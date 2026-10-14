@@ -47,9 +47,11 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   the series page plus a **Part of: <series>** button on the movie page (verified:
   Legend of Crimson ↔ KONOSUBA). Found and handled an AniList data bug (KonoSuba 2 carries
   Season 1's Crunchyroll episode list): repeated lists are refused, a forced refresh resets
-  wrong titles. Orphaned rows are pruned when files move. Still needed: **a TMDB key**
-  (user to register; embed as project default like Jellyfin) for Season 2 titles, episode
-  descriptions and non-anime posters.
+  wrong titles. Orphaned rows are pruned when files move. **TMDB key registered** by the
+  owner and kept out of the tree (`data/tmdb.key` locally; CI injects a project default
+  via ldflags for release images): Season 2 titles and episode descriptions, Season 3 as a
+  missing season, Toy Story and Legend of Crimson posters/logos/taglines all verified on
+  the phone. Source is on GitHub: private `drewfoos/roxy-tv`.
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.
