@@ -1,0 +1,21 @@
+#!/bin/sh
+# Create the roxy user with the host's PUID/PGID so /config and /data ownership matches,
+# add it to the video/render groups for /dev/dri, then drop privileges.
+set -e
+
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+
+if ! getent group roxy >/dev/null; then groupadd -g "$PGID" roxy; fi
+if ! id roxy >/dev/null 2>&1; then useradd -u "$PUID" -g "$PGID" -M -s /usr/sbin/nologin roxy; fi
+
+for dev in /dev/dri/*; do
+  [ -e "$dev" ] || continue
+  gid="$(stat -c %g "$dev")"
+  if ! getent group "$gid" >/dev/null; then groupadd -g "$gid" "dri$gid"; fi
+  usermod -aG "$gid" roxy
+done
+
+chown -R roxy:roxy /config /transcode 2>/dev/null || true
+
+exec gosu roxy "$@"

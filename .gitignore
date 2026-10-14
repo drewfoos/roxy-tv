@@ -1,0 +1,52 @@
+# ---- never commit media: test files, real releases, anything playable ----
+testdata/out/
+testdata/hold/
+*.mkv
+*.mp4
+*.m4v
+*.avi
+*.webm
+*.ts
+*.sup
+
+# downloaded fonts (fetched by scripts; licences listed in apps/tv/FONTS.md)
+testdata/fonts/*.otf
+testdata/fonts/*.ttf
+testdata/fonts/*.ttc
+apps/tv/app/src/main/assets/fonts/
+
+# ---- secrets and local config ----
+.env
+*.env
+spike.properties
+local.properties
+deploy/config/
+server/config/
+**/token.txt
+**/*.pem
+**/*.key
+**/*.keystore
+**/*.jks
+
+# ---- build output and runtime data ----
+server/bin/
+server/data/
+server/roxy.db*
+server/cache/
+deploy/fonts/
+apps/tv/spike-runs/
+*.apk
+*.aab
+build/
+.gradle/
+.kotlin/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+__pycache__/
+
+# ---- editors ----
+.idea/
+.vscode/
+*.swp

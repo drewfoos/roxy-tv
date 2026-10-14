@@ -1,0 +1,49 @@
+{
+  "data": {
+    "Page": {
+      "media": [
+        {
+          "id": 21202,
+          "idMal": 30831,
+          "title": {"romaji": "Kono Subarashii Sekai ni Shukufuku wo!", "english": "KONOSUBA -God's blessing on this wonderful world!", "native": "この素晴らしい世界に祝福を！"},
+          "synonyms": ["Konosuba", "GBWW"],
+          "description": "Kazuma Satou died a <i>laughable</i> death.<br><br>Now he must fight. &amp; more.<br>\n(Source: Crunchyroll)",
+          "coverImage": {"extraLarge": "https://img.example/cover-xl.png", "large": "https://img.example/cover-l.jpg"},
+          "bannerImage": "https://img.example/banner.jpg",
+          "genres": ["Adventure", "Comedy", "Fantasy"],
+          "averageScore": 81,
+          "startDate": {"year": 2016, "month": 1, "day": 14},
+          "status": "FINISHED",
+          "format": "TV",
+          "episodes": 10,
+          "duration": 23,
+          "studios": {"nodes": [{"name": "Studio Deen"}]},
+          "streamingEpisodes": [
+            {"title": "Episode 1 - This Self-Proclaimed Goddess and Reincarnation in Another World!", "thumbnail": "https://img.example/ep1.jpg"},
+            {"title": "Episode 2 - An Explosive Mage in This Wonderful World!", "thumbnail": "https://img.example/ep2.jpg"},
+            {"title": "Episode 2 - An Explosive Mage in This Wonderful World! (dub)", "thumbnail": "https://img.example/ep2-dub.jpg"},
+            {"title": "Recap special", "thumbnail": "https://img.example/recap.jpg"}
+          ]
+        },
+        {
+          "id": 20872,
+          "idMal": null,
+          "title": {"romaji": "Working!!!", "english": "WWW.Working!!", "native": "WORKING!!!"},
+          "synonyms": [],
+          "description": null,
+          "coverImage": {"extraLarge": "https://img.example/w.png", "large": ""},
+          "bannerImage": null,
+          "genres": ["Comedy"],
+          "averageScore": null,
+          "startDate": {"year": 2015, "month": null, "day": null},
+          "status": "RELEASING",
+          "format": "TV",
+          "episodes": null,
+          "duration": null,
+          "studios": {"nodes": []},
+          "streamingEpisodes": []
+        }
+      ]
+    }
+  }
+}

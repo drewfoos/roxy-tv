@@ -1,0 +1,9 @@
+{
+  "id": 71500,
+  "season_number": 2,
+  "poster_path": "/s2.jpg",
+  "episodes": [
+    {"episode_number": 1, "season_number": 2, "name": "Give Me Deliverance from this Judicial Injustice!", "overview": "Kazuma stands trial.", "air_date": "2017-01-12", "still_path": "/s2e1.jpg"},
+    {"episode_number": 2, "season_number": 2, "name": "A Loving Hand for a Sickly Brother!", "overview": "", "air_date": "2017-01-19", "still_path": null}
+  ]
+}

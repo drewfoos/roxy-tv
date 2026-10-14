@@ -1,0 +1,25 @@
+{
+  "id": 65844,
+  "name": "KonoSuba: God's Blessing on This Wonderful World!",
+  "original_name": "この素晴らしい世界に祝福を！",
+  "overview": "After dying a laughable death, Kazuma is given a second chance.",
+  "tagline": "",
+  "first_air_date": "2016-01-14",
+  "status": "Returning Series",
+  "vote_average": 8.3,
+  "poster_path": "/tvposter.jpg",
+  "backdrop_path": "/tvbackdrop.jpg",
+  "genres": [{"id": 16, "name": "Animation"}, {"id": 35, "name": "Comedy"}],
+  "networks": [{"id": 1, "name": "Tokyo MX"}],
+  "production_companies": [{"id": 2, "name": "Studio Deen"}],
+  "number_of_episodes": 31,
+  "seasons": [
+    {"season_number": 0, "episode_count": 4, "poster_path": "/s0.jpg"},
+    {"season_number": 1, "episode_count": 10, "poster_path": "/s1.jpg"},
+    {"season_number": 2, "episode_count": 10, "poster_path": "/s2.jpg"},
+    {"season_number": 3, "episode_count": 11, "poster_path": null}
+  ],
+  "external_ids": {"imdb_id": "tt5370118", "tvdb_id": 301311},
+  "images": {"logos": []},
+  "content_ratings": {"results": [{"iso_3166_1": "JP", "rating": "R15+"}, {"iso_3166_1": "US", "rating": "TV-14"}]}
+}

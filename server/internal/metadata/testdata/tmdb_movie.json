@@ -1,0 +1,20 @@
+{
+  "id": 526702,
+  "title": "KonoSuba: God's Blessing on This Wonderful World! Legend of Crimson",
+  "original_title": "この素晴らしい世界に祝福を！紅伝説",
+  "overview": "Kazuma and his party travel to the Crimson Demon village.",
+  "tagline": "A legend of crimson!",
+  "release_date": "2019-08-30",
+  "status": "Released",
+  "vote_average": 7.812,
+  "poster_path": "/poster.jpg",
+  "backdrop_path": "/backdrop.jpg",
+  "genres": [{"id": 16, "name": "Animation"}, {"id": 35, "name": "Comedy"}, {"id": 14, "name": "Fantasy"}],
+  "production_companies": [{"id": 1, "name": "J.C.STAFF"}],
+  "external_ids": {"imdb_id": "tt9381180", "tvdb_id": null},
+  "images": {"logos": [{"file_path": "/logo-ja.png", "iso_639_1": "ja"}, {"file_path": "/logo-en.png", "iso_639_1": "en"}]},
+  "release_dates": {"results": [
+    {"iso_3166_1": "JP", "release_dates": [{"certification": "G"}]},
+    {"iso_3166_1": "US", "release_dates": [{"certification": ""}, {"certification": "PG-13"}]}
+  ]}
+}

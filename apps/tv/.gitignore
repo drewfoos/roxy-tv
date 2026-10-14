@@ -1,0 +1,16 @@
+*.iml
+.gradle/
+.idea/
+.kotlin/
+build/
+local.properties
+spike.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+spike-runs/
+app/src/main/assets/fonts/*.ttc
+app/src/main/assets/fonts/*.ttf
+app/src/main/assets/fonts/*.otf

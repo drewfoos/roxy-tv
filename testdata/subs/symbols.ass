@@ -1,0 +1,25 @@
+[Script Info]
+; Symbol / emoji coverage test for libass fallback fonts. Each line names the glyphs it
+; shows so a tester can see at a glance which ones became boxes.
+Title: Roxy symbols test
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Open Sans Semibold,56,&H00FFFFFF,&H000000FF,&H00202020,&H80000000,0,0,0,0,100,100,0,0,1,3,1,2,60,60,50,1
+Style: Arial,Arial,56,&H00FFFFFF,&H000000FF,&H00202020,&H80000000,0,0,0,0,100,100,0,0,1,3,1,8,60,60,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.50,0:00:06.00,Default,,0,0,0,,Gender and music: ♀ ♂ ⚥ ♪ ♫ ♬ ♩  (6 symbols, none should be a box)
+Dialogue: 0,0:00:00.50,0:00:06.00,Arial,,0,0,0,,Arial line via alias: stars ★ ☆ ✦ ✧  hearts ♥ ♡ ❤  arrows → ← ↑ ↓ ⇒ ⇔
+Dialogue: 0,0:00:06.00,0:00:12.00,Default,,0,0,0,,JP punctuation: … 「」『』 wave dash 〜(U+301C) vs fullwidth tilde ～(U+FF5E) ・ ※ 〒 ♯ ♭ ⁉ ‼ — both dashes must show as a wave, not a box
+Dialogue: 0,0:00:06.00,0:00:12.00,Arial,,0,0,0,,Math and misc: ∞ ≠ ≈ ± × ÷ √ ∑ ° ‰ § ¶ © ® ™ € £ ¥
+Dialogue: 0,0:00:12.00,0:00:18.00,Default,,0,0,0,,Emoji (monochrome is fine): 😀 😂 🥺 😭 💢 💕 🎉 🔥 👍 🙏 ✨ 🎵
+Dialogue: 0,0:00:12.00,0:00:18.00,Arial,,0,0,0,,Box drawing and shapes: ─ │ ┌ ┐ └ ┘ ■ □ ● ○ ◆ ◇ ▲ △ ▼ ▽
+Dialogue: 0,0:00:18.00,0:00:24.00,Default,,0,0,0,,Kana + kanji + Hangul + Hanzi: あいうえお アイウエオ 漢字 한국어 中文 — all four scripts readable
+Dialogue: 0,0:00:18.00,0:00:24.00,Arial,,0,0,0,,Greek and Cyrillic: αβγδ ΩΣΦ  абвгд ЖЩЮЯ  — and a dingbat ✓ ✗ ☑ ☒

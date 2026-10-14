@@ -1,0 +1,5 @@
+# Copy to spike.properties (git-ignored). Optional dev convenience: the DEBUG build prefills
+# the login screen with these values. Release builds ignore this file.
+server.url=http://192.168.1.10:8096
+server.username=yourname
+server.password=yourpassword
