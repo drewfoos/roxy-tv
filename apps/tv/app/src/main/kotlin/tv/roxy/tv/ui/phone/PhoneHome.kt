@@ -205,7 +205,7 @@ private fun OfflineState(serverUrl: String, onRetry: () -> Unit) {
 }
 
 /** Height of the full-bleed hero (image under the status bar, down to the timer bars). */
-private val HeroHeight = 660.dp
+private val HeroHeight = 640.dp
 
 /**
  * The carousel: a full-bleed banner (no card, no margins) that swipes between shows and
@@ -338,8 +338,8 @@ private fun TimerBars(count: Int, current: Int, progress: Float, width: Dp, modi
     Row(modifier = modifier.padding(start = PhonePad, bottom = 10.dp).width(width), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(count) { i ->
             val fill = when { i < current -> 1f; i == current -> progress; else -> 0f }
-            Box(modifier = Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = 0.28f))) {
-                Box(modifier = Modifier.fillMaxWidth(fill).height(7.dp).clip(RoundedCornerShape(4.dp)).background(RoxyColors.accent))
+            Box(modifier = Modifier.weight(1f).height(9.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(alpha = 0.28f))) {
+                Box(modifier = Modifier.fillMaxWidth(fill).height(9.dp).clip(RoundedCornerShape(5.dp)).background(RoxyColors.accent))
             }
         }
     }
