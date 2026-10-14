@@ -19,7 +19,7 @@ $env:ROXY_MEDIA_ROOTS = "..\testdata\out"   # comma separated; one library per r
 $env:ROXY_DATA_DIR    = ".\data"            # db + caches (git-ignored)
 $env:ROXY_LISTEN      = "0.0.0.0:8096"      # 0.0.0.0 so the phone on the LAN can reach it
 $env:ROXY_DEBUG       = "1"
-$env:ROXY_TMDB_API_KEY = "..."              # optional; without it only AniList runs (see Metadata)
+$env:ROXY_TMDB_API_KEY = "..."              # or put the key in data\tmdb.key; without one only AniList runs
 .\bin\roxy.exe serve                         # scans on start, then serves
 ```
 
@@ -85,7 +85,10 @@ its series/movie, and a full scan re-enqueues every top-level item (anything ref
 within 7 days is skipped unless `POST /v1/items/{id}/refresh` forces it). One worker
 goroutine processes the queue; a bad item is logged, never fatal.
 
-- **TMDB** (`ROXY_TMDB_API_KEY`, v3 key or v4 read token): movies and series by provider
+- **TMDB** (v3 key or v4 read token; resolved from `ROXY_TMDB_API_KEY`, else
+  `<data dir>/tmdb.key`, else a project default injected at build time with
+  `-ldflags "-X .../internal/config.DefaultTMDBAPIKey=<key>"` from a CI secret, so no key
+  is ever committed): movies and series by provider
   id first (`tmdb` directly; `tvdb` / `imdb` from Sonarr/Radarr or `[tvdbid-…]` folder
   tags through `/find`), then title + year search. Seasons give episode titles,
   overviews, air dates and stills; absolute-numbered files are mapped through the
@@ -93,8 +96,11 @@ goroutine processes the queue; a bad item is logged, never fatal.
   provider is disabled (one warning at start).
 - **AniList** (no key, GraphQL): leads for anime-mode libraries, otherwise it runs
   after TMDB as fallback and always enriches a match with the `anilist` / `mal` ids.
-  `streamingEpisodes` supply episode titles and thumbnails for the matched entry
-  (season 1; AniList models later seasons as separate entries, not followed yet).
+  `streamingEpisodes` supply episode titles and thumbnails. AniList models each TV season
+  as its own entry; the PREQUEL/SEQUEL chain is followed so Season n maps to the n-th
+  entry, and its `relations` (movies, OVAs, side stories, spin-offs) are stored for
+  `/v1/items/{id}/related`. A sequel entry that repeats another season's episode list
+  (an AniList data problem) is marked untrusted and left to TMDB.
 - Search hits are accepted only when the normalized title is close enough
   (`TitleSimilarity` >= 0.6, year as a tiebreaker), so junk names stay unmatched.
 - Images download to `data/cache/images/<item>/<type>.jpg` (PNG re-encoded to JPEG) and

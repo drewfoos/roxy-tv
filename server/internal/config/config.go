@@ -55,8 +55,27 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.DataDir = abs
+	// TMDB key resolution, in order: env, <DataDir>/tmdb.key (git-ignored, lives in the
+	// Docker volume), then a project default compiled in by CI (see DefaultTMDBAPIKey).
+	// Keys never live in the source tree.
+	if c.TMDBAPIKey == "" {
+		if b, err := os.ReadFile(filepath.Join(c.DataDir, "tmdb.key")); err == nil {
+			c.TMDBAPIKey = strings.TrimSpace(string(b))
+		}
+	}
+	if c.TMDBAPIKey == "" {
+		c.TMDBAPIKey = DefaultTMDBAPIKey
+	}
 	return c, nil
 }
+
+// DefaultTMDBAPIKey is the project key for release builds, injected by the build:
+//
+//	go build -ldflags "-X github.com/roxy-media/roxy/server/internal/config.DefaultTMDBAPIKey=<key>"
+//
+// It is empty in source so the repository never carries a credential (the CI secret
+// supplies it), which is how Jellyfin-style "no key needed" behaviour is achieved.
+var DefaultTMDBAPIKey = ""
 
 func (c *Config) DBPath() string         { return filepath.Join(c.DataDir, "roxy.db") }
 func (c *Config) CacheDir() string       { return filepath.Join(c.DataDir, "cache") }

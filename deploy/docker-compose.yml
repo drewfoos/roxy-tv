@@ -33,6 +33,7 @@ services:
     environment:
       ROXY_MEDIA_ROOTS: "/data/media/movies,/data/media/tv"
       ROXY_HWACCEL: "vaapi"          # auto | vaapi | amf | qsv | nvenc | none
+      ROXY_TMDB_API_KEY: "${TMDB_API_KEY:-}" # or drop a tmdb.key file in the data volume; release images carry a project default
       ROXY_SONARR_URL: "http://sonarr:8989"
       ROXY_SONARR_API_KEY: "${SONARR_API_KEY}"
       ROXY_RADARR_URL: "http://radarr:7878"

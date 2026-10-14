@@ -476,8 +476,11 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 			se = fetch(secondary, si.Number)
 		}
 		seasonGUID := fmt.Sprintf("%s:season:%d", series.GUID, si.Number)
-		keep[seasonGUID] = true
 		season, ok := bySeason[si.Number]
+		if !ok && si.EpisodeCount == 0 && (se == nil || len(se.Episodes) == 0) {
+			continue // announced season with no episodes yet: nothing to show
+		}
+		keep[seasonGUID] = true
 		if !ok {
 			title := fmt.Sprintf("Season %d", si.Number)
 			if si.Number == 0 {
