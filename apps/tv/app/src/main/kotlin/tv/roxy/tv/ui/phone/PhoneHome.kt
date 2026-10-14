@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -224,7 +226,7 @@ private fun HeroCarousel(heroes: List<HeroPick>, api: RoxyApi, onPlay: (HeroPick
         pager.animateScrollToPage((pager.currentPage + 1) % count)
     }
 
-    Box(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
         if (count == 0) {
             // Rows arrived before the carousel resolved (or the library is empty): hold the space.
             Bone(Modifier.fillMaxSize(), shape = RoundedCornerShape(0.dp))
@@ -232,7 +234,9 @@ private fun HeroCarousel(heroes: List<HeroPick>, api: RoxyApi, onPlay: (HeroPick
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
                 HeroSlide(heroes[page], api, onOpen = { onOpen(heroes[page]) }, onPlay = { onPlay(heroes[page]) })
             }
-            if (count > 1) TimerBars(count = count, current = pager.currentPage, progress = progress.value, modifier = Modifier.align(Alignment.BottomStart))
+            // 80 % of the Start watching button (the row minus the save circle and its gap).
+            val buttonWidth = maxWidth - PhonePad * 2 - 46.dp - 14.dp
+            if (count > 1) TimerBars(count = count, current = pager.currentPage, progress = progress.value, width = buttonWidth * 0.8f, modifier = Modifier.align(Alignment.BottomStart))
         }
     }
 }
@@ -330,12 +334,12 @@ private fun audioBadge(play: Item): String? {
  * full, the current one filling in the brand blue, the rest dim.
  */
 @Composable
-private fun TimerBars(count: Int, current: Int, progress: Float, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.fillMaxWidth(0.8f).padding(start = PhonePad, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun TimerBars(count: Int, current: Int, progress: Float, width: Dp, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.padding(start = PhonePad, bottom = 10.dp).width(width), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(count) { i ->
             val fill = when { i < current -> 1f; i == current -> progress; else -> 0f }
-            Box(modifier = Modifier.weight(1f).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.28f))) {
-                Box(modifier = Modifier.fillMaxWidth(fill).height(5.dp).clip(RoundedCornerShape(3.dp)).background(RoxyColors.accent))
+            Box(modifier = Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = 0.28f))) {
+                Box(modifier = Modifier.fillMaxWidth(fill).height(7.dp).clip(RoundedCornerShape(4.dp)).background(RoxyColors.accent))
             }
         }
     }

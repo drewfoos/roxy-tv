@@ -26,6 +26,8 @@ data class Session(
     val profileHasAvatar: Boolean = false,
     /** Bumped when the avatar changes so cached images are refetched. */
     val profileAvatarVersion: Int = 0,
+    /** The profile used last, kept across Switch profile so the picker can mark it and offer a way back. */
+    val lastProfileId: String? = null,
 ) {
     val isLoggedIn: Boolean get() = token != null && serverUrl.isNotEmpty()
     val hasProfile: Boolean get() = profileId != null
@@ -99,6 +101,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_PROFILE_NAME] = s.profileName
             it[KEY_PROFILE_AVATAR] = s.profileHasAvatar
             it[KEY_PROFILE_AVATAR_V] = s.profileAvatarVersion
+            if (s.lastProfileId == null) it.remove(KEY_LAST_PROFILE) else it[KEY_LAST_PROFILE] = s.lastProfileId
         }
     }
 
@@ -106,11 +109,14 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
     suspend fun selectProfile(id: String, name: String, hasAvatar: Boolean) {
         val cur = _session.value
         val bump = if (cur.profileId == id) cur.profileAvatarVersion + 1 else 0
-        saveSession(cur.copy(profileId = id, profileName = name, profileHasAvatar = hasAvatar, profileAvatarVersion = bump))
+        saveSession(cur.copy(profileId = id, profileName = name, profileHasAvatar = hasAvatar, profileAvatarVersion = bump, lastProfileId = id))
     }
 
-    /** Back to the picker (Switch profile). */
-    suspend fun clearProfile() = saveSession(_session.value.copy(profileId = null, profileName = "", profileHasAvatar = false))
+    /** Back to the picker (Switch profile); remembers which profile we came from. */
+    suspend fun clearProfile() {
+        val cur = _session.value
+        saveSession(cur.copy(profileId = null, profileName = "", profileHasAvatar = false, lastProfileId = cur.profileId ?: cur.lastProfileId))
+    }
 
     suspend fun clearSession() {
         val keepUrl = _session.value.serverUrl
@@ -121,6 +127,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it.remove(KEY_PROFILE_ID)
             it.remove(KEY_PROFILE_NAME)
             it.remove(KEY_PROFILE_AVATAR)
+            it.remove(KEY_LAST_PROFILE)
         }
     }
 
@@ -145,6 +152,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         profileName = this[KEY_PROFILE_NAME].orEmpty(),
         profileHasAvatar = this[KEY_PROFILE_AVATAR] ?: false,
         profileAvatarVersion = this[KEY_PROFILE_AVATAR_V] ?: 0,
+        lastProfileId = this[KEY_LAST_PROFILE]?.takeIf { it.isNotEmpty() },
     )
 
     private fun Preferences.toSettings(): PlayerSettings {
@@ -168,6 +176,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_AVATAR = booleanPreferencesKey("profile_has_avatar")
         val KEY_PROFILE_AVATAR_V = intPreferencesKey("profile_avatar_v")
+        val KEY_LAST_PROFILE = stringPreferencesKey("last_profile_id")
         val KEY_HWDEC = stringPreferencesKey("hwdec")
         val KEY_VO = stringPreferencesKey("vo")
         val KEY_ALANG = stringPreferencesKey("audio_langs")

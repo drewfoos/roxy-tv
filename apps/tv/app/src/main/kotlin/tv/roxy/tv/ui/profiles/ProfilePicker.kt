@@ -1,13 +1,14 @@
-﻿package tv.roxy.tv.ui.profiles
+package tv.roxy.tv.ui.profiles
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,15 +16,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -49,8 +47,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,6 +73,7 @@ import tv.roxy.tv.api.Character
 import tv.roxy.tv.api.Profile
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.widthPx
+import tv.roxy.tv.ui.phone.BackCircle
 import tv.roxy.tv.ui.phone.ChipGrey
 import tv.roxy.tv.ui.phone.OnBrand
 import tv.roxy.tv.ui.phone.PhoneTheme
@@ -77,16 +81,22 @@ import tv.roxy.tv.ui.phone.PlayButton
 import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
 
+/** Avatar size on the picker. */
+private val PickSize = 112.dp
+
 /**
- * "Who's watching?" (Netflix): the account's profiles as big avatars, an Add tile, and a
- * Manage toggle that turns taps into edits. Picking one stores it in the session and the
- * app continues; everything watched from then on is that profile's.
+ * "Who's watching?" (Netflix): the account's profiles as big avatars in centred rows,
+ * Add profile on its own row beneath, and Manage profiles / Log out as pills at the
+ * bottom. The profile used last wears the blue ring with the cat, and a back button
+ * (top-left) returns to it without picking again. Picking one stores it in the session
+ * and the app continues; everything watched from then on is that profile's.
  *
- * [editOnly] opens the editor for one profile straight away (Account â†’ Edit profile).
+ * [editOnly] opens the editor for one profile straight away (Account → Edit profile).
  */
 @Composable
 fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
     val app = RoxyApp.get(LocalContext.current)
+    val session by app.prefs.session.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var profiles by remember { mutableStateOf<List<Profile>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -100,6 +110,8 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
             .onFailure { t -> Timber.w(t, "profiles failed"); error = t.message }
     }
     LaunchedEffect(Unit) { reload() }
+
+    val last = profiles?.firstOrNull { it.id == session.lastProfileId }
 
     PhoneTheme {
         Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
@@ -126,7 +138,7 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
                     onCancel = { creating = false; editing = null; if (editOnly != null) onDone() },
                 )
                 else -> PickerGrid(
-                    api = app.api, profiles = profiles, error = error, managing = managing,
+                    api = app.api, profiles = profiles, error = error, managing = managing, lastId = last?.id,
                     onToggleManage = { managing = !managing },
                     onPick = { p ->
                         if (managing) editing = p
@@ -134,6 +146,13 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
                     },
                     onAdd = { creating = true },
                     onRetry = { scope.launch { reload() } },
+                    onBack = last?.let { l -> { scope.launch { app.prefs.selectProfile(l.id, l.name, l.hasAvatar); onDone() } } },
+                    onLogout = {
+                        scope.launch {
+                            runCatching { app.api.logout() }.onFailure { Timber.w("logout: %s", it.message) }
+                            app.prefs.clearSession()
+                        }
+                    },
                 )
             }
         }
@@ -146,61 +165,140 @@ private fun PickerGrid(
     profiles: List<Profile>?,
     error: String?,
     managing: Boolean,
+    lastId: String?,
     onToggleManage: () -> Unit,
     onPick: (Profile) -> Unit,
     onAdd: () -> Unit,
     onRetry: () -> Unit,
+    onBack: (() -> Unit)?,
+    onLogout: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        WitchHat(size = 44.dp, modifier = Modifier.padding(top = 24.dp))
-        Text("Who's watching?", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 20.dp, bottom = 28.dp))
-        when {
-            profiles == null && error != null -> {
-                Text(error, color = RoxyColors.error, textAlign = TextAlign.Center)
-                PlayButton("Try again", icon = Icons.Filled.Search, modifier = Modifier.padding(top = 16.dp), onClick = onRetry)
-            }
-            profiles == null -> Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                repeat(2) { Box(Modifier.size(96.dp).clip(CircleShape).background(RoxyColors.surfaceHigh)) }
-            }
-            else -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.widthIn(max = 360.dp).weight(1f, fill = false),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp),
-                ) {
-                    items(profiles, key = { it.id }) { p ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onPick(p) }.padding(4.dp)) {
-                            Box {
-                                ProfileAvatar(p, api, size = 88.dp)
-                                if (managing) {
-                                    Box(modifier = Modifier.matchParentSize().clip(CircleShape).background(Color(0x88000000)), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White, modifier = Modifier.size(32.dp))
-                                    }
-                                }
-                            }
-                            Text(p.name, color = RoxyColors.onBackground, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
-                        }
-                    }
-                    if (profiles.size < 6) {
-                        item(key = "add") {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onAdd).padding(4.dp)) {
-                                Box(modifier = Modifier.size(88.dp).clip(CircleShape).border(2.dp, RoxyColors.muted, CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Filled.Add, contentDescription = "Add profile", tint = RoxyColors.muted, modifier = Modifier.size(40.dp))
-                                }
-                                Text("Add profile", color = RoxyColors.muted, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp))
-                            }
-                        }
-                    }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        // As many big tiles per row as fit (two on a phone), each row centred.
+        val gap = 20.dp
+        val perRow = ((maxWidth - 48.dp + gap) / (PickSize + 16.dp + gap)).toInt().coerceIn(1, 3)
+        if (onBack != null) BackCircle(onBack, modifier = Modifier.padding(12.dp))
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            WitchHat(size = 44.dp, modifier = Modifier.padding(top = 36.dp))
+            Text("Who's watching?", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 20.dp, bottom = 32.dp))
+            when {
+                profiles == null && error != null -> {
+                    Text(error, color = RoxyColors.error, textAlign = TextAlign.Center)
+                    PlayButton("Try again", icon = Icons.Filled.Search, modifier = Modifier.padding(top = 16.dp), onClick = onRetry)
                 }
-                Box(
-                    modifier = Modifier.padding(top = 20.dp).clip(RoundedCornerShape(4.dp)).border(1.dp, RoxyColors.muted, RoundedCornerShape(4.dp)).clickable(onClick = onToggleManage).padding(horizontal = 22.dp, vertical = 10.dp),
-                ) {
-                    Text(if (managing) "Done" else "Manage profiles", color = if (managing) Color.White else RoxyColors.muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                profiles == null -> Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    repeat(2) { Box(Modifier.size(PickSize).clip(CircleShape).background(RoxyColors.surfaceHigh)) }
+                }
+                else -> {
+                    // Up to three per row, each row centred; Add profile on its own row below.
+                    // Add profile takes the free slot of the last row; when that row is full it gets its own row.
+                    val canAdd = profiles.size < 6
+                    val rows = profiles.chunked(perRow)
+                    val addInLastRow = canAdd && rows.isNotEmpty() && rows.last().size < perRow
+                    rows.forEachIndexed { i, row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.padding(bottom = 24.dp)) {
+                            row.forEach { p -> ProfileTile(p, api, managing = managing, current = p.id == lastId, onClick = { onPick(p) }) }
+                            if (addInLastRow && i == rows.lastIndex) AddTile(onAdd)
+                        }
+                    }
+                    if (canAdd && !addInLastRow) AddTile(onAdd)
+                    Spacer(Modifier.height(40.dp))
                 }
             }
         }
+        if (profiles != null) {
+            // Bottom actions in the brand blue: the outlined Manage button, Log out beneath it.
+            Column(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(20.dp))
+                        .background(if (managing) RoxyColors.accent else Color.Transparent)
+                        .border(1.5.dp, RoxyColors.accent, RoundedCornerShape(20.dp))
+                        .clickable(onClick = onToggleManage).padding(horizontal = 24.dp, vertical = 10.dp),
+                ) {
+                    Text(if (managing) "Done" else "Manage profiles", color = if (managing) OnBrand else RoxyColors.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Text("Log out", color = RoxyColors.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp).clickable(onClick = onLogout).padding(8.dp))
+            }
+        }
+    }
+}
+
+/** The dashed-circle "Add profile" tile, same footprint as a profile tile. */
+@Composable
+private fun AddTile(onAdd: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(PickSize + 16.dp).clickable(onClick = onAdd).padding(top = 10.dp)) {
+        Box(modifier = Modifier.size(PickSize + 14.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(PickSize).clip(CircleShape).border(2.dp, RoxyColors.muted, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Add, contentDescription = "Add profile", tint = RoxyColors.muted, modifier = Modifier.size(44.dp))
+            }
+        }
+        Text("Add profile", color = RoxyColors.muted, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp))
+    }
+}
+
+/** One avatar with its name; the last-used one wears the blue ring with the cat holding it. */
+@Composable
+private fun ProfileTile(p: Profile, api: RoxyApi, managing: Boolean, current: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(PickSize + 16.dp).clickable(onClick = onClick).padding(top = 10.dp)) {
+        // Same footprint for every tile (ring space reserved) so the names line up.
+        Box(modifier = Modifier.size(PickSize + 14.dp), contentAlignment = Alignment.Center) {
+            if (current) {
+                Box(Modifier.size(PickSize + 14.dp).clip(CircleShape).border(3.dp, RoxyColors.accent, CircleShape))
+            }
+            ProfileAvatar(p, api, size = PickSize)
+            if (managing) {
+                Box(modifier = Modifier.size(PickSize).clip(CircleShape).background(Color(0x88000000)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White, modifier = Modifier.size(36.dp))
+                }
+            }
+            if (current && !managing) {
+                CatOnRing(modifier = Modifier.align(Alignment.TopCenter).offset(y = (-16).dp), width = 44.dp)
+            }
+        }
+        Text(p.name, color = RoxyColors.onBackground, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
+    }
+}
+
+/**
+ * A small cat peeking over the top of the ring, paws on the rim: round head, two ears,
+ * closed happy eyes and a tiny nose, in the light brand tint with navy features.
+ */
+@Composable
+fun CatOnRing(modifier: Modifier = Modifier, width: Dp = 44.dp) {
+    Canvas(modifier = modifier.size(width, width * 0.8f)) {
+        val w = size.width
+        val h = size.height
+        val fur = RoxyColors.accentLight
+        val ink = RoxyColors.accentDark
+        // Paws on the rim (drawn first, under the head).
+        drawOval(fur, topLeft = Offset(w * 0.12f, h * 0.70f), size = Size(w * 0.24f, h * 0.22f))
+        drawOval(fur, topLeft = Offset(w * 0.64f, h * 0.70f), size = Size(w * 0.24f, h * 0.22f))
+        drawOval(ink, topLeft = Offset(w * 0.12f, h * 0.70f), size = Size(w * 0.24f, h * 0.22f), style = Stroke(w * 0.03f))
+        drawOval(ink, topLeft = Offset(w * 0.64f, h * 0.70f), size = Size(w * 0.24f, h * 0.22f), style = Stroke(w * 0.03f))
+        // Ears.
+        val ears = Path().apply {
+            moveTo(w * 0.18f, h * 0.45f); lineTo(w * 0.16f, h * 0.05f); lineTo(w * 0.42f, h * 0.28f); close()
+            moveTo(w * 0.82f, h * 0.45f); lineTo(w * 0.84f, h * 0.05f); lineTo(w * 0.58f, h * 0.28f); close()
+        }
+        drawPath(ears, fur)
+        drawPath(ears, ink, style = Stroke(w * 0.03f))
+        // Head.
+        drawOval(fur, topLeft = Offset(w * 0.12f, h * 0.18f), size = Size(w * 0.76f, h * 0.66f))
+        drawOval(ink, topLeft = Offset(w * 0.12f, h * 0.18f), size = Size(w * 0.76f, h * 0.66f), style = Stroke(w * 0.03f))
+        // Closed happy eyes (two little arcs) and a nose.
+        val eyes = Path().apply {
+            moveTo(w * 0.30f, h * 0.52f); quadraticTo(w * 0.37f, h * 0.42f, w * 0.44f, h * 0.52f)
+            moveTo(w * 0.56f, h * 0.52f); quadraticTo(w * 0.63f, h * 0.42f, w * 0.70f, h * 0.52f)
+        }
+        drawPath(eyes, ink, style = Stroke(w * 0.035f))
+        val nose = Path().apply { moveTo(w * 0.46f, h * 0.60f); lineTo(w * 0.54f, h * 0.60f); lineTo(w * 0.50f, h * 0.66f); close() }
+        drawPath(nose, ink)
+        // Whiskers.
+        drawLine(ink, Offset(w * 0.14f, h * 0.60f), Offset(w * 0.30f, h * 0.63f), strokeWidth = w * 0.02f)
+        drawLine(ink, Offset(w * 0.86f, h * 0.60f), Offset(w * 0.70f, h * 0.63f), strokeWidth = w * 0.02f)
     }
 }
 
@@ -261,7 +359,7 @@ private fun ProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) ->
             Spacer(Modifier.weight(1f))
             Text(if (profile == null) "New profile" else "Edit profile", color = RoxyColors.onBackground, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text(if (busy) "Savingâ€¦" else "Save", color = if (name.isBlank()) RoxyColors.muted else RoxyColors.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { save() })
+            Text(if (busy) "Saving…" else "Save", color = if (name.isBlank()) RoxyColors.muted else RoxyColors.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { save() })
         }
         // Preview and name.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 12.dp)) {
@@ -278,7 +376,7 @@ private fun ProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) ->
             }
         }
         error?.let { Text(it, color = RoxyColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
-        picked?.let { Text("Picked: ${it.name}" + if (it.series.isNotEmpty()) " Â· ${it.series}" else "", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
+        picked?.let { Text("Picked: ${it.name}" + if (it.series.isNotEmpty()) " · ${it.series}" else "", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
 
         Text("From your library", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 8.dp, bottom = 10.dp))
         val s = suggested
