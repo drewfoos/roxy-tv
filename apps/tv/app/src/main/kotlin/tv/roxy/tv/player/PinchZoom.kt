@@ -18,7 +18,6 @@ import androidx.compose.ui.input.pointer.positionChanged
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.round
 
 /**
@@ -82,6 +81,7 @@ fun Modifier.pinchZoom(
 
 private class ZoomState(private val scope: CoroutineScope) {
     var scale = 1f
+    private var raw = 1f // unrounded scale while a gesture is in progress
     var offset = Offset.Zero // video centre relative to the view centre, screen px
     var maxZoom = 8f
     var onZoom: (Double, Double, Double) -> Unit = { _, _, _ -> }
@@ -93,14 +93,17 @@ private class ZoomState(private val scope: CoroutineScope) {
 
     fun begin() {
         snapJob?.cancel()
+        raw = scale
         onPinchStart()
     }
 
     fun apply(zoom: Float, pan: Offset, centroid: Offset, w: Int, h: Int) {
         val old = scale
-        // Quantise to 0.1× so the level reads as a number and does not creep with tremor.
-        val target = (old * zoom).coerceIn(1f, maxZoom)
-        val new = if (abs(target - old) < 0.05f) old else round(target * 10f) / 10f
+        // Accumulate the finger spread continuously, but apply it in 0.1× steps so the
+        // level reads as a number and tremor does not creep. (Comparing each event against
+        // the rounded level instead would swallow every small movement.)
+        raw = (raw * zoom).coerceIn(1f, maxZoom)
+        val new = round(raw * 10f) / 10f
         // Keep the point between the fingers fixed while scaling about it, then pan.
         val c = Offset(centroid.x - w / 2f, centroid.y - h / 2f)
         var off = (offset - c) * (new / old) + c + pan
@@ -130,6 +133,7 @@ private class ZoomState(private val scope: CoroutineScope) {
                 push(w, h)
             }
             scale = 1f
+            raw = 1f
             offset = Offset.Zero
             push(w, h)
             onLevel(1f, false)
