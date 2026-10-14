@@ -1,6 +1,8 @@
 package tv.roxy.tv.ui.phone
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -58,47 +60,40 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
     }
 
     val resumable = (movie.userData?.positionMs ?: 0) > 0
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 24.dp
+    val listState = rememberLazyListState()
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = bottom)) {
-        Backdrop(movie, app.api, onBack)
-        Column(modifier = Modifier.padding(horizontal = PhonePad)) {
-            Text(movie.title, fontSize = 22.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-            val meta = listOfNotNull(
-                (movie.year ?: movie.premiered?.take(4)?.toIntOrNull())?.toString(),
-                movie.runtimeMinutes?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
-                movie.officialRating,
-                movie.communityRating?.let { "★ %.1f".format(it) },
-            ).joinToString("   ")
-            if (meta.isNotEmpty()) Text(meta, fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp))
-
-            PlayAndSaveRow(if (resumable) "Resume" else "Start watching", movie, app.api, modifier = Modifier.padding(top = 16.dp), onPlay = {
-                scope.launch { playItem(context, movie).onFailure { Timber.w(it, "play failed") } }
-            }, onSaved = { vm.load() })
-            if (resumable) {
-                GreyButton("Play from start", modifier = Modifier.fillMaxWidth().padding(top = 10.dp), icon = Icons.Filled.Replay, onClick = {
-                    scope.launch { playItem(context, movie, fromStart = true) }
-                })
-            }
-            movie.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 14.dp)) }
-            movie.overview?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
-                    maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp).clickable { expanded = !expanded },
+    TitlePageScaffold(
+        item = movie, api = app.api, listState = listState, onBack = onBack,
+        playLabel = if (resumable) "Resume" else "Start watching",
+        onPlay = { scope.launch { playItem(context, movie).onFailure { Timber.w(it, "play failed") } } },
+        onSaved = { vm.load() },
+    ) { bottomInset ->
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
+            item(key = "banner") { TitleBanner(movie, app.api, listState) }
+            item(key = "info") {
+                TitleInfo(
+                    item = movie,
+                    badge = audioBadge(movie),
+                    extra = movie.runtimeMinutes?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
                 )
             }
-            val genres = movie.genres.joinToString(", ")
-            if (genres.isNotEmpty()) Text("Genres: $genres", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 8.dp))
-            movie.studio?.let { Text("Studio: $it", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 2.dp)) }
-            val episode = with(app.api) { movie.toEpisode() }
-            val tags = buildString { if (episode.isHi10p) append("Hi10P  "); if (episode.hasAss) append("ASS  ") }
-            Text(tags + episode.videoLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp))
-            Text(episode.tracksLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.muted)
-        }
-        if (state.partOf.isNotEmpty()) {
-            PhoneRow("Part of", state.partOf, app.api, onClick = onOpenSeries, modifier = Modifier.padding(top = 22.dp))
+            item(key = "more") {
+                Column(modifier = Modifier.padding(horizontal = PhonePad)) {
+                    if (resumable) {
+                        GreyButton("Play from start", modifier = Modifier.fillMaxWidth().padding(top = 16.dp), icon = Icons.Filled.Replay, onClick = {
+                            scope.launch { playItem(context, movie, fromStart = true) }
+                        })
+                    }
+                    movie.studio?.let { Text("Studio: $it", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 14.dp)) }
+                    val episode = with(app.api) { movie.toEpisode() }
+                    val tags = buildString { if (episode.isHi10p) append("Hi10P  "); if (episode.hasAss) append("ASS  ") }
+                    Text(tags + episode.videoLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp))
+                    Text(episode.tracksLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.muted)
+                }
+            }
+            if (state.partOf.isNotEmpty()) {
+                item(key = "partOf") { PhoneRow("Part of", state.partOf, app.api, onClick = onOpenSeries, modifier = Modifier.padding(top = 22.dp)) }
+            }
         }
     }
 }

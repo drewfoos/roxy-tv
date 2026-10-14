@@ -293,24 +293,6 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
 }
 
 /**
- * "Dub | Sub" for anime from the playable item's audio tracks: both English and Japanese
- * audio = Dub | Sub, Japanese only = Sub, English only = Dub. Null when the streams are
- * unknown (series slides resolved from the library carry no sources yet).
- */
-private fun audioBadge(play: Item): String? {
-    val langs = play.primarySource?.streams.orEmpty().filter { it.type == "audio" }.mapNotNull { it.language?.lowercase() }.toSet()
-    if (langs.isEmpty()) return null
-    val eng = langs.any { it == "eng" || it == "en" }
-    val jpn = langs.any { it == "jpn" || it == "ja" }
-    return when {
-        eng && jpn -> "Dub | Sub"
-        jpn -> "Sub"
-        eng && play.genres.any { it.equals("Animation", true) } -> "Dub"
-        else -> null
-    }
-}
-
-/**
  * Story-style segmented pills under the button, about 80 % of its width: done slides
  * full, the current one filling in the brand blue, the rest dim.
  */

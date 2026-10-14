@@ -19,7 +19,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -30,6 +36,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,44 +99,31 @@ fun PhoneSeries(
     }
 
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 24.dp
+    val playable = state.episodes.filter { it.isPlayable }
+    val next = playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
+        ?: playable.firstOrNull { it.userData?.played != true }
+        ?: playable.firstOrNull()
+    val resumable = next != null && (next.userData?.positionMs ?: 0) > 0
+    val label = when {
+        next == null -> "Nothing to play yet"
+        resumable -> "Resume ${next.episodeCode}"
+        else -> "Start watching ${next.episodeCode}".trim()
+    }
+    val listState = rememberLazyListState()
 
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottom)) {
-        item(key = "backdrop") { Backdrop(series, app.api, onBack) }
-        item(key = "info") {
-            Column(modifier = Modifier.padding(horizontal = PhonePad)) {
-                Text(series.title, fontSize = 22.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-                val meta = listOfNotNull(
-                    (series.year ?: series.premiered?.take(4)?.toIntOrNull())?.toString(),
-                    state.seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-                    series.officialRating,
-                    series.communityRating?.let { "★ %.1f".format(it) },
-                ).joinToString("   ")
-                if (meta.isNotEmpty()) Text(meta, fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp))
-
-                val playable = state.episodes.filter { it.isPlayable }
-                val next = playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
-                    ?: playable.firstOrNull { it.userData?.played != true }
-                    ?: playable.firstOrNull()
-                val resumable = next != null && (next.userData?.positionMs ?: 0) > 0
-                val label = when {
-                    next == null -> "Nothing to play yet"
-                    resumable -> "Resume ${next.episodeCode}"
-                    else -> "Start watching ${next.episodeCode}".trim()
-                }
-                PlayAndSaveRow(label, series, app.api, modifier = Modifier.padding(top = 16.dp), onPlay = { next?.let { play(it) } }, onSaved = { vm.load() })
-                series.overview?.takeIf { it.isNotBlank() }?.let {
-                    Text(
-                        it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
-                        maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp).clickable { expanded = !expanded },
-                    )
-                }
-                val genres = series.genres.joinToString(", ")
-                if (genres.isNotEmpty()) Text("Genres: $genres", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 8.dp))
+    TitlePageScaffold(
+        item = series, api = app.api, listState = listState, onBack = onBack,
+        playLabel = label, onPlay = { next?.let { play(it) } }, onSaved = { vm.load() },
+    ) { bottomInset ->
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
+            item(key = "banner") { TitleBanner(series, app.api, listState) }
+            item(key = "info") {
+                TitleInfo(
+                    item = series,
+                    badge = audioBadge(playable.firstOrNull()),
+                    seasons = state.seasons.size,
+                )
             }
-        }
         if (state.seasons.isNotEmpty() || state.related.isNotEmpty()) {
             item(key = "seasons") {
                 val label = when {
@@ -137,7 +131,7 @@ fun PhoneSeries(
                     state.seasons.isEmpty() -> "Episodes"
                     else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
                 }
-                Box(modifier = Modifier.padding(start = PhonePad, top = 18.dp, bottom = 6.dp)) {
+                Box(modifier = Modifier.padding(start = PhonePad, top = 22.dp, bottom = 6.dp)) {
                     var open by remember { mutableStateOf(false) }
                     Chip(text = label, selected = false, trailing = Icons.Filled.ArrowDropDown, onClick = { open = true })
                     DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
@@ -175,39 +169,127 @@ fun PhoneSeries(
                 PhoneEpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) })
             }
         }
-    }
-}
-
-/** 16:9 backdrop fading into the page, with the round back button over it. */
-@Composable
-fun Backdrop(item: Item, api: RoxyApi, onBack: () -> Unit) {
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
-            RoxyImage(api.imageUrl(item, "backdrop", widthPx(420.dp) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16)
-            Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to RoxyColors.background)))
         }
-        BackCircle(onBack, modifier = Modifier.statusBarsPadding().padding(12.dp))
     }
 }
 
-/** Title page while it loads: backdrop, title lines, button and three episode rows as shimmer. */
+/** Height of the banner at the top of a title page. */
+private val BannerHeight = 400.dp
+
+/**
+ * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
+ * banner, and the Play / Resume pill with the bookmark always sitting at the bottom.
+ * [content] receives the bottom inset the list must leave for that bar.
+ */
+@Composable
+fun TitlePageScaffold(
+    item: Item,
+    api: RoxyApi,
+    listState: LazyListState,
+    onBack: () -> Unit,
+    playLabel: String,
+    onPlay: () -> Unit,
+    onSaved: () -> Unit,
+    content: @Composable (bottomInset: Dp) -> Unit,
+) {
+    val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val barHeight = 44.dp + 24.dp
+    // The header strip goes from transparent over the banner to the page colour once the
+    // banner has scrolled away, so the back button never floats over the text.
+    val fadePx = with(LocalDensity.current) { (BannerHeight - 80.dp).toPx() }
+    val headerAlpha by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / fadePx).coerceIn(0f, 1f)
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        content(barHeight + navInset + 8.dp)
+        Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(12.dp)) {
+            BackCircle(onBack)
+        }
+        // Sticky actions: the same pill + bookmark as the hero, on a dark pane over the list.
+        Box(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .background(Brush.verticalGradient(0f to Color.Transparent, 0.35f to RoxyColors.background.copy(alpha = 0.96f), 1f to RoxyColors.background))
+                .navigationBarsPadding().padding(start = PhonePad, end = PhonePad, top = 24.dp, bottom = 12.dp),
+        ) {
+            PlayAndSaveRow(playLabel, item, api, onPlay = onPlay, onSaved = onSaved)
+        }
+    }
+}
+
+/**
+ * Full-bleed banner (the backdrop, cropped tall) that fades and slides up as the page
+ * scrolls, melting into the page colour at its foot.
+ */
+@Composable
+fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
+    val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
+    Box(
+        modifier = Modifier.fillMaxWidth().height(BannerHeight).graphicsLayer {
+            val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
+            alpha = (1f - off / (heightPx * 0.8f)).coerceIn(0f, 1f)
+            translationY = off * 0.45f
+        },
+    ) {
+        RoxyImage(api.imageUrl(item, "backdrop", widthPx(420.dp) * 2) ?: api.imageUrl(item, "poster", widthPx(420.dp) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16)
+        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.25f to Color.Transparent)))
+        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to RoxyColors.background)))
+    }
+}
+
+/**
+ * Centred title block under the banner: name, "Dub | Sub • genres", the rating, then the
+ * description (tap to expand) and the year / season count line.
+ */
+@Composable
+fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = null) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
+        val tags = listOf(badge.orEmpty(), item.genres.take(3).joinToString(", ")).filter { it.isNotEmpty() }.joinToString("  •  ")
+        if (tags.isNotEmpty()) Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
+        item.communityRating?.let {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Text("★ %.1f".format(it), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent)
+                Text("  TMDB", fontSize = 12.sp, color = RoxyColors.muted)
+            }
+        }
+        val facts = listOfNotNull(
+            (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
+            seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
+            item.officialRating,
+            extra,
+        ).joinToString("  ·  ")
+        if (facts.isNotEmpty()) Text(facts, fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+        item.overview?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
+                maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
+            )
+        }
+    }
+}
+
+/** Title page while it loads: banner, centred title lines and three episode rows as shimmer. */
 @Composable
 fun DetailSkeleton(onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            Bone(Modifier.fillMaxWidth().aspectRatio(16f / 9f), shape = RoundedCornerShape(0.dp))
+            Bone(Modifier.fillMaxWidth().height(BannerHeight), shape = RoundedCornerShape(0.dp))
             BackCircle(onBack, modifier = Modifier.statusBarsPadding().padding(12.dp))
         }
-        Column(modifier = Modifier.padding(horizontal = PhonePad)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
             BoneLine(width = 240.dp, height = 22.dp, modifier = Modifier.padding(top = 4.dp))
-            BoneLine(width = 160.dp, height = 12.dp, modifier = Modifier.padding(top = 10.dp))
-            Bone(Modifier.fillMaxWidth().height(42.dp).padding(top = 0.dp), shape = RoundedCornerShape(4.dp))
-            BoneLine(width = 320.dp, height = 12.dp, modifier = Modifier.padding(top = 14.dp))
-            BoneLine(width = 280.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
-            BoneLine(width = 200.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
+            BoneLine(width = 200.dp, height = 12.dp, modifier = Modifier.padding(top = 12.dp))
+            BoneLine(width = 80.dp, height = 12.dp, modifier = Modifier.padding(top = 10.dp))
+            BoneLine(width = 320.dp, height = 12.dp, modifier = Modifier.padding(top = 18.dp))
+            BoneLine(width = 300.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
+            BoneLine(width = 220.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
         }
-        Spacer(Modifier.height(16.dp))
-        repeat(3) { EpisodeRowSkeleton() }
+        Spacer(Modifier.height(24.dp))
+        repeat(2) { EpisodeRowSkeleton() }
     }
 }
 
