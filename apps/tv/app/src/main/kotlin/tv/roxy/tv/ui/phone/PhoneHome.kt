@@ -258,9 +258,10 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.3f to Color.Transparent, 0.62f to Color(0xB30B0B0F), 0.9f to Color(0xF20B0B0F), 1f to RoxyColors.background)))
 
         Column(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 34.dp),
+            // 18 dp between every block, and the same 18 dp from the button down to the timer bars (bars are 9 dp + 10 dp padding).
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 37.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             val logo = api.imageUrl(title, "logo", widthPx(320.dp))
             if (logo != null) {
