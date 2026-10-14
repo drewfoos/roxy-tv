@@ -81,6 +81,9 @@ type Item struct {
 	// AudioLanguages are the distinct audio-track languages across a series' episodes or
 	// a movie's sources (ISO 639-2), so cards can say "Dub | Sub" without the streams.
 	AudioLanguages []string `json:"audioLanguages,omitempty"`
+	// IsAnime: the title (or an episode's series) was matched on AniList, so clients use
+	// the Dub / Sub vocabulary instead of language names.
+	IsAnime bool `json:"isAnime,omitempty"`
 }
 
 // UserData is the per-user watch state as the native API renders it.

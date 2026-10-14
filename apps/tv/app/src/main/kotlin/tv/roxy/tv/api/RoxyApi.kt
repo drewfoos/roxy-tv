@@ -430,6 +430,8 @@ data class Item(
     val providerIds: Map<String, String> = emptyMap(),
     /** Distinct audio languages across the title's media (series and movies), for "Dub | Sub". */
     val audioLanguages: List<String> = emptyList(),
+    /** Matched on AniList (series, movies, and episodes via their series): use Dub / Sub wording. */
+    val isAnime: Boolean = false,
     val userData: UserData? = null,
     val mediaSources: List<Item.Source> = emptyList(),
 ) {

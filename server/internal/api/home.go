@@ -92,12 +92,23 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"rows": rows})
 }
 
-// fillAudioLanguages sets AudioLanguages on the series and movies in a batch (one query).
+// fillAudioLanguages sets AudioLanguages on the series and movies in a batch, and IsAnime
+// on series, movies and episodes (an episode inherits its series'). Two queries; runs
+// after fillSeriesRefs so episodes know their series.
 func (s *Server) fillAudioLanguages(ctx context.Context, items []model.Item) {
 	var ids []string
+	seen := map[string]bool{}
 	for i := range items {
-		if items[i].Type == model.TypeSeries || items[i].Type == model.TypeMovie {
-			ids = append(ids, items[i].ID)
+		var id string
+		switch items[i].Type {
+		case model.TypeSeries, model.TypeMovie:
+			id = items[i].ID
+		case model.TypeEpisode:
+			id = items[i].SeriesID
+		}
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
 	if len(ids) == 0 {
@@ -107,8 +118,15 @@ func (s *Server) fillAudioLanguages(ctx context.Context, items []model.Item) {
 	if err != nil {
 		return
 	}
+	anime, _ := s.store.AniListTagged(ctx, ids)
 	for i := range items {
-		items[i].AudioLanguages = langs[items[i].ID]
+		switch items[i].Type {
+		case model.TypeSeries, model.TypeMovie:
+			items[i].AudioLanguages = langs[items[i].ID]
+			items[i].IsAnime = anime[items[i].ID]
+		case model.TypeEpisode:
+			items[i].IsAnime = anime[items[i].SeriesID]
+		}
 	}
 }
 

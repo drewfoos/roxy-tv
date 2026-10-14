@@ -5,6 +5,33 @@ import (
 	"strings"
 )
 
+// AniListTagged reports which of the given items carry an AniList provider id (i.e. were
+// matched as anime).
+func (s *Store) AniListTagged(ctx context.Context, ids []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT item_id FROM item_provider_ids WHERE provider = 'anilist' AND item_id IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // AudioLanguagesFor returns, per top-level item (series or movie), the distinct audio
 // languages across its media in one query: a movie's own sources, or every episode under
 // a series' seasons. Items without tagged audio are absent from the map.

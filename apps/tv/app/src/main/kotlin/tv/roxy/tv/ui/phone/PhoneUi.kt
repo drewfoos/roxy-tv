@@ -251,7 +251,8 @@ fun audioBadge(play: Item?): String? {
     if (langs.isEmpty()) return null
     val eng = langs.any { it == "eng" || it == "en" }
     val other = langs.any { it != "eng" && it != "en" }
-    val anime = play.genres.any { it.equals("Animation", true) || it.equals("Anime", true) }
+    // Anime = matched on AniList (the server says so); a Pixar film is "Animation" but not anime.
+    val anime = play.isAnime || play.genres.any { it.equals("Anime", true) }
     return when {
         // Anime: the Dub / Sub vocabulary.
         anime && eng && other -> "Dub | Sub"
