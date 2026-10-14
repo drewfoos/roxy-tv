@@ -15,7 +15,7 @@ on a phone for development (no `leanback` requirement).
 ```
 app/src/main/kotlin/tv/roxy/tv/
   RoxyApp.kt                 Application: fonts install, Prefs, RoxyApi, Coil ImageLoader (Bearer token)
-  MainActivity.kt            Login vs. back-stack; validates the stored token with GET /v1/auth/me
+  MainActivity.kt            Login vs. the TV or phone graph; portrait on phones, landscape on TV; token check via GET /v1/auth/me
   api/RoxyApi.kt             suspend client + wire types (Item, UserData, HomeResponse, MediaSource, ...)
   data/Prefs.kt              DataStore: Session (server, token, user) and PlayerSettings
   diagnostics/DeviceReport.kt SoC / display / decoder report (logged at start, shown in Settings)
@@ -23,8 +23,10 @@ app/src/main/kotlin/tv/roxy/tv/
   player/MpvStats.kt         stats overlay snapshot + CPU sampler
   player/PlayerActivity.kt   full-screen player, OSD, stats overlay, progress reporting
   ui/theme/Theme.kt          dark colour scheme
-  ui/nav/Navigation.kt       hand-rolled back stack (sealed Screen, per-entry ViewModelStore)
-  ui/components/             MediaCard, MediaRow, RoxyImage (placeholder tile), buttons, text field
+  ui/nav/Routes.kt           typed Navigation Compose routes (Home, SeriesLibrary, MovieLibrary, Settings, Series, Movie)
+  ui/components/             MediaCard, MediaRow, RoxyImage (placeholder tile), buttons, text field (TV, tv-material)
+  ui/phone/                  phone layout (Material 3): PhoneRoot bottom bar, PhoneHome hero card + rows,
+                             PhoneBrowse poster grids, PhoneSeries / PhoneMovie title pages, PhoneSettings
   ui/login/LoginScreen.kt    server URL / user / password -> POST /v1/auth/login
   ui/home/HomeScreen.kt      hero + rows from GET /v1/home (falls back to /v1/items on 404)
   ui/detail/SeriesScreen.kt  backdrop header, season row, episode list (GET /v1/items?parent=...)
@@ -35,10 +37,22 @@ app/src/main/kotlin/tv/roxy/tv/
 
 Architecture: no DI framework. `RoxyApp` owns `Prefs` and `RoxyApi`; screens get simple
 `ViewModel`s with `StateFlow` UI state through `viewModel { ... }` initializers. Navigation
-is a sealed-class stack (`ui/nav/Navigation.kt`) rather than navigation-compose: four
-screens did not justify the dependency, and each stack entry owns its ViewModelStore so
-screen ViewModels are cleared on pop. Swap it for navigation-compose when deep links or
-saved state matter.
+is Navigation Compose with `@Serializable` routes (`ui/nav/Routes.kt`); each back-stack
+entry owns its ViewModels, and the phone's bottom-bar tabs save and restore their state.
+
+**Two layouts, one app.** `MainActivity` picks at start-up: on Android TV (leanback /
+`UI_MODE_TYPE_TELEVISION`) it locks to landscape and shows the D-pad screens in
+`ui/home`, `ui/detail`, `ui/settings` (tv-material, 48 dp overscan padding, focus scale).
+On a phone it locks to portrait, draws edge-to-edge and shows `ui/phone/*`: Netflix's
+phone layout built on Material 3 for the theme, ripples, bottom bar, dialogs and switches,
+with the look-defining pieces drawn by hand. Home = "Roxy" wordmark over a blurred
+backdrop glow, a big rounded 2:3 hero card (poster, title, genres, white **Play** /
+grey **Info**), then rows: 16:9 thumbs with a play badge and progress for Continue
+Watching, plain 2:3 posters for the rest. Bottom bar: Home, Series, Movies (3-column
+poster grids) and Settings. Title pages: 16:9 backdrop with a round back button, title,
+meta line (year, seasons, rating), full-width Play / Resume, tap-to-expand synopsis,
+season chips plus "Movies & OVAs", and Netflix-style episode rows (thumb, "N. Title",
+runtime, synopsis). Both layouts share the ViewModels and the player.
 
 Server contract: `docs/api/native.md`. The app is lenient (unknown JSON keys ignored) and
 degrades when the server is behind: a 404 on `/v1/home` composes the rows from

@@ -1,8 +1,16 @@
 package tv.roxy.tv
 
+import android.app.UiModeManager
+import android.content.Context
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -11,6 +19,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import androidx.tv.material3.Surface
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -20,9 +32,8 @@ import tv.roxy.tv.ui.detail.MovieScreen
 import tv.roxy.tv.ui.detail.SeriesScreen
 import tv.roxy.tv.ui.home.HomeScreen
 import tv.roxy.tv.ui.login.LoginScreen
-import tv.roxy.tv.ui.nav.NavHost
-import tv.roxy.tv.ui.nav.Screen
-import tv.roxy.tv.ui.nav.rememberNavController
+import tv.roxy.tv.ui.nav.Route
+import tv.roxy.tv.ui.phone.PhoneRoot
 import tv.roxy.tv.ui.settings.SettingsScreen
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.theme.RoxyTheme
@@ -32,19 +43,31 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Timber.i("Device report:\n%s", DeviceReport.full(this))
+        val tv = isTelevision(this)
+        // The TV UI is a landscape, D-pad layout; the phone browses in portrait like Netflix
+        // (the player is landscape on both, set in the manifest).
+        requestedOrientation = if (tv) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (!tv) enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         setContent {
             RoxyTheme {
                 Surface(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
-                    AppRoot()
+                    AppRoot(tv)
                 }
             }
         }
     }
 }
 
-/** Login when there is no session; otherwise the back-stack. The stored token is validated with GET /v1/auth/me. */
+/** True on Android TV / Google TV (leanback), false on phones and tablets. */
+fun isTelevision(context: Context): Boolean {
+    val uiMode = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+    return uiMode.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+}
+
+/** Login when there is no session; otherwise the TV or phone navigation graph. The stored token is validated with GET /v1/auth/me. */
 @Composable
-private fun AppRoot() {
+private fun AppRoot(tv: Boolean) {
     val app = RoxyApp.get(LocalContext.current)
     val session by app.prefs.session.collectAsStateWithLifecycle()
 
@@ -66,22 +89,37 @@ private fun AppRoot() {
         return
     }
 
-    val nav = rememberNavController(Screen.Home)
-    NavHost(nav) { screen ->
-        when (screen) {
-            Screen.Home -> HomeScreen(
-                onOpenSeries = { nav.push(Screen.Series(it.id, it.title)) },
-                onOpenMovie = { nav.push(Screen.Movie(it.id, it.title)) },
-                onOpenSettings = { nav.push(Screen.Settings) },
-                onUnauthorized = { app.scope.launch { app.prefs.clearSession() } },
+    val onUnauthorized = { app.scope.launch { app.prefs.clearSession() }; Unit }
+    if (tv) TvRoot(onUnauthorized) else PhoneRoot(onUnauthorized)
+}
+
+/** The TV graph: Home with the hero and rows, detail pages, Settings from the hero's button. */
+@Composable
+private fun TvRoot(onUnauthorized: () -> Unit) {
+    val nav = rememberNavController()
+    NavHost(nav, startDestination = Route.Home) {
+        composable<Route.Home> {
+            HomeScreen(
+                onOpenSeries = { nav.navigate(Route.Series(it.id, it.title)) },
+                onOpenMovie = { nav.navigate(Route.Movie(it.id, it.title)) },
+                onOpenSettings = { nav.navigate(Route.Settings) },
+                onUnauthorized = onUnauthorized,
             )
-            is Screen.Series -> SeriesScreen(
-                screen.id, screen.title,
-                onOpenMovie = { nav.push(Screen.Movie(it.id, it.title)) },
-                onOpenSeries = { nav.push(Screen.Series(it.id, it.title)) },
+        }
+        composable<Route.Series> { entry ->
+            val r = entry.toRoute<Route.Series>()
+            SeriesScreen(
+                r.id, r.title,
+                onOpenMovie = { nav.navigate(Route.Movie(it.id, it.title)) },
+                onOpenSeries = { nav.navigate(Route.Series(it.id, it.title)) },
             )
-            is Screen.Movie -> MovieScreen(screen.id, screen.title, onOpenSeries = { nav.push(Screen.Series(it.id, it.title)) })
-            Screen.Settings -> SettingsScreen(onLoggedOut = { while (nav.pop()) Unit })
+        }
+        composable<Route.Movie> { entry ->
+            val r = entry.toRoute<Route.Movie>()
+            MovieScreen(r.id, r.title, onOpenSeries = { nav.navigate(Route.Series(it.id, it.title)) })
+        }
+        composable<Route.Settings> {
+            SettingsScreen(onLoggedOut = { nav.popBackStack(Route.Home, inclusive = false) })
         }
     }
 }

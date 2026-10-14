@@ -68,6 +68,12 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   the chapter closest to 90 s, pinch zoom v2 (YouTube-style: persistent level with a
   "1.5×" readout, 0.1× steps, one mpv update per frame; the owner still has to try it by
   hand, adb cannot inject two fingers), centre buttons as plain dark discs.
+- Also done (2026-10-14, 04:30): **phone layout**. The app now picks a layout at start:
+  TV = landscape D-pad screens as before; phone = portrait, edge-to-edge, Netflix-style
+  (hero poster card with Play/Info, poster rows, bottom bar Home / Series / Movies /
+  Settings, Netflix title pages with season chips and episode rows). Navigation moved to
+  Navigation Compose with typed routes. Verified on the S25 Ultra, including play and
+  return. Screens in `apps/tv/spike-runs/20261014-controls/5*.png`.
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.

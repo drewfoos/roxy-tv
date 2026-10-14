@@ -8,7 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -95,7 +96,8 @@ fun LoginScreen() {
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
-            modifier = Modifier.width(440.dp).verticalScroll(rememberScrollState()).padding(32.dp),
+            // 440dp on a TV; the full width (minus padding) on a phone in portrait.
+            modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("Roxy", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = RoxyColors.accent)
