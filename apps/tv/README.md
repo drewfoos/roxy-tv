@@ -109,7 +109,8 @@ an `images` entry never hit the network.
 
 Player controls (`player/PlayerControls.kt`), laid out like YouTube: tap the video or
 press any key to show them; they auto-hide after 4 s unless paused or a sheet is open.
-Top: back + title. Centre: -10 s, play/pause, +10 s (big targets for the remote).
+Top: back + title. Centre: -10 s, play/pause, +10 s as plain translucent dark discs
+(no outline; a remote's focus adds a white ring, touch shows none).
 Bottom: red seek bar with a round thumb and the buffered range; while dragging or
 stepping it shows the **trickplay preview** (server-generated thumbnail for that time).
 Button row, left: play/pause, mute, `elapsed / total`; right: **CC** (toggles the last
@@ -119,8 +120,12 @@ speed, audio, subtitles, auto-skip; tapping anywhere else closes it), **picture-
 (crop to the screen or letterbox). Autoplay of the next episode is always on, so there is
 no switch for it. Top-right shows the clock and **"Ends at …"** (remaining time at the
 current speed, in the device's time zone). **Double-tap** the left or right half of the
-video to seek ±10 s with a flash saying so, like YouTube. The seek bar is drawn by hand (full width, red from 0:00, round thumb;
-intro/outro ranges show as lighter ticks).
+video to seek ±10 s with a flash saying so, like YouTube. **Pinch to zoom** (phones): two
+fingers zoom about the point between them, up to 8×, in 0.1× steps with a "1.5×" readout
+at the top; the level stays after letting go, one finger pans while zoomed, and letting
+go at or near 1× eases back to normal. The player is updated once per frame (mpv
+`video-zoom` / `video-pan`), never per touch event. The seek bar is drawn by hand (full
+width, red from 0:00, round thumb; intro/outro ranges show as lighter ticks).
 
 **Skip intro / outro.** The server derives skippable segments from chapter markers
 (`segments` on the media source: an OP-length chapter near the start, an ED-length one

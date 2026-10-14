@@ -106,6 +106,8 @@ class PlayerActivity : ComponentActivity() {
     private var hideJob: Job? = null
     private var trickplay by mutableStateOf<TrickplayPreview?>(null)
     private var doubleTapFlash by mutableStateOf(0) // -10 / +10 while the ripple shows
+    private var zoomLevel by mutableStateOf(1f)
+    private var zoomActive by mutableStateOf(false)
     private var flashJob: Job? = null
     private var lastSid = 0
     private var autoSkip = false
@@ -248,6 +250,7 @@ class PlayerActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier.fillMaxSize().pinchZoom(
                         onZoom = { f, x, y -> player.setZoom(f, x, y) },
+                        onLevel = { level, active -> zoomLevel = level; zoomActive = active },
                         onPinchStart = { hideControls() },
                     ).pointerInput(Unit) {
                         detectTapGestures(
@@ -263,6 +266,16 @@ class PlayerActivity : ComponentActivity() {
                         )
                     },
                 )
+                // Zoom readout: "1.5×" while pinching, and kept on screen while zoomed in.
+                if (zoomActive || zoomLevel > 1.01f) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Text(
+                            "%.1f×".format(zoomLevel),
+                            color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 5.dp),
+                        )
+                    }
+                }
                 if (doubleTapFlash != 0) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Row(

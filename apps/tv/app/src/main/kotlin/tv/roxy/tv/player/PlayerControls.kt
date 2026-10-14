@@ -64,6 +64,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -177,7 +179,7 @@ fun PlayerControls(
         if (sheet == Sheet.None) {
             Row(modifier = Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(48.dp), verticalAlignment = Alignment.CenterVertically) {
                 RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = 60.dp, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
-                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = 84.dp, iconSize = 44.dp, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
+                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = 76.dp, iconSize = 42.dp, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
                 RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = 60.dp, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
             }
         }
@@ -409,6 +411,8 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
 @Composable
 private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp = 30.dp, onClick: () -> Unit, onFocus: () -> Unit, focusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
+    // Only a remote/keyboard shows focus; on a phone the three discs look identical.
+    val showFocus = focused && LocalInputModeManager.current.inputMode == InputMode.Keyboard
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -418,11 +422,12 @@ private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
             .clip(CircleShape)
-            .background(if (focused) Color.White else Color(0x66000000))
-            .border(BorderStroke(2.dp, if (focused) Color.White else Color(0x66FFFFFF)), CircleShape)
+            // Plain translucent dark discs like YouTube's, no outline; a remote's focus adds a white ring.
+            .background(if (showFocus) Color(0x55FFFFFF) else Color(0x59000000))
+            .then(if (showFocus) Modifier.border(BorderStroke(2.dp, Color.White), CircleShape) else Modifier)
             .tapClick(onClick),
     ) {
-        Icon(icon, contentDescription = label, tint = if (focused) Color.Black else Color.White, modifier = Modifier.size(iconSize))
+        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(iconSize))
     }
 }
 

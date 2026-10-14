@@ -64,6 +64,10 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   OP/ED from chapter markers (`media_segments`, migration 0006; 22 of 36 episodes in the
   test library have them) and the app shows the pill or jumps automatically. All verified
   on the phone. The TV is a TCL 65" Q77K (Google TV), so the same APK sideloads.
+- Also done (2026-10-14, 04:00): "Ends at" clock, double-tap seek, OP detection picks
+  the chapter closest to 90 s, pinch zoom v2 (YouTube-style: persistent level with a
+  "1.5×" readout, 0.1× steps, one mpv update per frame; the owner still has to try it by
+  hand, adb cannot inject two fingers), centre buttons as plain dark discs.
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.

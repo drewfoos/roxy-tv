@@ -3,86 +3,143 @@ package tv.roxy.tv.player
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.round
 
 /**
- * YouTube-style pinch zoom: two fingers zoom the video up to [maxZoom] and pan it; when
- * the fingers lift, the picture animates back to normal. Single-finger taps and drags are
- * left alone (passed through to the tap/double-tap layer below), and the controls are
- * told to hide the moment a pinch starts.
+ * Pinch zoom the way YouTube's player does it:
+ *
+ *  - two fingers zoom about the point between them and pan; one finger pans once zoomed;
+ *  - the level persists after the fingers lift and is shown as "1.5×";
+ *  - the level is quantised to 0.1× steps, so finger tremor does not make it jitter;
+ *  - letting go at or near 1× snaps the picture back to normal;
+ *  - the player is updated once per frame, never once per touch event.
+ *
+ * [onZoom] receives (factor, panX, panY) in mpv's units: factor 1..[maxZoom], pan as a
+ * fraction of the scaled video size. [onLevel] gets the display level and whether a
+ * gesture is in progress, for the readout.
  */
 @Composable
 fun Modifier.pinchZoom(
     onZoom: (factor: Double, panX: Double, panY: Double) -> Unit,
+    onLevel: (level: Float, active: Boolean) -> Unit,
     onPinchStart: () -> Unit,
     maxZoom: Float = 8f,
 ): Modifier {
     val scope = rememberCoroutineScope()
-    val zoom = remember { Animatable(1f) }
-    val panX = remember { Animatable(0f) }
-    val panY = remember { Animatable(0f) }
-    var snapJob: Job? = remember { null }
-    return this.pointerInput(Unit) {
+    val state = remember { ZoomState(scope) }
+    state.onZoom = onZoom
+    state.onLevel = onLevel
+    state.onPinchStart = onPinchStart
+    state.maxZoom = maxZoom
+
+    return this.pointerInput(state) {
         awaitEachGesture {
-            var pinching = false
-            var factor = zoom.value
-            var px = panX.value
-            var py = panY.value
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                val down = event.changes.count { it.pressed }
-                if (down >= 2) {
-                    if (!pinching) {
-                        pinching = true
-                        snapJob?.cancel()
-                        onPinchStart()
-                    }
-                    val z = event.calculateZoom()
-                    val pan = event.calculatePan()
-                    val centroid = event.calculateCentroid()
-                    val newFactor = (factor * z).coerceIn(1f, maxZoom)
-                    // Zoom about the fingers' centroid: keep the point under them fixed.
-                    val cx = (centroid.x - size.width / 2f) / size.width
-                    val cy = (centroid.y - size.height / 2f) / size.height
-                    val ratio = newFactor / factor
-                    px = (px - cx) * ratio + cx + pan.x / (size.width * newFactor)
-                    py = (py - cy) * ratio + cy + pan.y / (size.height * newFactor)
-                    factor = newFactor
-                    // Keep the picture covering the screen: pan is bounded by (factor-1)/2.
-                    val bound = (factor - 1f) / (2f * factor)
-                    px = px.coerceIn(-bound, bound)
-                    py = py.coerceIn(-bound, bound)
-                    scope.launch { zoom.snapTo(factor); panX.snapTo(px); panY.snapTo(py) }
-                    onZoom(factor.toDouble(), px.toDouble(), py.toDouble())
-                    event.changes.forEach { it.consume() }
-                } else if (pinching && down < 2) {
-                    // Fingers lifted: animate back to normal.
-                    event.changes.forEach { it.consume() }
-                    snapJob = scope.launch {
-                        val spec = tween<Float>(260)
-                        val jobs = listOf(
-                            launch { zoom.animateTo(1f, spec) { onZoom(value.toDouble(), panX.value.toDouble(), panY.value.toDouble()) } },
-                            launch { panX.animateTo(0f, spec) },
-                            launch { panY.animateTo(0f, spec) },
-                        )
-                        jobs.forEach { it.join() }
-                        onZoom(1.0, 0.0, 0.0)
-                    }
-                    break
+            awaitFirstDown(requireUnconsumed = false)
+            val slop = viewConfiguration.touchSlop
+            var started = false
+            var singleDrag = Offset.Zero
+            do {
+                val event = awaitPointerEvent()
+                val pressed = event.changes.count { it.pressed }
+                if (pressed == 0) break
+                val zoom = event.calculateZoom()
+                val pan = event.calculatePan()
+                if (!started) {
+                    if (pressed >= 2) {
+                        started = true
+                    } else if (state.scale > 1f) {
+                        // One finger only pans when already zoomed in, and only after slop,
+                        // so taps and double taps still reach the controls.
+                        singleDrag += pan
+                        if (singleDrag.getDistance() > slop) started = true else continue
+                    } else continue
+                    state.begin()
                 }
-                if (down == 0) break // single-finger gestures belong to the tap layer
-            }
+                val centroid = event.calculateCentroid(useCurrent = false)
+                state.apply(zoom, pan, centroid, size.width, size.height)
+                event.changes.forEach { if (it.positionChanged()) it.consume() }
+            } while (true)
+            if (started) state.end(size.width, size.height)
         }
+    }
+}
+
+private class ZoomState(private val scope: CoroutineScope) {
+    var scale = 1f
+    var offset = Offset.Zero // video centre relative to the view centre, screen px
+    var maxZoom = 8f
+    var onZoom: (Double, Double, Double) -> Unit = { _, _, _ -> }
+    var onLevel: (Float, Boolean) -> Unit = { _, _ -> }
+    var onPinchStart: () -> Unit = {}
+    private var snapJob: Job? = null
+    private var pushJob: Job? = null
+    private val anim = Animatable(0f)
+
+    fun begin() {
+        snapJob?.cancel()
+        onPinchStart()
+    }
+
+    fun apply(zoom: Float, pan: Offset, centroid: Offset, w: Int, h: Int) {
+        val old = scale
+        // Quantise to 0.1× so the level reads as a number and does not creep with tremor.
+        val target = (old * zoom).coerceIn(1f, maxZoom)
+        val new = if (abs(target - old) < 0.05f) old else round(target * 10f) / 10f
+        // Keep the point between the fingers fixed while scaling about it, then pan.
+        val c = Offset(centroid.x - w / 2f, centroid.y - h / 2f)
+        var off = (offset - c) * (new / old) + c + pan
+        // Never reveal the area outside the picture.
+        val bx = (new - 1f) * w / 2f
+        val by = (new - 1f) * h / 2f
+        off = Offset(off.x.coerceIn(-bx, bx), off.y.coerceIn(-by, by))
+        scale = new
+        offset = off
+        onLevel(new, true)
+        if (pushJob?.isActive != true) {
+            pushJob = scope.launch { withFrameNanos { }; push(w, h) }
+        }
+    }
+
+    fun end(w: Int, h: Int) {
+        onLevel(scale, false)
+        if (scale > 1.15f) return
+        // Let go near normal size: ease back to 1×.
+        snapJob = scope.launch {
+            val from = scale
+            val fromOff = offset
+            anim.snapTo(0f)
+            anim.animateTo(1f, tween(200)) {
+                scale = from + (1f - from) * value
+                offset = fromOff * (1f - value)
+                push(w, h)
+            }
+            scale = 1f
+            offset = Offset.Zero
+            push(w, h)
+            onLevel(1f, false)
+        }
+    }
+
+    private fun push(w: Int, h: Int) {
+        // mpv pan is a fraction of the scaled video size; the picture spans the view width
+        // (landscape, fit), so scaled size ≈ view size × scale on each axis.
+        val s = scale
+        onZoom(s.toDouble(), (offset.x / (w * s)).toDouble(), (offset.y / (h * s)).toDouble())
     }
 }
