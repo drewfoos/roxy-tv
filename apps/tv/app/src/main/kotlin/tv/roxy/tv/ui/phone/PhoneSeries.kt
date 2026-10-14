@@ -112,11 +112,13 @@ fun PhoneSeries(
                 val next = playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
                     ?: playable.firstOrNull { it.userData?.played != true }
                     ?: playable.firstOrNull()
-                if (next != null) {
-                    val resumable = (next.userData?.positionMs ?: 0) > 0
-                    PlayButton(if (resumable) "Resume ${next.episodeCode}" else "Play ${next.episodeCode}".trim(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp), onClick = { play(next) })
+                val resumable = next != null && (next.userData?.positionMs ?: 0) > 0
+                val label = when {
+                    next == null -> "Nothing to play yet"
+                    resumable -> "Resume ${next.episodeCode}"
+                    else -> "Start watching ${next.episodeCode}".trim()
                 }
-                MyListButton(series, app.api, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), onChanged = { vm.load() })
+                PlayAndSaveRow(label, series, app.api, modifier = Modifier.padding(top = 16.dp), onPlay = { next?.let { play(it) } }, onSaved = { vm.load() })
                 series.overview?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
@@ -174,22 +176,6 @@ fun PhoneSeries(
             }
         }
     }
-}
-
-/** "+ My List" / "✓ My List": toggles the favourite flag that feeds the Watchlist tab. */
-@Composable
-fun MyListButton(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onChanged: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
-    GreyButton(if (on) "In My List" else "My List", modifier = modifier, icon = if (on) Icons.Filled.Check else Icons.Filled.Add, onClick = {
-        val want = !on
-        on = want
-        scope.launch {
-            runCatching { api.setFavorite(item.id, want) }
-                .onFailure { Timber.w(it, "favorite failed"); on = !want }
-                .onSuccess { onChanged() }
-        }
-    })
 }
 
 /** 16:9 backdrop fading into the page, with the round back button over it. */

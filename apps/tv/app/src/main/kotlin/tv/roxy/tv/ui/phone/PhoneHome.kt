@@ -287,28 +287,8 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
                 hero.play.isEpisode && hero.play.episodeCode.isNotEmpty() -> "Start watching ${hero.play.episodeCode}"
                 else -> "Start watching"
             }
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                PlayButton(label, modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onPlay)
-                SaveButton(title, api)
-            }
+            PlayAndSaveRow(label, title, api, onPlay = onPlay)
         }
-    }
-}
-
-/** Round bookmark in the brand blue: adds the show to the Watchlist (favourite); filled once saved. */
-@Composable
-private fun SaveButton(item: Item, api: RoxyApi) {
-    val scope = rememberCoroutineScope()
-    var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
-    Box(
-        modifier = Modifier.size(44.dp).clip(CircleShape).border(2.dp, RoxyColors.accent, CircleShape).clickable {
-            val want = !on
-            on = want
-            scope.launch { runCatching { api.setFavorite(item.id, want) }.onFailure { Timber.w(it, "favorite failed"); on = !want } }
-        },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(if (on) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, contentDescription = if (on) "Saved" else "Save", tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
     }
 }
 

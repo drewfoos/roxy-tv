@@ -73,15 +73,14 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
             ).joinToString("   ")
             if (meta.isNotEmpty()) Text(meta, fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp))
 
-            PlayButton(if (resumable) "Resume" else "Play", modifier = Modifier.fillMaxWidth().padding(top = 14.dp), onClick = {
+            PlayAndSaveRow(if (resumable) "Resume" else "Start watching", movie, app.api, modifier = Modifier.padding(top = 16.dp), onPlay = {
                 scope.launch { playItem(context, movie).onFailure { Timber.w(it, "play failed") } }
-            })
+            }, onSaved = { vm.load() })
             if (resumable) {
-                GreyButton("Play from start", modifier = Modifier.fillMaxWidth().padding(top = 8.dp), icon = Icons.Filled.Replay, onClick = {
+                GreyButton("Play from start", modifier = Modifier.fillMaxWidth().padding(top = 10.dp), icon = Icons.Filled.Replay, onClick = {
                     scope.launch { playItem(context, movie, fromStart = true) }
                 })
             }
-            MyListButton(movie, app.api, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), onChanged = { vm.load() })
             movie.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 14.dp)) }
             movie.overview?.takeIf { it.isNotBlank() }?.let {
                 Text(

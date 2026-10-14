@@ -27,14 +27,20 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +54,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import timber.log.Timber
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.ProgressBar
@@ -166,6 +174,39 @@ fun PlayButton(
 
 /** Dark text on the brand blue (the hat's colour), like Crunchyroll's black-on-orange. */
 val OnBrand = Color(0xFF07182B)
+
+/**
+ * The hero's action pair, reused on title pages: blue pill Play / Resume filling the row
+ * and the round bookmark beside it.
+ */
+@Composable
+fun PlayAndSaveRow(label: String, item: Item, api: RoxyApi, modifier: Modifier = Modifier, onPlay: () -> Unit, onSaved: () -> Unit = {}) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        PlayButton(label, modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onPlay)
+        SaveButton(item, api, onSaved = onSaved)
+    }
+}
+
+/** Round bookmark in the brand blue: adds the show to the Watchlist (favourite); filled once saved. */
+@Composable
+fun SaveButton(item: Item, api: RoxyApi, onSaved: () -> Unit = {}) {
+    val scope = rememberCoroutineScope()
+    var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
+    Box(
+        modifier = Modifier.size(44.dp).clip(CircleShape).border(2.dp, RoxyColors.accent, CircleShape).clickable {
+            val want = !on
+            on = want
+            scope.launch {
+                runCatching { api.setFavorite(item.id, want) }
+                    .onFailure { Timber.w(it, "favorite failed"); on = !want }
+                    .onSuccess { onSaved() }
+            }
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(if (on) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, contentDescription = if (on) "Saved" else "Save", tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
+    }
+}
 
 /** Netflix's grey secondary button. */
 @Composable
