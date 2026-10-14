@@ -143,17 +143,29 @@ fun PhoneRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> 
 
 /** White primary button: black icon and bold label. [pill] rounds it fully (the hero); otherwise 4 dp corners (Netflix). */
 @Composable
-fun PlayButton(text: String, modifier: Modifier = Modifier, icon: ImageVector = Icons.Filled.PlayArrow, height: Dp = 42.dp, pill: Boolean = false, onClick: () -> Unit) {
+fun PlayButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector = Icons.Filled.PlayArrow,
+    height: Dp = 42.dp,
+    pill: Boolean = false,
+    container: Color = Color.White,
+    content: Color = Color.Black,
+    onClick: () -> Unit,
+) {
     Row(
-        modifier = modifier.height(height).clip(RoundedCornerShape(if (pill) height / 2 else 4.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        modifier = modifier.height(height).clip(RoundedCornerShape(if (pill) height / 2 else 4.dp)).background(container).clickable(onClick = onClick).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
+        Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(6.dp))
-        Text(text, color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, color = content, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
+
+/** Dark text on the brand blue (the hat's colour), like Crunchyroll's black-on-orange. */
+val OnBrand = Color(0xFF0A1230)
 
 /** Netflix's grey secondary button. */
 @Composable

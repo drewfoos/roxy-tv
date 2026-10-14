@@ -203,7 +203,7 @@ private fun OfflineState(serverUrl: String, onRetry: () -> Unit) {
 }
 
 /** Height of the full-bleed hero (image under the status bar, down to the timer bars). */
-private val HeroHeight = 620.dp
+private val HeroHeight = 660.dp
 
 /**
  * The carousel: a full-bleed banner (no card, no margins) that swipes between shows and
@@ -232,7 +232,7 @@ private fun HeroCarousel(heroes: List<HeroPick>, api: RoxyApi, onPlay: (HeroPick
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
                 HeroSlide(heroes[page], api, onOpen = { onOpen(heroes[page]) }, onPlay = { onPlay(heroes[page]) })
             }
-            if (count > 1) TimerBars(count = count, current = pager.currentPage, progress = progress.value, modifier = Modifier.align(Alignment.BottomCenter))
+            if (count > 1) TimerBars(count = count, current = pager.currentPage, progress = progress.value, modifier = Modifier.align(Alignment.BottomStart))
         }
     }
 }
@@ -254,9 +254,9 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.3f to Color.Transparent, 0.62f to Color(0xB30B0B0F), 0.9f to Color(0xF20B0B0F), 1f to RoxyColors.background)))
 
         Column(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 26.dp),
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 34.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             val logo = api.imageUrl(title, "logo", widthPx(320.dp))
             if (logo != null) {
@@ -282,28 +282,28 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
                 hero.play.isEpisode && hero.play.episodeCode.isNotEmpty() -> "Start watching ${hero.play.episodeCode}"
                 else -> "Start watching"
             }
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PlayButton(label, modifier = Modifier.weight(1f), height = 40.dp, pill = true, onClick = onPlay)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                PlayButton(label, modifier = Modifier.weight(1f), height = 46.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onPlay)
                 SaveButton(title, api)
             }
         }
     }
 }
 
-/** Round outlined bookmark: adds the show to the Watchlist (favourite); filled once saved. */
+/** Round bookmark in the brand blue: adds the show to the Watchlist (favourite); filled once saved. */
 @Composable
 private fun SaveButton(item: Item, api: RoxyApi) {
     val scope = rememberCoroutineScope()
     var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
     Box(
-        modifier = Modifier.size(40.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).clickable {
+        modifier = Modifier.size(46.dp).clip(CircleShape).border(2.dp, RoxyColors.accent, CircleShape).clickable {
             val want = !on
             on = want
             scope.launch { runCatching { api.setFavorite(item.id, want) }.onFailure { Timber.w(it, "favorite failed"); on = !want } }
         },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(if (on) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, contentDescription = if (on) "Saved" else "Save", tint = Color.White, modifier = Modifier.size(22.dp))
+        Icon(if (on) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, contentDescription = if (on) "Saved" else "Save", tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
     }
 }
 
@@ -325,14 +325,17 @@ private fun audioBadge(play: Item): String? {
     }
 }
 
-/** Story-style segmented bars: done slides full, the current one filling, the rest empty. */
+/**
+ * Story-style segmented pills under the button, about 80 % of its width: done slides
+ * full, the current one filling in the brand blue, the rest dim.
+ */
 @Composable
 private fun TimerBars(count: Int, current: Int, progress: Float, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(modifier = modifier.fillMaxWidth(0.8f).padding(start = PhonePad, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(count) { i ->
             val fill = when { i < current -> 1f; i == current -> progress; else -> 0f }
-            Box(modifier = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.25f))) {
-                Box(modifier = Modifier.fillMaxWidth(fill).height(3.dp).background(Color.White))
+            Box(modifier = Modifier.weight(1f).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.28f))) {
+                Box(modifier = Modifier.fillMaxWidth(fill).height(5.dp).clip(RoundedCornerShape(3.dp)).background(RoxyColors.accent))
             }
         }
     }
