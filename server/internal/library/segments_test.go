@@ -27,6 +27,26 @@ func TestSegmentsFromChapters_KonoSubaShape(t *testing.T) {
 	}
 }
 
+func TestSegmentsFromChapters_ColdOpenBeforeOP(t *testing.T) {
+	// S02E01: a 67 s cold open, then the 90 s OP. "First chapter that fits" would take
+	// the cold open; the OP is the one closest to 90 s.
+	ch := []probe.Chapter{
+		{StartMs: 0, EndMs: 66_900},
+		{StartMs: 66_900, EndMs: 157_400},
+		{StartMs: 157_400, EndMs: 860_400},
+		{StartMs: 860_400, EndMs: 1_412_400},
+		{StartMs: 1_412_400, EndMs: 1_502_400},
+		{StartMs: 1_502_400, EndMs: 1_512_900},
+	}
+	segs := segmentsFromChapters(ch, 1_512_900)
+	if len(segs) != 3 || segs[0].Type != "intro" || segs[0].StartMs != 66_900 || segs[0].EndMs != 157_400 {
+		t.Fatalf("intro should be the OP chapter, got %+v", segs)
+	}
+	if segs[1].Type != "outro" || segs[1].StartMs != 1_412_400 || segs[2].Type != "preview" {
+		t.Fatalf("outro/preview wrong: %+v", segs)
+	}
+}
+
 func TestSegmentsFromChapters_WithPreviewAndNoIntro(t *testing.T) {
 	ch := []probe.Chapter{
 		{StartMs: 0, EndMs: 600_000},

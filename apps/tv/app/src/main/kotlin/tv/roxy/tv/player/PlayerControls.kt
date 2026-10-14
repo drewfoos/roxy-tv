@@ -157,13 +157,19 @@ fun PlayerControls(
         Box(modifier = Modifier.fillMaxWidth().height(140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
         Box(modifier = Modifier.fillMaxWidth().height(200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
 
-        // Title row
-        Row(modifier = Modifier.align(Alignment.TopStart).padding(horizontal = 24.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Title row, with the clock and "Ends at" top-right (local time zone).
+        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction)
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (state.subtitle.isNotEmpty()) Text(state.subtitle, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(clockNow(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                val remaining = (state.durationSec - state.positionSec) / state.speed.coerceAtLeast(0.25)
+                if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = 13.sp)
             }
         }
 
@@ -509,6 +515,14 @@ fun langName(code: String): String = when (code.lowercase()) {
     "" -> ""
     else -> code
 }
+
+private val clockFormat: java.text.DateFormat get() = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+
+/** Current wall-clock time in the device's locale and zone ("3:07 AM"). */
+fun clockNow(): String = clockFormat.format(java.util.Date())
+
+/** Wall-clock time [remainingSec] from now ("3:30 AM"). */
+fun endsAt(remainingSec: Double): String = clockFormat.format(java.util.Date(System.currentTimeMillis() + (remainingSec * 1000).toLong()))
 
 fun fmtTime(d: Double): String {
     val s = d.toLong().coerceAtLeast(0)

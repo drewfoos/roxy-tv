@@ -207,6 +207,16 @@ class MpvPlayer(
 
     fun isFill(): Boolean = (dbl("panscan") ?: 0.0) > 0.5
 
+    /**
+     * Pinch zoom: [factor] 1..8 (mpv's video-zoom is log2), [panX]/[panY] as fractions of
+     * the scaled video size. Reset with (1, 0, 0).
+     */
+    fun setZoom(factor: Double, panX: Double, panY: Double) {
+        mpv.setPropertyDouble("video-zoom", kotlin.math.log2(factor.coerceIn(1.0, 8.0)))
+        mpv.setPropertyDouble("video-pan-x", panX)
+        mpv.setPropertyDouble("video-pan-y", panY)
+    }
+
     fun speed(): Double = dbl("speed") ?: 1.0
 
     /** Current mpv track id for "sub" or "audio" (0 when off / none). */

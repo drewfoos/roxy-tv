@@ -21,10 +21,20 @@ func segmentsFromChapters(chapters []probe.Chapter, durationMs int64) []model.Me
 	const (
 		minLen   = 55_000
 		maxLen   = 125_000
+		typical  = 90_000 // TV anime OP/ED are 89..91 s almost without exception
 		introBy  = 4 * 60_000
 		outroIn  = 5 * 60_000
 		previewM = 45_000
 	)
+	dist := func(c probe.Chapter) int64 {
+		d := c.EndMs - c.StartMs - typical
+		if d < 0 {
+			d = -d
+		}
+		return d
+	}
+	// Among the chapters that fit the window, take the one closest to 90 s: a cold open
+	// can also be 60..120 s long, and it comes first, so "first that fits" picks it.
 	var out []model.MediaSegment
 	var introIdx, outroIdx = -1, -1
 	for i, c := range chapters {
@@ -32,12 +42,16 @@ func segmentsFromChapters(chapters []probe.Chapter, durationMs int64) []model.Me
 		if l < minLen || l > maxLen {
 			continue
 		}
-		if introIdx < 0 && c.StartMs <= introBy && i < len(chapters)-1 {
-			introIdx = i
+		if c.StartMs <= introBy && i < len(chapters)-1 {
+			if introIdx < 0 || dist(c) < dist(chapters[introIdx]) {
+				introIdx = i
+			}
 			continue
 		}
 		if c.StartMs >= durationMs-outroIn && i > 0 {
-			outroIdx = i // keep the last candidate
+			if outroIdx < 0 || dist(c) <= dist(chapters[outroIdx]) {
+				outroIdx = i
+			}
 		}
 	}
 	if introIdx >= 0 {

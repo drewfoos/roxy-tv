@@ -36,7 +36,11 @@ import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.diagnostics.DeviceReport
-import tv.roxy.tv.ui.components.tapClick
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
 
 private val uuidRegex = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -101,6 +105,8 @@ class PlayerActivity : ComponentActivity() {
     private var sheet by mutableStateOf(Sheet.None)
     private var hideJob: Job? = null
     private var trickplay by mutableStateOf<TrickplayPreview?>(null)
+    private var doubleTapFlash by mutableStateOf(0) // -10 / +10 while the ripple shows
+    private var flashJob: Job? = null
     private var lastSid = 0
     private var autoSkip = false
     private var segments: List<tv.roxy.tv.api.MediaSegment> = emptyList()
@@ -237,7 +243,40 @@ class PlayerActivity : ComponentActivity() {
                     },
                 )
                 // Tap anywhere on the video: toggle the controls (phone); keys are handled in onKeyDown.
-                Box(modifier = Modifier.fillMaxSize().tapClick { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() })
+                // Tap: toggle the controls. Double-tap: seek -10 s on the left half, +10 s on
+                // the right (YouTube), with a flash saying how far.
+                Box(
+                    modifier = Modifier.fillMaxSize().pinchZoom(
+                        onZoom = { f, x, y -> player.setZoom(f, x, y) },
+                        onPinchStart = { hideControls() },
+                    ).pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() },
+                            onDoubleTap = { pos ->
+                                val back = pos.x < size.width / 2
+                                player.seekRelative(if (back) -10 else 10)
+                                refreshUi()
+                                doubleTapFlash = if (back) -10 else 10
+                                flashJob?.cancel()
+                                flashJob = lifecycleScope.launch { delay(700); doubleTapFlash = 0 }
+                            },
+                        )
+                    },
+                )
+                if (doubleTapFlash != 0) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .align(if (doubleTapFlash < 0) Alignment.CenterStart else Alignment.CenterEnd)
+                                .padding(horizontal = 96.dp)
+                                .background(Color(0x66000000), CircleShape)
+                                .padding(horizontal = 22.dp, vertical = 16.dp),
+                        ) {
+                            Text(if (doubleTapFlash < 0) "◀◀ 10 s" else "10 s ▶▶", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
                 PlayerControls(
                     state = ui,
                     visible = controlsVisible,

@@ -117,7 +117,9 @@ subtitle track), **Settings** (a YouTube-style popup above the gear: quality, pl
 speed, audio, subtitles, auto-skip; tapping anywhere else closes it), **picture-in-picture**
 (phones only; also entered automatically when leaving the app while playing), **fill/fit**
 (crop to the screen or letterbox). Autoplay of the next episode is always on, so there is
-no switch for it. The seek bar is drawn by hand (full width, red from 0:00, round thumb;
+no switch for it. Top-right shows the clock and **"Ends at …"** (remaining time at the
+current speed, in the device's time zone). **Double-tap** the left or right half of the
+video to seek ±10 s with a flash saying so, like YouTube. The seek bar is drawn by hand (full width, red from 0:00, round thumb;
 intro/outro ranges show as lighter ticks).
 
 **Skip intro / outro.** The server derives skippable segments from chapter markers
