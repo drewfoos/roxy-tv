@@ -46,7 +46,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.nav.Route
+import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
 
 private enum class Tab(val label: String, val route: Route) {
@@ -132,7 +134,8 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
             if (currentTab != null) {
                 BottomBar(
                     current = currentTab,
-                    userInitial = session.userName.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                    profileName = session.profileName.ifEmpty { session.userName },
+                    avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarVersion) },
                     modifier = Modifier.align(Alignment.BottomCenter),
                     onSelect = { tab ->
                         if (tab == currentTab) return@BottomBar
@@ -150,7 +153,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
 
 /** Compact bottom bar: 22 dp icons, 10 sp labels, the Account tab as the profile avatar. */
 @Composable
-private fun BottomBar(current: Tab, userInitial: String, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
+private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
     Row(
         modifier = modifier.fillMaxWidth().background(Color(0xFA0B0B0F)).navigationBarsPadding().height(BarHeight),
         verticalAlignment = Alignment.CenterVertically,
@@ -164,7 +167,9 @@ private fun BottomBar(current: Tab, userInitial: String, modifier: Modifier = Mo
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
             ) {
                 if (tab == Tab.Account) {
-                    Avatar(userInitial, size = 22.dp, ring = selected)
+                    Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(if (selected) Color.White else Color.Transparent), contentAlignment = Alignment.Center) {
+                        AvatarCircle(name = profileName, imageUrl = avatarUrl, size = if (selected) 20.dp else 22.dp)
+                    }
                 } else {
                     val icon: ImageVector = when (tab) {
                         Tab.Home -> if (selected) Icons.Filled.Home else Icons.Outlined.Home
@@ -179,15 +184,3 @@ private fun BottomBar(current: Tab, userInitial: String, modifier: Modifier = Mo
     }
 }
 
-/** Profile picture placeholder: a coloured disc with the user's initial. */
-@Composable
-fun Avatar(initial: String, size: androidx.compose.ui.unit.Dp, ring: Boolean = false, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.size(size).clip(CircleShape).background(if (ring) Color.White else RoxyColors.accent),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(modifier = Modifier.size(if (ring) size - 3.dp else size).clip(CircleShape).background(RoxyColors.accent), contentAlignment = Alignment.Center) {
-            Text(initial, color = Color.White, fontSize = (size.value * 0.5f).sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}

@@ -29,8 +29,8 @@ func (s *Store) GetUserItemData(ctx context.Context, userID, guid string) (*User
 	var played, fav int
 	var last sql.NullString
 	var audio, sub sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT user_id, item_guid, position_ms, play_count, played, is_favorite, last_played_at, audio_stream_index, subtitle_stream_index
-		FROM user_item_data WHERE user_id = ? AND item_guid = ?`, userID, guid).
+	err := s.db.QueryRowContext(ctx, `SELECT scope_id, item_guid, position_ms, play_count, played, is_favorite, last_played_at, audio_stream_index, subtitle_stream_index
+		FROM user_item_data WHERE scope_id = ? AND item_guid = ?`, userID, guid).
 		Scan(&d.UserID, &d.ItemGUID, &d.PositionMs, &d.PlayCount, &played, &fav, &last, &audio, &sub)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -46,9 +46,9 @@ func (s *Store) GetUserItemData(ctx context.Context, userID, guid string) (*User
 
 // SetProgress records a playback position (and track selections) for a user/item.
 func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (user_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
 		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id, item_guid) DO UPDATE SET position_ms = excluded.position_ms, last_played_at = excluded.last_played_at,
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = excluded.position_ms, last_played_at = excluded.last_played_at,
 			audio_stream_index = COALESCE(excluded.audio_stream_index, user_item_data.audio_stream_index),
 			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`,
 		userID, guid, positionMs, Now(), intPtrNull(audio), intPtrNull(sub))
@@ -58,20 +58,20 @@ func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs
 // MarkPlayed sets played (incrementing play count) or unplayed (resetting position).
 func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool) error {
 	if played {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (user_id, item_guid, position_ms, play_count, played, last_played_at)
+		_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
 			VALUES (?, ?, 0, 1, 1, ?)
-			ON CONFLICT(user_id, item_guid) DO UPDATE SET position_ms = 0, play_count = user_item_data.play_count + 1, played = 1, last_played_at = excluded.last_played_at`,
+			ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, play_count = user_item_data.play_count + 1, played = 1, last_played_at = excluded.last_played_at`,
 			userID, guid, Now())
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (user_id, item_guid, position_ms, played) VALUES (?, ?, 0, 0)
-		ON CONFLICT(user_id, item_guid) DO UPDATE SET position_ms = 0, played = 0`, userID, guid)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played) VALUES (?, ?, 0, 0)
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0`, userID, guid)
 	return err
 }
 
 func (s *Store) SetFavorite(ctx context.Context, userID, guid string, fav bool) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (user_id, item_guid, is_favorite) VALUES (?, ?, ?)
-		ON CONFLICT(user_id, item_guid) DO UPDATE SET is_favorite = excluded.is_favorite`, userID, guid, boolInt(fav))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, is_favorite) VALUES (?, ?, ?)
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET is_favorite = excluded.is_favorite`, userID, guid, boolInt(fav))
 	return err
 }
 
@@ -83,11 +83,11 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 	// One entry per show: for episodes, keep only the most recently played episode of
 	// each series (grouped by the season's parent); movies stand on their own.
 	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items i
-		JOIN user_item_data u ON u.item_guid = i.guid AND u.user_id = ?
+		JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
 		WHERE u.position_ms > 0 AND u.played = 0 AND i.type IN ('movie', 'episode')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM items i2
-		    JOIN user_item_data u2 ON u2.item_guid = i2.guid AND u2.user_id = u.user_id
+		    JOIN user_item_data u2 ON u2.item_guid = i2.guid AND u2.scope_id = u.scope_id
 		    JOIN items s1 ON s1.id = i.parent_id
 		    JOIN items s2 ON s2.id = i2.parent_id
 		    WHERE i.type = 'episode' AND i2.type = 'episode' AND i2.id <> i.id
@@ -134,8 +134,8 @@ func (s *Store) UserDataForItems(ctx context.Context, userID string, guids []str
 		for _, g := range part {
 			args = append(args, g)
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT user_id, item_guid, position_ms, play_count, played, is_favorite, last_played_at, audio_stream_index, subtitle_stream_index
-			FROM user_item_data WHERE user_id = ? AND item_guid IN (`+ph+`)`, args...)
+		rows, err := s.db.QueryContext(ctx, `SELECT scope_id, item_guid, position_ms, play_count, played, is_favorite, last_played_at, audio_stream_index, subtitle_stream_index
+			FROM user_item_data WHERE scope_id = ? AND item_guid IN (`+ph+`)`, args...)
 		if err != nil {
 			return nil, err
 		}

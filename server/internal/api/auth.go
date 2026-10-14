@@ -60,7 +60,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"apiKey": true, "isAdmin": true})
 		return
 	}
-	writeJSON(w, 200, userJSON(p.User))
+	out := userJSON(p.User)
+	out["profileId"] = p.ScopeID // the profile this request's watch state is keyed by
+	writeJSON(w, 200, out)
 }
 
 // POST /v1/auth/logout revokes the calling device token.

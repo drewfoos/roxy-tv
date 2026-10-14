@@ -178,6 +178,21 @@ func WithPrincipal(ctx context.Context, p *model.Principal) context.Context {
 	return context.WithValue(ctx, ctxKey{}, p)
 }
 
+// resolveScope picks the profile that keys this request's watch state: the one named by
+// the X-Roxy-Profile header when it belongs to the user, else the user's default.
+func (s *Service) resolveScope(ctx context.Context, userID, requested string) (string, error) {
+	if requested != "" {
+		p, err := s.store.GetProfile(ctx, requested)
+		if err != nil {
+			return "", err
+		}
+		if p != nil && p.UserID == userID {
+			return p.ID, nil
+		}
+	}
+	return s.store.DefaultProfileID(ctx, userID)
+}
+
 func PrincipalFrom(ctx context.Context) *model.Principal {
 	p, _ := ctx.Value(ctxKey{}).(*model.Principal)
 	return p
@@ -200,6 +215,14 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 				return
 			}
 			if p != nil {
+				if p.User != nil {
+					scope, err := s.resolveScope(r.Context(), p.UserID, r.Header.Get("X-Roxy-Profile"))
+					if err != nil {
+						http.Error(w, `{"Message":"profile lookup failed"}`, http.StatusInternalServerError)
+						return
+					}
+					p.ScopeID = scope
+				}
 				r = r.WithContext(WithPrincipal(r.Context(), p))
 			}
 			next.ServeHTTP(w, r)

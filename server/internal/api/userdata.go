@@ -35,7 +35,7 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.store.ResumeItems(r.Context(), p.UserID, limit)
+	items, err := s.store.ResumeItems(r.Context(), p.ScopeID, limit)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -78,10 +78,10 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	}
 	played := it.RuntimeMs != nil && *it.RuntimeMs > 0 && float64(body.PositionMs) >= float64(*it.RuntimeMs)*playedThreshold
 	if played {
-		err = s.store.MarkPlayed(r.Context(), p.UserID, it.GUID, true)
+		err = s.store.MarkPlayed(r.Context(), p.ScopeID, it.GUID, true)
 		slog.Info("playback finished", "user", p.User.Name, "item", it.Title, "positionMs", body.PositionMs)
 	} else {
-		err = s.store.SetProgress(r.Context(), p.UserID, it.GUID, body.PositionMs, body.AudioIndex, body.SubtitleIndex)
+		err = s.store.SetProgress(r.Context(), p.ScopeID, it.GUID, body.PositionMs, body.AudioIndex, body.SubtitleIndex)
 	}
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -118,11 +118,11 @@ func (s *Server) setFlag(w http.ResponseWriter, r *http.Request, set func(ctx co
 		writeError(w, 404, "item not found")
 		return
 	}
-	if err := set(r.Context(), p.UserID, it.GUID, r.Method == http.MethodPost); err != nil {
+	if err := set(r.Context(), p.ScopeID, it.GUID, r.Method == http.MethodPost); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
-	d, err := s.store.GetUserItemData(r.Context(), p.UserID, it.GUID)
+	d, err := s.store.GetUserItemData(r.Context(), p.ScopeID, it.GUID)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

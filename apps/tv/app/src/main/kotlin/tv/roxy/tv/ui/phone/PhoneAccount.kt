@@ -41,7 +41,11 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.api.Profile
 import tv.roxy.tv.data.PlayerSettings
+import tv.roxy.tv.ui.components.widthPx
+import tv.roxy.tv.ui.profiles.AvatarCircle
+import tv.roxy.tv.ui.profiles.ProfilePicker
 import tv.roxy.tv.ui.theme.RoxyColors
 
 private class Pick(val title: String, val options: List<String>, val selected: String, val onPick: (String) -> Unit)
@@ -59,18 +63,30 @@ fun PhoneAccount(bottomInset: Dp) {
     val session by app.prefs.session.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var pick by remember { mutableStateOf<Pick?>(null) }
+    var editingProfile by remember { mutableStateOf(false) }
 
     fun save(s: PlayerSettings) = scope.launch { app.prefs.saveSettings(s) }
 
+    if (editingProfile) {
+        val id = session.profileId
+        if (id != null) {
+            ProfilePicker(editOnly = Profile(id = id, name = session.profileName, hasAvatar = session.profileHasAvatar), onDone = { editingProfile = false })
+            return
+        }
+        editingProfile = false
+    }
+
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 16.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Avatar(session.userName.firstOrNull()?.uppercaseChar()?.toString() ?: "?", size = 56.dp)
+            val avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(56.dp) * 2, session.profileAvatarVersion) }
+            AvatarCircle(name = session.profileName.ifEmpty { session.userName }, imageUrl = avatarUrl, size = 56.dp)
             Column(modifier = Modifier.padding(start = 14.dp)) {
-                Text(session.userName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-                Text(session.serverUrl, fontSize = 12.sp, color = RoxyColors.muted)
+                Text(session.profileName.ifEmpty { session.userName }, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                Text("${session.userName} @ ${session.serverUrl}", fontSize = 12.sp, color = RoxyColors.muted)
             }
         }
-        SoonRow("Switch profile", "Profiles on one account are coming")
+        SettingRow("Edit profile", "Name and avatar") { editingProfile = true }
+        SettingRow("Switch profile", "Back to \"Who's watching?\"") { scope.launch { app.prefs.clearProfile() } }
 
         SectionTitle("Playback", modifier = Modifier.padding(top = 8.dp))
         SettingRow("Subtitles", settings.subMode.subLabel()) {

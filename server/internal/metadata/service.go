@@ -51,6 +51,9 @@ type job struct {
 	force  bool
 }
 
+// AniList exposes the AniList client for non-matching uses (profile avatars).
+func (s *Service) AniList() *AniList { a, _ := s.anilist.(*AniList); return a }
+
 func New(st *store.Store, cfg *config.Config) *Service {
 	s := &Service{
 		store:   st,

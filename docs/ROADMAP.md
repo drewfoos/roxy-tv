@@ -85,6 +85,14 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   notifications, email, password, ToS, privacy. Server: one Continue Watching entry per
   show, `favorites=1` filter, PNG logos, per-client rate limit; app caps concurrent
   requests. PiP uses auto-enter (seamless swipe-home on Android 12+).
+- Also done (2026-10-14, 07:40): **profiles**. Migration 0007 adds `profiles` and re-keys
+  watch state by profile (every user got a default profile with their history). Clients
+  send `X-Roxy-Profile`; `/v1/me/profiles` CRUD, cached avatars, and avatar pickers from
+  AniList (`/v1/avatars/suggested` = main cast of the library's series, `/search?q=`).
+  App: "Who's watching?" at launch with Add / Manage, an editor with "From your library"
+  and character search, Edit / Switch profile on Account, the avatar in the bottom bar.
+  Verified on the phone: a new profile starts with no Continue Watching. TV uses the same
+  picker (no focus highlight yet). Launcher icon and TV banner are the witch hat.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

@@ -182,6 +182,29 @@ subtitleIndex?}` (one batched query per response). API-key callers get no `userD
 and the `/v1/me/*` endpoints answer them 401. The same store backs the Jellyfin-compat
 session endpoints, so progress reported either way is one record.
 
+## Profiles
+
+Several viewers on one login (Netflix-style). Watch state, favourites, `/v1/me/resume`
+and `/v1/home` are **per profile**. Clients send `X-Roxy-Profile: <id>` on every request;
+without it (or with a profile that is not the caller's) the user's default profile is
+used, which is also what the Jellyfin-compat surface writes to. Migration 0007 gave every
+existing user a default profile that inherited their history. At most 6 per account.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/me/profiles` | `{profiles: [Profile], current}`; `current` is the id this request resolved to |
+| POST | `/v1/me/profiles` | `{name, avatarUrl?, avatarName?}` → 201 Profile |
+| PATCH | `/v1/me/profiles/{id}` | `{name?, avatarUrl?, avatarName?}`; `avatarUrl: "-"` clears the picture |
+| DELETE | `/v1/me/profiles/{id}` | 204; the last profile cannot be deleted, deleting the default promotes the oldest |
+| GET | `/v1/me/profiles/{id}/avatar?w=` | the cached picture (JPEG), 404 when none |
+| GET | `/v1/avatars/search?q=` | `{characters: [{id, name, image, series}]}` from AniList |
+| GET | `/v1/avatars/suggested` | main cast of the library's series (up to 6 per show, cached an hour) |
+
+`Profile: {id, name, isDefault, avatarName, hasAvatar, avatarUrl, createdAt}`. Avatars are
+anime characters: `avatarUrl` on create/update must be an AniList CDN image (as returned
+by the two `/v1/avatars` endpoints); the server caches a copy and serves it from
+`/v1/me/profiles/{id}/avatar`. `/v1/auth/me` also returns `profileId`.
+
 ## Not yet (see ROADMAP)
 
 Playback decision (`/v1/items/{id}/playback`), device-code login, websocket events,

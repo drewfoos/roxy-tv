@@ -36,7 +36,7 @@ func (h *Handler) itemDTO(ctx context.Context, it *model.Item, withSources bool)
 		dto["ParentId"] = *it.ParentID
 	}
 	if p := auth.PrincipalFrom(ctx); p != nil && p.User != nil && (it.Type == model.TypeEpisode || it.Type == model.TypeMovie) {
-		d, _ := h.store.GetUserItemData(ctx, p.UserID, it.GUID)
+		d, _ := h.store.GetUserItemData(ctx, p.ScopeID, it.GUID)
 		dto["UserData"] = userDataDTO(it, d)
 	}
 

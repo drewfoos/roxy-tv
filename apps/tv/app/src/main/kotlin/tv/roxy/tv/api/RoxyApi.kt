@@ -38,11 +38,13 @@ class RoxyApi(private val prefs: Prefs) {
         // client), the rest queue. The server also rate-limits the JSON API per client.
         .dispatcher(Dispatcher().apply { maxRequests = 12; maxRequestsPerHost = 6 })
         .addInterceptor(Interceptor { chain ->
-            val token = prefs.session.value.token
+            val s = prefs.session.value
             val req = chain.request()
-            if (token != null && req.header("Authorization") == null) {
-                chain.proceed(req.newBuilder().header("Authorization", "Bearer $token").build())
-            } else chain.proceed(req)
+            val b = req.newBuilder()
+            if (s.token != null && req.header("Authorization") == null) b.header("Authorization", "Bearer ${s.token}")
+            // Watch state, favourites and Home are per profile (docs/api/native.md "Profiles").
+            s.profileId?.let { b.header("X-Roxy-Profile", it) }
+            chain.proceed(b.build())
         })
         .build()
 
@@ -106,6 +108,26 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun setPlayed(itemId: String, on: Boolean) {
         if (on) postNoBody("/v1/me/played/$itemId", "") else delete("/v1/me/played/$itemId")
     }
+
+    // ---- profiles ----
+
+    suspend fun profiles(): ProfilesResponse = get("/v1/me/profiles")
+
+    suspend fun createProfile(name: String, avatarUrl: String?, avatarName: String?): Profile =
+        postJson("/v1/me/profiles", json.encodeToString(ProfileRequest.serializer(), ProfileRequest(name, avatarUrl, avatarName)))
+
+    /** [avatarUrl] null keeps the picture, "-" clears it. */
+    suspend fun updateProfile(id: String, name: String?, avatarUrl: String?, avatarName: String?): Profile =
+        patchJson("/v1/me/profiles/$id", json.encodeToString(ProfileRequest.serializer(), ProfileRequest(name, avatarUrl, avatarName)))
+
+    suspend fun deleteProfile(id: String) = delete("/v1/me/profiles/$id")
+
+    suspend fun avatarSearch(q: String): List<Character> = get<CharactersResponse>("/v1/avatars/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")).characters
+
+    suspend fun avatarSuggested(): List<Character> = get<CharactersResponse>("/v1/avatars/suggested").characters
+
+    /** The cached avatar; [version] busts Coil's cache after a change. */
+    fun profileAvatarUrl(id: String, widthPx: Int, version: Int = 0): String = "$baseUrl/v1/me/profiles/$id/avatar?w=$widthPx&v=$version"
 
     /**
      * Is the server reachable right now? A fast probe (3 s) of the unauthenticated system
@@ -229,6 +251,14 @@ class RoxyApi(private val prefs: Prefs) {
         }
     }
 
+    private suspend inline fun <reified T> postJson(path: String, body: String): T = withContext(Dispatchers.IO) {
+        execute<T>(request(path).post(body.toRequestBody(JSON_TYPE)).build())
+    }
+
+    private suspend inline fun <reified T> patchJson(path: String, body: String): T = withContext(Dispatchers.IO) {
+        execute<T>(request(path).patch(body.toRequestBody(JSON_TYPE)).build())
+    }
+
     private suspend fun delete(path: String) = withContext(Dispatchers.IO) {
         val req = request(path).delete().build()
         http.newCall(req).execute().use { resp ->
@@ -274,7 +304,29 @@ data class User(val id: String, val name: String, val isAdmin: Boolean = false)
 
 /** `/v1/auth/me`: a user, or `{apiKey: true}` for an integration key. */
 @Serializable
-data class MeResponse(val id: String? = null, val name: String? = null, val isAdmin: Boolean = false, val apiKey: Boolean = false)
+data class MeResponse(val id: String? = null, val name: String? = null, val isAdmin: Boolean = false, val apiKey: Boolean = false, val profileId: String? = null)
+
+@Serializable
+data class Profile(
+    val id: String,
+    val name: String,
+    val isDefault: Boolean = false,
+    val avatarName: String = "",
+    val hasAvatar: Boolean = false,
+)
+
+@Serializable
+data class ProfilesResponse(val profiles: List<Profile> = emptyList(), val current: String? = null)
+
+@Serializable
+data class ProfileRequest(val name: String? = null, val avatarUrl: String? = null, val avatarName: String? = null)
+
+/** An AniList character offered as an avatar. */
+@Serializable
+data class Character(val id: Int, val name: String, val image: String, val series: String = "")
+
+@Serializable
+data class CharactersResponse(val characters: List<Character> = emptyList())
 
 @Serializable
 data class ItemsResponse(val items: List<Item> = emptyList(), val total: Int = 0)

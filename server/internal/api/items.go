@@ -62,7 +62,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 401, "a user login is required")
 			return
 		}
-		q.FavoriteOf = p.UserID
+		q.FavoriteOf = p.ScopeID
 	}
 	q.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	q.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))

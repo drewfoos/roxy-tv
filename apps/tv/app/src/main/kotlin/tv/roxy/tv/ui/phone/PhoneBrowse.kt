@@ -195,5 +195,6 @@ private fun libraryViewModel(): LibraryViewModel {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val owner = context as ViewModelStoreOwner
-    return viewModel(viewModelStoreOwner = owner, key = "library") { LibraryViewModel(app.api) }
+    val profile = app.prefs.session.value.profileId ?: "-"
+    return viewModel(viewModelStoreOwner = owner, key = "library:$profile") { LibraryViewModel(app.api) }
 }

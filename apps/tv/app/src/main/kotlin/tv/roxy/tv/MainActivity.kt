@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,6 +35,7 @@ import tv.roxy.tv.ui.home.HomeScreen
 import tv.roxy.tv.ui.login.LoginScreen
 import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.phone.PhoneRoot
+import tv.roxy.tv.ui.profiles.ProfilePicker
 import tv.roxy.tv.ui.settings.SettingsScreen
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.theme.RoxyTheme
@@ -88,9 +90,17 @@ private fun AppRoot(tv: Boolean) {
         LoginScreen()
         return
     }
+    // "Who's watching?" until a profile is chosen (and again after Switch profile).
+    if (!session.hasProfile) {
+        ProfilePicker()
+        return
+    }
 
     val onUnauthorized = { app.scope.launch { app.prefs.clearSession() }; Unit }
-    if (tv) TvRoot(onUnauthorized) else PhoneRoot(onUnauthorized)
+    // Keyed by profile so every screen's ViewModel starts fresh after a switch.
+    key(session.profileId) {
+        if (tv) TvRoot(onUnauthorized) else PhoneRoot(onUnauthorized)
+    }
 }
 
 /** The TV graph: Home with the hero and rows, detail pages, Settings from the hero's button. */

@@ -7,6 +7,12 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+  <!-- Scaled down inside the safe zone so the hat sits with air around it like most icons. -->
+  <group
+      android:scaleX="0.72"
+      android:scaleY="0.72"
+      android:pivotX="54"
+      android:pivotY="54">
     <!-- brim -->
     <path
         android:fillColor="#1B5FA8"
@@ -42,4 +48,5 @@
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M64.8,23.04 h10.08 v1.44 h-10.08 z M69.12,18.72 h1.44 v10.08 h-1.44 z" />
+  </group>
 </vector>

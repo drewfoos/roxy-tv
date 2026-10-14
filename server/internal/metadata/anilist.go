@@ -17,9 +17,10 @@ import (
 // AniList is the anilist.co GraphQL provider (no API key). It is the primary source
 // for anime-mode libraries and the fallback/enrichment source elsewhere.
 type AniList struct {
-	endpoint string
-	client   *http.Client
-	lim      *limiter
+	endpoint  string
+	client    *http.Client
+	lim       *limiter
+	castCache castCache
 }
 
 const anilistEndpoint = "https://graphql.anilist.co"

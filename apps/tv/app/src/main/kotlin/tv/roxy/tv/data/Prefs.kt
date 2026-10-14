@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
@@ -19,8 +20,15 @@ data class Session(
     val serverUrl: String = "",
     val token: String? = null,
     val userName: String = "",
+    /** The chosen profile (null = show the picker). Sent as X-Roxy-Profile on every request. */
+    val profileId: String? = null,
+    val profileName: String = "",
+    val profileHasAvatar: Boolean = false,
+    /** Bumped when the avatar changes so cached images are refetched. */
+    val profileAvatarVersion: Int = 0,
 ) {
     val isLoggedIn: Boolean get() = token != null && serverUrl.isNotEmpty()
+    val hasProfile: Boolean get() = profileId != null
 }
 
 /** Player preferences (Settings screen). Persisted. */
@@ -87,8 +95,22 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_SERVER] = s.serverUrl
             if (s.token == null) it.remove(KEY_TOKEN) else it[KEY_TOKEN] = s.token
             it[KEY_USER] = s.userName
+            if (s.profileId == null) it.remove(KEY_PROFILE_ID) else it[KEY_PROFILE_ID] = s.profileId
+            it[KEY_PROFILE_NAME] = s.profileName
+            it[KEY_PROFILE_AVATAR] = s.profileHasAvatar
+            it[KEY_PROFILE_AVATAR_V] = s.profileAvatarVersion
         }
     }
+
+    /** Choose (or update) the active profile; a new avatar bumps the version so Coil refetches it. */
+    suspend fun selectProfile(id: String, name: String, hasAvatar: Boolean) {
+        val cur = _session.value
+        val bump = if (cur.profileId == id) cur.profileAvatarVersion + 1 else 0
+        saveSession(cur.copy(profileId = id, profileName = name, profileHasAvatar = hasAvatar, profileAvatarVersion = bump))
+    }
+
+    /** Back to the picker (Switch profile). */
+    suspend fun clearProfile() = saveSession(_session.value.copy(profileId = null, profileName = "", profileHasAvatar = false))
 
     suspend fun clearSession() {
         val keepUrl = _session.value.serverUrl
@@ -96,6 +118,9 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         ds.edit {
             it.remove(KEY_TOKEN)
             it.remove(KEY_USER)
+            it.remove(KEY_PROFILE_ID)
+            it.remove(KEY_PROFILE_NAME)
+            it.remove(KEY_PROFILE_AVATAR)
         }
     }
 
@@ -116,6 +141,10 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         serverUrl = this[KEY_SERVER].orEmpty(),
         token = this[KEY_TOKEN]?.takeIf { it.isNotEmpty() },
         userName = this[KEY_USER].orEmpty(),
+        profileId = this[KEY_PROFILE_ID]?.takeIf { it.isNotEmpty() },
+        profileName = this[KEY_PROFILE_NAME].orEmpty(),
+        profileHasAvatar = this[KEY_PROFILE_AVATAR] ?: false,
+        profileAvatarVersion = this[KEY_PROFILE_AVATAR_V] ?: 0,
     )
 
     private fun Preferences.toSettings(): PlayerSettings {
@@ -135,6 +164,10 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_SERVER = stringPreferencesKey("server_url")
         val KEY_TOKEN = stringPreferencesKey("token")
         val KEY_USER = stringPreferencesKey("user_name")
+        val KEY_PROFILE_ID = stringPreferencesKey("profile_id")
+        val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
+        val KEY_PROFILE_AVATAR = booleanPreferencesKey("profile_has_avatar")
+        val KEY_PROFILE_AVATAR_V = intPreferencesKey("profile_avatar_v")
         val KEY_HWDEC = stringPreferencesKey("hwdec")
         val KEY_VO = stringPreferencesKey("vo")
         val KEY_ALANG = stringPreferencesKey("audio_langs")

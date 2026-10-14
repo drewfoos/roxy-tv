@@ -240,7 +240,7 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 		}
 	}
 	if q.FavoriteOf != "" {
-		where = append(where, "EXISTS (SELECT 1 FROM user_item_data u WHERE u.item_guid = items.guid AND u.user_id = ? AND u.is_favorite = 1)")
+		where = append(where, "EXISTS (SELECT 1 FROM user_item_data u WHERE u.item_guid = items.guid AND u.scope_id = ? AND u.is_favorite = 1)")
 		args = append(args, q.FavoriteOf)
 	}
 	sqlWhere := ""

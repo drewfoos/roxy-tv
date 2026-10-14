@@ -25,8 +25,9 @@ app/src/main/kotlin/tv/roxy/tv/
   ui/theme/Theme.kt          dark colour scheme
   ui/nav/Routes.kt           typed Navigation Compose routes (Home, SeriesLibrary, MovieLibrary, Settings, Series, Movie)
   ui/components/             MediaCard, MediaRow, RoxyImage (placeholder tile), buttons, text field (TV, tv-material)
-  ui/phone/                  phone layout (Material 3): PhoneRoot bottom bar, PhoneHome hero card + rows,
-                             PhoneBrowse poster grids, PhoneSeries / PhoneMovie title pages, PhoneSettings
+  ui/phone/                  phone layout (Material 3): PhoneRoot bottom bar, PhoneHome hero carousel + rows,
+                             PhoneBrowse / Watchlist / Search grids, PhoneSeries / PhoneMovie title pages, PhoneAccount
+  ui/profiles/ProfilePicker.kt "Who's watching?" picker + profile editor (AniList character avatars); both layouts
   ui/login/LoginScreen.kt    server URL / user / password -> POST /v1/auth/login
   ui/home/HomeScreen.kt      hero + rows from GET /v1/home (falls back to /v1/items on 404)
   ui/detail/SeriesScreen.kt  backdrop header, season row, episode list (GET /v1/items?parent=...)
