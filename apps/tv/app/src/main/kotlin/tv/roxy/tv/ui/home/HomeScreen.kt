@@ -34,6 +34,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -54,10 +57,21 @@ import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
+/** One slide of the phone's hero carousel: the series/movie to show, and what Play starts. */
+data class HeroPick(val title: Item, val play: Item)
+
 sealed interface HomeUiState {
     data object Loading : HomeUiState
-    data class Error(val message: String, val unauthorized: Boolean = false) : HomeUiState
-    data class Ready(val hero: Item?, val rows: List<HomeRow>, val composedLocally: Boolean, val note: String? = null) : HomeUiState
+    /** [offline]: the server did not answer at all (not on the home network / Tailscale), as opposed to an API error. */
+    data class Error(val message: String, val unauthorized: Boolean = false, val offline: Boolean = false) : HomeUiState
+    data class Ready(
+        val hero: Item?,
+        val rows: List<HomeRow>,
+        val composedLocally: Boolean,
+        val note: String? = null,
+        /** Resolved carousel slides (phone); empty until [HomeViewModel.resolveHeroes] finishes. */
+        val heroes: List<HeroPick> = emptyList(),
+    ) : HomeUiState
 }
 
 class HomeViewModel(private val api: RoxyApi) : ViewModel() {
@@ -74,12 +88,17 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
                         composeRows()
                     } else throw t
                 }
-            result.onSuccess { _state.value = it }
-                .onFailure { t ->
-                    Timber.e(t, "home failed")
-                    val unauthorized = t is ApiException && t.isUnauthorized
-                    _state.value = HomeUiState.Error(t.message ?: t::class.simpleName.orEmpty(), unauthorized)
-                }
+            result.onSuccess { ready ->
+                // Keep the previous carousel while the new one resolves, so a silent reload does not blank it.
+                val previous = (_state.value as? HomeUiState.Ready)?.heroes.orEmpty()
+                _state.value = ready.copy(heroes = previous)
+                _state.value = ready.copy(heroes = resolveHeroes(ready.rows))
+            }.onFailure { t ->
+                Timber.e(t, "home failed")
+                val unauthorized = t is ApiException && t.isUnauthorized
+                val offline = t !is ApiException && !api.reachable()
+                _state.value = HomeUiState.Error(t.message ?: t::class.simpleName.orEmpty(), unauthorized, offline)
+            }
         }
     }
 
@@ -87,6 +106,38 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
         val rows = api.home().rows.filter { it.items.isNotEmpty() }
         return HomeUiState.Ready(hero = pickHero(rows), rows = rows, composedLocally = false)
     }
+
+    /**
+     * Carousel selection: what you are in the middle of first (one slide per show), then
+     * the newest arrivals (one per series, then movies), then the library's series, up to
+     * [MAX_HEROES]. Episodes are resolved to their series so the slide can show the poster
+     * and logo; the episode stays as the thing Play starts.
+     */
+    private suspend fun resolveHeroes(rows: List<HomeRow>): List<HeroPick> {
+        val picks = LinkedHashMap<String, Item>() // show key -> item to play
+        fun consider(items: List<Item>) {
+            for (it in items) {
+                if (picks.size >= MAX_HEROES) return
+                val key = if (it.isEpisode) (it.seriesId ?: it.id) else it.id
+                picks.putIfAbsent(key, it)
+            }
+        }
+        listOf("continue", "recentEpisodes", "recentMovies", "series").forEach { key ->
+            consider(rows.firstOrNull { it.key == key }?.items.orEmpty())
+        }
+        return coroutineScope {
+            picks.values.map { play ->
+                async {
+                    val title = if (play.isEpisode) {
+                        play.seriesId?.let { id -> runCatching { api.item(id) }.getOrNull() } ?: return@async null
+                    } else play
+                    HeroPick(title, play)
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
+
+    private companion object { const val MAX_HEROES = 6 }
 
     /** Fallback for a server without `/v1/home`: five parallel-ish list calls. */
     private suspend fun composeRows(): HomeUiState.Ready {

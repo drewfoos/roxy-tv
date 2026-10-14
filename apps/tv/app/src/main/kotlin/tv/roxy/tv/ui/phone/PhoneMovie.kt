@@ -52,9 +52,8 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
 
     val movie = state.movie
     if (movie == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(if (state.loading) "Loading $fallbackTitle..." else state.error ?: "Not found", color = if (state.loading) RoxyColors.muted else RoxyColors.error)
-        }
+        if (state.loading) DetailSkeleton(onBack)
+        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(state.error ?: "Not found", color = RoxyColors.error) }
         return
     }
 
@@ -82,6 +81,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                     scope.launch { playItem(context, movie, fromStart = true) }
                 })
             }
+            MyListButton(movie, app.api, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), onChanged = { vm.load() })
             movie.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 14.dp)) }
             movie.overview?.takeIf { it.isNotBlank() }?.let {
                 Text(

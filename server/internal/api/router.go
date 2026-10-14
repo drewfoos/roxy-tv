@@ -39,6 +39,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors)
+	r.Use(newRateLimiter(20, 60).middleware)
 
 	r.Get("/healthz", s.healthz)
 

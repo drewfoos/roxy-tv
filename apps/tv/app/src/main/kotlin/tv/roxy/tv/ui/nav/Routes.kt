@@ -9,6 +9,11 @@ import kotlinx.serialization.Serializable
  */
 sealed interface Route {
     @Serializable data object Home : Route
+    @Serializable data object Watchlist : Route
+    @Serializable data object Browse : Route
+    @Serializable data object Account : Route
+    @Serializable data object Search : Route
+    // TV-only: the D-pad screens keep Settings as a page and have no tabs.
     @Serializable data object SeriesLibrary : Route
     @Serializable data object MovieLibrary : Route
     @Serializable data object Settings : Route

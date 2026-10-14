@@ -39,6 +39,10 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if p := auth.PrincipalFrom(ctx); p != nil && p.User != nil {
 		resume, err = s.store.ResumeItems(ctx, p.UserID, 20)
+		// Streams ride along so the client can play straight away and show Dub | Sub.
+		for i := range resume {
+			resume[i].Sources, _ = s.store.SourcesForItem(ctx, resume[i].ID)
+		}
 	}
 	if !add("continue", "Continue Watching", resume, err) {
 		return

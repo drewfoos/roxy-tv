@@ -108,6 +108,16 @@ and mostly recaps.
   real: ids, watch state and images are kept.
 - `GET /v1/items?...&hasMedia=1` hides placeholders; `hasMedia=0` lists only them (a
   "wanted" view). `/v1/home` rows only ever contain real items.
+- `GET /v1/items?...&favorites=1` restricts to the caller's favourites (the client's
+  Watchlist; 401 without a user login).
+- `/v1/home` → `continue` lists **one entry per show** (the most recently played
+  episode of each series, plus movies) and carries `mediaSources` so the client can show
+  Dub | Sub and play without another round trip. `/v1/me/resume` applies the same rule.
+- Logos are stored and served as PNG (transparency kept); other images are JPEG. The
+  image endpoint's `Content-Type` follows the file.
+- Rate limiting: the JSON API allows 20 requests/s sustained with a burst of 60 per
+  client (IP + token), answering `429` with `Retry-After: 1` beyond that. Media bytes
+  (`/v1/stream`, images, trickplay, attachments, subtitles) are exempt.
 - Placeholders the provider stops listing are removed on the next refresh.
 
 ## Segments (skip intro / outro)

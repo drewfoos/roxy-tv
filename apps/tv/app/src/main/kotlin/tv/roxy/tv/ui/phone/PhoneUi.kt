@@ -1,5 +1,10 @@
 package tv.roxy.tv.ui.phone
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,16 +27,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -131,11 +141,11 @@ fun PhoneRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> 
     }
 }
 
-/** Netflix's white primary button: black icon and bold label. */
+/** White primary button: black icon and bold label. [pill] rounds it fully (the hero); otherwise 4 dp corners (Netflix). */
 @Composable
-fun PlayButton(text: String, modifier: Modifier = Modifier, icon: ImageVector = Icons.Filled.PlayArrow, onClick: () -> Unit) {
+fun PlayButton(text: String, modifier: Modifier = Modifier, icon: ImageVector = Icons.Filled.PlayArrow, height: Dp = 42.dp, pill: Boolean = false, onClick: () -> Unit) {
     Row(
-        modifier = modifier.height(42.dp).clip(RoundedCornerShape(4.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        modifier = modifier.height(height).clip(RoundedCornerShape(if (pill) height / 2 else 4.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
@@ -161,14 +171,15 @@ fun GreyButton(text: String, modifier: Modifier = Modifier, icon: ImageVector? =
     }
 }
 
-/** Pill chip for season tabs: white when selected, dark grey otherwise. */
+/** Pill chip: white when selected, dark grey otherwise; [trailing] adds an icon (dropdown arrow). */
 @Composable
-fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier.height(34.dp).clip(RoundedCornerShape(17.dp)).background(if (selected) Color.White else ChipGrey).clickable(onClick = onClick).padding(horizontal = 16.dp),
-        contentAlignment = Alignment.Center,
+fun Chip(text: String, selected: Boolean, trailing: ImageVector? = null, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.height(34.dp).clip(RoundedCornerShape(17.dp)).background(if (selected) Color.White else ChipGrey).clickable(onClick = onClick).padding(start = 16.dp, end = if (trailing != null) 8.dp else 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text, color = if (selected) Color.Black else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        if (trailing != null) Icon(trailing, contentDescription = null, tint = if (selected) Color.Black else Color.White, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -187,4 +198,76 @@ fun BackCircle(onClick: () -> Unit, modifier: Modifier = Modifier) {
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = modifier.padding(horizontal = PhonePad, vertical = 8.dp))
+}
+
+/** Small "watched" tick shown on episodes the user has finished. */
+@Composable
+fun WatchedCheck(modifier: Modifier = Modifier, size: Dp = 16.dp) {
+    Icon(Icons.Filled.CheckCircle, contentDescription = "Watched", tint = Color.White, modifier = modifier.size(size))
+}
+
+/** Roxy's app mark: a small rounded accent square with an R, drawn over the hero. */
+@Composable
+fun RoxyMark(modifier: Modifier = Modifier, size: Dp = 28.dp) {
+    Box(modifier = modifier.size(size).clip(RoundedCornerShape(size / 4)).background(RoxyColors.accent), contentAlignment = Alignment.Center) {
+        Text("R", color = Color.White, fontSize = (size.value * 0.62f).sp, fontWeight = FontWeight.Black)
+    }
+}
+
+/* ---------- Skeletons ----------
+ * Shimmering placeholders shaped like the content they stand in for, so a screen never
+ * says "Loading…". They will change as the layouts change; keep each next to the screen
+ * it mirrors. */
+
+@Composable
+fun shimmerBrush(): Brush {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val x by transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "shimmerX",
+    )
+    val width = 900f
+    val start = -width + x * (2400f + width)
+    return Brush.linearGradient(
+        colors = listOf(Color(0xFF1C1C24), Color(0xFF2A2A34), Color(0xFF1C1C24)),
+        start = Offset(start, 0f), end = Offset(start + width, 0f),
+    )
+}
+
+/** One shimmering block. */
+@Composable
+fun Bone(modifier: Modifier, shape: Shape = RoundedCornerShape(6.dp)) {
+    Box(modifier = modifier.clip(shape).background(shimmerBrush()))
+}
+
+/** A text line placeholder. */
+@Composable
+fun BoneLine(width: Dp, height: Dp = 14.dp, modifier: Modifier = Modifier) {
+    Bone(modifier.width(width).height(height), shape = RoundedCornerShape(4.dp))
+}
+
+/** Skeleton for a poster row: title line plus three and a half posters. */
+@Composable
+fun RowSkeleton(modifier: Modifier = Modifier, thumbs: Boolean = false) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        BoneLine(width = 150.dp, height = 18.dp, modifier = Modifier.padding(start = PhonePad, bottom = 10.dp))
+        Row(modifier = Modifier.padding(start = PhonePad), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeat(4) {
+                if (thumbs) Bone(Modifier.width(ThumbW).aspectRatio(16f / 9f))
+                else Bone(Modifier.width(PosterW).aspectRatio(2f / 3f))
+            }
+        }
+    }
+}
+
+/** Skeleton for a 3-column poster grid. */
+@Composable
+fun GridSkeleton(modifier: Modifier = Modifier, rows: Int = 4) {
+    Column(modifier = modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(rows) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(3) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) }
+            }
+        }
+    }
 }

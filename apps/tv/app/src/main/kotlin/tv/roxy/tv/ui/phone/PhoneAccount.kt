@@ -3,10 +3,12 @@ package tv.roxy.tv.ui.phone
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,9 +29,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -40,53 +42,60 @@ import timber.log.Timber
 import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.PlayerSettings
-import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.ui.theme.RoxyColors
 
 private class Pick(val title: String, val options: List<String>, val selected: String, val onPick: (String) -> Unit)
 
-/** Settings as a phone list: tap a row for a choice dialog, switches for the toggles. */
+/**
+ * Account tab: profile header, then the settings as a phone list. Items that need server
+ * work (profiles, notifications, password, email, legal pages) are listed greyed with
+ * "Coming soon" so the shape of the page is already right.
+ */
 @Composable
-fun PhoneSettings(bottomInset: Dp) {
+fun PhoneAccount(bottomInset: Dp) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
     val session by app.prefs.session.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    val device = remember { DeviceReport.soc() + "\n" + DeviceReport.display(context) }
     var pick by remember { mutableStateOf<Pick?>(null) }
 
     fun save(s: PlayerSettings) = scope.launch { app.prefs.saveSettings(s) }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 16.dp)) {
-        Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, end = PhonePad, top = 12.dp))
-        Text("${session.userName} @ ${session.serverUrl}", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp))
-
-        SectionTitle("Player", modifier = Modifier.padding(top = 12.dp))
-        SettingRow("Hardware decoding", settings.hwdec) {
-            pick = Pick("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Avatar(session.userName.firstOrNull()?.uppercaseChar()?.toString() ?: "?", size = 56.dp)
+            Column(modifier = Modifier.padding(start = 14.dp)) {
+                Text(session.userName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                Text(session.serverUrl, fontSize = 12.sp, color = RoxyColors.muted)
+            }
         }
-        SettingRow("Video output", settings.vo) {
-            pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
+        SoonRow("Switch profile", "Profiles on one account are coming")
+
+        SectionTitle("Playback", modifier = Modifier.padding(top = 8.dp))
+        SettingRow("Subtitles", settings.subMode.subLabel()) {
+            pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
+                PlayerSettings.subModeChoices.firstOrNull { it.subLabel() == picked }?.let { save(settings.copy(subMode = it)) }
+            }
         }
         SettingRow("Audio language", settings.audioLangs.label()) {
             pick = Pick("Audio language", PlayerSettings.audioChoices.map { it.label() }, settings.audioLangs.label()) { picked ->
                 PlayerSettings.audioChoices.firstOrNull { it.label() == picked }?.let { save(settings.copy(audioLangs = it)) }
             }
         }
-        SettingRow("Subtitles", settings.subMode.subLabel()) {
-            pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
-                PlayerSettings.subModeChoices.firstOrNull { it.subLabel() == picked }?.let { save(settings.copy(subMode = it)) }
-            }
-        }
         SwitchRow("Auto-skip intro & outro", settings.autoSkip) { save(settings.copy(autoSkip = it)) }
+        SettingRow("Hardware decoding", settings.hwdec) {
+            pick = Pick("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
+        }
+        SettingRow("Video output", settings.vo) {
+            pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
+        }
         SwitchRow("Stats overlay", settings.showStats) { save(settings.copy(showStats = it)) }
-        Text(
-            "Subtitles: \"full dialogue\" picks the dialogue track (for Japanese audio), \"signs & songs\" the signs track (for an English dub).",
-            color = RoxyColors.muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(horizontal = PhonePad, vertical = 8.dp),
-        )
 
-        SectionTitle("Account", modifier = Modifier.padding(top = 12.dp))
+        SectionTitle("Account", modifier = Modifier.padding(top = 8.dp))
+        SoonRow("Notifications", "New-episode alerts are coming")
+        SoonRow("Email", "Account email is managed on the server for now")
+        SoonRow("Password", "Change it on the server for now")
         Row(
             modifier = Modifier.fillMaxWidth().clickable {
                 scope.launch {
@@ -96,9 +105,10 @@ fun PhoneSettings(bottomInset: Dp) {
             }.padding(horizontal = PhonePad, vertical = 14.dp),
         ) { Text("Log out", fontSize = 16.sp, color = RoxyColors.onBackground) }
 
-        SectionTitle("About", modifier = Modifier.padding(top = 12.dp))
-        Text("Roxy TV ${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})", color = RoxyColors.muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = PhonePad))
-        Text(device, color = RoxyColors.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp))
+        SectionTitle("About", modifier = Modifier.padding(top = 8.dp))
+        InfoRow("Version", "${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
+        SoonRow("Terms of Service", "")
+        SoonRow("Privacy Policy", "")
     }
 
     pick?.let { p ->
@@ -137,6 +147,27 @@ private fun SettingRow(label: String, value: String, onClick: () -> Unit) {
             Text(value, fontSize = 13.sp, color = RoxyColors.muted)
         }
         Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = RoxyColors.muted)
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 16.sp, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
+        Text(value, fontSize = 13.sp, color = RoxyColors.muted)
+    }
+}
+
+/** A row for something not built yet: dimmed, with the reason underneath. */
+@Composable
+private fun SoonRow(label: String, note: String) {
+    Row(modifier = Modifier.fillMaxWidth().alpha(0.5f).padding(horizontal = PhonePad, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontSize = 16.sp, color = RoxyColors.onBackground)
+            if (note.isNotEmpty()) Text(note, fontSize = 13.sp, color = RoxyColors.muted)
+        }
+        Text("Coming soon", fontSize = 12.sp, color = RoxyColors.muted)
+        Spacer(Modifier.width(4.dp))
     }
 }
 

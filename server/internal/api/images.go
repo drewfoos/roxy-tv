@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/imaging"
@@ -41,7 +43,12 @@ func (s *Server) getItemImage(w http.ResponseWriter, r *http.Request) {
 			width = 4096
 		}
 		if img.Width == 0 || width < img.Width {
-			variant := filepath.Join(filepath.Dir(img.Path), fmt.Sprintf("%s.w%d.jpg", typ, width))
+			// Logos keep their transparency (PNG); photos are JPEG.
+			ext := "jpg"
+			if typ == "logo" {
+				ext = "png"
+			}
+			variant := filepath.Join(filepath.Dir(img.Path), fmt.Sprintf("%s.w%d.%s", typ, width, ext))
 			if _, err := os.Stat(variant); err != nil {
 				if err := resizeToFile(img.Path, variant, width); err != nil {
 					writeError(w, 500, "resize failed: "+err.Error())
@@ -62,11 +69,25 @@ func (s *Server) getItemImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
+	// The original keeps whatever the provider sent (sniffed); variants are named by format.
+	ctype := "image/jpeg"
+	if strings.HasSuffix(path, ".png") {
+		ctype = "image/png"
+	} else if path == img.Path {
+		head := make([]byte, 512)
+		if n, _ := f.Read(head); n > 0 {
+			if t := http.DetectContentType(head[:n]); strings.HasPrefix(t, "image/") {
+				ctype = t
+			}
+			_, _ = f.Seek(0, 0)
+		}
+	}
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 }
 
+// resizeToFile writes a resized copy; PNG (alpha kept) when dst ends in .png, else JPEG.
 func resizeToFile(src, dst string, width int) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -77,7 +98,12 @@ func resizeToFile(src, dst string, width int) error {
 		return err
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, imaging.Resize(img, width), &jpeg.Options{Quality: 85}); err != nil {
+	resized := imaging.Resize(img, width)
+	if strings.HasSuffix(dst, ".png") {
+		if err := png.Encode(&buf, resized); err != nil {
+			return err
+		}
+	} else if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 85}); err != nil {
 		return err
 	}
 	tmp := dst + ".tmp"

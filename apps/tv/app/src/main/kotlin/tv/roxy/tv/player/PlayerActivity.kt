@@ -394,6 +394,7 @@ class PlayerActivity : ComponentActivity() {
             currentAid = player.currentTrackId("audio"),
             quality = runCatching { player.videoSummary() }.getOrDefault(""),
         )
+        updatePipParams()
         // Auto-skip: jump to the end of a segment the first time the playhead enters it.
         if (autoSkip && !ui.paused) {
             ui.activeSegment?.let { seg ->
@@ -412,19 +413,40 @@ class PlayerActivity : ComponentActivity() {
         scheduleHide()
     }
 
+    private fun pipParams(autoEnter: Boolean): android.app.PictureInPictureParams {
+        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(16, 9))
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            // Auto-enter makes the swipe-home transition a seamless shrink of the live
+            // surface; without it the system takes a screenshot after the fact (a lag and
+            // a black frame). Seamless resize keeps the video drawing while it animates.
+            b.setAutoEnterEnabled(autoEnter).setSeamlessResizeEnabled(true)
+        }
+        return b.build()
+    }
+
+    private var pipAutoEnter: Boolean? = null
+
+    /** Keep the system's PiP parameters current: auto-enter only while playing. */
+    private fun updatePipParams() {
+        if (!pipSupported || isDestroyed) return
+        val want = !ui.paused
+        if (pipAutoEnter == want) return
+        pipAutoEnter = want
+        runCatching { setPictureInPictureParams(pipParams(autoEnter = want)) }
+    }
+
     /** Phone only: shrink to a floating window (the PiP button, and leaving the app while playing). */
     private fun enterPip() {
         if (!pipSupported) return
         hideControls()
-        val params = android.app.PictureInPictureParams.Builder()
-            .setAspectRatio(android.util.Rational(16, 9))
-            .build()
-        runCatching { enterPictureInPictureMode(params) }.onFailure { Timber.w(it, "PiP failed") }
+        runCatching { enterPictureInPictureMode(pipParams(autoEnter = !ui.paused)) }.onFailure { Timber.w(it, "PiP failed") }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (pipSupported && !ui.paused) enterPip()
+        // Android 12+ auto-enters through the params set in updatePipParams(); older
+        // versions need the explicit call here.
+        if (pipSupported && !ui.paused && android.os.Build.VERSION.SDK_INT < 31) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {

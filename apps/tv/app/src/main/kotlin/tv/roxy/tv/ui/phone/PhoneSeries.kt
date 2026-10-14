@@ -19,14 +19,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -60,9 +66,9 @@ import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /**
- * Netflix's phone title page: 16:9 backdrop, title and meta, full-width Play, synopsis,
- * season chips (plus "Movies & OVAs"), then the episode list. Same [SeriesViewModel] as
- * the TV screen.
+ * Netflix's phone title page: 16:9 backdrop, title and meta, full-width Play, My List,
+ * synopsis, a season **dropdown** (One Piece has 40), then the episode list with watched
+ * ticks. Same [SeriesViewModel] as the TV screen; shimmer skeleton while loading.
  */
 @Composable
 fun PhoneSeries(
@@ -81,9 +87,7 @@ fun PhoneSeries(
 
     val series = state.series
     if (series == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(if (state.loading) "Loading $fallbackTitle..." else state.error ?: "Not found", color = if (state.loading) RoxyColors.muted else RoxyColors.error)
-        }
+        if (state.loading) DetailSkeleton(onBack) else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(state.error ?: "Not found", color = RoxyColors.error) }
         return
     }
 
@@ -112,6 +116,7 @@ fun PhoneSeries(
                     val resumable = (next.userData?.positionMs ?: 0) > 0
                     PlayButton(if (resumable) "Resume ${next.episodeCode}" else "Play ${next.episodeCode}".trim(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp), onClick = { play(next) })
                 }
+                MyListButton(series, app.api, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), onChanged = { vm.load() })
                 series.overview?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
@@ -125,16 +130,28 @@ fun PhoneSeries(
         }
         if (state.seasons.isNotEmpty() || state.related.isNotEmpty()) {
             item(key = "seasons") {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = PhonePad),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 18.dp, bottom = 6.dp),
-                ) {
-                    itemsIndexed(state.seasons, key = { _, s -> s.id }) { i, season ->
-                        Chip(season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }, selected = !state.showRelated && i == state.selectedSeason, onClick = { vm.selectSeason(i) })
-                    }
-                    if (state.related.isNotEmpty()) {
-                        item(key = "related-tab") { Chip("Movies & OVAs", selected = state.showRelated, onClick = { vm.selectRelated() }) }
+                val label = when {
+                    state.showRelated -> "Movies & OVAs"
+                    state.seasons.isEmpty() -> "Episodes"
+                    else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
+                }
+                Box(modifier = Modifier.padding(start = PhonePad, top = 18.dp, bottom = 6.dp)) {
+                    var open by remember { mutableStateOf(false) }
+                    Chip(text = label, selected = false, trailing = Icons.Filled.ArrowDropDown, onClick = { open = true })
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+                        state.seasons.forEachIndexed { i, season ->
+                            val name = season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }
+                            DropdownMenuItem(
+                                text = { Text(name, color = Color.White, fontWeight = if (!state.showRelated && i == state.selectedSeason) FontWeight.Bold else FontWeight.Normal) },
+                                onClick = { open = false; vm.selectSeason(i) },
+                            )
+                        }
+                        if (state.related.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("Movies & OVAs", color = Color.White, fontWeight = if (state.showRelated) FontWeight.Bold else FontWeight.Normal) },
+                                onClick = { open = false; vm.selectRelated() },
+                            )
+                        }
                     }
                 }
             }
@@ -148,7 +165,7 @@ fun PhoneSeries(
             }
         } else {
             if (state.episodesLoading && state.episodes.isEmpty()) {
-                item(key = "eps-loading") { Text("Loading episodes...", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
+                items(4) { EpisodeRowSkeleton() }
             } else if (state.episodes.isEmpty()) {
                 item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
             }
@@ -157,6 +174,22 @@ fun PhoneSeries(
             }
         }
     }
+}
+
+/** "+ My List" / "✓ My List": toggles the favourite flag that feeds the Watchlist tab. */
+@Composable
+fun MyListButton(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onChanged: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
+    GreyButton(if (on) "In My List" else "My List", modifier = modifier, icon = if (on) Icons.Filled.Check else Icons.Filled.Add, onClick = {
+        val want = !on
+        on = want
+        scope.launch {
+            runCatching { api.setFavorite(item.id, want) }
+                .onFailure { Timber.w(it, "favorite failed"); on = !want }
+                .onSuccess { onChanged() }
+        }
+    })
 }
 
 /** 16:9 backdrop fading into the page, with the round back button over it. */
@@ -171,11 +204,45 @@ fun Backdrop(item: Item, api: RoxyApi, onBack: () -> Unit) {
     }
 }
 
-/** Netflix's episode row: thumb with a play badge, "N. Title" and runtime, then the synopsis. */
+/** Title page while it loads: backdrop, title lines, button and three episode rows as shimmer. */
+@Composable
+fun DetailSkeleton(onBack: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Bone(Modifier.fillMaxWidth().aspectRatio(16f / 9f), shape = RoundedCornerShape(0.dp))
+            BackCircle(onBack, modifier = Modifier.statusBarsPadding().padding(12.dp))
+        }
+        Column(modifier = Modifier.padding(horizontal = PhonePad)) {
+            BoneLine(width = 240.dp, height = 22.dp, modifier = Modifier.padding(top = 4.dp))
+            BoneLine(width = 160.dp, height = 12.dp, modifier = Modifier.padding(top = 10.dp))
+            Bone(Modifier.fillMaxWidth().height(42.dp).padding(top = 0.dp), shape = RoundedCornerShape(4.dp))
+            BoneLine(width = 320.dp, height = 12.dp, modifier = Modifier.padding(top = 14.dp))
+            BoneLine(width = 280.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
+            BoneLine(width = 200.dp, height = 12.dp, modifier = Modifier.padding(top = 6.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        repeat(3) { EpisodeRowSkeleton() }
+    }
+}
+
+@Composable
+private fun EpisodeRowSkeleton() {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Bone(Modifier.width(130.dp).aspectRatio(16f / 9f), shape = RoundedCornerShape(4.dp))
+            Column { BoneLine(width = 180.dp, height = 14.dp); BoneLine(width = 40.dp, height = 11.dp, modifier = Modifier.padding(top = 8.dp)) }
+        }
+        BoneLine(width = 300.dp, height = 11.dp, modifier = Modifier.padding(top = 10.dp))
+        BoneLine(width = 220.dp, height = 11.dp, modifier = Modifier.padding(top = 5.dp))
+    }
+}
+
+/** Netflix's episode row: thumb with a play badge, "N. Title", runtime and a watched tick, then the synopsis. */
 @Composable
 private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit) {
     val thumbWidth = 130.dp
     val placeholder = !ep.isPlayable
+    val watched = ep.userData?.played == true
     val badge = when (ep.availability) {
         "missing" -> "Missing"
         "unaired" -> ep.airDate?.takeIf { it.isNotBlank() }?.let { "Airs $it" } ?: "Unaired"
@@ -186,7 +253,7 @@ private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(modifier = Modifier.width(thumbWidth).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
-                RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
+                RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.6f else 1f), placeholderTextSize = 12)
                 if (!placeholder) {
                     PlayBadge(size = 34.dp, modifier = Modifier.align(Alignment.Center))
                     ProgressBar(ep.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
@@ -195,13 +262,19 @@ private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 val n = (ep.indexAired ?: ep.indexAbsolute)?.let { "$it. " } ?: ""
                 Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val sub = listOfNotNull(
-                    ep.runtimeMinutes?.let { "${it}m" },
-                    badge,
-                    if (ep.userData?.played == true) "Watched" else null,
-                    if (placeholder && ep.availability == "missing" && !ep.airDate.isNullOrBlank()) "Aired ${ep.airDate}" else null,
-                ).joinToString("  ·  ")
-                if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 3.dp)) {
+                    val sub = listOfNotNull(
+                        ep.runtimeMinutes?.let { "${it}m" },
+                        badge,
+                        if (placeholder && ep.availability == "missing" && !ep.airDate.isNullOrBlank()) "Aired ${ep.airDate}" else null,
+                    ).joinToString("  ·  ")
+                    if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted)
+                    if (watched) {
+                        if (sub.isNotEmpty()) Spacer(Modifier.width(8.dp))
+                        WatchedCheck(size = 15.dp)
+                        Text("Watched", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
+                    }
+                }
             }
         }
         ep.overview?.takeIf { it.isNotBlank() }?.let {

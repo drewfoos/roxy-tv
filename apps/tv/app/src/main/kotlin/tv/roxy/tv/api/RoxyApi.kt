@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -33,6 +34,9 @@ class RoxyApi(private val prefs: Prefs) {
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        // Never hammer the server: at most a handful of calls in flight (images share this
+        // client), the rest queue. The server also rate-limits the JSON API per client.
+        .dispatcher(Dispatcher().apply { maxRequests = 12; maxRequestsPerHost = 6 })
         .addInterceptor(Interceptor { chain ->
             val token = prefs.session.value.token
             val req = chain.request()
@@ -74,6 +78,7 @@ class RoxyApi(private val prefs: Prefs) {
         desc: Boolean = false,
         limit: Int? = null,
         includeSources: Boolean = false,
+        favorites: Boolean = false,
     ): ItemsResponse {
         val q = buildList {
             add("type=$type")
@@ -83,11 +88,40 @@ class RoxyApi(private val prefs: Prefs) {
             if (desc) add("desc=1")
             limit?.let { add("limit=$it") }
             if (includeSources) add("include=sources")
+            if (favorites) add("favorites=1")
         }.joinToString("&")
         return get("/v1/items?$q")
     }
 
     suspend fun item(id: String): Item = get("/v1/items/$id")
+
+    /** The caller's favourites (the Watchlist): series and movies, newest first. */
+    suspend fun favorites(limit: Int = 200): ItemsResponse =
+        items(type = "series,movie", recursive = true, sort = "date_created", desc = true, limit = limit, favorites = true)
+
+    suspend fun setFavorite(itemId: String, on: Boolean) {
+        if (on) postNoBody("/v1/me/favorite/$itemId", "") else delete("/v1/me/favorite/$itemId")
+    }
+
+    suspend fun setPlayed(itemId: String, on: Boolean) {
+        if (on) postNoBody("/v1/me/played/$itemId", "") else delete("/v1/me/played/$itemId")
+    }
+
+    /**
+     * Is the server reachable right now? A fast probe (3 s) of the unauthenticated system
+     * endpoint, for the "you're not on the home network" state. Never throws.
+     */
+    suspend fun reachable(): Boolean = withContext(Dispatchers.IO) {
+        val url = baseUrl
+        if (url.isEmpty()) return@withContext false
+        runCatching {
+            probe.newCall(Request.Builder().url("$url/v1/system/info").get().build()).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
+
+    private val probe: OkHttpClient by lazy {
+        http.newBuilder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).build()
+    }
 
     /**
      * Seek-preview thumbnails for a source: the manifest, or null while the server is still
@@ -192,6 +226,13 @@ class RoxyApi(private val prefs: Prefs) {
         val req = request(path).post(body.toRequestBody(JSON_TYPE)).build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw ApiException(resp.code, "HTTP ${resp.code} POST ${req.url.encodedPath}: ${resp.body.string().take(200)}")
+        }
+    }
+
+    private suspend fun delete(path: String) = withContext(Dispatchers.IO) {
+        val req = request(path).delete().build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw ApiException(resp.code, "HTTP ${resp.code} DELETE ${req.url.encodedPath}: ${resp.body.string().take(200)}")
         }
     }
 

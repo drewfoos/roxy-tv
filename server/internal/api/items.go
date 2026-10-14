@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
@@ -53,6 +54,15 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	if hm := r.URL.Query().Get("hasMedia"); hm != "" {
 		v := hm == "1" || hm == "true"
 		q.HasMedia = &v
+	}
+	// favorites=1: only the caller's favourites (the client's Watchlist).
+	if f := r.URL.Query().Get("favorites"); f == "1" || f == "true" {
+		p := auth.PrincipalFrom(r.Context())
+		if p == nil || p.User == nil {
+			writeError(w, 401, "a user login is required")
+			return
+		}
+		q.FavoriteOf = p.UserID
 	}
 	q.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	q.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))

@@ -80,9 +80,21 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 	if limit <= 0 {
 		limit = 20
 	}
+	// One entry per show: for episodes, keep only the most recently played episode of
+	// each series (grouped by the season's parent); movies stand on their own.
 	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items i
 		JOIN user_item_data u ON u.item_guid = i.guid AND u.user_id = ?
 		WHERE u.position_ms > 0 AND u.played = 0 AND i.type IN ('movie', 'episode')
+		  AND NOT EXISTS (
+		    SELECT 1 FROM items i2
+		    JOIN user_item_data u2 ON u2.item_guid = i2.guid AND u2.user_id = u.user_id
+		    JOIN items s1 ON s1.id = i.parent_id
+		    JOIN items s2 ON s2.id = i2.parent_id
+		    WHERE i.type = 'episode' AND i2.type = 'episode' AND i2.id <> i.id
+		      AND s1.parent_id = s2.parent_id
+		      AND u2.position_ms > 0 AND u2.played = 0
+		      AND (u2.last_played_at > u.last_played_at OR (u2.last_played_at = u.last_played_at AND i2.id > i.id))
+		  )
 		ORDER BY u.last_played_at DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err

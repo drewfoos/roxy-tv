@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	_ "image/png" // AniList covers are sometimes PNG; re-encoded to JPEG on save
+	"image/png" // AniList covers are sometimes PNG (re-encoded to JPEG); logos are kept as PNG
 	"io"
 	"log/slog"
 	"net/http"
@@ -554,12 +554,17 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 
 func newID() string { return uuid.NewString() }
 
-// fetchImage downloads an image into the cache as JPEG and records it. Already-cached
-// files from the same URL are kept.
+// fetchImage downloads an image into the cache and records it: photos (poster, backdrop,
+// thumb) as JPEG, logos as PNG so their transparency survives. Already-cached files from
+// the same URL in the same format are kept.
 func (s *Service) fetchImage(ctx context.Context, itemID, typ, srcURL string) {
 	dir := filepath.Join(s.cfg.ImagesDir(), itemID)
-	path := filepath.Join(dir, typ+".jpg")
-	if existing, err := s.store.GetItemImage(ctx, itemID, typ); err == nil && existing != nil && existing.SourceURL == srcURL {
+	ext := ".jpg"
+	if typ == "logo" {
+		ext = ".png"
+	}
+	path := filepath.Join(dir, typ+ext)
+	if existing, err := s.store.GetItemImage(ctx, itemID, typ); err == nil && existing != nil && existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext {
 		if _, err := os.Stat(existing.Path); err == nil {
 			return
 		}
@@ -588,14 +593,22 @@ func (s *Service) fetchImage(ctx context.Context, itemID, typ, srcURL string) {
 		slog.Warn("metadata: undecodable image", "url", srcURL, "err", err)
 		return
 	}
-	if format != "jpeg" {
+	want := "jpeg"
+	if ext == ".png" {
+		want = "png"
+	}
+	if format != want {
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
 			slog.Warn("metadata: undecodable image", "url", srcURL, "err", err)
 			return
 		}
 		var buf bytes.Buffer
-		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		if want == "png" {
+			if err := png.Encode(&buf, img); err != nil {
+				return
+			}
+		} else if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
 			return
 		}
 		data = buf.Bytes()

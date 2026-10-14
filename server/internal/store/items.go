@@ -203,6 +203,8 @@ type ItemQuery struct {
 	// HasMedia filters on whether a media source exists (nil = no filter). Series and
 	// seasons never have sources themselves; use it for episodes and movies.
 	HasMedia *bool
+	// FavoriteOf restricts to items this user marked as favourite (the watchlist).
+	FavoriteOf string
 }
 
 func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, error) {
@@ -236,6 +238,10 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 		} else {
 			where = append(where, "NOT EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = items.id)")
 		}
+	}
+	if q.FavoriteOf != "" {
+		where = append(where, "EXISTS (SELECT 1 FROM user_item_data u WHERE u.item_guid = items.guid AND u.user_id = ? AND u.is_favorite = 1)")
+		args = append(args, q.FavoriteOf)
 	}
 	sqlWhere := ""
 	if len(where) > 0 {

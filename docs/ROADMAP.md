@@ -74,6 +74,24 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   Settings, Netflix title pages with season chips and episode rows). Navigation moved to
   Navigation Compose with typed routes. Verified on the S25 Ultra, including play and
   return. Screens in `apps/tv/spike-runs/20261014-controls/5*.png`.
+- Also done (2026-10-14, 07:20): phone layout round two from the owner's feedback. Hero is
+  a full-bleed Crunchyroll-style carousel (poster bleeding under logo, "★ 8.5 Dub | Sub •
+  genres", 3-line synopsis, pill Start watching + save circle, story-style timer bars,
+  8 s dwell; selection = continue-watching shows, then newest arrivals, then library),
+  pinned header (witch-hat mark, Cast, Search) that turns black on scroll, compact bottom
+  bar Home / Watchlist / Browse / Account, shimmer skeletons everywhere instead of
+  "Loading…", plain fade transitions, season **dropdown**, watched ticks, My List /
+  Watchlist (favourites), Search, Account page with "coming soon" rows for profiles,
+  notifications, email, password, ToS, privacy. Server: one Continue Watching entry per
+  show, `favorites=1` filter, PNG logos, per-client rate limit; app caps concurrent
+  requests. PiP uses auto-enter (seamless swipe-home on Android 12+).
+- **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
+  Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
+  **profiles** per account with a profile picker at launch, a **Discover** tab that talks
+  to the arr apps through TMDB ("our own request app"), Chromecast if feasible (would need the
+  server to serve HLS; mpv playback does not cast), notifications. Dub | Sub on series
+  slides needs the server to aggregate audio languages per series (today it is derived
+  from the continue-watching episode's streams only).
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.
