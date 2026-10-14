@@ -100,6 +100,15 @@ class PlayerActivity : ComponentActivity() {
     private var controlsVisible by mutableStateOf(true)
     private var sheet by mutableStateOf(Sheet.None)
     private var hideJob: Job? = null
+    private var trickplay by mutableStateOf<TrickplayPreview?>(null)
+    private var lastSid = 0
+    private var autoplay = true
+    private val isTv: Boolean by lazy {
+        (getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager).currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+    private val pipSupported: Boolean by lazy {
+        !isTv && packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
     private var title = ""
     private var subtitleLine = ""
     private var hwdec = ""
@@ -132,6 +141,7 @@ class PlayerActivity : ComponentActivity() {
             ?.let { settings.copy(audioLangs = it).mpvAudioLangs }
             ?: settings.mpvAudioLangs
         showStats = intent.getBooleanExtra(EXTRA_STATS, settings.showStats)
+        autoplay = settings.autoplay
         itemId = intent.getStringExtra(EXTRA_ITEM_ID)
         val sourceId = intent.getStringExtra(EXTRA_SOURCE_ID)
             ?: url.substringAfterLast("/stream/").substringBefore('?').takeIf { it.matches(uuidRegex) }
@@ -154,6 +164,15 @@ class PlayerActivity : ComponentActivity() {
             }
         }
         if (sourceId != null && app.prefs.session.value.isLoggedIn) {
+            // Seek-preview thumbnails: ask once now and, if the server is still generating
+            // them (202), a few more times while the episode plays.
+            lifecycleScope.launch {
+                repeat(6) { attempt ->
+                    val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
+                    if (m != null && m.sheets > 0) { trickplay = TrickplayPreview(app.api, sourceId, m); return@launch }
+                    delay(if (attempt == 0) 5_000 else 20_000)
+                }
+            }
             // Ask the server which language each subtitle track really is, then play.
             lifecycleScope.launch {
                 runCatching { app.api.subtitleStreams(sourceId) }
@@ -172,9 +191,27 @@ class PlayerActivity : ComponentActivity() {
             override fun togglePause() = player.togglePause()
             override fun seekTo(seconds: Double) { player.seekTo(seconds); refreshUi() }
             override fun seekBy(seconds: Int) { player.seekRelative(seconds); refreshUi() }
-            override fun selectSubtitle(id: Int) { player.setSubtitleTrack(id); refreshUi() }
+            override fun selectSubtitle(id: Int) { if (id > 0) lastSid = id; player.setSubtitleTrack(id); refreshUi() }
             override fun selectAudio(id: Int) { player.setAudioTrack(id); refreshUi() }
             override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi() }
+            override fun toggleMute() { player.setMuted(!player.isMuted()); refreshUi() }
+            override fun toggleCaptions() {
+                // CC button: off <-> the last chosen track (or the first one).
+                val current = player.currentTrackId("sub")
+                if (current > 0) { lastSid = current; player.setSubtitleTrack(0) } else {
+                    val target = lastSid.takeIf { it > 0 } ?: ui.subtitleTracks.firstOrNull()?.id ?: 0
+                    player.setSubtitleTrack(target)
+                }
+                refreshUi()
+            }
+            override fun toggleAutoplay() {
+                autoplay = !autoplay
+                app.scope.launch { app.prefs.saveSettings(app.prefs.settings.value.copy(autoplay = autoplay)) }
+                refreshUi()
+            }
+            override fun toggleFill() { player.setFill(!player.isFill()); refreshUi() }
+            override fun enterPip() { this@PlayerActivity.enterPip() }
+            override fun next() { /* next-episode queue arrives with the series player session */ }
             override fun back() = finish()
         }
         scheduleHide()
@@ -196,6 +233,7 @@ class PlayerActivity : ComponentActivity() {
                     onSheet = { s -> sheet = s; showControls() },
                     onInteraction = { showControls() },
                     actions = actions,
+                    trickplay = trickplay,
                 )
                 osd?.let { text ->
                     Box(
@@ -261,7 +299,11 @@ class PlayerActivity : ComponentActivity() {
             durationSec = player.durationSeconds() ?: 0.0,
             bufferedSec = player.cacheEndSeconds() ?: 0.0,
             paused = player.isPaused(),
+            muted = player.isMuted(),
             speed = player.speed(),
+            autoplay = autoplay,
+            fillScreen = player.isFill(),
+            pipSupported = pipSupported,
             subtitleTracks = tracks.filter { it.type == "sub" },
             audioTracks = tracks.filter { it.type == "audio" },
             currentSid = player.currentTrackId("sub"),
@@ -271,8 +313,29 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun showControls() {
+        if (isInPictureInPictureMode) return
         controlsVisible = true
         scheduleHide()
+    }
+
+    /** Phone only: shrink to a floating window (the PiP button, and leaving the app while playing). */
+    private fun enterPip() {
+        if (!pipSupported) return
+        hideControls()
+        val params = android.app.PictureInPictureParams.Builder()
+            .setAspectRatio(android.util.Rational(16, 9))
+            .build()
+        runCatching { enterPictureInPictureMode(params) }.onFailure { Timber.w(it, "PiP failed") }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (pipSupported && !ui.paused) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) hideControls() else showControls()
     }
 
     private fun hideControls() {
@@ -347,7 +410,11 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        if (::player.isInitialized) reportProgress("stop")
+        if (::player.isInitialized) {
+            reportProgress("stop")
+            // Leaving without PiP (screen off, task switch): pause so audio does not keep playing.
+            if (!isInPictureInPictureMode) player.setPaused(true)
+        }
         super.onStop()
     }
 

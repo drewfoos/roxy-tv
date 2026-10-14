@@ -40,6 +40,8 @@
         <activity
             android:name=".player.PlayerActivity"
             android:exported="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
             tools:ignore="ExportedActivity"
             android:launchMode="singleTask"

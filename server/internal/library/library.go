@@ -43,6 +43,9 @@ type Library struct {
 	// movie) after a file is ingested, and for every top-level item at the end of a full
 	// scan. cmd/roxy wires it to the metadata service; this package must not import it.
 	OnItemIngested func(itemID string)
+	// OnSourceIngested, when set, is called with the media source id after a file is
+	// ingested (trickplay generation).
+	OnSourceIngested func(sourceID string)
 }
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
@@ -247,6 +250,9 @@ func (l *Library) AddFile(ctx context.Context, lib model.Library, path string) e
 		if top, err := l.store.TopLevelID(ctx, item.ID); err == nil {
 			l.OnItemIngested(top)
 		}
+	}
+	if l.OnSourceIngested != nil {
+		l.OnSourceIngested(sourceID)
 	}
 	return nil
 }

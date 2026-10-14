@@ -34,6 +34,8 @@ data class PlayerSettings(
     /** "full" | "signs" | "none" */
     val subMode: String = "full",
     val showStats: Boolean = false,
+    /** Play the next episode when one ends (the player's Autoplay switch). */
+    val autoplay: Boolean = true,
 ) {
     /** mpv `alang` list: each 3-letter code followed by its 2-letter twin, since tags vary. */
     val mpvAudioLangs: List<String>
@@ -103,6 +105,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_ALANG] = s.audioLangs.joinToString(",")
             it[KEY_SUBMODE] = s.subMode
             it[KEY_STATS] = s.showStats
+            it[KEY_AUTOPLAY] = s.autoplay
         }
     }
 
@@ -120,6 +123,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             audioLangs = this[KEY_ALANG]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: d.audioLangs,
             subMode = this[KEY_SUBMODE] ?: d.subMode,
             showStats = this[KEY_STATS] ?: d.showStats,
+            autoplay = this[KEY_AUTOPLAY] ?: d.autoplay,
         )
     }
 
@@ -132,5 +136,6 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_ALANG = stringPreferencesKey("audio_langs")
         val KEY_SUBMODE = stringPreferencesKey("sub_mode")
         val KEY_STATS = booleanPreferencesKey("show_stats")
+        val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
     }
 }

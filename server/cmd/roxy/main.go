@@ -23,6 +23,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
+	"github.com/roxy-media/roxy/server/internal/trickplay"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/probe"
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -125,26 +126,33 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	meta.Start(ctx)
 	lib.OnItemIngested = meta.Enqueue
 
+	// Seek-preview thumbnails, generated after ingest (and swept for anything missing).
+	trick := trickplay.New(db, ff, cfg)
+	trick.Start(ctx)
+	lib.OnSourceIngested = trick.Enqueue
+
 	if cfg.ScanOnStart {
 		go func() {
 			if err := lib.ScanAll(ctx); err != nil {
 				slog.Error("initial scan failed", "err", err)
 			}
+			trick.SweepMissing(ctx)
 		}()
 	} else {
-		// No scan: still sweep for missing/stale metadata.
+		// No scan: still sweep for missing/stale metadata and thumbnails.
 		go func() {
 			if ids, err := db.TopLevelItemIDs(ctx); err == nil {
 				for _, id := range ids {
 					meta.Enqueue(id)
 				}
 			}
+			trick.SweepMissing(ctx)
 		}()
 	}
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           api.NewRouter(cfg, db, lib, ff, authSvc, meta),
+		Handler:           api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

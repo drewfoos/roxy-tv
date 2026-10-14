@@ -89,6 +89,27 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun item(id: String): Item = get("/v1/items/$id")
 
+    /**
+     * Seek-preview thumbnails for a source: the manifest, or null while the server is still
+     * generating them (202) or has none (404). Sheets come from [trickplaySheetUrl].
+     */
+    suspend fun trickplay(sourceId: String): TrickplayManifest? = withContext(Dispatchers.IO) {
+        http.newCall(request("/v1/sources/$sourceId/trickplay").get().build()).execute().use { resp ->
+            if (resp.code != 200) return@withContext null
+            json.decodeFromString<TrickplayManifest>(resp.body.string())
+        }
+    }
+
+    fun trickplaySheetUrl(sourceId: String, sheet: Int): String = "$baseUrl/v1/sources/$sourceId/trickplay/$sheet"
+
+    /** Raw bytes of an authenticated URL (sheets, attachments). */
+    suspend fun bytes(url: String): ByteArray = withContext(Dispatchers.IO) {
+        http.newCall(okhttp3.Request.Builder().url(url).get().build()).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} GET $url")
+            resp.body.bytes()
+        }
+    }
+
     /** Franchise view: movies/OVAs/side stories linked to an item, and the series it is part of. */
     suspend fun related(id: String): RelatedResponse = get("/v1/items/$id/related")
 
@@ -232,6 +253,23 @@ data class UserData(
     val isFavorite: Boolean = false,
     val lastPlayedAt: String? = null,
 )
+
+@Serializable
+data class TrickplayManifest(
+    val intervalMs: Int = 10_000,
+    val width: Int = 320,
+    val height: Int = 180,
+    val columns: Int = 10,
+    val rows: Int = 10,
+    val count: Int = 0,
+    val sheets: Int = 0,
+) {
+    val perSheet: Int get() = columns * rows
+    fun tileIndex(positionSec: Double): Int = ((positionSec * 1000) / intervalMs).toInt().coerceIn(0, (count - 1).coerceAtLeast(0))
+    fun sheetOf(tile: Int): Int = tile / perSheet
+    fun columnOf(tile: Int): Int = (tile % perSheet) % columns
+    fun rowOf(tile: Int): Int = (tile % perSheet) / columns
+}
 
 @Serializable
 data class RelatedResponse(val related: List<RelatedEntry> = emptyList(), val partOf: List<Item> = emptyList())

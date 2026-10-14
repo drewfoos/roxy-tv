@@ -169,6 +169,24 @@ func (s *Store) ListPartPaths(ctx context.Context, libraryID int64) (map[string]
 	return out, rows.Err()
 }
 
+// AllSourceIDs lists every media source id, newest items first.
+func (s *Store) AllSourceIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ms.id FROM media_sources ms JOIN items i ON i.id = ms.item_id ORDER BY i.date_created DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) DeleteSource(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM media_sources WHERE id = ?`, id)
 	return err

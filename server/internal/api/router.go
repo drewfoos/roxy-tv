@@ -17,6 +17,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
 	"github.com/roxy-media/roxy/server/internal/store"
+	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
 
 type Server struct {
@@ -26,11 +27,12 @@ type Server struct {
 	ff      *ffmpeg.FFmpeg
 	authSvc *auth.Service
 	meta    *metadata.Service // may be nil (scan-only runs)
+	trick   *trickplay.Service
 	start   time.Time
 }
 
-func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service) http.Handler {
-	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, start: time.Now()}
+func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service) http.Handler {
+	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, start: time.Now()}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
@@ -66,6 +68,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/sources/{id}", s.getSource)
 			r.Get("/sources/{id}/attachments/{index}", s.getAttachment)
 			r.Get("/sources/{id}/subtitles/{index}", s.getSubtitle)
+			r.Get("/sources/{id}/trickplay", s.trickplayManifest)
+			r.Get("/sources/{id}/trickplay/{n}", s.trickplaySheet)
 			r.Get("/stream/{id}", s.stream)
 			r.Head("/stream/{id}", s.stream)
 		})

@@ -198,6 +198,15 @@ class MpvPlayer(
 
     fun setSpeed(speed: Double) = mpv.setPropertyDouble("speed", speed)
 
+    fun isMuted(): Boolean = bool("mute") ?: false
+
+    fun setMuted(muted: Boolean) = mpv.setPropertyBoolean("mute", muted)
+
+    /** Crop-to-fill (panscan 1) vs letterbox (0): the "fullscreen" button on phones. */
+    fun setFill(fill: Boolean) = mpv.setPropertyDouble("panscan", if (fill) 1.0 else 0.0)
+
+    fun isFill(): Boolean = (dbl("panscan") ?: 0.0) > 0.5
+
     fun speed(): Double = dbl("speed") ?: 1.0
 
     /** Current mpv track id for "sub" or "audio" (0 when off / none). */
