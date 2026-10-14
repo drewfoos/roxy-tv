@@ -107,12 +107,16 @@ Images go through Coil with the API's OkHttp client, so every request carries
 `Authorization: Bearer`; URLs are `serverUrl + images[type] + ?w=<card px>`. Items without
 an `images` entry never hit the network.
 
-Player controls (`player/PlayerControls.kt`, YouTube-style): tap the video or press any
-key to show them; they auto-hide after 4 s unless paused or a sheet is open. Title row
-with back button, centre ±10 s and play/pause, seek bar (buffered range shown) with
-times, and pills for **Subtitles** (Off + every track, language first), **Audio**,
-**Quality** (direct play only until server transcoding exists) and **Speed**. Every
-control is D-pad focusable; Left/Right on the seek bar seeks.
+Player controls (`player/PlayerControls.kt`), laid out like YouTube: tap the video or
+press any key to show them; they auto-hide after 4 s unless paused or a sheet is open.
+Top: back + title. Centre: -10 s, play/pause, +10 s (big targets for the remote).
+Bottom: red seek bar with a round thumb and the buffered range; while dragging or
+stepping it shows the **trickplay preview** (server-generated thumbnail for that time).
+Button row, left: play/pause, mute, `elapsed / total`; right: **Autoplay** switch, **CC**
+(toggles the last subtitle track; the Settings sheet picks a specific one), **Settings**
+(quality, playback speed, audio, subtitles), **picture-in-picture** (phones only; also
+entered automatically when leaving the app while playing), **fill/fit** (crop to the
+screen or letterbox). Every control is D-pad focusable.
 
 | Key | Action |
 |---|---|

@@ -110,6 +110,18 @@ and mostly recaps.
   "wanted" view). `/v1/home` rows only ever contain real items.
 - Placeholders the provider stops listing are removed on the next refresh.
 
+## Trickplay (seek-preview thumbnails)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/sources/{id}/trickplay` | `200` manifest `{intervalMs, width, height, columns, rows, count, sheets, generatedAt}`; `202 {"status":"generating"}` after queueing (retry later); `404` unknown source |
+| GET | `/v1/sources/{id}/trickplay/{n}` | sheet `n` (0-based), JPEG, immutable cache headers |
+
+Generated server-side after ingest (one keyframe every 10 s, 320 px wide, 10×10 tiles
+per sheet, `data/cache/trickplay/<source>/`) and swept for missing sources at startup.
+Tile for time `t`: index `floor(t / intervalMs)`, sheet `index / (columns*rows)`, column
+`(index % per_sheet) % columns`, row `(index % per_sheet) / columns`.
+
 ## Related titles (franchise view)
 
 | Method | Path | Notes |

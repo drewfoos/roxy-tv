@@ -52,6 +52,11 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   via ldflags for release images): Season 2 titles and episode descriptions, Season 3 as a
   missing season, Toy Story and Legend of Crimson posters/logos/taglines all verified on
   the phone. Source is on GitHub: private `drewfoos/roxy-tv`.
+- Also done (2026-10-14, early hours): server-side **trickplay** thumbnails (10 s
+  keyframes, tiled sheets, ~9 s per episode), and the player got a **YouTube-layout
+  control bar** with scrubbing preview, Autoplay switch, CC toggle, Settings sheet,
+  picture-in-picture, mute and fill. All verified on the phone (PiP via button and via
+  Home). Screens in `apps/tv/spike-runs/20261014-controls/`.
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.
