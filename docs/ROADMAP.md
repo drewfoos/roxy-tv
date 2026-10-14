@@ -57,6 +57,13 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   control bar** with scrubbing preview, Autoplay switch, CC toggle, Settings sheet,
   picture-in-picture, mute and fill. All verified on the phone (PiP via button and via
   Home). Screens in `apps/tv/spike-runs/20261014-controls/`.
+- Also done (2026-10-14, 03:30): owner feedback round on the player. Seek bar redrawn by
+  hand (full width, red from 0:00, round thumb), trickplay preview aspect fixed, Settings
+  is now a YouTube-style popup that closes on tap-away, Autoplay switch removed (always
+  on), and **Skip intro / Skip outro** with an **auto-skip** option: the server detects
+  OP/ED from chapter markers (`media_segments`, migration 0006; 22 of 36 episodes in the
+  test library have them) and the app shows the pill or jumps automatically. All verified
+  on the phone. The TV is a TCL 65" Q77K (Google TV), so the same APK sideloads.
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.

@@ -46,6 +46,9 @@ type Library struct {
 	// OnSourceIngested, when set, is called with the media source id after a file is
 	// ingested (trickplay generation).
 	OnSourceIngested func(sourceID string)
+	// Force makes the next scan re-probe files whose size and mtime are unchanged
+	// (after a probe/segment change). Reset to false when the scan completes.
+	Force bool
 }
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
@@ -135,7 +138,7 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 		}
 		if _, ok := known[path]; ok {
 			part, err := l.store.GetPartByPath(ctx, path)
-			if err == nil && part != nil && part.Size == info.Size() && part.ModTime.Equal(info.ModTime().UTC().Truncate(time.Millisecond)) {
+			if !l.Force && err == nil && part != nil && part.Size == info.Size() && part.ModTime.Equal(info.ModTime().UTC().Truncate(time.Millisecond)) {
 				skipped++
 				return nil
 			}
@@ -169,7 +172,8 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 	} else if n > 0 {
 		slog.Info("pruned orphaned items", "count", n)
 	}
-	slog.Info("scan complete", "library", lib.Name, "added", added, "updated", updated, "unchanged", skipped, "removed", removed, "took", time.Since(start).Round(time.Millisecond))
+	slog.Info("scan complete", "library", lib.Name, "added", added, "updated", updated, "unchanged", skipped, "removed", removed, "forced", l.Force, "took", time.Since(start).Round(time.Millisecond))
+	l.Force = false
 	return nil
 }
 
@@ -213,6 +217,7 @@ func (l *Library) AddFile(ctx context.Context, lib model.Library, path string) e
 		}},
 		Streams:     res.Streams,
 		Attachments: res.Attachments,
+		Segments:    segmentsFromChapters(res.Chapters, res.DurationMs),
 	}
 	for i := range src.Streams {
 		src.Streams[i].SourceID = sourceID

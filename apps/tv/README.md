@@ -112,11 +112,21 @@ press any key to show them; they auto-hide after 4 s unless paused or a sheet is
 Top: back + title. Centre: -10 s, play/pause, +10 s (big targets for the remote).
 Bottom: red seek bar with a round thumb and the buffered range; while dragging or
 stepping it shows the **trickplay preview** (server-generated thumbnail for that time).
-Button row, left: play/pause, mute, `elapsed / total`; right: **Autoplay** switch, **CC**
-(toggles the last subtitle track; the Settings sheet picks a specific one), **Settings**
-(quality, playback speed, audio, subtitles), **picture-in-picture** (phones only; also
-entered automatically when leaving the app while playing), **fill/fit** (crop to the
-screen or letterbox). Every control is D-pad focusable.
+Button row, left: play/pause, mute, `elapsed / total`; right: **CC** (toggles the last
+subtitle track), **Settings** (a YouTube-style popup above the gear: quality, playback
+speed, audio, subtitles, auto-skip; tapping anywhere else closes it), **picture-in-picture**
+(phones only; also entered automatically when leaving the app while playing), **fill/fit**
+(crop to the screen or letterbox). Autoplay of the next episode is always on, so there is
+no switch for it. The seek bar is drawn by hand (full width, red from 0:00, round thumb;
+intro/outro ranges show as lighter ticks).
+
+**Skip intro / outro.** The server derives skippable segments from chapter markers
+(`segments` on the media source: an OP-length chapter near the start, an ED-length one
+near the end, plus a short preview after the ED). While the playhead is inside one, a
+"Skip intro" / "Skip outro" pill sits bottom-right over the video, visible even with the
+controls hidden. **Auto-skip intro & outro** in the Settings popup jumps over them
+automatically (persisted; seeking back into a segment re-arms it). Files without chapters
+get no segments yet; audio fingerprinting across a season is the follow-up.
 
 | Key | Action |
 |---|---|

@@ -115,6 +115,15 @@ type MediaSource struct {
 	Parts        []MediaPart   `json:"parts,omitempty"`
 	Streams      []MediaStream `json:"streams,omitempty"`
 	Attachments  []Attachment  `json:"attachments,omitempty"`
+	// Segments are skippable ranges (intro, outro, recap, preview) in milliseconds.
+	Segments []MediaSegment `json:"segments,omitempty"`
+}
+
+type MediaSegment struct {
+	Type    string `json:"type"` // intro | outro | recap | preview
+	StartMs int64  `json:"startMs"`
+	EndMs   int64  `json:"endMs"`
+	Origin  string `json:"origin,omitempty"` // chapters | fingerprint | manual
 }
 
 type MediaPart struct {

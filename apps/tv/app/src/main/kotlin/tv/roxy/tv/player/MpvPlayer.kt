@@ -389,7 +389,12 @@ class MpvPlayer(
     override fun event(eventId: Int) {
         when (eventId) {
             MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
-                Timber.i("file loaded: codec=%s hwdec=%s", str("video-codec"), str("hwdec-current"))
+                Timber.i("file loaded: codec=%s hwdec=%s start-opt=%s time-pos=%s", str("video-codec"), str("hwdec-current"), str("start"), str("time-pos"))
+                // Belt and braces: the `start` option is set before init, but seek anyway if
+                // the file came up at 0 (seen on the refactored player; cheap to be sure).
+                if (options.startSeconds > 0 && (dbl("time-pos") ?: 0.0) < options.startSeconds - 2.0) {
+                    seekTo(options.startSeconds.toDouble())
+                }
                 applyTrackPolicy()
                 listener?.onFileLoaded()
             }

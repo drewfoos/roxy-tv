@@ -344,6 +344,7 @@ data class Item(
         val isPrimary: Boolean = false,
         val streams: List<MediaStream> = emptyList(),
         val attachments: List<Attachment> = emptyList(),
+        val segments: List<MediaSegment> = emptyList(),
     )
 
     val isPlayable: Boolean get() = hasMedia && availability != "missing" && availability != "unaired"
@@ -387,7 +388,16 @@ data class MediaSource(
     val durationMs: Long? = null,
     val streams: List<MediaStream> = emptyList(),
     val attachments: List<Attachment> = emptyList(),
+    val segments: List<MediaSegment> = emptyList(),
 )
+
+/** A skippable range: intro | outro | recap | preview. */
+@Serializable
+data class MediaSegment(val type: String, val startMs: Long, val endMs: Long, val origin: String? = null) {
+    val startSec: Double get() = startMs / 1000.0
+    val endSec: Double get() = endMs / 1000.0
+    val label: String get() = when (type) { "intro" -> "Skip intro"; "outro" -> "Skip outro"; "recap" -> "Skip recap"; "preview" -> "Skip preview"; else -> "Skip" }
+}
 
 @Serializable
 data class MediaStream(

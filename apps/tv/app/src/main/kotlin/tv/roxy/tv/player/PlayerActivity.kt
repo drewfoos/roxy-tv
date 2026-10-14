@@ -102,7 +102,9 @@ class PlayerActivity : ComponentActivity() {
     private var hideJob: Job? = null
     private var trickplay by mutableStateOf<TrickplayPreview?>(null)
     private var lastSid = 0
-    private var autoplay = true
+    private var autoSkip = false
+    private var segments: List<tv.roxy.tv.api.MediaSegment> = emptyList()
+    private val skipped = HashSet<String>() // segment types auto-skipped this playback
     private val isTv: Boolean by lazy {
         (getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager).currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
@@ -141,7 +143,7 @@ class PlayerActivity : ComponentActivity() {
             ?.let { settings.copy(audioLangs = it).mpvAudioLangs }
             ?: settings.mpvAudioLangs
         showStats = intent.getBooleanExtra(EXTRA_STATS, settings.showStats)
-        autoplay = settings.autoplay
+        autoSkip = settings.autoSkip
         itemId = intent.getStringExtra(EXTRA_ITEM_ID)
         val sourceId = intent.getStringExtra(EXTRA_SOURCE_ID)
             ?: url.substringAfterLast("/stream/").substringBefore('?').takeIf { it.matches(uuidRegex) }
@@ -164,6 +166,12 @@ class PlayerActivity : ComponentActivity() {
             }
         }
         if (sourceId != null && app.prefs.session.value.isLoggedIn) {
+            // Skippable segments (intro/outro) from the server's chapter analysis.
+            lifecycleScope.launch {
+                runCatching { app.api.source(sourceId).segments }
+                    .onSuccess { segs -> segments = segs; segs.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) } }
+                    .onFailure { Timber.w(it, "segments for %s", sourceId) }
+            }
             // Seek-preview thumbnails: ask once now and, if the server is still generating
             // them (202), a few more times while the episode plays.
             lifecycleScope.launch {
@@ -189,7 +197,11 @@ class PlayerActivity : ComponentActivity() {
 
         val actions = object : PlayerActions {
             override fun togglePause() = player.togglePause()
-            override fun seekTo(seconds: Double) { player.seekTo(seconds); refreshUi() }
+            override fun seekTo(seconds: Double) {
+                // A manual seek backwards into a segment re-arms its auto-skip.
+                segments.filter { seconds < it.startSec }.forEach { skipped.remove(it.type) }
+                player.seekTo(seconds); refreshUi()
+            }
             override fun seekBy(seconds: Int) { player.seekRelative(seconds); refreshUi() }
             override fun selectSubtitle(id: Int) { if (id > 0) lastSid = id; player.setSubtitleTrack(id); refreshUi() }
             override fun selectAudio(id: Int) { player.setAudioTrack(id); refreshUi() }
@@ -204,9 +216,9 @@ class PlayerActivity : ComponentActivity() {
                 }
                 refreshUi()
             }
-            override fun toggleAutoplay() {
-                autoplay = !autoplay
-                app.scope.launch { app.prefs.saveSettings(app.prefs.settings.value.copy(autoplay = autoplay)) }
+            override fun toggleAutoSkip() {
+                autoSkip = !autoSkip
+                app.scope.launch { app.prefs.saveSettings(app.prefs.settings.value.copy(autoSkip = autoSkip)) }
                 refreshUi()
             }
             override fun toggleFill() { player.setFill(!player.isFill()); refreshUi() }
@@ -301,15 +313,26 @@ class PlayerActivity : ComponentActivity() {
             paused = player.isPaused(),
             muted = player.isMuted(),
             speed = player.speed(),
-            autoplay = autoplay,
             fillScreen = player.isFill(),
             pipSupported = pipSupported,
+            segments = segments,
+            autoSkip = autoSkip,
             subtitleTracks = tracks.filter { it.type == "sub" },
             audioTracks = tracks.filter { it.type == "audio" },
             currentSid = player.currentTrackId("sub"),
             currentAid = player.currentTrackId("audio"),
             quality = runCatching { player.videoSummary() }.getOrDefault(""),
         )
+        // Auto-skip: jump to the end of a segment the first time the playhead enters it.
+        if (autoSkip && !ui.paused) {
+            ui.activeSegment?.let { seg ->
+                if (skipped.add(seg.type)) {
+                    Timber.i("auto-skip %s -> %.1f s", seg.type, seg.endSec)
+                    player.seekTo(seg.endSec)
+                    flashOsd("Skipped ${seg.type}")
+                }
+            }
+        }
     }
 
     private fun showControls() {

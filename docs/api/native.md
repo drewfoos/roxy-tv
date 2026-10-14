@@ -110,6 +110,17 @@ and mostly recaps.
   "wanted" view). `/v1/home` rows only ever contain real items.
 - Placeholders the provider stops listing are removed on the next refresh.
 
+## Segments (skip intro / outro)
+
+`MediaSource.segments[]`: `{type: intro | outro | recap | preview, startMs, endMs,
+origin}`. Derived at ingest from the file's chapter markers (`origin: "chapters"`): a
+55..125 s chapter starting within the first 4 minutes is the intro, one of that length
+starting in the last 5 minutes is the outro, a chapter of 45 s or less right after the
+outro is the preview. Movies (long chapters only) get none. `POST
+/v1/libraries/scan?force=1` re-probes unchanged files, which is how existing items pick
+segments up after a probe change. Planned origins: `fingerprint` (audio match across a
+season for files without chapters) and `manual`.
+
 ## Trickplay (seek-preview thumbnails)
 
 | Method | Path | Notes |

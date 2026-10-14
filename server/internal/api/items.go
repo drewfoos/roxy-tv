@@ -23,7 +23,11 @@ func (s *Server) listLibraries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"libraries": libs})
 }
 
+// POST /v1/libraries/scan?force=1 re-probes unchanged files too.
 func (s *Server) scanAll(w http.ResponseWriter, r *http.Request) {
+	if f := r.URL.Query().Get("force"); f == "1" || f == "true" {
+		s.lib.Force = true
+	}
 	// Detached from the request context: the scan must outlive this 202 response.
 	go func() { _ = s.lib.ScanAll(context.Background()) }()
 	w.WriteHeader(http.StatusAccepted)

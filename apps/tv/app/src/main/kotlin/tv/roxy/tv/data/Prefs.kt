@@ -34,8 +34,10 @@ data class PlayerSettings(
     /** "full" | "signs" | "none" */
     val subMode: String = "full",
     val showStats: Boolean = false,
-    /** Play the next episode when one ends (the player's Autoplay switch). */
+    /** Play the next episode when one ends. Always on; kept as a field for the queue logic. */
     val autoplay: Boolean = true,
+    /** Jump over intro/outro segments automatically instead of showing a Skip button. */
+    val autoSkip: Boolean = false,
 ) {
     /** mpv `alang` list: each 3-letter code followed by its 2-letter twin, since tags vary. */
     val mpvAudioLangs: List<String>
@@ -106,6 +108,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_SUBMODE] = s.subMode
             it[KEY_STATS] = s.showStats
             it[KEY_AUTOPLAY] = s.autoplay
+            it[KEY_AUTOSKIP] = s.autoSkip
         }
     }
 
@@ -124,6 +127,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             subMode = this[KEY_SUBMODE] ?: d.subMode,
             showStats = this[KEY_STATS] ?: d.showStats,
             autoplay = this[KEY_AUTOPLAY] ?: d.autoplay,
+            autoSkip = this[KEY_AUTOSKIP] ?: d.autoSkip,
         )
     }
 
@@ -137,5 +141,6 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_SUBMODE = stringPreferencesKey("sub_mode")
         val KEY_STATS = booleanPreferencesKey("show_stats")
         val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
+        val KEY_AUTOSKIP = booleanPreferencesKey("auto_skip")
     }
 }

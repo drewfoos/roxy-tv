@@ -29,7 +29,7 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 		src.ID, src.ItemID, nullStr(src.Name), nullStr(src.Container), src.Size, src.DurationMs, nullInt64(src.Bitrate), nullStr(src.VersionLabel), boolInt(src.IsPrimary), now, nullStr(probeJSON)); err != nil {
 		return err
 	}
-	for _, t := range []string{"media_parts", "media_streams", "attachments"} {
+	for _, t := range []string{"media_parts", "media_streams", "attachments", "media_segments"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE source_id = ?`, src.ID); err != nil {
 			return err
 		}
@@ -58,6 +58,13 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO attachments (source_id, stream_index, filename, mime, extracted_path, extracted_at) VALUES (?,?,?,?,?,?)`,
 			src.ID, a.Index, a.Filename, nullStr(a.Mime), nullStr(a.ExtractedPath), at); err != nil {
+			return err
+		}
+	}
+	for _, sg := range src.Segments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_segments (source_id, type, start_ms, end_ms, origin) VALUES (?,?,?,?,?)
+			ON CONFLICT(source_id, type) DO UPDATE SET start_ms = excluded.start_ms, end_ms = excluded.end_ms, origin = excluded.origin`,
+			src.ID, sg.Type, sg.StartMs, sg.EndMs, sg.Origin); err != nil {
 			return err
 		}
 	}
@@ -263,6 +270,23 @@ func (s *Store) loadSourceChildren(ctx context.Context, src *model.MediaSource) 
 			}
 		}
 		src.Attachments = append(src.Attachments, a)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	rows, err = s.db.QueryContext(ctx, `SELECT type, start_ms, end_ms, origin FROM media_segments WHERE source_id = ? ORDER BY start_ms`, src.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sg model.MediaSegment
+		if err := rows.Scan(&sg.Type, &sg.StartMs, &sg.EndMs, &sg.Origin); err != nil {
+			return err
+		}
+		src.Segments = append(src.Segments, sg)
 	}
 	_ = time.Now
 	return rows.Err()
