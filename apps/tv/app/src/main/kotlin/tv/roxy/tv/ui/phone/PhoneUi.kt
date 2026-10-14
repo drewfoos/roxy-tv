@@ -129,8 +129,8 @@ fun TitleCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
             RoxyImage(api.imageUrl(item, "poster", widthPx(width) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
         }
-        // Two lines reserved so the Dub | Sub row lines up across the cards in a row.
-        Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        // One line, so every card in a row is the same height (the full name is on the title page).
+        Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
             Text(
                 audioBadge(item) ?: listOfNotNull(item.year?.toString(), if (item.isMovie) "Movie" else null).joinToString("  ·  "),
@@ -247,16 +247,25 @@ fun audioBadge(play: Item?): String? {
     if (play == null) return null
     val fromServer = play.audioLanguages.map { it.lowercase() }
     val langs = (if (fromServer.isNotEmpty()) fromServer else play.primarySource?.streams.orEmpty().filter { it.type == "audio" }.mapNotNull { it.language?.lowercase() })
-        .filter { it != "und" }.toSet()
+        .filter { it != "und" }.distinct()
     if (langs.isEmpty()) return null
     val eng = langs.any { it == "eng" || it == "en" }
     val other = langs.any { it != "eng" && it != "en" }
+    val anime = play.genres.any { it.equals("Animation", true) || it.equals("Anime", true) }
     return when {
-        eng && other -> "Dub | Sub"
-        other -> "Sub"
-        play.genres.any { it.equals("Animation", true) } -> "Dub"
-        else -> null
+        // Anime: the Dub / Sub vocabulary.
+        anime && eng && other -> "Dub | Sub"
+        anime && other -> "Sub"
+        anime -> "Dub"
+        // Everything else: the language names ("English", "English, French").
+        else -> langs.take(3).joinToString(", ") { languageName(it) }
     }
+}
+
+/** "eng" → "English", via the platform's ISO 639 tables; unknown codes are shown upper-cased. */
+fun languageName(code: String): String {
+    val name = runCatching { java.util.Locale(code).getDisplayLanguage(java.util.Locale.ENGLISH) }.getOrNull()
+    return if (name.isNullOrEmpty() || name.equals(code, ignoreCase = true)) code.uppercase() else name
 }
 
 /** Small translucent pill over a card ("Dub | Sub"). */
