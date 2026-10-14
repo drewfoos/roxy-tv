@@ -31,6 +31,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		s.fillSeriesRefs(ctx, items)
 		fillAvailability(items)
 		s.attachUserData(ctx, items)
+		s.fillAudioLanguages(ctx, items)
 		rows = append(rows, homeRow{Key: key, Title: title, Items: items})
 		return true
 	}
@@ -64,12 +65,19 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Streams ride along on the "recently added" rows too (Dub | Sub on the cards).
+	for i := range perSeries {
+		perSeries[i].Sources, _ = s.store.SourcesForItem(ctx, perSeries[i].ID)
+	}
 	if !add("recentEpisodes", "Recently Added Episodes", perSeries, err) {
 		return
 	}
 
 	withMedia := true
 	movies, _, err := s.store.ListItems(ctx, store.ItemQuery{Types: []model.ItemType{model.TypeMovie}, SortBy: "date_created", Desc: true, Limit: 20, HasMedia: &withMedia})
+	for i := range movies {
+		movies[i].Sources, _ = s.store.SourcesForItem(ctx, movies[i].ID)
+	}
 	if !add("recentMovies", "Recently Added Movies", movies, err) {
 		return
 	}
@@ -82,6 +90,26 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"rows": rows})
+}
+
+// fillAudioLanguages sets AudioLanguages on the series and movies in a batch (one query).
+func (s *Server) fillAudioLanguages(ctx context.Context, items []model.Item) {
+	var ids []string
+	for i := range items {
+		if items[i].Type == model.TypeSeries || items[i].Type == model.TypeMovie {
+			ids = append(ids, items[i].ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	langs, err := s.store.AudioLanguagesFor(ctx, ids)
+	if err != nil {
+		return
+	}
+	for i := range items {
+		items[i].AudioLanguages = langs[items[i].ID]
+	}
 }
 
 // attachUserData sets UserData on every item for the calling user with one query.

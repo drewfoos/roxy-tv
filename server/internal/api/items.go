@@ -88,6 +88,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	s.fillSeriesRefs(r.Context(), items)
 	fillAvailability(items)
 	s.attachUserData(r.Context(), items)
+	s.fillAudioLanguages(r.Context(), items)
 	writeJSON(w, 200, map[string]any{"items": items, "total": total})
 }
 
@@ -141,6 +142,7 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	s.fillSeriesRefs(r.Context(), one)
 	fillAvailability(one)
 	s.attachUserData(r.Context(), one)
+	s.fillAudioLanguages(r.Context(), one)
 	writeJSON(w, 200, one[0])
 }
 

@@ -26,14 +26,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import android.content.Intent
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -97,7 +104,7 @@ fun PhoneTheme(content: @Composable () -> Unit) {
     )
 }
 
-/** 2:3 poster with the watch-progress bar; no caption (Netflix). */
+/** 2:3 poster with the watch-progress bar; no caption (grids). */
 @Composable
 fun PosterTile(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
@@ -108,19 +115,57 @@ fun PosterTile(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onClick:
     }
 }
 
-/** 16:9 episode thumb with a play badge, progress and a two-line caption (Continue Watching). */
+/**
+ * Big title card for rows (shows and movies): 2:3 poster sized so two and a half fit
+ * across the screen, the name under it, then "Dub | Sub" with the three-dot menu on the
+ * right.
+ */
+@Composable
+fun TitleCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
+    Column(modifier = Modifier.width(width)) {
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
+        ) {
+            RoxyImage(api.imageUrl(item, "poster", widthPx(width) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+            ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
+        }
+        // Two lines reserved so the Dub | Sub row lines up across the cards in a row.
+        Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+            Text(
+                audioBadge(item) ?: listOfNotNull(item.year?.toString(), if (item.isMovie) "Movie" else null).joinToString("  ·  "),
+                fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            CardMenu(item, api, onPlay = onClick)
+        }
+    }
+}
+
+/**
+ * 16:9 card (episodes, and movies in the Recently added row): play badge, progress,
+ * Dub | Sub pill, then a caption with the three-dot menu on the right.
+ */
 @Composable
 fun ThumbTile(item: Item, api: RoxyApi, width: Dp = ThumbW, onClick: () -> Unit) {
+    val isMovie = item.isMovie
     Column(modifier = Modifier.width(width)) {
         Box(
             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
         ) {
-            RoxyImage(api.imageUrl(item, "thumb", widthPx(width) * 2), item.episodeCode.ifEmpty { item.title }, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
+            val url = if (isMovie) api.imageUrl(item, "backdrop", widthPx(width) * 2) ?: api.imageUrl(item, "poster", widthPx(width) * 2) else api.imageUrl(item, "thumb", widthPx(width) * 2)
+            RoxyImage(url, item.episodeCode.ifEmpty { item.title }, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
             PlayBadge(size = 38.dp, modifier = Modifier.align(Alignment.Center))
+            audioBadge(item)?.let { BadgePill(it, modifier = Modifier.align(Alignment.TopStart).padding(6.dp)) }
             ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
         }
-        Text(item.seriesTitle ?: item.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-        Text(listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }.joinToString("  "), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 6.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(if (isMovie) item.title else item.seriesTitle ?: item.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val sub = if (isMovie) listOfNotNull(item.year?.toString(), "Movie").joinToString("  ·  ") else listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }.joinToString("  ")
+                Text(sub, fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            CardMenu(item, api, onPlay = onClick, modifier = Modifier.padding(start = 4.dp))
+        }
     }
 }
 
@@ -135,15 +180,20 @@ fun PlayBadge(size: Dp = 40.dp, modifier: Modifier = Modifier) {
     }
 }
 
-/** Titled horizontal row: thumbs for episodes, posters for everything else. */
+/**
+ * Titled horizontal row: big [TitleCard]s for shows and movies, 16:9 [ThumbTile]s for
+ * episodes (Continue Watching); both sized so two and a half fit across the screen.
+ */
 @Composable
 fun PhoneRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> Unit, modifier: Modifier = Modifier) {
+    val screen = LocalConfiguration.current.screenWidthDp.dp
+    val cardWidth = ((screen - PhonePad - 10.dp * 2) / 2.5f)
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, bottom = 8.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, bottom = 10.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(items, key = { it.id }) { item ->
-                if (item.isEpisode) ThumbTile(item, api, onClick = { onClick(item) })
-                else PosterTile(item, api, modifier = Modifier.width(PosterW), onClick = { onClick(item) })
+                if (item.isEpisode) ThumbTile(item, api, width = cardWidth, onClick = { onClick(item) })
+                else TitleCard(item, api, width = cardWidth, onClick = { onClick(item) })
             }
         }
     }
@@ -188,21 +238,81 @@ fun PlayAndSaveRow(label: String, item: Item, api: RoxyApi, modifier: Modifier =
 }
 
 /**
- * "Dub | Sub" for anime from a playable item's audio tracks: both English and Japanese
- * audio = Dub | Sub, Japanese only = Sub, English only = Dub. Null when the streams are
+ * "Dub | Sub" from a playable item's audio tracks: English plus another language =
+ * Dub | Sub (KonoSuba, or Toy Story with its extra dubs), another language only = Sub,
+ * English only = Dub for animation and nothing otherwise. Null when the streams are
  * unknown (series resolved from the library carry no sources).
  */
 fun audioBadge(play: Item?): String? {
     if (play == null) return null
-    val langs = play.primarySource?.streams.orEmpty().filter { it.type == "audio" }.mapNotNull { it.language?.lowercase() }.toSet()
+    val fromServer = play.audioLanguages.map { it.lowercase() }
+    val langs = (if (fromServer.isNotEmpty()) fromServer else play.primarySource?.streams.orEmpty().filter { it.type == "audio" }.mapNotNull { it.language?.lowercase() })
+        .filter { it != "und" }.toSet()
     if (langs.isEmpty()) return null
     val eng = langs.any { it == "eng" || it == "en" }
-    val jpn = langs.any { it == "jpn" || it == "ja" }
+    val other = langs.any { it != "eng" && it != "en" }
     return when {
-        eng && jpn -> "Dub | Sub"
-        jpn -> "Sub"
-        eng && play.genres.any { it.equals("Animation", true) } -> "Dub"
+        eng && other -> "Dub | Sub"
+        other -> "Sub"
+        play.genres.any { it.equals("Animation", true) } -> "Dub"
         else -> null
+    }
+}
+
+/** Small translucent pill over a card ("Dub | Sub"). */
+@Composable
+fun BadgePill(text: String, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xB3000000)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+        Text(text, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * The three-dot menu on a card: Watch now, Add to Watchlist (the show, for an episode),
+ * Mark as watched, Share (TMDB / AniList page when known, else the title).
+ */
+@Composable
+fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var open by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        Icon(
+            Icons.Filled.MoreVert, contentDescription = "More", tint = RoxyColors.muted,
+            modifier = Modifier.size(22.dp).clickable { open = true },
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+            if (item.isPlayable || item.isSeries) {
+                DropdownMenuItem(text = { Text("Watch now", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null, tint = Color.White) }, onClick = { open = false; onPlay() })
+            }
+            DropdownMenuItem(
+                text = { Text("Add to Watchlist", color = Color.White) },
+                leadingIcon = { Icon(Icons.Outlined.BookmarkBorder, null, tint = Color.White) },
+                onClick = {
+                    open = false
+                    val target = if (item.isEpisode) item.seriesId ?: item.id else item.id
+                    scope.launch { runCatching { api.setFavorite(target, true) }.onFailure { Timber.w(it, "favorite failed") } }
+                },
+            )
+            if (item.isPlayable) {
+                DropdownMenuItem(
+                    text = { Text("Mark as watched", color = Color.White) },
+                    leadingIcon = { Icon(Icons.Filled.CheckCircle, null, tint = Color.White) },
+                    onClick = { open = false; scope.launch { runCatching { api.setPlayed(item.id, true) }.onFailure { Timber.w(it, "played failed") } } },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("Share", color = Color.White) },
+                leadingIcon = { Icon(Icons.Filled.Share, null, tint = Color.White) },
+                onClick = {
+                    open = false
+                    val name = if (item.isEpisode) listOfNotNull(item.seriesTitle, item.episodeCode.takeIf { it.isNotEmpty() }, item.title).joinToString(" ") else item.title
+                    val text = listOfNotNull(name, item.shareUrl).joinToString("\n")
+                    val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text) }
+                    context.startActivity(Intent.createChooser(send, "Share"))
+                },
+            )
+        }
     }
 }
 

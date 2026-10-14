@@ -77,6 +77,10 @@ type Item struct {
 
 	// Populated on detail responses.
 	Sources []MediaSource `json:"mediaSources,omitempty"`
+
+	// AudioLanguages are the distinct audio-track languages across a series' episodes or
+	// a movie's sources (ISO 639-2), so cards can say "Dub | Sub" without the streams.
+	AudioLanguages []string `json:"audioLanguages,omitempty"`
 }
 
 // UserData is the per-user watch state as the native API renders it.

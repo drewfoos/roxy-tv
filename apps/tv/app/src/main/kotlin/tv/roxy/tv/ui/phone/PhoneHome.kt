@@ -140,8 +140,18 @@ fun PhoneHome(
                             onOpen = { h -> open(h.title) },
                         )
                     }
-                    items(s.rows, key = { it.key }) { row ->
-                        PhoneRow(row.title.ifEmpty { rowTitle(row.key) }, row.items, app.api, onClick = ::open, modifier = Modifier.padding(top = 22.dp))
+                    // Recently added leads: shows and movies together, newest first, as big
+                    // title cards. Continue Watching follows, then the Series and Movies rows.
+                    val recent = (s.rows.firstOrNull { it.key == "series" }?.items.orEmpty() + s.rows.firstOrNull { it.key == "recentMovies" }?.items.orEmpty())
+                        .sortedByDescending { it.dateCreated.orEmpty() }.take(20)
+                    if (recent.isNotEmpty()) {
+                        item(key = "recent") { PhoneRow("Recently added", recent, app.api, onClick = ::open, modifier = Modifier.padding(top = 22.dp)) }
+                    }
+                    s.rows.firstOrNull { it.key == "continue" }?.let { row ->
+                        item(key = "continue") { PhoneRow("Continue Watching", row.items, app.api, onClick = ::open, modifier = Modifier.padding(top = 26.dp)) }
+                    }
+                    items(s.rows.filter { it.key in setOf("series", "movies") }, key = { it.key }) { row ->
+                        PhoneRow(row.title.ifEmpty { rowTitle(row.key) }, row.items, app.api, onClick = ::open, modifier = Modifier.padding(top = 26.dp))
                     }
                     item(key = "footer") {
                         if (s.rows.isEmpty()) Text("The library is empty. Scan a library on the server first.", color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(32.dp))

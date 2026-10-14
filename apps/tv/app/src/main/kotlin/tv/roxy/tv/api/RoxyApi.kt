@@ -426,6 +426,10 @@ data class Item(
     val availability: String? = null,
     /** poster | backdrop | logo | thumb -> relative URL. Absent key = no image. */
     val images: Map<String, String> = emptyMap(),
+    /** tmdb | tvdb | imdb | anilist | mal -> id (series and movies). */
+    val providerIds: Map<String, String> = emptyMap(),
+    /** Distinct audio languages across the title's media (series and movies), for "Dub | Sub". */
+    val audioLanguages: List<String> = emptyList(),
     val userData: UserData? = null,
     val mediaSources: List<Item.Source> = emptyList(),
 ) {
@@ -447,6 +451,15 @@ data class Item(
     val isSeason: Boolean get() = type == "season"
 
     val primarySource: Source? get() = mediaSources.firstOrNull { it.isPrimary } ?: mediaSources.firstOrNull()
+
+    /** A public page for the title, for sharing: TMDB first, then AniList, then IMDb. */
+    val shareUrl: String?
+        get() {
+            providerIds["tmdb"]?.let { return "https://www.themoviedb.org/${if (isMovie) "movie" else "tv"}/$it" }
+            providerIds["anilist"]?.let { return "https://anilist.co/anime/$it" }
+            providerIds["imdb"]?.let { return "https://www.imdb.com/title/$it/" }
+            return null
+        }
 
     /** "S01E03" for episodes ("S01" when the episode number is unknown), "" otherwise. */
     val episodeCode: String
