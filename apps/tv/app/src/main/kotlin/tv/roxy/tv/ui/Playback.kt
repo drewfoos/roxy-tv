@@ -19,11 +19,15 @@ suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false): 
     val intent = PlayerActivity.intent(
         context = context,
         url = app.api.streamUrl(source.id),
-        title = full.displayLabel,
+        title = full.title.ifEmpty { full.displayLabel },
         itemId = full.id,
         sourceId = source.id,
         startSeconds = startSeconds,
         settings = app.prefs.settings.value,
+        subtitleLine = when {
+            full.isEpisode -> listOfNotNull(full.seriesTitle, full.episodeCode.takeIf { it.isNotEmpty() }).joinToString("  ")
+            else -> full.year?.toString() ?: ""
+        },
     )
     Timber.i("play %s item=%s source=%s start=%ds", full.displayLabel, full.id, source.id, startSeconds)
     context.startActivity(intent)

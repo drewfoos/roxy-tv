@@ -107,15 +107,21 @@ Images go through Coil with the API's OkHttp client, so every request carries
 `Authorization: Bearer`; URLs are `serverUrl + images[type] + ?w=<card px>`. Items without
 an `images` entry never hit the network.
 
-Player keys (remote / phone keyboard):
+Player controls (`player/PlayerControls.kt`, YouTube-style): tap the video or press any
+key to show them; they auto-hide after 4 s unless paused or a sheet is open. Title row
+with back button, centre ±10 s and play/pause, seek bar (buffered range shown) with
+times, and pills for **Subtitles** (Off + every track, language first), **Audio**,
+**Quality** (direct play only until server transcoding exists) and **Speed**. Every
+control is D-pad focusable; Left/Right on the seek bar seeks.
 
 | Key | Action |
 |---|---|
-| Center / Enter / Play-Pause | toggle pause |
-| Left / Right | seek -10 s / +10 s |
-| Up / Menu | toggle stats overlay (hidden by default; Settings can turn it on) |
-| Down | cycle subtitle track |
-| Back | exit (reports the final position) |
+| Any D-pad key (controls hidden) | show controls; Left/Right also seek ±10 s immediately |
+| Play-Pause / Space | toggle pause |
+| Rewind / Fast-forward | seek -10 s / +10 s |
+| Captions / A | open the Subtitles / Audio sheet |
+| Menu / I | toggle the diagnostics stats overlay |
+| Back | close sheet → hide controls → exit (reports the final position) |
 
 Track policy: audio by the Settings language order (`eng` then `jpn` by default);
 subtitles by server-detected language (`detectedLanguage` beats the container tag), then

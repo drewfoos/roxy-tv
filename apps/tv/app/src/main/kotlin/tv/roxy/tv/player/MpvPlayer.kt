@@ -181,6 +181,39 @@ class MpvPlayer(
 
     fun cycleAudio() = mpv.command(arrayOf("cycle", "audio"))
 
+    // ---- direct control (used by the on-screen controls) ----
+
+    fun setPaused(paused: Boolean) = mpv.setPropertyBoolean("pause", paused)
+
+    fun seekTo(seconds: Double) = mpv.command(arrayOf("seek", "%.3f".format(java.util.Locale.ROOT, seconds), "absolute"))
+
+    /** mpv subtitle id (1-based) or 0 for off. */
+    fun setSubtitleTrack(id: Int) {
+        if (id <= 0) mpv.setPropertyString("sid", "no") else mpv.setPropertyInt("sid", id)
+    }
+
+    fun setAudioTrack(id: Int) {
+        if (id <= 0) mpv.setPropertyString("aid", "no") else mpv.setPropertyInt("aid", id)
+    }
+
+    fun setSpeed(speed: Double) = mpv.setPropertyDouble("speed", speed)
+
+    fun speed(): Double = dbl("speed") ?: 1.0
+
+    /** Current mpv track id for "sub" or "audio" (0 when off / none). */
+    fun currentTrackId(type: String): Int = int("current-tracks/$type/id") ?: 0
+
+    /** Demuxer cache end in seconds (how far ahead playback can go without buffering). */
+    fun cacheEndSeconds(): Double? = dbl("demuxer-cache-time")
+
+    fun videoSummary(): String {
+        val w = int("video-params/w") ?: return ""
+        val h = int("video-params/h") ?: return ""
+        val codec = str("video-format") ?: ""
+        val hw = str("hwdec-current")?.takeIf { it != "no" && it.isNotEmpty() }
+        return "${h}p ${codec.uppercase()}" + (if (hw != null) " · hardware" else " · software")
+    }
+
     // ---- track selection ----
 
     fun tracks(): List<Track> {

@@ -78,6 +78,8 @@ data class SeriesUiState(
     val episodesLoading: Boolean = false,
     /** Movies / OVAs / side stories of this franchise (Crunchyroll-style, seasons and movies together). */
     val related: List<RelatedEntry> = emptyList(),
+    /** The "Movies & OVAs" tab is selected instead of a season. */
+    val showRelated: Boolean = false,
 )
 
 class SeriesViewModel(private val api: RoxyApi, private val seriesId: String) : ViewModel() {
@@ -115,9 +117,14 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String) : 
 
     fun selectSeason(index: Int) {
         val s = _state.value
-        if (index !in s.seasons.indices || index == s.selectedSeason && s.episodes.isNotEmpty()) return
-        _state.value = s.copy(selectedSeason = index)
-        loadEpisodes(s.seasons[index].id)
+        if (index !in s.seasons.indices) return
+        if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showRelated) return
+        _state.value = s.copy(selectedSeason = index, showRelated = false)
+        if (index != s.selectedSeason || s.episodes.isEmpty()) loadEpisodes(s.seasons[index].id)
+    }
+
+    fun selectRelated() {
+        _state.value = _state.value.copy(showRelated = true)
     }
 
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {
@@ -165,7 +172,9 @@ fun SeriesScreen(seriesId: String, fallbackTitle: String, onOpenMovie: (Item) ->
                 }
             })
         }
-        if (state.seasons.isNotEmpty()) {
+        // Season tabs, with "Movies & OVAs" as the last tab (Crunchyroll-style) so the
+        // franchise's films and specials sit next to the seasons, not under the list.
+        if (state.seasons.isNotEmpty() || state.related.isNotEmpty()) {
             item(key = "seasons") {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = ScreenPadding),
@@ -173,25 +182,31 @@ fun SeriesScreen(seriesId: String, fallbackTitle: String, onOpenMovie: (Item) ->
                     modifier = Modifier.padding(bottom = 12.dp),
                 ) {
                     itemsIndexed(state.seasons, key = { _, s -> s.id }) { i, season ->
-                        SecondaryButton(season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }, onClick = { vm.selectSeason(i) }, selected = i == state.selectedSeason)
+                        SecondaryButton(season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }, onClick = { vm.selectSeason(i) }, selected = !state.showRelated && i == state.selectedSeason)
+                    }
+                    if (state.related.isNotEmpty()) {
+                        item(key = "related-tab") {
+                            SecondaryButton("Movies & OVAs", onClick = { vm.selectRelated() }, selected = state.showRelated)
+                        }
                     }
                 }
             }
         }
-        if (state.episodesLoading && state.episodes.isEmpty()) {
-            item(key = "eps-loading") { Text("Loading episodes...", color = RoxyColors.muted, modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 12.dp)) }
-        } else if (state.episodes.isEmpty()) {
-            item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 12.dp)) }
-        }
-        items(state.episodes, key = { it.id }) { ep ->
-            EpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) })
-        }
-        if (state.related.isNotEmpty()) {
+        if (state.showRelated) {
             item(key = "related") {
                 RelatedRow(state.related, app.api, onOpen = { it ->
                     val item = it.item ?: return@RelatedRow
                     if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
                 })
+            }
+        } else {
+            if (state.episodesLoading && state.episodes.isEmpty()) {
+                item(key = "eps-loading") { Text("Loading episodes...", color = RoxyColors.muted, modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 12.dp)) }
+            } else if (state.episodes.isEmpty()) {
+                item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 12.dp)) }
+            }
+            items(state.episodes, key = { it.id }) { ep ->
+                EpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) })
             }
         }
         item(key = "bottom") { Spacer(Modifier.height(32.dp)) }
@@ -238,8 +253,7 @@ fun DetailHeader(item: Item, api: RoxyApi, actions: @Composable () -> Unit) {
  */
 @Composable
 private fun RelatedRow(related: List<RelatedEntry>, api: RoxyApi, onOpen: (RelatedEntry) -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
-        Text("Movies & OVAs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = ScreenPadding, bottom = 8.dp))
+    Column(modifier = Modifier.fillMaxWidth()) {
         LazyRow(contentPadding = PaddingValues(horizontal = ScreenPadding, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(related, key = { it.key }) { rel ->
                 val item = rel.item

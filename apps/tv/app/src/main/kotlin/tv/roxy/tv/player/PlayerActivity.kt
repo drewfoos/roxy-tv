@@ -36,6 +36,7 @@ import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.diagnostics.DeviceReport
+import tv.roxy.tv.ui.components.tapClick
 
 private val uuidRegex = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -58,6 +59,8 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_ITEM_ID = "itemId"   // Roxy item id: enables progress reporting
         const val EXTRA_ALANG = "alang"      // comma-separated audio language order
         const val EXTRA_STATS = "stats"      // show the stats overlay from the start; adb: --ez stats true
+        const val EXTRA_SUBTITLE_LINE = "subtitleLine" // second title line (series + SxxEyy, or year)
+        private const val AUTO_HIDE_MS = 4000L
 
         private const val PROGRESS_INTERVAL_MS = 10_000L
 
@@ -69,9 +72,11 @@ class PlayerActivity : ComponentActivity() {
             sourceId: String?,
             startSeconds: Int,
             settings: PlayerSettings,
+            subtitleLine: String = "",
         ): Intent = Intent(context, PlayerActivity::class.java)
             .putExtra(EXTRA_URL, url)
             .putExtra(EXTRA_TITLE, title)
+            .putExtra(EXTRA_SUBTITLE_LINE, subtitleLine)
             .putExtra(EXTRA_ITEM_ID, itemId)
             .putExtra(EXTRA_SOURCE_ID, sourceId)
             .putExtra(EXTRA_START, startSeconds)
@@ -91,7 +96,12 @@ class PlayerActivity : ComponentActivity() {
     private var showStats by mutableStateOf(false)
     private var osd by mutableStateOf<String?>(null)
     private var osdJob: Job? = null
+    private var ui by mutableStateOf(PlayerUiState())
+    private var controlsVisible by mutableStateOf(true)
+    private var sheet by mutableStateOf(Sheet.None)
+    private var hideJob: Job? = null
     private var title = ""
+    private var subtitleLine = ""
     private var hwdec = ""
     private var vo = ""
     private var itemId: String? = null
@@ -111,6 +121,7 @@ class PlayerActivity : ComponentActivity() {
 
         val url = intent.getStringExtra(EXTRA_URL) ?: run { finish(); return }
         title = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        subtitleLine = intent.getStringExtra(EXTRA_SUBTITLE_LINE) ?: ""
         hwdec = intent.getStringExtra(EXTRA_HWDEC) ?: settings.hwdec
         vo = intent.getStringExtra(EXTRA_VO) ?: settings.vo
         val start = intent.getIntExtra(EXTRA_START, 0)
@@ -138,7 +149,7 @@ class PlayerActivity : ComponentActivity() {
             }
 
             override fun onPauseChanged(paused: Boolean) {
-                runOnUiThread { flashOsd(if (paused) "Paused" else null) }
+                runOnUiThread { refreshUi(); if (paused) showControls() else scheduleHide() }
                 reportProgress(if (paused) "pause" else "resume")
             }
         }
@@ -157,6 +168,17 @@ class PlayerActivity : ComponentActivity() {
             player.play(url)
         }
 
+        val actions = object : PlayerActions {
+            override fun togglePause() = player.togglePause()
+            override fun seekTo(seconds: Double) { player.seekTo(seconds); refreshUi() }
+            override fun seekBy(seconds: Int) { player.seekRelative(seconds); refreshUi() }
+            override fun selectSubtitle(id: Int) { player.setSubtitleTrack(id); refreshUi() }
+            override fun selectAudio(id: Int) { player.setAudioTrack(id); refreshUi() }
+            override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi() }
+            override fun back() = finish()
+        }
+        scheduleHide()
+
         setContent {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                 AndroidView(
@@ -164,6 +186,16 @@ class PlayerActivity : ComponentActivity() {
                     factory = { ctx ->
                         SurfaceView(ctx).apply { holder.addCallback(player) }
                     },
+                )
+                // Tap anywhere on the video: toggle the controls (phone); keys are handled in onKeyDown.
+                Box(modifier = Modifier.fillMaxSize().tapClick { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() })
+                PlayerControls(
+                    state = ui,
+                    visible = controlsVisible,
+                    sheet = sheet,
+                    onSheet = { s -> sheet = s; showControls() },
+                    onInteraction = { showControls() },
+                    actions = actions,
                 )
                 osd?.let { text ->
                     Box(
@@ -201,18 +233,60 @@ class PlayerActivity : ComponentActivity() {
             }
         }
 
-        // Stats sampling (cheap; only rendered when the overlay is on) and periodic progress.
+        // Controls state (fast), stats sampling (cheap; only rendered when the overlay is on)
+        // and periodic progress.
         lifecycleScope.launch {
             var tick = 0
             while (true) {
-                delay(1000)
+                delay(500)
                 tick++
+                refreshUi()
+                if (tick % 2 != 0) continue
                 val cores = Runtime.getRuntime().availableProcessors()
                 val snap = runCatching { player.snapshot() }.getOrNull() ?: continue
                 statsLines = snap.lines(cpu.sample(), cores)
                 fontLog = snap.fontLog
-                if (tick % (PROGRESS_INTERVAL_MS / 1000).toInt() == 0 && snap.paused != true) reportProgress("tick")
+                if ((tick / 2) % (PROGRESS_INTERVAL_MS / 1000).toInt() == 0 && snap.paused != true) reportProgress("tick")
             }
+        }
+    }
+
+    /** Pulls position, tracks and state from mpv into the controls' state. */
+    private fun refreshUi() {
+        val tracks = runCatching { player.tracks() }.getOrDefault(emptyList())
+        ui = PlayerUiState(
+            title = title,
+            subtitle = subtitleLine,
+            positionSec = player.timePosSeconds() ?: 0.0,
+            durationSec = player.durationSeconds() ?: 0.0,
+            bufferedSec = player.cacheEndSeconds() ?: 0.0,
+            paused = player.isPaused(),
+            speed = player.speed(),
+            subtitleTracks = tracks.filter { it.type == "sub" },
+            audioTracks = tracks.filter { it.type == "audio" },
+            currentSid = player.currentTrackId("sub"),
+            currentAid = player.currentTrackId("audio"),
+            quality = runCatching { player.videoSummary() }.getOrDefault(""),
+        )
+    }
+
+    private fun showControls() {
+        controlsVisible = true
+        scheduleHide()
+    }
+
+    private fun hideControls() {
+        hideJob?.cancel()
+        controlsVisible = false
+        sheet = Sheet.None
+    }
+
+    /** Auto-hide unless paused or a sheet is open (YouTube behaviour). */
+    private fun scheduleHide() {
+        hideJob?.cancel()
+        hideJob = lifecycleScope.launch {
+            delay(AUTO_HIDE_MS)
+            if (!ui.paused && sheet == Sheet.None) controlsVisible = false
         }
     }
 
@@ -242,29 +316,34 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private fun seekOsd() {
-        val pos = player.timePosSeconds() ?: return
-        val dur = player.durationSeconds()
-        flashOsd(fmtTime(pos) + (dur?.let { " / " + fmtTime(it) } ?: ""))
-    }
-
-    private fun fmtTime(d: Double): String {
-        val s = d.toLong()
-        return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
-    }
-
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        // Media keys and the diagnostics shortcuts work regardless of the control layer.
         when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
-            KeyEvent.KEYCODE_SPACE -> { player.togglePause(); return true }
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> { player.seekRelative(-10); seekOsd(); return true }
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { player.seekRelative(10); seekOsd(); return true }
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_I -> { showStats = !showStats; return true }
-            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CAPTIONS -> { player.cycleSubtitle(); flashOsd("Subtitle: " + (player.snapshot().subTitle ?: "cycled")); return true }
-            KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK, KeyEvent.KEYCODE_A -> { player.cycleAudio(); flashOsd("Audio: " + (player.snapshot().audioCodec ?: "cycled")); return true }
+            KeyEvent.KEYCODE_SPACE -> { player.togglePause(); showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { player.seekRelative(-10); showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { player.seekRelative(10); showControls(); return true }
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_I -> { showStats = !showStats; return true }
+            KeyEvent.KEYCODE_CAPTIONS -> { sheet = Sheet.Subtitles; showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK, KeyEvent.KEYCODE_A -> { sheet = Sheet.Audio; showControls(); return true }
+            KeyEvent.KEYCODE_BACK -> {
+                if (sheet != Sheet.None) { sheet = Sheet.None; showControls(); return true }
+                if (controlsVisible) { hideControls(); return true }
+                return super.onKeyDown(keyCode, event)
+            }
         }
-        return super.onKeyDown(keyCode, event)
+        if (!controlsVisible) {
+            // Hidden: the first D-pad press reveals the controls (YouTube on TV); Left/Right
+            // also seek straight away so a quick skip does not need two presses.
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> { player.seekRelative(-10); showControls(); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { player.seekRelative(10); showControls(); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { showControls(); return true }
+            }
+        } else {
+            showControls() // any navigation keeps them on screen
+        }
+        return super.onKeyDown(keyCode, event) // Compose focus handles the rest
     }
 
     override fun onStop() {
