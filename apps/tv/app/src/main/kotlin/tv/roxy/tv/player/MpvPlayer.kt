@@ -217,6 +217,9 @@ class MpvPlayer(
         mpv.setPropertyDouble("video-pan-y", panY)
     }
 
+    /** Display aspect (width/height) of the current video, or null before it is known. */
+    fun videoAspect(): Double? = dbl("video-params/aspect")?.takeIf { it > 0.0 }
+
     fun speed(): Double = dbl("speed") ?: 1.0
 
     /** Current mpv track id for "sub" or "audio" (0 when off / none). */
@@ -432,7 +435,13 @@ class MpvPlayer(
 
     // ---- lifecycle ----
 
+    /** True once [destroy] ran; every property read after that would throw in MPVLib. */
+    @Volatile var destroyed = false
+        private set
+
     fun destroy() {
+        destroyed = true
+        listener = null
         runCatching { mpv.removeLogObserver(this) }
         runCatching { mpv.removeObserver(this) }
         runCatching { mpv.command(arrayOf("stop")) }

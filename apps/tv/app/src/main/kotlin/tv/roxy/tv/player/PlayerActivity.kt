@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.geometry.Offset
 
 private val uuidRegex = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -107,7 +108,8 @@ class PlayerActivity : ComponentActivity() {
     private var trickplay by mutableStateOf<TrickplayPreview?>(null)
     private var doubleTapFlash by mutableStateOf(0) // -10 / +10 while the ripple shows
     private var zoomLevel by mutableStateOf(1f)
-    private var zoomActive by mutableStateOf(false)
+    private var zoomHud by mutableStateOf(false) // "1.5×" readout shown (fingers down, or just after)
+    private var zoomHudJob: Job? = null
     private var flashJob: Job? = null
     private var lastSid = 0
     private var autoSkip = false
@@ -169,7 +171,7 @@ class PlayerActivity : ComponentActivity() {
             }
 
             override fun onPauseChanged(paused: Boolean) {
-                runOnUiThread { refreshUi(); if (paused) showControls() else scheduleHide() }
+                runOnUiThread { if (player.destroyed || isDestroyed) return@runOnUiThread; refreshUi(); if (paused) showControls() else scheduleHide() }
                 reportProgress(if (paused) "pause" else "resume")
             }
         }
@@ -250,12 +252,27 @@ class PlayerActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier.fillMaxSize().pinchZoom(
                         onZoom = { f, x, y -> player.setZoom(f, x, y) },
-                        onLevel = { level, active -> zoomLevel = level; zoomActive = active },
+                        onLevel = { level, active ->
+                            zoomLevel = level
+                            zoomHud = true
+                            zoomHudJob?.cancel()
+                            if (!active) zoomHudJob = lifecycleScope.launch { delay(1400); zoomHud = false }
+                        },
                         onPinchStart = { hideControls() },
+                        videoAspect = { if (player.isFill()) null else player.videoAspect()?.toFloat() },
                     ).pointerInput(Unit) {
+                        // Compose's tap detector fires on the up even after a long drag (it only
+                        // checks consumption), so a swipe from the top edge for the status bar
+                        // or shade would count as a tap and pop the controls. Require the finger
+                        // to have stayed within touch slop.
+                        var down = Offset.Zero
+                        val slop = viewConfiguration.touchSlop
+                        fun moved(pos: Offset) = (pos - down).getDistance() > slop
                         detectTapGestures(
-                            onTap = { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() },
+                            onPress = { down = it },
+                            onTap = { pos -> if (!moved(pos)) { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() } },
                             onDoubleTap = { pos ->
+                                if (moved(pos)) return@detectTapGestures
                                 val back = pos.x < size.width / 2
                                 player.seekRelative(if (back) -10 else 10)
                                 refreshUi()
@@ -266,8 +283,8 @@ class PlayerActivity : ComponentActivity() {
                         )
                     },
                 )
-                // Zoom readout: "1.5×" while pinching, and kept on screen while zoomed in.
-                if (zoomActive || zoomLevel > 1.01f) {
+                // Zoom readout: "1.5×" at the top while pinching and briefly after.
+                if (zoomHud) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Text(
                             "%.1f×".format(zoomLevel),
@@ -355,6 +372,8 @@ class PlayerActivity : ComponentActivity() {
 
     /** Pulls position, tracks and state from mpv into the controls' state. */
     private fun refreshUi() {
+        // Callbacks posted by mpv (e.g. the pause from onStop) can land after onDestroy.
+        if (player.destroyed || isDestroyed) return
         val tracks = runCatching { player.tracks() }.getOrDefault(emptyList())
         ui = PlayerUiState(
             title = title,
