@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import tv.roxy.tv.ui.theme.RoxyColors
 
 /**
  * Roxy's mark: a pointed witch hat (Roxy Migurdia's), drawn as a vector so it scales
@@ -24,9 +25,9 @@ fun WitchHat(modifier: Modifier = Modifier, size: Dp = 30.dp) {
     Canvas(modifier = modifier.size(size)) {
         val w = this.size.width
         val h = this.size.height
-        val light = Color(0xFF7FB0FF)
-        val mid = Color(0xFF3F74E6)
-        val dark = Color(0xFF1C2E6B)
+        val light = RoxyColors.accentLight
+        val mid = RoxyColors.accent
+        val dark = RoxyColors.accentDark
         val gold = Color(0xFFF2C35B)
 
         // Brim: wide ellipse, dark underside with a lighter top edge.

@@ -10,7 +10,15 @@ object RoxyColors {
     val background = Color(0xFF0B0B0F)
     val surface = Color(0xFF17171E)
     val surfaceHigh = Color(0xFF23232C)
-    val accent = Color(0xFF4F8CFF)
+    /**
+     * Brand blue (the witch hat's colour). A bright azure that stays vivid on near-black,
+     * the same value YouTube's dark theme uses for its accent, so it is known to read
+     * well with dark text on it and as a fill on dark surfaces.
+     */
+    val accent = Color(0xFF3EA6FF)
+    /** Lighter and darker tints of the accent for shading (hat, pressed states). */
+    val accentLight = Color(0xFF8FD0FF)
+    val accentDark = Color(0xFF1B5FA8)
     val onBackground = Color(0xFFF2F2F5)
     val muted = Color(0xFF9AA0A6)
     val focusBorder = Color.White

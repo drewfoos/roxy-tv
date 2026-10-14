@@ -165,7 +165,7 @@ fun PlayButton(
 }
 
 /** Dark text on the brand blue (the hat's colour), like Crunchyroll's black-on-orange. */
-val OnBrand = Color(0xFF0A1230)
+val OnBrand = Color(0xFF07182B)
 
 /** Netflix's grey secondary button. */
 @Composable
