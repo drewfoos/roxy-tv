@@ -81,8 +81,8 @@ import tv.roxy.tv.ui.phone.PlayButton
 import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
 
-/** Avatar size on the picker. */
-private val PickSize = 112.dp
+/** Avatar size on the picker: big up to four profiles, a little smaller beyond so six still fit. */
+private fun pickSize(count: Int): Dp = if (count > 4) 96.dp else 112.dp
 
 /**
  * "Who's watching?" (Netflix): the account's profiles as big avatars in centred rows,
@@ -176,7 +176,8 @@ private fun PickerGrid(
     BoxWithConstraints(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         // As many big tiles per row as fit (two on a phone), each row centred.
         val gap = 20.dp
-        val perRow = ((maxWidth - 48.dp + gap) / (PickSize + 16.dp + gap)).toInt().coerceIn(1, 3)
+        val tile = pickSize(profiles?.size ?: 0)
+        val perRow = ((maxWidth - 48.dp + gap) / (tile + 16.dp + gap)).toInt().coerceIn(1, 3)
         if (onBack != null) BackCircle(onBack, modifier = Modifier.padding(12.dp))
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
@@ -190,22 +191,23 @@ private fun PickerGrid(
                     PlayButton("Try again", icon = Icons.Filled.Search, modifier = Modifier.padding(top = 16.dp), onClick = onRetry)
                 }
                 profiles == null -> Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    repeat(2) { Box(Modifier.size(PickSize).clip(CircleShape).background(RoxyColors.surfaceHigh)) }
+                    repeat(2) { Box(Modifier.size(tile).clip(CircleShape).background(RoxyColors.surfaceHigh)) }
                 }
                 else -> {
-                    // Up to three per row, each row centred; Add profile on its own row below.
-                    // Add profile takes the free slot of the last row; when that row is full it gets its own row.
+                    // Add profile takes the free slot of the last row; when that row is full it gets
+                    // its own row. The server caps an account at six, so the tile is gone at six.
                     val canAdd = profiles.size < 6
                     val rows = profiles.chunked(perRow)
                     val addInLastRow = canAdd && rows.isNotEmpty() && rows.last().size < perRow
                     rows.forEachIndexed { i, row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.padding(bottom = 24.dp)) {
-                            row.forEach { p -> ProfileTile(p, api, managing = managing, current = p.id == lastId, onClick = { onPick(p) }) }
-                            if (addInLastRow && i == rows.lastIndex) AddTile(onAdd)
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.padding(bottom = 20.dp)) {
+                            row.forEach { p -> ProfileTile(p, api, tile, managing = managing, current = p.id == lastId, onClick = { onPick(p) }) }
+                            if (addInLastRow && i == rows.lastIndex) AddTile(tile, onAdd)
                         }
                     }
-                    if (canAdd && !addInLastRow) AddTile(onAdd)
-                    Spacer(Modifier.height(40.dp))
+                    if (canAdd && !addInLastRow) AddTile(tile, onAdd)
+                    // Room to scroll the last row clear of the pinned bottom actions.
+                    Spacer(Modifier.height(130.dp))
                 }
             }
         }
@@ -228,10 +230,10 @@ private fun PickerGrid(
 
 /** The dashed-circle "Add profile" tile, same footprint as a profile tile. */
 @Composable
-private fun AddTile(onAdd: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(PickSize + 16.dp).clickable(onClick = onAdd).padding(top = 10.dp)) {
-        Box(modifier = Modifier.size(PickSize + 14.dp), contentAlignment = Alignment.Center) {
-            Box(modifier = Modifier.size(PickSize).clip(CircleShape).border(2.dp, RoxyColors.muted, CircleShape), contentAlignment = Alignment.Center) {
+private fun AddTile(tile: Dp, onAdd: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 16.dp).clickable(onClick = onAdd).padding(top = 10.dp)) {
+        Box(modifier = Modifier.size(tile + 14.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(tile).clip(CircleShape).border(2.dp, RoxyColors.muted, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.Add, contentDescription = "Add profile", tint = RoxyColors.muted, modifier = Modifier.size(44.dp))
             }
         }
@@ -241,16 +243,16 @@ private fun AddTile(onAdd: () -> Unit) {
 
 /** One avatar with its name; the last-used one wears the blue ring with the cat holding it. */
 @Composable
-private fun ProfileTile(p: Profile, api: RoxyApi, managing: Boolean, current: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(PickSize + 16.dp).clickable(onClick = onClick).padding(top = 10.dp)) {
+private fun ProfileTile(p: Profile, api: RoxyApi, tile: Dp, managing: Boolean, current: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 16.dp).clickable(onClick = onClick).padding(top = 10.dp)) {
         // Same footprint for every tile (ring space reserved) so the names line up.
-        Box(modifier = Modifier.size(PickSize + 14.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(tile + 14.dp), contentAlignment = Alignment.Center) {
             if (current) {
-                Box(Modifier.size(PickSize + 14.dp).clip(CircleShape).border(3.dp, RoxyColors.accent, CircleShape))
+                Box(Modifier.size(tile + 14.dp).clip(CircleShape).border(3.dp, RoxyColors.accent, CircleShape))
             }
-            ProfileAvatar(p, api, size = PickSize)
+            ProfileAvatar(p, api, size = tile)
             if (managing) {
-                Box(modifier = Modifier.size(PickSize).clip(CircleShape).background(Color(0x88000000)), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.size(tile).clip(CircleShape).background(Color(0x88000000)), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White, modifier = Modifier.size(36.dp))
                 }
             }
