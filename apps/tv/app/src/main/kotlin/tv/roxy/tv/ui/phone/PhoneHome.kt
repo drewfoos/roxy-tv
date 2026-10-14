@@ -234,9 +234,9 @@ private fun HeroCarousel(heroes: List<HeroPick>, api: RoxyApi, onPlay: (HeroPick
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
                 HeroSlide(heroes[page], api, onOpen = { onOpen(heroes[page]) }, onPlay = { onPlay(heroes[page]) })
             }
-            // 80 % of the Start watching button (the row minus the save circle and its gap).
-            val buttonWidth = maxWidth - PhonePad * 2 - 46.dp - 14.dp
-            if (count > 1) TimerBars(count = count, current = pager.currentPage, progress = progress.value, width = buttonWidth * 0.8f, modifier = Modifier.align(Alignment.BottomStart))
+            // 90 % of the Start watching button (the row minus the save circle and its gap).
+            val buttonWidth = maxWidth - PhonePad * 2 - 44.dp - 14.dp
+            if (count > 1) TimerBars(count = count, current = pager.currentPage, progress = progress.value, width = buttonWidth * 0.9f, modifier = Modifier.align(Alignment.BottomStart))
         }
     }
 }
@@ -258,15 +258,15 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.3f to Color.Transparent, 0.62f to Color(0xB30B0B0F), 0.9f to Color(0xF20B0B0F), 1f to RoxyColors.background)))
 
         Column(
-            // 18 dp between every block, and the same 18 dp from the button down to the timer bars (bars are 9 dp + 10 dp padding).
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 37.dp),
+            // 22 dp between every block, and the same 22 dp from the button down to the timer bars (bars are 9 dp + 10 dp padding).
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 41.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             val logo = api.imageUrl(title, "logo", widthPx(320.dp))
             if (logo != null) {
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    AsyncImage(model = logo, contentDescription = title.title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth(0.72f).heightIn(max = 80.dp))
+                    AsyncImage(model = logo, contentDescription = title.title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth(0.72f).heightIn(max = 72.dp))
                 }
             } else {
                 Text(title.title, fontSize = 26.sp, lineHeight = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
@@ -288,7 +288,7 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
                 else -> "Start watching"
             }
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                PlayButton(label, modifier = Modifier.weight(1f), height = 46.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onPlay)
+                PlayButton(label, modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onPlay)
                 SaveButton(title, api)
             }
         }
@@ -301,7 +301,7 @@ private fun SaveButton(item: Item, api: RoxyApi) {
     val scope = rememberCoroutineScope()
     var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
     Box(
-        modifier = Modifier.size(46.dp).clip(CircleShape).border(2.dp, RoxyColors.accent, CircleShape).clickable {
+        modifier = Modifier.size(44.dp).clip(CircleShape).border(2.dp, RoxyColors.accent, CircleShape).clickable {
             val want = !on
             on = want
             scope.launch { runCatching { api.setFavorite(item.id, want) }.onFailure { Timber.w(it, "favorite failed"); on = !want } }
