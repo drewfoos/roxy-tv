@@ -256,11 +256,14 @@ private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -
     }
 }
 
+private val NavBarGrey = Color(0xFF23252B)
+
 /** Compact bottom bar: 22 dp icons, 10 sp labels, the Account tab as the profile avatar. */
 @Composable
 private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
     Row(
-        modifier = modifier.fillMaxWidth().background(Color(0xFA0B0B0F)).navigationBarsPadding().height(BarHeight),
+        // Crunchyroll-style gray bar over the black page, so the tabs read at a glance; the accent stays Roxy blue.
+        modifier = modifier.fillMaxWidth().background(NavBarGrey).navigationBarsPadding().height(BarHeight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Tab.entries.forEach { tab ->
