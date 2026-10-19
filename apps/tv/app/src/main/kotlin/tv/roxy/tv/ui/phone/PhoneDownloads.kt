@@ -183,7 +183,7 @@ private fun DownloadEntry.sizeLine(): String = "Downloaded  ·  ${formatBytes(by
  * every episode is on the device (tap to delete the season's downloads).
  */
 @Composable
-fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: (List<Item>) -> Unit) {
+fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: (List<Item>) -> Unit, compact: Boolean = false) {
     val app = RoxyApp.get(LocalContext.current)
     val index by app.downloads.index.collectAsStateWithLifecycle()
     val playable = episodes.filter { it.isPlayable && it.primarySource != null }
@@ -210,15 +210,19 @@ fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: 
         else -> Triple(Icons.Outlined.Download, "Download $seasonLabel  ·  ${formatBytes(remainingBytes)}", RoxyColors.onBackground)
     }
 
+    val onTap = {
+        when {
+            active.isNotEmpty() || (paused.isNotEmpty() && remaining.isEmpty()) -> open = true
+            remaining.isEmpty() -> open = true
+            else -> onDownloadAll(remaining)
+        }
+    }
     Box {
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable {
-                when {
-                    active.isNotEmpty() || (paused.isNotEmpty() && remaining.isEmpty()) -> open = true
-                    remaining.isEmpty() -> open = true
-                    else -> onDownloadAll(remaining)
-                }
-            }.padding(horizontal = PhonePad, vertical = 10.dp),
+        if (compact) {
+            // Icon only, for the end of the season row; the colour carries the state and the label is the description.
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(20.dp)).clickable(onClick = onTap).padding(8.dp))
+        } else Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onTap).padding(horizontal = PhonePad, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))

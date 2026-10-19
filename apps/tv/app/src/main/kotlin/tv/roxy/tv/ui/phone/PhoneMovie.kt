@@ -75,6 +75,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                 TitleInfo(
                     item = movie,
                     badge = audioBadge(movie),
+                    showTitle = app.api.imageUrl(movie, "logo") == null,
                     extra = movie.runtimeMinutes?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
                     onMoreDetails = { onOpenDetails(movie) },
                 )

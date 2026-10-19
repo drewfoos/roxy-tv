@@ -42,6 +42,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import coil3.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -141,93 +147,134 @@ fun PhoneSeries(
         item = series, api = app.api, listState = listState, onBack = onBack,
         playLabel = label, onPlay = { next?.let { play(it) } }, onSaved = { vm.load() },
     ) { bottomInset ->
+        // Crunchyroll's order: key art with the logo, the facts and synopsis centred, a tab
+        // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
+        // the list is a skeleton: the header is drawn from the card that opened the page
+        // and the episodes simply appear under the season row when they land.
+        val hasLogo = app.api.imageUrl(series, "logo") != null
+        val tabs = if (state.related.isNotEmpty()) listOf("Episodes", "Movies & OVAs") else listOf("Episodes")
+        val selectedTab = if (state.showRelated && tabs.size > 1) 1 else 0
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(series, app.api, listState) }
             item(key = "info") {
                 TitleInfo(
                     item = series,
-                    badge = audioBadge(playable.firstOrNull()),
+                    badge = audioBadge(series) ?: audioBadge(playable.firstOrNull()),
                     seasons = state.seasons.size,
+                    showTitle = !hasLogo,
                     onMoreDetails = { onOpenDetails(series) },
                 )
             }
-        if (state.seasons.isNotEmpty() || state.related.isNotEmpty() || extraSeasons.isNotEmpty()) {
-            item(key = "seasons") {
-                val label = when {
-                    selectedExtra != null -> "Season $selectedExtra"
-                    state.showRelated -> "Movies & OVAs"
-                    state.seasons.isEmpty() -> "Episodes"
-                    else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
+            item(key = "tabs") {
+                SectionTabs(tabs, selectedTab, modifier = Modifier.padding(top = 22.dp)) { i ->
+                    selectedExtra = null
+                    if (i == 1) vm.selectRelated() else vm.selectSeason(state.selectedSeason)
                 }
-                Box(modifier = Modifier.padding(start = PhonePad, top = 22.dp, bottom = 6.dp)) {
-                    var open by remember { mutableStateOf(false) }
-                    Chip(text = label, selected = false, trailing = Icons.Filled.ArrowDropDown, onClick = { open = true })
-                    DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
-                        state.seasons.forEachIndexed { i, season ->
-                            val name = season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }
-                            DropdownMenuItem(
-                                text = { Text(name, color = Color.White, fontWeight = if (!state.showRelated && selectedExtra == null && i == state.selectedSeason) FontWeight.Bold else FontWeight.Normal) },
-                                onClick = { open = false; selectedExtra = null; vm.selectSeason(i) },
+            }
+            if (selectedTab == 1) {
+                items(state.related.chunked(3)) { row ->
+                    RelatedGridRow(row, app.api, onOpen = { rel ->
+                        val item = rel.item ?: return@RelatedGridRow
+                        if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
+                    })
+                }
+            } else {
+                if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty()) {
+                    item(key = "seasons") {
+                        SeasonRow(
+                            label = seasonLabel,
+                            menu = { close ->
+                                state.seasons.forEachIndexed { i, season ->
+                                    val name = season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }
+                                    DropdownMenuItem(
+                                        text = { Text(name, color = Color.White, fontWeight = if (selectedExtra == null && i == state.selectedSeason) FontWeight.Bold else FontWeight.Normal) },
+                                        onClick = { close(); selectedExtra = null; vm.selectSeason(i) },
+                                    )
+                                }
+                                extraSeasons.forEach { sn ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(sn.name.ifEmpty { "Season ${sn.number}" }, color = Color.White, fontWeight = if (selectedExtra == sn.number) FontWeight.Bold else FontWeight.Normal)
+                                                Text(if (sn.requested) "  ·  requested" else "  ·  not in library", color = RoxyColors.muted, fontSize = 12.sp)
+                                            }
+                                        },
+                                        onClick = { close(); selectedExtra = sn.number },
+                                    )
+                                }
+                            },
+                            trailing = {
+                                // Season download lives at the end of the season row as an icon, not a row of its own.
+                                if (selectedExtra == null && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
+                            },
+                        )
+                    }
+                }
+                val extra = extraSeasons.firstOrNull { it.number == selectedExtra }
+                if (extra != null && tmdbId != null) {
+                    item(key = "extra-season") {
+                        Column {
+                            Text(
+                                listOfNotNull(extra.episodes.takeIf { it > 0 }?.let { "$it episodes" }, extra.airDate?.take(4)).joinToString("  ·  ").ifEmpty { "Season ${extra.number}" },
+                                fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp),
                             )
+                            RequestSeasonRow(tmdbId, extra.number, "Season ${extra.number}")
                         }
-                        extraSeasons.forEach { sn ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(sn.name.ifEmpty { "Season ${sn.number}" }, color = Color.White, fontWeight = if (selectedExtra == sn.number) FontWeight.Bold else FontWeight.Normal)
-                                        Text(if (sn.requested) "  ·  requested" else "  ·  not in library", color = RoxyColors.muted, fontSize = 12.sp)
-                                    }
-                                },
-                                onClick = { open = false; selectedExtra = sn.number },
-                            )
-                        }
-                        if (state.related.isNotEmpty()) {
-                            DropdownMenuItem(
-                                text = { Text("Movies & OVAs", color = Color.White, fontWeight = if (state.showRelated) FontWeight.Bold else FontWeight.Normal) },
-                                onClick = { open = false; selectedExtra = null; vm.selectRelated() },
-                            )
-                        }
+                    }
+                } else {
+                    if (!state.episodesLoading && !state.loading && state.episodes.isEmpty()) {
+                        item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
+                    } else if (state.episodes.isNotEmpty() && state.episodes.none { it.isPlayable }) {
+                        // Nothing on disk for this season (provider placeholders only): offer to request it.
+                        val seasonNumber = state.seasons.getOrNull(state.selectedSeason)?.indexAired
+                        if (tmdbId != null && seasonNumber != null) item(key = "season-request") { RequestSeasonRow(tmdbId, seasonNumber, seasonLabel) }
+                    }
+                    items(state.episodes, key = { it.id }) { ep ->
+                        PhoneEpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) }, onDownload = { download(listOf(ep)) })
                     }
                 }
             }
         }
-        val extra = extraSeasons.firstOrNull { it.number == selectedExtra }
-        if (extra != null && tmdbId != null) {
-            item(key = "extra-season") {
-                Column {
-                    Text(
-                        listOfNotNull(extra.episodes.takeIf { it > 0 }?.let { "$it episodes" }, extra.airDate?.take(4)).joinToString("  ·  ").ifEmpty { "Season ${extra.number}" },
-                        fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp),
-                    )
-                    RequestSeasonRow(tmdbId, extra.number, "Season ${extra.number}")
+    }
+}
+
+/** Crunchyroll's tab strip: bold labels, a brand-colour underline under the open one, a hairline across. */
+@Composable
+fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(horizontal = PhonePad)) {
+            tabs.forEachIndexed { i, tab ->
+                val on = i == selected
+                Column(modifier = Modifier.width(IntrinsicSize.Max).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(i) }.padding(end = 28.dp)) {
+                    Text(tab, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (on) RoxyColors.onBackground else RoxyColors.muted, modifier = Modifier.padding(vertical = 10.dp))
+                    Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(if (on) RoxyColors.accent else Color.Transparent))
                 }
             }
-        } else if (state.showRelated) {
-            items(state.related.chunked(3)) { row ->
-                RelatedGridRow(row, app.api, onOpen = { rel ->
-                    val item = rel.item ?: return@RelatedGridRow
-                    if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
-                })
-            }
-        } else {
-            if (state.episodesLoading && state.episodes.isEmpty()) {
-                items(4) { EpisodeRowSkeleton() }
-            } else if (state.episodes.isEmpty()) {
-                item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
-            } else if (state.episodes.none { it.isPlayable }) {
-                // Nothing on disk for this season (provider placeholders only): offer to request it.
-                val tmdb = series.providerIds["tmdb"]?.toIntOrNull()
-                val seasonNumber = state.seasons.getOrNull(state.selectedSeason)?.indexAired
-                if (tmdb != null && seasonNumber != null) item(key = "season-request") { RequestSeasonRow(tmdb, seasonNumber, seasonLabel) }
-            } else {
-                // Netflix's "Download Season N" sits between the dropdown and the first episode.
-                item(key = "season-download") { SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download) }
-            }
-            items(state.episodes, key = { it.id }) { ep ->
-                PhoneEpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) }, onDownload = { download(listOf(ep)) })
-            }
         }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(RoxyColors.surfaceHigh))
+    }
+}
+
+/** Full-width season selector under the tabs: the name with a caret opens [menu]; [trailing] sits at the right end. */
+@Composable
+private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () -> Unit) -> Unit, trailing: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Column {
+        Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad - 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                Row(
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(label, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                    Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose season", tint = RoxyColors.onBackground)
+                }
+                DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) { menu { open = false } }
+            }
+            Spacer(Modifier.weight(1f))
+            trailing()
         }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(RoxyColors.surfaceHigh))
     }
 }
 
@@ -277,8 +324,9 @@ fun TitlePageScaffold(
 }
 
 /**
- * Full-bleed banner (the backdrop, cropped tall) that fades and slides up as the page
- * scrolls, melting into the page colour at its foot.
+ * Full-bleed key art (the backdrop, cropped tall) that fades and slides up as the page
+ * scrolls, melting into the page colour at its foot. The show's logo sits in that fade,
+ * like Crunchyroll's banners, so the page needs no title line when one exists.
  */
 @Composable
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
@@ -297,42 +345,51 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
         val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
         RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.25f to Color.Transparent)))
-        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to RoxyColors.background)))
+        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 0.8f to RoxyColors.background.copy(alpha = 0.88f), 1f to RoxyColors.background)))
+        val logo = api.imageUrl(item, "logo", widthPx(320.dp))
+        if (logo != null) {
+            AsyncImage(
+                model = logo, contentDescription = item.title, contentScale = ContentScale.Fit,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp).fillMaxWidth(0.7f).heightIn(max = 84.dp),
+            )
+        }
     }
 }
 
 /**
- * Centred title block under the banner: name, "Dub | Sub • genres", the rating, then the
- * description (tap to expand) and the year / season count line.
+ * Centred title block under the banner, Crunchyroll's order: the name only when the
+ * banner carries no logo; "TV-14 • Dub | Sub • genres"; the star rating with the year
+ * and season count; the synopsis (tap to expand); "More details" as a link.
  */
 @Composable
-fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
+fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = null, showTitle: Boolean = true, onMoreDetails: (() -> Unit)? = null) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
-        val tags = listOf(badge.orEmpty(), item.genres.take(3).joinToString(", ")).filter { it.isNotEmpty() }.joinToString("  •  ")
-        if (tags.isNotEmpty()) Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
+        if (showTitle) {
+            Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 10.dp))
+        }
+        val tags = listOfNotNull(item.officialRating, badge, item.genres.take(3).joinToString(", ").ifEmpty { null }).joinToString("  •  ")
+        if (tags.isNotEmpty()) Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         FactsLine(
             rating = item.communityRating,
             facts = listOfNotNull(
                 (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
                 seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-                item.officialRating,
                 extra,
             ),
         )
         item.overview?.takeIf { it.isNotBlank() }?.let {
             Text(
-                it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
+                it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
                 maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
             )
         }
-        // Crunchyroll's "More details": a plain link in the brand colour, not a button.
+        // Crunchyroll's "More details": a centred link in the brand colour, not a button.
         if (onMoreDetails != null) {
             Text(
                 "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
-                modifier = Modifier.align(Alignment.Start).padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp),
+                modifier = Modifier.padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp, horizontal = 8.dp),
             )
         }
     }
