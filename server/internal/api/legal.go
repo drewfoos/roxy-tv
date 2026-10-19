@@ -12,7 +12,7 @@ import (
 // again at the next launch.
 
 // TermsVersion bumps whenever the wording changes in a way people should see again.
-const TermsVersion = "2026-10-20"
+const TermsVersion = "2026-10-20b"
 
 var legalDocs = map[string]struct {
 	Title string
@@ -80,7 +80,7 @@ const termsText = `Roxy TV is self-hosted software. It runs on a server you (or 
 
 **Third-party services.** Metadata, artwork, and character images come from The Movie Database (TMDB) and AniList under their terms. This product uses the TMDB API but is not endorsed or certified by TMDB. Opening a link on a details page takes you to the third party's site.
 
-**Accounts and profiles.** Your server administrator creates accounts. Profiles under one account share that account's access; the administrator can see what the household has requested and watched. Keep your password private.
+**Accounts and profiles.** Your server administrator creates accounts. Profiles under one account share that account's access and these terms: agreeing when you sign in covers every profile on the login. The administrator can see what the household has requested and watched. Keep your password private.
 
 **Offline downloads.** Downloaded episodes are copies of your server's files, stored on this device for your own offline viewing. They are deleted when you remove them or uninstall the app.
 
@@ -92,9 +92,13 @@ const privacyText = `Roxy TV is self-hosted. There is no Roxy cloud and no analy
 
 **What stays on your server.** Your account, profiles, watch history, resume positions, favourites, requests, and the settings you change are stored in the Roxy Server database on your own server. They never leave it except to reach your devices.
 
-**What the app keeps on your device.** Your login token, the chosen profile, player settings, and any episodes you download. Nothing else. There are no advertising identifiers and no tracking.
+**What the app keeps on your device.** Your login token, the chosen profile, player settings, any episodes you download, and a copy of the profile list so "Who's watching?" works away from home. Nothing else. There are no advertising identifiers and no tracking.
 
 **Third-party services the server contacts.** The Movie Database (TMDB) and AniList, to fetch titles, artwork, episode lists, and character images. Those requests carry the title being looked up, not your identity. Sonarr and Radarr, when the administrator connects them, receive the titles you request. Your server's administrator can see all of this.
+
+**Third-party services your device contacts.** Posters, stills, and cast photos on the Discover tab and details pages load straight from TMDB's image servers, so TMDB sees your device's address as any website would. Links on a details page open the third party's site in your browser. Everything else goes through your own server.
+
+**App updates.** When your server hosts a newer build, the app offers it; the file comes from your server, not from the internet.
 
 **Crash and debug logs.** The app writes logs to the device's standard log buffer during development builds. They are not sent anywhere.
 

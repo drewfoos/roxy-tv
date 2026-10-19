@@ -23,6 +23,34 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material.icons.outlined.Webhook
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.SwitchAccount
+import androidx.compose.material.icons.outlined.Subtitles
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.FastForward
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,72 +107,118 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
         editingProfile = false
     }
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            val avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(56.dp) * 2, session.profileAvatarKey.ifEmpty { session.profileAvatarVersion.toString() }) }
-            AvatarCircle(name = session.profileName.ifEmpty { session.userName }, imageUrl = avatarUrl, size = 56.dp)
-            Column(modifier = Modifier.padding(start = 14.dp)) {
+    var advanced by rememberSaveable { mutableStateOf(false) }
+    var confirmLogout by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 24.dp)) {
+        Text("Account", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 10.dp))
+
+        // Profile header card: avatar, profile name, the login and server underneath.
+        Row(
+            modifier = Modifier.padding(horizontal = PhonePad).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(RoxyColors.surface).clickable { editingProfile = true }.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(60.dp) * 2, session.profileAvatarKey.ifEmpty { session.profileAvatarVersion.toString() }) }
+            AvatarCircle(name = session.profileName.ifEmpty { session.userName }, imageUrl = avatarUrl, size = 60.dp)
+            Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
                 Text(session.profileName.ifEmpty { session.userName }, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-                Text("${session.userName} @ ${session.serverUrl}", fontSize = 12.sp, color = RoxyColors.muted)
+                Text(session.userName + "  ·  " + session.serverUrl.removePrefix("http://").removePrefix("https://"), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Edit profile", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.padding(top = 4.dp))
             }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = RoxyColors.muted)
         }
-        SettingRow("Edit profile", "Name and avatar") { editingProfile = true }
-        SettingRow("Switch profile", "Back to \"Who's watching?\"") { scope.launch { app.prefs.clearProfile() } }
+        GroupCard(title = null) {
+            SettingRow(Icons.Outlined.SwitchAccount, "Switch profile", "Back to \"Who's watching?\"") { scope.launch { app.prefs.clearProfile() } }
+        }
 
-        SectionTitle("Downloads", modifier = Modifier.padding(top = 8.dp))
-        val dlDone = downloadIndex.entries.values.count { it.isDone }
-        val dlActive = downloadIndex.entries.values.count { it.state.isActive }
-        val dlLine = buildList {
-            add(if (dlDone == 0) "Nothing downloaded yet" else "$dlDone ${if (dlDone == 1) "item" else "items"}  ·  ${formatBytes(app.downloads.usedBytes())}")
-            if (dlActive > 0) add("$dlActive downloading")
-        }.joinToString("  ·  ")
-        SettingRow("Downloads", dlLine, onClick = onOpenDownloads)
-        SwitchRow("Download over Wi-Fi only", wifiOnly) { scope.launch { app.prefs.setDownloadsWifiOnly(it) } }
+        GroupCard("Playback") {
+            SettingRow(Icons.Outlined.Subtitles, "Subtitles", settings.subMode.subLabel()) {
+                pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
+                    PlayerSettings.subModeChoices.firstOrNull { it.subLabel() == picked }?.let { save(settings.copy(subMode = it)) }
+                }
+            }
+            Divider()
+            SettingRow(Icons.Outlined.Translate, "Audio language", settings.audioLangs.label()) {
+                pick = Pick("Audio language", PlayerSettings.audioChoices.map { it.label() }, settings.audioLangs.label()) { picked ->
+                    PlayerSettings.audioChoices.firstOrNull { it.label() == picked }?.let { save(settings.copy(audioLangs = it)) }
+                }
+            }
+            Divider()
+            SwitchRow(Icons.Outlined.FastForward, "Auto-skip intro & outro", settings.autoSkip) { save(settings.copy(autoSkip = it)) }
+            Divider()
+            SwitchRow(Icons.Outlined.PlaylistPlay, "Autoplay next episode", settings.autoplay) { save(settings.copy(autoplay = it)) }
+            Divider()
+            SettingRow(Icons.Outlined.Tune, "Advanced", if (advanced) "Hide decoder and debug options" else "Decoder, video output, stats overlay", trailing = if (advanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore) { advanced = !advanced }
+            if (advanced) {
+                Divider()
+                SettingRow(null, "Hardware decoding", settings.hwdec) {
+                    pick = Pick("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
+                }
+                Divider()
+                SettingRow(null, "Video output", settings.vo) {
+                    pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
+                }
+                Divider()
+                SwitchRow(null, "Stats overlay", settings.showStats) { save(settings.copy(showStats = it)) }
+            }
+        }
 
-        SectionTitle("Playback", modifier = Modifier.padding(top = 8.dp))
-        SettingRow("Subtitles", settings.subMode.subLabel()) {
-            pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
-                PlayerSettings.subModeChoices.firstOrNull { it.subLabel() == picked }?.let { save(settings.copy(subMode = it)) }
-            }
+        GroupCard("Downloads") {
+            val dlDone = downloadIndex.entries.values.count { it.isDone }
+            val dlActive = downloadIndex.entries.values.count { it.state.isActive }
+            val dlLine = buildList {
+                add(if (dlDone == 0) "Nothing downloaded yet" else "$dlDone ${if (dlDone == 1) "item" else "items"}  ·  ${formatBytes(app.downloads.usedBytes())}")
+                if (dlActive > 0) add("$dlActive downloading")
+            }.joinToString("  ·  ")
+            SettingRow(Icons.Outlined.Download, "Downloads", dlLine, onClick = onOpenDownloads)
+            Divider()
+            SwitchRow(Icons.Outlined.Wifi, "Download over Wi-Fi only", wifiOnly) { scope.launch { app.prefs.setDownloadsWifiOnly(it) } }
         }
-        SettingRow("Audio language", settings.audioLangs.label()) {
-            pick = Pick("Audio language", PlayerSettings.audioChoices.map { it.label() }, settings.audioLangs.label()) { picked ->
-                PlayerSettings.audioChoices.firstOrNull { it.label() == picked }?.let { save(settings.copy(audioLangs = it)) }
-            }
-        }
-        SwitchRow("Auto-skip intro & outro", settings.autoSkip) { save(settings.copy(autoSkip = it)) }
-        SwitchRow("Autoplay next episode", settings.autoplay) { save(settings.copy(autoplay = it)) }
-        SettingRow("Hardware decoding", settings.hwdec) {
-            pick = Pick("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
-        }
-        SettingRow("Video output", settings.vo) {
-            pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
-        }
-        SwitchRow("Stats overlay", settings.showStats) { save(settings.copy(showStats = it)) }
 
         if (session.isAdmin) {
-            SectionTitle("Server", modifier = Modifier.padding(top = 8.dp))
-            SettingRow("Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)
-            SettingRow("Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
+            GroupCard("Server") {
+                SettingRow(Icons.Outlined.Dns, "Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)
+                Divider()
+                SettingRow(Icons.Outlined.Webhook, "Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
+            }
         }
 
-        SectionTitle("Account", modifier = Modifier.padding(top = 8.dp))
-        SoonRow("Notifications", "New-episode alerts are coming")
-        SoonRow("Email", "Account email is managed on the server for now")
-        SoonRow("Password", "Change it on the server for now")
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable {
-                scope.launch {
-                    runCatching { app.api.logout() }.onFailure { Timber.w("logout: %s", it.message) }
-                    app.prefs.clearSession() // AppRoot switches to the login screen
-                }
-            }.padding(horizontal = PhonePad, vertical = 14.dp),
-        ) { Text("Log out", fontSize = 16.sp, color = RoxyColors.onBackground) }
+        GroupCard("About") {
+            SettingRow(Icons.Outlined.Info, "Version", "${BuildConfig.VERSION_NAME}  ·  ${BuildConfig.APPLICATION_ID}", trailing = null) {}
+            Divider()
+            SettingRow(Icons.Outlined.Description, "Terms of Use", if (session.acceptedTerms.isNotEmpty()) "Accepted  ·  version ${session.acceptedTerms}" else "Read the terms") { onOpenLegal("terms") }
+            Divider()
+            SettingRow(Icons.Outlined.Shield, "Privacy", "What stays on your server and your device") { onOpenLegal("privacy") }
+        }
 
-        SectionTitle("About", modifier = Modifier.padding(top = 8.dp))
-        InfoRow("Version", "${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
-        SettingRow("Terms of Use", if (session.acceptedTerms.isNotEmpty()) "Accepted  ·  version ${session.acceptedTerms}" else "Read the terms") { onOpenLegal("terms") }
-        SettingRow("Privacy", "What stays on your server and your device") { onOpenLegal("privacy") }
+        // Log out stands alone at the end, in red, with a confirmation.
+        Row(
+            modifier = Modifier.padding(horizontal = PhonePad, vertical = 12.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(RoxyColors.surface).clickable { confirmLogout = true }.padding(horizontal = 16.dp, vertical = 15.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null, tint = RoxyColors.error, modifier = Modifier.size(20.dp))
+            Text("Log out", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.error, modifier = Modifier.padding(start = 8.dp))
+        }
+        Text("Signed in as ${session.userName}", fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+    }
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+            title = { Text("Log out?") },
+            text = { Text("Every profile on this login signs out of this device. Downloads stay until you remove them.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLogout = false
+                    scope.launch {
+                        runCatching { app.api.logout() }.onFailure { Timber.w("logout: %s", it.message) }
+                        app.prefs.clearSession() // AppRoot switches to the login screen
+                    }
+                }) { Text("Log out", color = RoxyColors.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("Cancel", color = Color.White) } },
+        )
     }
 
     pick?.let { p ->
@@ -172,47 +246,45 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
     }
 }
 
+/** A rounded card holding related rows, with an optional small caps-style title above it. */
 @Composable
-private fun SettingRow(label: String, value: String, onClick: () -> Unit) {
+private fun GroupCard(title: String?, content: @Composable ColumnScope.() -> Unit) {
+    if (title != null) Text(title.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = PhonePad + 4.dp, top = 22.dp, bottom = 8.dp))
+    else Spacer(Modifier.height(10.dp))
+    Column(modifier = Modifier.padding(horizontal = PhonePad).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(RoxyColors.surface), content = content)
+}
+
+@Composable
+private fun Divider() {
+    Box(modifier = Modifier.fillMaxWidth().padding(start = 52.dp).height(1.dp).background(Color.White.copy(alpha = 0.06f)))
+}
+
+@Composable
+private fun SettingRow(icon: ImageVector?, label: String, value: String, trailing: ImageVector? = Icons.Filled.ChevronRight, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = PhonePad, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.CenterStart) {
+            if (icon != null) Icon(icon, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(label, fontSize = 16.sp, color = RoxyColors.onBackground)
-            Text(value, fontSize = 13.sp, color = RoxyColors.muted)
+            if (value.isNotEmpty()) Text(value, fontSize = 13.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = RoxyColors.muted)
+        if (trailing != null) Icon(trailing, contentDescription = null, tint = RoxyColors.muted)
     }
 }
 
 @Composable
-private fun InfoRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 16.sp, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
-        Text(value, fontSize = 13.sp, color = RoxyColors.muted)
-    }
-}
-
-/** A row for something not built yet: dimmed, with the reason underneath. */
-@Composable
-private fun SoonRow(label: String, note: String) {
-    Row(modifier = Modifier.fillMaxWidth().alpha(0.5f).padding(horizontal = PhonePad, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, fontSize = 16.sp, color = RoxyColors.onBackground)
-            if (note.isNotEmpty()) Text(note, fontSize = 13.sp, color = RoxyColors.muted)
-        }
-        Text("Coming soon", fontSize = 12.sp, color = RoxyColors.muted)
-        Spacer(Modifier.width(4.dp))
-    }
-}
-
-@Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(icon: ImageVector?, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = PhonePad, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(start = 16.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.CenterStart) {
+            if (icon != null) Icon(icon, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
+        }
         Text(label, fontSize = 16.sp, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
         Switch(
             checked = checked, onCheckedChange = onChange,
