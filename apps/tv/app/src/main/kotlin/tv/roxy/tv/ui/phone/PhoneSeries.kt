@@ -35,6 +35,12 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.RemoveDone
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -146,6 +152,7 @@ fun PhoneSeries(
     TitlePageScaffold(
         item = series, api = app.api, listState = listState, onBack = onBack,
         playLabel = label, onPlay = { next?.let { play(it) } }, onSaved = { vm.load() },
+        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(series.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
     ) { bottomInset ->
         // Crunchyroll's order: key art with the logo, the facts and synopsis centred, a tab
         // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
@@ -295,6 +302,9 @@ fun TitlePageScaffold(
     playLabel: String,
     onPlay: () -> Unit,
     onSaved: () -> Unit,
+    /** The three-dot menu's "Mark … as watched / unwatched"; null hides the menu. */
+    onMarkWatched: ((Boolean) -> Unit)? = null,
+    markAll: Boolean = true,
     content: @Composable (bottomInset: Dp) -> Unit,
 ) {
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -309,8 +319,26 @@ fun TitlePageScaffold(
     }
     Box(modifier = Modifier.fillMaxSize()) {
         content(barHeight + navInset + 8.dp)
-        Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(12.dp)) {
-            BackCircle(onBack)
+        // Crunchyroll's header: a plain white X at the left, Cast and the three-dot menu
+        // at the right, over the banner's top fade; the strip turns solid once scrolled.
+        Row(
+            modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HeaderIcon(Icons.Filled.Close, "Close", onClick = onBack)
+            Spacer(Modifier.weight(1f))
+            HeaderIcon(Icons.Filled.Cast, "Cast (coming soon)", tint = Color.White.copy(alpha = 0.6f))
+            if (onMarkWatched != null) {
+                Box {
+                    var open by remember { mutableStateOf(false) }
+                    HeaderIcon(Icons.Filled.MoreVert, "More", onClick = { open = true })
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+                        val what = if (markAll) "all" else "movie"
+                        DropdownMenuItem(text = { Text("Mark $what as watched", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Check, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(true) })
+                        DropdownMenuItem(text = { Text("Mark $what as unwatched", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.RemoveDone, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(false) })
+                    }
+                }
+            }
         }
         // Sticky actions: the same pill + bookmark as the hero, on a dark pane over the list.
         Box(
@@ -321,6 +349,15 @@ fun TitlePageScaffold(
             PlayAndSaveRow(playLabel, item, api, onPlay = onPlay, onSaved = onSaved)
         }
     }
+}
+
+/** A 44 dp white glyph for the title page header (no circle behind it, like Crunchyroll's). */
+@Composable
+private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Color.White, onClick: (() -> Unit)? = null) {
+    Icon(
+        icon, contentDescription = description, tint = tint,
+        modifier = Modifier.size(44.dp).clip(CircleShape).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(10.dp),
+    )
 }
 
 /**
@@ -344,7 +381,7 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
         // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
         val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
         RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
-        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.25f to Color.Transparent)))
+        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0xE6000000), 0.12f to Color(0x80000000), 0.32f to Color.Transparent)))
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 0.8f to RoxyColors.background.copy(alpha = 0.88f), 1f to RoxyColors.background)))
         val logo = api.imageUrl(item, "logo", widthPx(320.dp))
         if (logo != null) {

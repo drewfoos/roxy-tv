@@ -92,19 +92,23 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 
 // POST|DELETE /v1/me/played/{itemId}
 func (s *Server) played(w http.ResponseWriter, r *http.Request) {
-	s.setFlag(w, r, func(ctx context.Context, userID, guid string, on bool) error {
-		return s.store.MarkPlayed(ctx, userID, guid, on)
+	s.setFlag(w, r, func(ctx context.Context, userID string, it *model.Item, on bool) error {
+		// A series or season stands for its episodes ("mark all as watched").
+		if it.Type == model.TypeSeries || it.Type == model.TypeSeason {
+			return s.store.MarkPlayedUnder(ctx, userID, it.ID, on)
+		}
+		return s.store.MarkPlayed(ctx, userID, it.GUID, on)
 	})
 }
 
 // POST|DELETE /v1/me/favorite/{itemId}
 func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
-	s.setFlag(w, r, func(ctx context.Context, userID, guid string, on bool) error {
-		return s.store.SetFavorite(ctx, userID, guid, on)
+	s.setFlag(w, r, func(ctx context.Context, userID string, it *model.Item, on bool) error {
+		return s.store.SetFavorite(ctx, userID, it.GUID, on)
 	})
 }
 
-func (s *Server) setFlag(w http.ResponseWriter, r *http.Request, set func(ctx context.Context, userID, guid string, on bool) error) {
+func (s *Server) setFlag(w http.ResponseWriter, r *http.Request, set func(ctx context.Context, userID string, it *model.Item, on bool) error) {
 	p := userFrom(w, r)
 	if p == nil {
 		return
@@ -118,7 +122,7 @@ func (s *Server) setFlag(w http.ResponseWriter, r *http.Request, set func(ctx co
 		writeError(w, 404, "item not found")
 		return
 	}
-	if err := set(r.Context(), p.ScopeID, it.GUID, r.Method == http.MethodPost); err != nil {
+	if err := set(r.Context(), p.ScopeID, it, r.Method == http.MethodPost); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}

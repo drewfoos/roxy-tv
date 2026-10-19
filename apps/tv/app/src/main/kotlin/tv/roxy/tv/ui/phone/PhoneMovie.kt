@@ -68,6 +68,8 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
         playLabel = if (resumable) "Resume" else "Start watching",
         onPlay = { scope.launch { playItem(context, movie).onFailure { Timber.w(it, "play failed") } } },
         onSaved = { vm.load() },
+        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(movie.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+        markAll = false,
     ) { bottomInset ->
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(movie, app.api, listState) }

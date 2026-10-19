@@ -69,6 +69,37 @@ func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool
 	return err
 }
 
+// MarkPlayedUnder flags every episode beneath a series or season, so "mark all as
+// watched" on a title page is one call. The parent row itself carries no flag: a
+// series' progress is derived from its episodes.
+func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, played bool) error {
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+			SELECT id FROM items WHERE id = ?
+			UNION ALL
+			SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+		)
+		SELECT guid FROM items WHERE type = 'episode' AND id IN (SELECT id FROM tree)`, itemID)
+	if err != nil {
+		return err
+	}
+	var guids []string
+	for rows.Next() {
+		var g string
+		if err := rows.Scan(&g); err != nil {
+			rows.Close()
+			return err
+		}
+		guids = append(guids, g)
+	}
+	rows.Close()
+	for _, g := range guids {
+		if err := s.MarkPlayed(ctx, userID, g, played); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SetFavorite(ctx context.Context, userID, guid string, fav bool) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, is_favorite) VALUES (?, ?, ?)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET is_favorite = excluded.is_favorite`, userID, guid, boolInt(fav))
