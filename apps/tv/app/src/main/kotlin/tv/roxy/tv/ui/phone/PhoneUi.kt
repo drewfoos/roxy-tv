@@ -58,6 +58,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -268,6 +272,27 @@ fun audioBadge(play: Item?): String? {
 fun languageName(code: String): String {
     val name = runCatching { java.util.Locale(code).getDisplayLanguage(java.util.Locale.ENGLISH) }.getOrNull()
     return if (name.isNullOrEmpty() || name.equals(code, ignoreCase = true)) code.uppercase() else name
+}
+
+/**
+ * The facts line under a title: "★ 8.5 · 2016 · 4 Seasons · 31 Episodes · 24m". The
+ * rating leads in the brand blue; the rest is muted. One line, so the title block reads
+ * as a single taper: title, tagline, genres, facts.
+ */
+@Composable
+fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifier) {
+    val rest = facts.filter { it.isNotBlank() }
+    if (rating == null && rest.isEmpty()) return
+    Text(
+        buildAnnotatedString {
+            if (rating != null) {
+                withStyle(SpanStyle(color = RoxyColors.accent, fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
+                if (rest.isNotEmpty()) append("  ·  ")
+            }
+            append(rest.joinToString("  ·  "))
+        },
+        fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = modifier.padding(top = 8.dp),
+    )
 }
 
 /** Small translucent pill over a card ("Dub | Sub"). */

@@ -84,11 +84,18 @@ func getJSON(ctx context.Context, client *http.Client, lim *limiter, method, url
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			// A dropped connection (reset, EOF) gets one retry; the request is idempotent.
+			if attempt == 0 {
+				continue
+			}
 			return err
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		resp.Body.Close()
 		if err != nil {
+			if attempt == 0 {
+				continue
+			}
 			return err
 		}
 		if resp.StatusCode == http.StatusTooManyRequests && attempt == 0 {

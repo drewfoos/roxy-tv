@@ -122,6 +122,8 @@ data class DiscoverUiState(
     val query: String = "",
     val results: List<DiscoverItem>? = null, // null = not searching
     val searching: Boolean = false,
+    /** The last search failed (TMDB unreachable); shown with a retry instead of falling back to the rows. */
+    val searchError: String? = null,
     // Filters: when active, a paged grid from TMDB discover replaces the rows.
     val filters: BrowseFilters = BrowseFilters(),
     val browseItems: List<DiscoverItem>? = null,
@@ -178,7 +180,7 @@ class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
 
     /** Type-to-search with a short debounce; an empty query returns to the rows. */
     fun search(q: String) {
-        _state.value = _state.value.copy(query = q)
+        _state.value = _state.value.copy(query = q, searchError = null)
         searchJob?.cancel()
         if (q.isBlank()) { _state.value = _state.value.copy(results = null, searching = false); return }
         searchJob = viewModelScope.launch {
@@ -186,7 +188,7 @@ class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
             _state.value = _state.value.copy(searching = true)
             runCatching { api.discoverSearch(q) }
                 .onSuccess { r -> if (_state.value.query == q) _state.value = _state.value.copy(results = r, searching = false) }
-                .onFailure { t -> Timber.w(t, "discover search"); _state.value = _state.value.copy(searching = false) }
+                .onFailure { t -> Timber.w(t, "discover search"); if (_state.value.query == q) _state.value = _state.value.copy(searching = false, results = null, searchError = t.message ?: "search failed") }
         }
     }
 }
@@ -205,7 +207,7 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
         }
         SearchBox(query = state.query, onChange = vm::search, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
         var sheet by rememberSaveable { mutableStateOf(false) }
-        if (state.results == null && !state.searching) {
+        if (state.results == null && !state.searching && state.searchError == null) {
             FilterBar(filters = state.filters, onChange = vm::setFilters, onOpenSheet = { vm.loadGenres(state.filters.type); sheet = true })
         }
         if (sheet) {
@@ -230,6 +232,11 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
                         if (state.browseLoading) item(span = { GridItemSpan(3) }) { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = RoxyColors.accent, modifier = Modifier.size(24.dp), strokeWidth = 2.dp) } }
                     }
                 }
+            }
+            state.searchError != null -> Column(modifier = Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Couldn't reach TMDB", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                Text(state.searchError ?: "", fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 14.dp))
+                GreyButton("Try again", onClick = { vm.search(state.query) })
             }
             state.results != null || state.searching -> {
                 val results = state.results
@@ -448,21 +455,19 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                     d.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
                     val tags = listOf(if (d.isAnime) "Anime" else if (d.isMovie) "Movie" else "Series", d.genres.take(3).joinToString(", ")).filter { it.isNotEmpty() }.joinToString("  •  ")
                     Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
-                    d.rating?.takeIf { it > 0 }?.let {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                            Text("★ %.1f".format(it), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent)
-                            Text("  TMDB", fontSize = 12.sp, color = RoxyColors.muted)
-                        }
-                    }
-                    val facts = listOfNotNull(
-                        d.year?.toString(),
-                        d.seasonCount.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-                        d.episodes.takeIf { it > 0 && !d.isMovie }?.let { "$it Episodes" },
-                        d.runtimeMinutes.takeIf { it > 0 }?.let { if (d.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "${it}m" },
-                        d.status?.takeIf { it.isNotBlank() },
-                        d.networks.firstOrNull(),
-                    ).joinToString("  ·  ")
-                    if (facts.isNotEmpty()) Text(facts, fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+                    // One facts line with the rating leading it, so the block tapers from the
+                    // title down instead of narrowing and widening again around a lone "8.5".
+                    FactsLine(
+                        rating = d.rating?.takeIf { it > 0 },
+                        facts = listOfNotNull(
+                            d.year?.toString(),
+                            d.seasonCount.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
+                            d.episodes.takeIf { it > 0 && !d.isMovie }?.let { "$it Episodes" },
+                            d.runtimeMinutes.takeIf { it > 0 }?.let { if (d.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "${it}m" },
+                            d.status?.takeIf { it.isNotBlank() },
+                        ),
+                    )
+                    d.networks.firstOrNull()?.let { Text(it, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
                     d.overview?.takeIf { it.isNotBlank() }?.let {
                         Text(
                             it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),

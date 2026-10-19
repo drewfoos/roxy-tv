@@ -303,19 +303,15 @@ fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = nul
         Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
         val tags = listOf(badge.orEmpty(), item.genres.take(3).joinToString(", ")).filter { it.isNotEmpty() }.joinToString("  •  ")
         if (tags.isNotEmpty()) Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
-        item.communityRating?.let {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                Text("★ %.1f".format(it), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent)
-                Text("  TMDB", fontSize = 12.sp, color = RoxyColors.muted)
-            }
-        }
-        val facts = listOfNotNull(
-            (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
-            seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-            item.officialRating,
-            extra,
-        ).joinToString("  ·  ")
-        if (facts.isNotEmpty()) Text(facts, fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+        FactsLine(
+            rating = item.communityRating,
+            facts = listOfNotNull(
+                (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
+                seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
+                item.officialRating,
+                extra,
+            ),
+        )
         item.overview?.takeIf { it.isNotBlank() }?.let {
             Text(
                 it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
