@@ -14,6 +14,39 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import tv.roxy.tv.ui.phone.WitchHat
+import tv.roxy.tv.ui.phone.PlayButton
+import tv.roxy.tv.ui.phone.OnBrand
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -106,24 +139,48 @@ fun LoginScreen() {
     var serverUrl by rememberSaveable { mutableStateOf(savedUrl.ifEmpty { BuildConfig.DEFAULT_SERVER_URL }) }
     var username by rememberSaveable { mutableStateOf(BuildConfig.DEFAULT_USERNAME) }
     var password by rememberSaveable { mutableStateOf(BuildConfig.DEFAULT_PASSWORD) }
+    var showPassword by rememberSaveable { mutableStateOf(false) }
+    // Signing in means agreeing to the terms. The text lives on the server, so the link
+    // fetches it from the URL typed above; acceptance is recorded once logged in.
+    var agreed by rememberSaveable { mutableStateOf(false) }
+    var showTerms by rememberSaveable { mutableStateOf(false) }
+    val canConnect = !state.busy && agreed && serverUrl.isNotBlank() && username.isNotBlank()
 
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
+        // A soft blue glow behind the mark, like the splash, fading into the page.
+        Box(
+            modifier = Modifier.fillMaxWidth().height(420.dp).align(Alignment.TopCenter)
+                .background(Brush.radialGradient(listOf(RoxyColors.accent.copy(alpha = 0.22f), Color.Transparent), radius = 900f)),
+        )
         Column(
             // 440dp on a TV; the full width (minus padding) on a phone in portrait.
-            modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.align(Alignment.Center).widthIn(max = 440.dp).fillMaxWidth().statusBarsPadding().navigationBarsPadding().imePadding()
+                .verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Roxy", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = RoxyColors.accent)
-            Text("Sign in to your Roxy Server", color = RoxyColors.muted, modifier = Modifier.padding(bottom = 8.dp))
-            RoxyTextField(serverUrl, { serverUrl = it }, label = "Server URL", keyboardType = KeyboardType.Uri)
-            RoxyTextField(username, { username = it }, label = "User name")
-            RoxyTextField(password, { password = it }, label = "Password", password = true, keyboardType = KeyboardType.Password, imeAction = ImeAction.Done)
-            // Signing in means agreeing to the terms. The text lives on the server, so the
-            // link fetches it from the URL typed above; acceptance is recorded once logged in.
-            var agreed by rememberSaveable { mutableStateOf(false) }
-            var showTerms by rememberSaveable { mutableStateOf(false) }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Checkbox(checked = agreed, onCheckedChange = { agreed = it }, colors = CheckboxDefaults.colors(checkedColor = RoxyColors.accent, uncheckedColor = RoxyColors.muted))
+            WitchHat(size = 84.dp, modifier = Modifier.padding(top = 8.dp))
+            Text("Roxy TV", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.5.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 14.dp))
+            Text("Sign in to your server", fontSize = 14.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp, bottom = 32.dp))
+
+            LoginField(serverUrl, { serverUrl = it }, placeholder = "Server address", icon = Icons.Outlined.Dns, keyboardType = KeyboardType.Uri)
+            Spacer(Modifier.height(12.dp))
+            LoginField(username, { username = it }, placeholder = "User name", icon = Icons.Outlined.Person)
+            Spacer(Modifier.height(12.dp))
+            LoginField(
+                password, { password = it }, placeholder = "Password", icon = Icons.Outlined.Lock,
+                keyboardType = KeyboardType.Password, imeAction = ImeAction.Done,
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                trailing = {
+                    Icon(
+                        if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = if (showPassword) "Hide password" else "Show password",
+                        tint = RoxyColors.muted, modifier = Modifier.size(22.dp).clickable { showPassword = !showPassword },
+                    )
+                },
+                onDone = { if (canConnect) vm.login(serverUrl, username, password) },
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp)) {
+                Checkbox(checked = agreed, onCheckedChange = { agreed = it }, colors = CheckboxDefaults.colors(checkedColor = RoxyColors.accent, uncheckedColor = RoxyColors.muted, checkmarkColor = OnBrand))
                 Text(
                     buildAnnotatedString {
                         append("I agree to the ")
@@ -133,17 +190,62 @@ fun LoginScreen() {
                     modifier = Modifier.clickable { showTerms = true },
                 )
             }
-            PrimaryButton(
-                text = if (state.busy) "Connecting..." else "Connect",
-                enabled = !state.busy && agreed,
-                onClick = { vm.login(serverUrl, username, password) },
+            PlayButton(
+                text = if (state.busy) "Connecting…" else "Connect",
+                icon = Icons.AutoMirrored.Filled.Login, height = 50.dp, pill = true,
+                container = if (canConnect) RoxyColors.accent else RoxyColors.accent.copy(alpha = 0.35f),
+                content = if (canConnect) OnBrand else OnBrand.copy(alpha = 0.6f),
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                onClick = { if (canConnect) vm.login(serverUrl, username, password) },
+            )
+            state.error?.let {
+                Text(it, color = RoxyColors.error, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp))
+            }
+            Text(
+                "Your server's address is where Roxy Server runs, like http://192.168.1.10:8096 or your Tailscale name.",
+                color = RoxyColors.muted.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 28.dp),
             )
             if (showTerms) {
                 LoginTermsDialog(serverUrl = serverUrl, onDismiss = { showTerms = false }, onAgree = { agreed = true; showTerms = false })
             }
-            state.error?.let { Text(it, color = RoxyColors.error, fontSize = 14.sp) }
         }
+    }
+}
+
+/** Rounded dark field with a leading icon and a brand-blue ring on focus; works by touch and D-pad. */
+@Composable
+private fun LoginField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    icon: ImageVector,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    imeAction: ImeAction = ImeAction.Next,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailing: (@Composable () -> Unit)? = null,
+    onDone: () -> Unit = {},
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    Row(
+        modifier = Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(14.dp)).background(RoxyColors.surfaceHigh)
+            .border(1.5.dp, if (focused) RoxyColors.accent else Color.Transparent, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (focused) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.size(22.dp))
+        Box(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+            if (value.isEmpty()) Text(placeholder, color = RoxyColors.muted, fontSize = 16.sp)
+            BasicTextField(
+                value = value, onValueChange = onValueChange, singleLine = true, interactionSource = interaction,
+                textStyle = TextStyle(color = RoxyColors.onBackground, fontSize = 16.sp),
+                cursorBrush = SolidColor(RoxyColors.accent),
+                visualTransformation = visualTransformation,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+                keyboardActions = KeyboardActions(onDone = { onDone() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        trailing?.invoke()
     }
 }
 
