@@ -66,18 +66,20 @@ type ItemImage struct {
 	Height    int
 	SourceURL string
 	FetchedAt time.Time
+	// Locked marks art the admin picked by hand; metadata refreshes leave it alone.
+	Locked bool
 }
 
 func (s *Store) SetItemImage(ctx context.Context, img ItemImage) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO item_images (item_id, type, path, width, height, source_url, fetched_at) VALUES (?,?,?,?,?,?,?)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO item_images (item_id, type, path, width, height, source_url, fetched_at, locked) VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(item_id, type) DO UPDATE SET path = excluded.path, width = excluded.width, height = excluded.height,
-		source_url = excluded.source_url, fetched_at = excluded.fetched_at`,
-		img.ItemID, img.Type, img.Path, nullInt(img.Width), nullInt(img.Height), nullStr(img.SourceURL), Now())
+		source_url = excluded.source_url, fetched_at = excluded.fetched_at, locked = excluded.locked`,
+		img.ItemID, img.Type, img.Path, nullInt(img.Width), nullInt(img.Height), nullStr(img.SourceURL), Now(), boolInt(img.Locked))
 	return err
 }
 
 func (s *Store) GetItemImage(ctx context.Context, itemID, imageType string) (*ItemImage, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT item_id, type, path, width, height, source_url, fetched_at FROM item_images WHERE item_id = ? AND type = ?`, itemID, imageType)
+	row := s.db.QueryRowContext(ctx, `SELECT item_id, type, path, width, height, source_url, fetched_at, locked FROM item_images WHERE item_id = ? AND type = ?`, itemID, imageType)
 	img, err := scanImage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -86,7 +88,7 @@ func (s *Store) GetItemImage(ctx context.Context, itemID, imageType string) (*It
 }
 
 func (s *Store) ImagesForItem(ctx context.Context, itemID string) ([]ItemImage, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT item_id, type, path, width, height, source_url, fetched_at FROM item_images WHERE item_id = ? ORDER BY type`, itemID)
+	rows, err := s.db.QueryContext(ctx, `SELECT item_id, type, path, width, height, source_url, fetched_at, locked FROM item_images WHERE item_id = ? ORDER BY type`, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -107,9 +109,11 @@ func scanImage(sc interface{ Scan(...any) error }) (*ItemImage, error) {
 	var w, h sql.NullInt64
 	var src sql.NullString
 	var at string
-	if err := sc.Scan(&img.ItemID, &img.Type, &img.Path, &w, &h, &src, &at); err != nil {
+	var locked int
+	if err := sc.Scan(&img.ItemID, &img.Type, &img.Path, &w, &h, &src, &at, &locked); err != nil {
 		return nil, err
 	}
+	img.Locked = locked == 1
 	img.Width, img.Height, img.SourceURL = int(w.Int64), int(h.Int64), src.String
 	img.FetchedAt = ParseTime(at)
 	return &img, nil

@@ -587,15 +587,39 @@ func newID() string { return uuid.NewString() }
 // thumb) as JPEG, logos as PNG so their transparency survives. Already-cached files from
 // the same URL in the same format are kept.
 func (s *Service) fetchImage(ctx context.Context, itemID, typ, srcURL string) {
+	s.fetchImageOpt(ctx, itemID, typ, srcURL, false)
+}
+
+// SetImage stores art the admin chose (any https URL) and locks it, so refreshes keep it.
+func (s *Service) SetImage(ctx context.Context, itemID, typ, srcURL string) error {
+	s.fetchImageOpt(ctx, itemID, typ, srcURL, true)
+	img, err := s.store.GetItemImage(ctx, itemID, typ)
+	if err != nil {
+		return err
+	}
+	if img == nil || img.SourceURL != srcURL {
+		return fmt.Errorf("could not fetch %s", srcURL)
+	}
+	return nil
+}
+
+// fetchImageOpt downloads one image into the cache. A locked image (admin's choice) is
+// kept unless force is set, which is how the admin replaces it.
+func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string, force bool) {
 	dir := filepath.Join(s.cfg.ImagesDir(), itemID)
 	ext := ".jpg"
 	if typ == "logo" {
 		ext = ".png"
 	}
 	path := filepath.Join(dir, typ+ext)
-	if existing, err := s.store.GetItemImage(ctx, itemID, typ); err == nil && existing != nil && existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext {
-		if _, err := os.Stat(existing.Path); err == nil {
+	if existing, err := s.store.GetItemImage(ctx, itemID, typ); err == nil && existing != nil {
+		if existing.Locked && !force {
 			return
+		}
+		if existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext {
+			if _, err := os.Stat(existing.Path); err == nil {
+				return
+			}
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
@@ -662,7 +686,7 @@ func (s *Service) fetchImage(ctx context.Context, itemID, typ, srcURL string) {
 			}
 		}
 	}
-	if err := s.store.SetItemImage(ctx, store.ItemImage{ItemID: itemID, Type: typ, Path: path, Width: cfg.Width, Height: cfg.Height, SourceURL: srcURL}); err != nil {
+	if err := s.store.SetItemImage(ctx, store.ItemImage{ItemID: itemID, Type: typ, Path: path, Width: cfg.Width, Height: cfg.Height, SourceURL: srcURL, Locked: force}); err != nil {
 		slog.Warn("metadata: recording image", "item", itemID, "type", typ, "err", err)
 	}
 }

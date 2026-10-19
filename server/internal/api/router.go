@@ -95,6 +95,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/items", s.listItems)
 			r.Get("/items/{id}", s.getItem)
 			r.Get("/items/{id}/images/{type}", s.getItemImage)
+			r.Put("/items/{id}/images/{type}", s.putItemImage)
 			r.Post("/items/{id}/refresh", s.refreshItem)
 			r.Get("/items/{id}/related", s.related)
 			r.Get("/items/{id}/details", s.itemDetails)

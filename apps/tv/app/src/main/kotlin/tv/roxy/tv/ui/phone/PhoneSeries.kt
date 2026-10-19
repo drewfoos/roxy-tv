@@ -310,11 +310,10 @@ fun TitlePageScaffold(
 ) {
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val barHeight = 44.dp + 24.dp
-    // The strip is transparent over the banner at rest (the X and icons sit on the art's
-    // dark top) and solid within the first 100 dp of scroll; the name fades in once the
-    // logo block has scrolled under it.
+    // The strip is clear over the banner and only goes solid as the picture itself goes
+    // black (it fades into it); the name fades in once the logo block has scrolled under it.
     val density = LocalDensity.current
-    val stripPx = with(density) { 100.dp.toPx() }
+    val stripPx = with(density) { (BannerHeight * 0.55f).toPx() }
     val headerAlpha by remember {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / stripPx).coerceIn(0f, 1f)
@@ -398,17 +397,18 @@ private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Col
 private val HeaderRow = 52.dp
 
 /**
- * Full-bleed key art (the backdrop, cropped tall) from the very top of the screen, with
- * the status bar and header row on its darkened top. Pinned where it is while the page
- * scrolls over it, dimming to black on the way, like Crunchyroll's: the content brings
- * its own fade (see [TitleInfo]), so nothing bright is ever under the text. The logo is
- * not here; it scrolls with the content.
+ * Full-bleed key art (the backdrop, cropped tall) starting just above the X, with the
+ * status bar black above it and a short fade at its top edge. Pinned where it is while
+ * the page scrolls over it, dimming to black on the way, like Crunchyroll's: the content
+ * brings its own fade (see [TitleInfo]), so nothing bright is ever under the text. The
+ * logo is not here; it scrolls with the content.
  */
 @Composable
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
     val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
+    val top = (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() - 6.dp).coerceAtLeast(0.dp)
     Box(
-        modifier = Modifier.fillMaxWidth().height(BannerHeight).graphicsLayer {
+        modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
             translationY = off
             alpha = (1f - off / (heightPx * 0.55f)).coerceIn(0f, 1f)
@@ -420,15 +420,9 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
         // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
         val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
         RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
-        // Black through the status bar, then a fade the X and icons sit on.
-        val density = LocalDensity.current
-        val solidPx = with(density) { WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx() }
-        val fadePx = with(density) { (HeaderRow + 90.dp).toPx() }
-        Box(
-            modifier = Modifier.matchParentSize().background(
-                Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, solidPx / (solidPx + fadePx) to Color(0xD9000000), 1f to Color.Transparent), startY = 0f, endY = solidPx + fadePx),
-            ),
-        )
+        // A short fade from the black status bar into the art, which the X and icons sit on.
+        val fadePx = with(LocalDensity.current) { (HeaderRow + 40.dp).toPx() }
+        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, 0.35f to Color(0x99000000), 1f to Color.Transparent), startY = 0f, endY = fadePx)))
     }
 }
 
@@ -461,7 +455,7 @@ fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra:
         Column(
             modifier = Modifier.fillMaxWidth()
                 .background(Brush.verticalGradient(0f to Color.Transparent, 0.42f to RoxyColors.background.copy(alpha = 0.75f), 0.62f to RoxyColors.background, 1f to RoxyColors.background))
-                .padding(horizontal = PhonePad).padding(top = 120.dp, bottom = 12.dp),
+                .padding(horizontal = PhonePad).padding(top = 120.dp, bottom = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val logo = api.imageUrl(item, "logo", widthPx(320.dp))
