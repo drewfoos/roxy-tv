@@ -50,23 +50,28 @@ type Request struct {
 	UserName   string `json:"userName,omitempty"`
 	Status     string `json:"status"` // pending | sent | failed (available is derived from the library)
 	// Seasons asked for (series only); empty = the whole series.
-	Seasons   []int  `json:"seasons,omitempty"`
-	ArrID     int    `json:"arrId,omitempty"`
-	Error     string `json:"error,omitempty"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	Seasons []int `json:"seasons,omitempty"`
+	// Individual episodes asked for (specials), as "S0E5" codes.
+	Episodes  []string `json:"episodes,omitempty"`
+	ArrID     int      `json:"arrId,omitempty"`
+	Error     string   `json:"error,omitempty"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
 }
 
-const requestCols = `r.id, r.media_type, r.tmdb_id, r.title, COALESCE(r.year, 0), COALESCE(r.poster_path, ''), r.user_id, COALESCE(NULLIF(r.requested_by, ''), u.name, ''), r.status, COALESCE(r.arr_id, 0), COALESCE(r.error, ''), r.created_at, r.updated_at, COALESCE(r.seasons, '')`
+const requestCols = `r.id, r.media_type, r.tmdb_id, r.title, COALESCE(r.year, 0), COALESCE(r.poster_path, ''), r.user_id, COALESCE(NULLIF(r.requested_by, ''), u.name, ''), r.status, COALESCE(r.arr_id, 0), COALESCE(r.error, ''), r.created_at, r.updated_at, COALESCE(r.seasons, ''), COALESCE(r.episodes, '')`
 
 func scanRequest(row interface{ Scan(...any) error }) (*Request, error) {
 	var r Request
-	var seasons string
-	if err := row.Scan(&r.ID, &r.MediaType, &r.TMDBID, &r.Title, &r.Year, &r.PosterPath, &r.UserID, &r.UserName, &r.Status, &r.ArrID, &r.Error, &r.CreatedAt, &r.UpdatedAt, &seasons); err != nil {
+	var seasons, episodes string
+	if err := row.Scan(&r.ID, &r.MediaType, &r.TMDBID, &r.Title, &r.Year, &r.PosterPath, &r.UserID, &r.UserName, &r.Status, &r.ArrID, &r.Error, &r.CreatedAt, &r.UpdatedAt, &seasons, &episodes); err != nil {
 		return nil, err
 	}
 	if seasons != "" {
 		_ = json.Unmarshal([]byte(seasons), &r.Seasons)
+	}
+	if episodes != "" {
+		_ = json.Unmarshal([]byte(episodes), &r.Episodes)
 	}
 	return &r, nil
 }
@@ -121,10 +126,15 @@ func (s *Store) UpsertRequest(ctx context.Context, r *Request) error {
 		b, _ := json.Marshal(r.Seasons)
 		seasons = sql.NullString{String: string(b), Valid: true}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO requests (id, media_type, tmdb_id, title, year, poster_path, user_id, status, arr_id, error, created_at, updated_at, seasons, requested_by)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(media_type, tmdb_id) DO UPDATE SET status = excluded.status, arr_id = excluded.arr_id, error = excluded.error, updated_at = excluded.updated_at, seasons = excluded.seasons`,
-		r.ID, r.MediaType, r.TMDBID, r.Title, nullInt(r.Year), nullStr(r.PosterPath), r.UserID, r.Status, nullInt(r.ArrID), nullStr(r.Error), r.CreatedAt, r.UpdatedAt, seasons, nullStr(r.UserName))
+	var episodes sql.NullString
+	if len(r.Episodes) > 0 {
+		b, _ := json.Marshal(r.Episodes)
+		episodes = sql.NullString{String: string(b), Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO requests (id, media_type, tmdb_id, title, year, poster_path, user_id, status, arr_id, error, created_at, updated_at, seasons, requested_by, episodes)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(media_type, tmdb_id) DO UPDATE SET status = excluded.status, arr_id = excluded.arr_id, error = excluded.error, updated_at = excluded.updated_at, seasons = excluded.seasons, episodes = excluded.episodes`,
+		r.ID, r.MediaType, r.TMDBID, r.Title, nullInt(r.Year), nullStr(r.PosterPath), r.UserID, r.Status, nullInt(r.ArrID), nullStr(r.Error), r.CreatedAt, r.UpdatedAt, seasons, nullStr(r.UserName), episodes)
 	return err
 }
 

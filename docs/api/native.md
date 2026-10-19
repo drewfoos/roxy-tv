@@ -238,7 +238,11 @@ requested}]` (`have` = episodes with a file, `known` = files + placeholders). `P
 the library lacks); a later request widens the existing one; seasons already complete are
 refused. `GET /v1/discover/tv/{tmdbId}/season/{n}` → `{episodes: [{number, title,
 overview, airDate, still, have}]}` marks which episodes the library holds, so a
-half-complete season shows which half. Sonarr gets per-season monitoring and a SeasonSearch per requested season (or
+half-complete season shows which half. Specials (TMDB season 0) appear last with
+`special: true` and are requested one episode at a time: `POST /v1/discover/request`
+`{type: "tv", tmdbId, episodes: ["S0E3"]}` (up to 12); the season-0 episode list carries
+`requested` per episode. In Sonarr those episodes are monitored individually with an
+EpisodeSearch. Sonarr gets per-season monitoring and a SeasonSearch per requested season (or
 the seasons monitored on an already-added series). `requested_by` names the profile that
 asked when the login is shared.
 

@@ -50,6 +50,8 @@ type Season struct {
 	Have      int    `json:"have"`      // episodes with a file in the library
 	Known     int    `json:"known"`     // episodes the library knows (files + placeholders)
 	Requested bool   `json:"requested"` // covered by a pending / sent request
+	// Specials (TMDB season 0): requested one episode at a time, never as a unit.
+	Special bool `json:"special,omitempty"`
 }
 
 // Detail is the title page's data.
@@ -735,11 +737,19 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 		for _, n := range d.Networks {
 			base.Networks = append(base.Networks, n.Name)
 		}
+		var specials *Season
 		for _, sn := range d.SeasonList {
-			if sn.SeasonNumber == 0 {
-				continue // specials are not requestable as a unit
+			season := Season{Number: sn.SeasonNumber, Name: sn.Name, Episodes: sn.EpisodeCount, AirDate: sn.AirDate, Poster: s.tmdb.ImageURL("w185", sn.PosterPath), Special: sn.SeasonNumber == 0}
+			if season.Special {
+				if sn.EpisodeCount > 0 {
+					specials = &season
+				}
+				continue
 			}
-			base.Seasons = append(base.Seasons, Season{Number: sn.SeasonNumber, Name: sn.Name, Episodes: sn.EpisodeCount, AirDate: sn.AirDate, Poster: s.tmdb.ImageURL("w185", sn.PosterPath)})
+			base.Seasons = append(base.Seasons, season)
+		}
+		if specials != nil {
+			base.Seasons = append(base.Seasons, *specials) // last, like Jellyfin
 		}
 		if d.ExternalIDs != nil {
 			base.TVDBID, base.IMDBID = d.ExternalIDs.TvdbID, d.ExternalIDs.ImdbID
@@ -768,6 +778,10 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 	}
 	if det.Request != nil && det.Request.Status != "failed" {
 		for i := range det.Seasons {
+			if det.Seasons[i].Special {
+				det.Seasons[i].Requested = false // per episode; see Episodes()
+				continue
+			}
 			det.Seasons[i].Requested = len(det.Request.Seasons) == 0 || contains(det.Request.Seasons, det.Seasons[i].Number)
 		}
 	}
@@ -780,10 +794,13 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 // Without them it stays "pending" (shown to the household; sent when configured and
 // retried through RetryPending). For series, seasons narrows it (empty = everything
 // the library lacks); a later request for more seasons widens the existing one.
-func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *model.Principal, seasons []int) (*store.Request, error) {
+func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *model.Principal, seasons []int, episodes []string) (*store.Request, error) {
 	det, err := s.Detail(ctx, kind, tmdbID)
 	if err != nil {
 		return nil, err
+	}
+	if kind == "tv" && len(episodes) > 0 {
+		return s.requestEpisodes(ctx, det, user, episodes)
 	}
 	if kind == "movie" {
 		seasons = nil
@@ -794,6 +811,9 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 		// Everything requestable that is not complete in the library.
 		var missing []int
 		for _, sn := range det.Seasons {
+			if sn.Special {
+				continue
+			}
 			if sn.Known == 0 || sn.Have < sn.Episodes {
 				missing = append(missing, sn.Number)
 			}
@@ -840,6 +860,16 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 					added = true
 				}
 			}
+			// Real seasons replace the "episodes only" sentinel.
+			if added && contains(r.Seasons, -1) {
+				var kept []int
+				for _, n := range r.Seasons {
+					if n != -1 {
+						kept = append(kept, n)
+					}
+				}
+				r.Seasons = kept
+			}
 			if !added && r.Status == "sent" {
 				return r, nil
 			}
@@ -857,6 +887,65 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 	return r, nil
 }
 
+// requestEpisodes adds individual episodes (specials) to the series' request. The
+// series itself is added to Sonarr with nothing monitored beyond what was asked.
+func (s *Service) requestEpisodes(ctx context.Context, det *Detail, user *model.Principal, episodes []string) (*store.Request, error) {
+	r := det.Request
+	if r == nil {
+		r = &store.Request{ID: newID(), MediaType: "tv", TMDBID: det.TMDBID, Title: det.Title, Year: det.Year, PosterPath: det.Poster, UserID: user.UserID, Status: "pending", Seasons: []int{-1}}
+		if user.User != nil {
+			r.UserName = user.User.Name
+		}
+		if user.ScopeID != "" {
+			if pr, err := s.store.GetProfile(ctx, user.ScopeID); err == nil && pr != nil && pr.Name != "" {
+				r.UserName = pr.Name
+			}
+		}
+	}
+	added := false
+	for _, code := range episodes {
+		code = strings.ToUpper(strings.TrimSpace(code))
+		if code == "" || containsStr(r.Episodes, code) {
+			continue
+		}
+		r.Episodes = append(r.Episodes, code)
+		added = true
+	}
+	if !added && r.Status == "sent" {
+		return r, nil
+	}
+	r.Status, r.Error = "pending", ""
+	s.send(ctx, r, det)
+	if err := s.store.UpsertRequest(ctx, r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func containsStr(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// seasonsForSonarr turns the stored seasons into what AddSeries monitors: the sentinel
+// -1 ("episodes only") becomes an empty-but-not-whole set so nothing extra is grabbed.
+func seasonsForSonarr(r *store.Request) []int {
+	var out []int
+	for _, n := range r.Seasons {
+		if n >= 0 {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 && len(r.Episodes) > 0 && len(r.Seasons) > 0 {
+		return []int{0} // episodes only: season 0 nominally, the episodes monitored one by one after
+	}
+	return out
+}
+
 func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 	sonarr, radarr := s.clients()
 	switch r.MediaType {
@@ -868,11 +957,18 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 			r.Status, r.Error = "failed", "TMDB has no TVDB id for this series"
 			return
 		}
-		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, r.Seasons)
+		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, seasonsForSonarr(r))
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: sonarr add failed", "title", r.Title, "err", err)
 			return
+		}
+		if len(r.Episodes) > 0 {
+			if err := sonarr.MonitorEpisodes(ctx, id, r.Episodes); err != nil {
+				r.Status, r.Error = "failed", err.Error()
+				slog.Warn("discover: sonarr episode monitor failed", "title", r.Title, "err", err)
+				return
+			}
 		}
 		r.Status, r.ArrID, r.Error = "sent", id, ""
 	case "movie":
@@ -943,10 +1039,13 @@ type Episode struct {
 	AirDate  string `json:"airDate,omitempty"`
 	Still    string `json:"still,omitempty"`
 	Have     bool   `json:"have"`
+	// Specials only: covered by a request (season requests never cover season 0).
+	Requested bool `json:"requested,omitempty"`
 }
 
 // Episodes lists a season's episodes from TMDB (cached 10 min) marked with what the
-// library holds, so a half-complete season shows which half.
+// library holds (so a half-complete season shows which half) and, for specials, whether
+// each one is requested.
 func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, error) {
 	key := fmt.Sprintf("eps:%d:%d", tmdbID, season)
 	base, ok := s.episodes.get(key)
@@ -970,6 +1069,13 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 		s.episodes.put(key, base)
 	}
 	out := append([]Episode(nil), base...)
+	if season == 0 {
+		if r, err := s.store.GetRequest(ctx, "tv", tmdbID); err == nil && r != nil && r.Status != "failed" {
+			for i := range out {
+				out[i].Requested = containsStr(r.Episodes, fmt.Sprintf("S0E%d", out[i].Number))
+			}
+		}
+	}
 	lib, err := s.store.ItemsByProviderIDs(ctx, "tmdb", []string{strconv.Itoa(tmdbID)})
 	if err == nil {
 		if li, ok := lib["tmdb:"+strconv.Itoa(tmdbID)]; ok && li.Type == model.TypeSeries {

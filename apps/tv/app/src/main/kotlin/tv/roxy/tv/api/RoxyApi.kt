@@ -184,8 +184,8 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun discoverDetail(type: String, tmdbId: Int): DiscoverDetail = get("/v1/discover/$type/$tmdbId")
 
     /** Request a title; [seasons] narrows a series to those seasons (empty = everything the library lacks). */
-    suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList()): RequestRow =
-        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons)))
+    suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList(), episodes: List<String> = emptyList()): RequestRow =
+        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons, episodes)))
 
     suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
 
@@ -623,7 +623,7 @@ data class DiscoverItem(
 }
 
 @Serializable
-data class DiscoverEpisode(val number: Int, val title: String = "", val overview: String? = null, val airDate: String? = null, val still: String? = null, val have: Boolean = false)
+data class DiscoverEpisode(val number: Int, val title: String = "", val overview: String? = null, val airDate: String? = null, val still: String? = null, val have: Boolean = false, val requested: Boolean = false)
 
 @Serializable
 data class DiscoverEpisodesResponse(val episodes: List<DiscoverEpisode> = emptyList())
@@ -681,11 +681,11 @@ data class DiscoverDetail(
     val isMovie: Boolean get() = type == "movie"
     val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()
     /** Seasons with something still to fetch (not complete in the library, not requested). */
-    val missingSeasons: List<DiscoverSeason> get() = seasons.filter { !it.complete && !it.requested }
+    val missingSeasons: List<DiscoverSeason> get() = seasons.filter { !it.special && !it.complete && !it.requested }
 }
 
 @Serializable
-private data class DiscoverRequestBody(val type: String, val tmdbId: Int, val seasons: List<Int> = emptyList())
+private data class DiscoverRequestBody(val type: String, val tmdbId: Int, val seasons: List<Int> = emptyList(), val episodes: List<String> = emptyList())
 
 /** One season on a Discover title page, with what the library holds and whether it is requested. */
 @Serializable
@@ -698,6 +698,8 @@ data class DiscoverSeason(
     val have: Int = 0,
     val known: Int = 0,
     val requested: Boolean = false,
+    /** TMDB season 0: requested one episode at a time. */
+    val special: Boolean = false,
 ) {
     val complete: Boolean get() = episodes > 0 && have >= episodes
     val partial: Boolean get() = have > 0 && !complete

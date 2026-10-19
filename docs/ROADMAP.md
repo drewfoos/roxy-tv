@@ -163,7 +163,8 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   library lacks, with a Request row; Sonarr gets per-season monitoring + SeasonSearch;
   `requested_by` names the profile. Season rows unfold into TMDB's episode list with a tick
   per episode the library holds ("9 of 10 episodes", "Request rest"), and Sonarr's add
-  ignores episodes that already have files. Verified end to end against the test library with
+  ignores episodes that already have files. Specials are listed last and requested per
+  episode (requests.episodes, migration 0014; Sonarr episode monitor + EpisodeSearch). Verified end to end against the test library with
   replayed payloads (Download → Rename → EpisodeFileDelete → SeriesDelete).
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),

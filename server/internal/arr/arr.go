@@ -194,6 +194,45 @@ func (c *Client) rootAndProfile(ctx context.Context, anime bool) (string, int, [
 	return root, profile, tags, nil
 }
 
+// MonitorEpisodes marks specific episodes of a Sonarr series monitored and searches for
+// them (specials are asked for one at a time; Sonarr cannot search season 0 usefully).
+// codes are "S0E5"-style.
+func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []string) error {
+	if len(codes) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, code := range codes {
+		want[strings.ToUpper(code)] = true
+	}
+	var eps []struct {
+		ID            int  `json:"id"`
+		SeasonNumber  int  `json:"seasonNumber"`
+		EpisodeNumber int  `json:"episodeNumber"`
+		Monitored     bool `json:"monitored"`
+		HasFile       bool `json:"hasFile"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/episode", url.Values{"seriesId": {strconv.Itoa(seriesID)}}, nil, &eps); err != nil {
+		return err
+	}
+	var ids []int
+	for _, e := range eps {
+		if want[fmt.Sprintf("S%dE%d", e.SeasonNumber, e.EpisodeNumber)] && !e.HasFile {
+			ids = append(ids, e.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := c.do(ctx, http.MethodPut, "/episode/monitor", nil, map[string]any{"episodeIds": ids, "monitored": true}, nil); err != nil {
+		return err
+	}
+	if c.cfg.searchOnAdd() {
+		_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "EpisodeSearch", "episodeIds": ids}, nil)
+	}
+	return nil
+}
+
 // AddSeries adds a series to Sonarr by TVDB id (monitored, search on add; series type
 // "anime" with the anime root / profile when asked). With seasons, only those are
 // monitored and searched (request app's per-season requests); empty means the whole series.
