@@ -29,6 +29,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
@@ -63,6 +67,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.api.DiscoverSeason
 import tv.roxy.tv.api.RelatedEntry
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.ProgressBar
@@ -100,7 +105,19 @@ fun PhoneSeries(
 
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
     val startDownload = rememberDownloadStarter()
+    // Seasons TMDB knows that the library lacks (Discover's list), so the dropdown shows
+    // the whole show and a missing season can be requested from here.
+    val tmdbId = series.providerIds["tmdb"]?.toIntOrNull()
+    var extraSeasons by remember(series.id) { mutableStateOf<List<DiscoverSeason>>(emptyList()) }
+    var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(series.id, state.seasons.size) {
+        if (tmdbId == null) return@LaunchedEffect
+        val have = state.seasons.mapNotNull { it.indexAired }.toSet()
+        runCatching { app.api.discoverDetail("tv", tmdbId) }
+            .onSuccess { d -> extraSeasons = d.seasons.filter { it.number !in have && it.number != 0 } }
+    }
     val seasonLabel = when {
+        selectedExtra != null -> "Season $selectedExtra"
         state.showRelated || state.seasons.isEmpty() -> "Episodes"
         else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
     }
@@ -130,9 +147,10 @@ fun PhoneSeries(
                     seasons = state.seasons.size,
                 )
             }
-        if (state.seasons.isNotEmpty() || state.related.isNotEmpty()) {
+        if (state.seasons.isNotEmpty() || state.related.isNotEmpty() || extraSeasons.isNotEmpty()) {
             item(key = "seasons") {
                 val label = when {
+                    selectedExtra != null -> "Season $selectedExtra"
                     state.showRelated -> "Movies & OVAs"
                     state.seasons.isEmpty() -> "Episodes"
                     else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
@@ -144,21 +162,43 @@ fun PhoneSeries(
                         state.seasons.forEachIndexed { i, season ->
                             val name = season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }
                             DropdownMenuItem(
-                                text = { Text(name, color = Color.White, fontWeight = if (!state.showRelated && i == state.selectedSeason) FontWeight.Bold else FontWeight.Normal) },
-                                onClick = { open = false; vm.selectSeason(i) },
+                                text = { Text(name, color = Color.White, fontWeight = if (!state.showRelated && selectedExtra == null && i == state.selectedSeason) FontWeight.Bold else FontWeight.Normal) },
+                                onClick = { open = false; selectedExtra = null; vm.selectSeason(i) },
+                            )
+                        }
+                        extraSeasons.forEach { sn ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(sn.name.ifEmpty { "Season ${sn.number}" }, color = Color.White, fontWeight = if (selectedExtra == sn.number) FontWeight.Bold else FontWeight.Normal)
+                                        Text(if (sn.requested) "  ·  requested" else "  ·  not in library", color = RoxyColors.muted, fontSize = 12.sp)
+                                    }
+                                },
+                                onClick = { open = false; selectedExtra = sn.number },
                             )
                         }
                         if (state.related.isNotEmpty()) {
                             DropdownMenuItem(
                                 text = { Text("Movies & OVAs", color = Color.White, fontWeight = if (state.showRelated) FontWeight.Bold else FontWeight.Normal) },
-                                onClick = { open = false; vm.selectRelated() },
+                                onClick = { open = false; selectedExtra = null; vm.selectRelated() },
                             )
                         }
                     }
                 }
             }
         }
-        if (state.showRelated) {
+        val extra = extraSeasons.firstOrNull { it.number == selectedExtra }
+        if (extra != null && tmdbId != null) {
+            item(key = "extra-season") {
+                Column {
+                    Text(
+                        listOfNotNull(extra.episodes.takeIf { it > 0 }?.let { "$it episodes" }, extra.airDate?.take(4)).joinToString("  ·  ").ifEmpty { "Season ${extra.number}" },
+                        fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp),
+                    )
+                    RequestSeasonRow(tmdbId, extra.number, "Season ${extra.number}")
+                }
+            }
+        } else if (state.showRelated) {
             items(state.related.chunked(3)) { row ->
                 RelatedGridRow(row, app.api, onOpen = { rel ->
                     val item = rel.item ?: return@RelatedGridRow
@@ -170,6 +210,11 @@ fun PhoneSeries(
                 items(4) { EpisodeRowSkeleton() }
             } else if (state.episodes.isEmpty()) {
                 item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
+            } else if (state.episodes.none { it.isPlayable }) {
+                // Nothing on disk for this season (provider placeholders only): offer to request it.
+                val tmdb = series.providerIds["tmdb"]?.toIntOrNull()
+                val seasonNumber = state.seasons.getOrNull(state.selectedSeason)?.indexAired
+                if (tmdb != null && seasonNumber != null) item(key = "season-request") { RequestSeasonRow(tmdb, seasonNumber, seasonLabel) }
             } else {
                 // Netflix's "Download Season N" sits between the dropdown and the first episode.
                 item(key = "season-download") { SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download) }
@@ -357,6 +402,47 @@ private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownl
         }
         ep.overview?.takeIf { it.isNotBlank() }?.let {
             Text(it, fontSize = 13.sp, lineHeight = 17.sp, color = RoxyColors.muted, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+}
+
+/**
+ * The library's twin of Discover's season request: a season the server knows about but
+ * has no files for gets a Request row here, so nobody has to leave the show's page.
+ * State comes from the same request list Discover shows.
+ */
+@Composable
+private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    var requested by remember(tmdbId, season) { mutableStateOf<Boolean?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(tmdbId, season) {
+        runCatching { app.api.discoverDetail("tv", tmdbId) }
+            .onSuccess { d -> requested = d.seasons.firstOrNull { it.number == season }?.requested ?: false }
+            .onFailure { requested = false }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = requested == false && !busy) {
+            busy = true
+            scope.launch {
+                runCatching { app.api.discoverRequest("tv", tmdbId, listOf(season)) }
+                    .onSuccess { requested = true }
+                    .onFailure { t -> error = t.message }
+                busy = false
+            }
+        }.padding(horizontal = PhonePad, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val on = requested == true
+        Icon(if (on) Icons.Outlined.Schedule else Icons.Outlined.AddCircleOutline, contentDescription = null, tint = if (on) RoxyColors.muted else RoxyColors.accent, modifier = Modifier.size(22.dp))
+        Column(modifier = Modifier.padding(start = 10.dp)) {
+            Text(
+                when { requested == null -> "Checking…"; on -> "$label requested"; busy -> "Requesting…"; else -> "Request $label" },
+                fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) RoxyColors.muted else RoxyColors.accent,
+            )
+            Text(error ?: if (on) "Sonarr will fetch it once connected" else "Not in your library yet", fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
         }
     }
 }

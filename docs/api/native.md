@@ -230,6 +230,16 @@ TMDB client has its own token bucket, so the app cannot hammer TMDB.
 - `GET /v1/discover/requests` → `{items}` (everyone's, newest first).
 - `POST /v1/discover/requests/retry` (admin) → resend pending requests now.
 
+### Seasons and requests
+
+A series detail carries `seasons: [{number, name, episodes, airDate, poster, have, known,
+requested}]` (`have` = episodes with a file, `known` = files + placeholders). `POST
+/v1/discover/request` takes `seasons: [n, …]` to ask for those only (empty = every season
+the library lacks); a later request widens the existing one; seasons already complete are
+refused. Sonarr gets per-season monitoring and a SeasonSearch per requested season (or
+the seasons monitored on an already-added series). `requested_by` names the profile that
+asked when the login is shared.
+
 ### Sonarr / Radarr settings (admin)
 
 request app's Services model, saved on the server (settings key `arr`, migration 0010); the
@@ -244,6 +254,20 @@ request app's Services model, saved on the server (settings key `arr`, migration
 - `POST /v1/settings/arr/test` `{kind, url, apiKey}` → `{version, appName, rootFolders,
   qualityProfiles, tags}` so the app can offer dropdowns.
 - `DELETE /v1/discover/requests/{id}` → 204; the requester or an admin only.
+
+## Webhooks (Sonarr / Radarr → Roxy)
+
+`POST /v1/webhooks/sonarr` and `/v1/webhooks/radarr` (also `/v1/ingest/…`) take the arr
+apps' Webhook connection payloads (`docs/api/arr-webhooks.md`). Auth: an API key as
+`X-Api-Key` or `?api_key=`, or an admin token. Handled: `Download` (deleted files
+dropped, new file ingested), `Rename` (old source dropped, new path ingested),
+`EpisodeFileDelete` / `MovieFileDelete`, `SeriesDelete` / `MovieDelete` (everything
+under the folder), `Test`; the rest are logged. Paths are the arr app's own: an explicit
+`pathMappings: [{from, to}]` on the arr settings document is applied first, else the
+longest tail of the path that exists under a library root (or, for removals, that the
+library knows) wins. Every notification lands in `GET /v1/webhooks/events?limit=`
+(admin) with its outcome. API keys: `GET/POST /v1/auth/keys`, `DELETE
+/v1/auth/keys/{id}` (admin; the token is returned once on create).
 
 ## App updates
 

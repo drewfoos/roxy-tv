@@ -3,8 +3,40 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
+
+// SeasonCount is how much of one season the library holds.
+type SeasonCount struct {
+	Have  int `json:"have"`  // episodes with a file
+	Total int `json:"total"` // episodes known (files + placeholders)
+}
+
+// SeasonAvailability counts, per aired season number, how many of a series' episodes
+// have a file and how many are known at all (provider placeholders included).
+func (s *Store) SeasonAvailability(ctx context.Context, seriesID string) (map[int]SeasonCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(e.season_aired, 0), COUNT(*),
+		       SUM(CASE WHEN EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = e.id) THEN 1 ELSE 0 END)
+		FROM items e JOIN items sn ON e.parent_id = sn.id
+		WHERE sn.parent_id = ? AND e.type = 'episode'
+		GROUP BY COALESCE(e.season_aired, 0)`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]SeasonCount{}
+	for rows.Next() {
+		var n int
+		var c SeasonCount
+		if err := rows.Scan(&n, &c.Total, &c.Have); err != nil {
+			return nil, err
+		}
+		out[n] = c
+	}
+	return out, rows.Err()
+}
 
 // Request is a Discover request row.
 type Request struct {
@@ -17,18 +49,24 @@ type Request struct {
 	UserID     string `json:"userId"`
 	UserName   string `json:"userName,omitempty"`
 	Status     string `json:"status"` // pending | sent | failed (available is derived from the library)
-	ArrID      int    `json:"arrId,omitempty"`
-	Error      string `json:"error,omitempty"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	// Seasons asked for (series only); empty = the whole series.
+	Seasons   []int  `json:"seasons,omitempty"`
+	ArrID     int    `json:"arrId,omitempty"`
+	Error     string `json:"error,omitempty"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
-const requestCols = `r.id, r.media_type, r.tmdb_id, r.title, COALESCE(r.year, 0), COALESCE(r.poster_path, ''), r.user_id, COALESCE(u.name, ''), r.status, COALESCE(r.arr_id, 0), COALESCE(r.error, ''), r.created_at, r.updated_at`
+const requestCols = `r.id, r.media_type, r.tmdb_id, r.title, COALESCE(r.year, 0), COALESCE(r.poster_path, ''), r.user_id, COALESCE(NULLIF(r.requested_by, ''), u.name, ''), r.status, COALESCE(r.arr_id, 0), COALESCE(r.error, ''), r.created_at, r.updated_at, COALESCE(r.seasons, '')`
 
 func scanRequest(row interface{ Scan(...any) error }) (*Request, error) {
 	var r Request
-	if err := row.Scan(&r.ID, &r.MediaType, &r.TMDBID, &r.Title, &r.Year, &r.PosterPath, &r.UserID, &r.UserName, &r.Status, &r.ArrID, &r.Error, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	var seasons string
+	if err := row.Scan(&r.ID, &r.MediaType, &r.TMDBID, &r.Title, &r.Year, &r.PosterPath, &r.UserID, &r.UserName, &r.Status, &r.ArrID, &r.Error, &r.CreatedAt, &r.UpdatedAt, &seasons); err != nil {
 		return nil, err
+	}
+	if seasons != "" {
+		_ = json.Unmarshal([]byte(seasons), &r.Seasons)
 	}
 	return &r, nil
 }
@@ -78,10 +116,15 @@ func (s *Store) UpsertRequest(ctx context.Context, r *Request) error {
 		r.CreatedAt = now
 	}
 	r.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx, `INSERT INTO requests (id, media_type, tmdb_id, title, year, poster_path, user_id, status, arr_id, error, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(media_type, tmdb_id) DO UPDATE SET status = excluded.status, arr_id = excluded.arr_id, error = excluded.error, updated_at = excluded.updated_at`,
-		r.ID, r.MediaType, r.TMDBID, r.Title, nullInt(r.Year), nullStr(r.PosterPath), r.UserID, r.Status, nullInt(r.ArrID), nullStr(r.Error), r.CreatedAt, r.UpdatedAt)
+	var seasons sql.NullString
+	if len(r.Seasons) > 0 {
+		b, _ := json.Marshal(r.Seasons)
+		seasons = sql.NullString{String: string(b), Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO requests (id, media_type, tmdb_id, title, year, poster_path, user_id, status, arr_id, error, created_at, updated_at, seasons, requested_by)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(media_type, tmdb_id) DO UPDATE SET status = excluded.status, arr_id = excluded.arr_id, error = excluded.error, updated_at = excluded.updated_at, seasons = excluded.seasons`,
+		r.ID, r.MediaType, r.TMDBID, r.Title, nullInt(r.Year), nullStr(r.PosterPath), r.UserID, r.Status, nullInt(r.ArrID), nullStr(r.Error), r.CreatedAt, r.UpdatedAt, seasons, nullStr(r.UserName))
 	return err
 }
 

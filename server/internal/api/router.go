@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/roxy-media/roxy/server/internal/api/compat"
+	"github.com/roxy-media/roxy/server/internal/arrhook"
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/discover"
@@ -33,11 +34,13 @@ type Server struct {
 	trick    *trickplay.Service
 	segs     *segments.Service // may be nil (scan-only runs)
 	discover *discover.Service // nil without TMDB
+	hooks    *arrhook.Service
 	start    time.Time
 }
 
 func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service, segs *segments.Service) http.Handler {
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
+	s.hooks = arrhook.New(st, lib)
 	if meta != nil && meta.TMDB() != nil {
 		s.discover = discover.New(st, cfg, meta.TMDB())
 		s.discover.Start(context.Background())
@@ -73,6 +76,12 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/discover/genres", s.discoverGenres)
 			r.Post("/discover/requests/retry", s.discoverRetry)
 			r.Get("/discover/{type}/{tmdbId}", s.discoverDetail)
+			r.Post("/webhooks/{source}", s.webhook)
+			r.Post("/ingest/{source}", s.webhook)
+			r.Get("/webhooks/events", s.webhookEvents)
+			r.Get("/auth/keys", s.listKeys)
+			r.Post("/auth/keys", s.createKey)
+			r.Delete("/auth/keys/{id}", s.deleteKey)
 			r.Get("/settings/arr", s.arrSettingsGet)
 			r.Put("/settings/arr", s.arrSettingsPut)
 			r.Post("/settings/arr/test", s.arrSettingsTest)

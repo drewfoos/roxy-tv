@@ -77,14 +77,15 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Type   string `json:"type"`
-		TMDBID int    `json:"tmdbId"`
+		Type    string `json:"type"`
+		TMDBID  int    `json:"tmdbId"`
+		Seasons []int  `json:"seasons"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.TMDBID == 0 || (body.Type != "tv" && body.Type != "movie") {
 		writeError(w, 400, "type and tmdbId required")
 		return
 	}
-	req, err := s.discover.Request(r.Context(), body.Type, body.TMDBID, p)
+	req, err := s.discover.Request(r.Context(), body.Type, body.TMDBID, p, body.Seasons)
 	if err != nil {
 		writeError(w, 409, err.Error())
 		return

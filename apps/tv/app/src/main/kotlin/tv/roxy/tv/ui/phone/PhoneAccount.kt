@@ -57,7 +57,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -125,6 +125,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
         if (session.isAdmin) {
             SectionTitle("Server", modifier = Modifier.padding(top = 8.dp))
             SettingRow("Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)
+            SettingRow("Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
         }
 
         SectionTitle("Account", modifier = Modifier.padding(top = 8.dp))

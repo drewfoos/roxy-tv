@@ -195,18 +195,54 @@ func (c *Client) rootAndProfile(ctx context.Context, anime bool) (string, int, [
 }
 
 // AddSeries adds a series to Sonarr by TVDB id (monitored, search on add; series type
-// "anime" with the anime root / profile when asked). Returns the Sonarr series id. An
-// already-added series is returned, not an error.
-func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool) (int, error) {
-	var existing []struct {
-		ID     int `json:"id"`
-		TvdbID int `json:"tvdbId"`
+// "anime" with the anime root / profile when asked). With seasons, only those are
+// monitored and searched (request app's per-season requests); empty means the whole series.
+// Returns the Sonarr series id. A series Sonarr already has gets the requested seasons
+// monitored and a SeasonSearch for each instead of an error.
+func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons []int) (int, error) {
+	want := map[int]bool{}
+	for _, n := range seasons {
+		want[n] = true
 	}
+	var existing []map[string]any
 	if err := c.do(ctx, http.MethodGet, "/series", url.Values{"tvdbId": {strconv.Itoa(tvdbID)}}, nil, &existing); err == nil {
 		for _, s := range existing {
-			if s.TvdbID == tvdbID {
-				return s.ID, nil
+			id, _ := s["id"].(float64)
+			if tv, _ := s["tvdbId"].(float64); int(tv) != tvdbID || id == 0 {
+				continue
 			}
+			// Already there: monitor the asked-for seasons (all when none given) and search them.
+			changed := false
+			if ss, ok := s["seasons"].([]any); ok {
+				for _, x := range ss {
+					sm, ok := x.(map[string]any)
+					if !ok {
+						continue
+					}
+					n, _ := sm["seasonNumber"].(float64)
+					if (len(want) == 0 && n != 0) || want[int(n)] {
+						if m, _ := sm["monitored"].(bool); !m {
+							sm["monitored"] = true
+							changed = true
+						}
+					}
+				}
+			}
+			s["monitored"] = true
+			if changed {
+				if err := c.do(ctx, http.MethodPut, "/series/"+strconv.Itoa(int(id)), nil, s, nil); err != nil {
+					return 0, err
+				}
+			}
+			if c.cfg.searchOnAdd() {
+				for n := range want {
+					_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeasonSearch", "seriesId": int(id), "seasonNumber": n}, nil)
+				}
+				if len(want) == 0 {
+					_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeriesSearch", "seriesId": int(id)}, nil)
+				}
+			}
+			return int(id), nil
 		}
 	}
 	var lookup []map[string]any
@@ -229,7 +265,16 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool) (int, er
 	if anime {
 		series["seriesType"] = "anime"
 	}
-	series["addOptions"] = map[string]any{"searchForMissingEpisodes": c.cfg.searchOnAdd(), "monitor": "all"}
+	if ss, ok := series["seasons"].([]any); ok {
+		for _, x := range ss {
+			if sm, ok := x.(map[string]any); ok {
+				n, _ := sm["seasonNumber"].(float64)
+				sm["monitored"] = (len(want) == 0 && n != 0) || want[int(n)]
+			}
+		}
+	}
+	// No "monitor" option: Sonarr keeps the per-season flags set above.
+	series["addOptions"] = map[string]any{"searchForMissingEpisodes": c.cfg.searchOnAdd(), "ignoreEpisodesWithFiles": true}
 	var added struct {
 		ID int `json:"id"`
 	}

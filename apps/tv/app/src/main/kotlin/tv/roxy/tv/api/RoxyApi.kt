@@ -183,8 +183,9 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun discoverDetail(type: String, tmdbId: Int): DiscoverDetail = get("/v1/discover/$type/$tmdbId")
 
-    suspend fun discoverRequest(type: String, tmdbId: Int): RequestRow =
-        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId)))
+    /** Request a title; [seasons] narrows a series to those seasons (empty = everything the library lacks). */
+    suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList()): RequestRow =
+        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons)))
 
     suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
 
@@ -219,6 +220,17 @@ class RoxyApi(private val prefs: Prefs) {
         postJson("/v1/settings/arr/test", json.encodeToString(ArrTestBody.serializer(), ArrTestBody(kind, url, apiKey)))
 
     suspend fun retryRequests(): List<DiscoverItem> = postJson<DiscoverItemsResponse>("/v1/discover/requests/retry", "{}").items
+
+    // ---- webhooks + API keys (admin) ----
+
+    suspend fun apiKeys(): List<ApiKeyRow> = get<ApiKeysResponse>("/v1/auth/keys").keys
+
+    /** Creates a key; the token comes back once. */
+    suspend fun createApiKey(name: String): ApiKeyCreated = postJson("/v1/auth/keys", json.encodeToString(NameBody.serializer(), NameBody(name)))
+
+    suspend fun deleteApiKey(id: String) = delete("/v1/auth/keys/$id")
+
+    suspend fun webhookEvents(limit: Int = 30): List<WebhookEvent> = get<WebhookEventsResponse>("/v1/webhooks/events?limit=$limit").events
 
     // ---- app updates ----
 
@@ -628,6 +640,7 @@ data class RequestRow(
     val status: String = "pending",
     val error: String? = null,
     val createdAt: String = "",
+    val seasons: List<Int> = emptyList(),
 )
 
 /** The Discover title page: a [DiscoverItem]'s fields plus the longer facts. */
@@ -647,7 +660,7 @@ data class DiscoverDetail(
     val requestStatus: String? = null,
     val tagline: String? = null,
     val status: String? = null,
-    val seasons: Int = 0,
+    val seasonCount: Int = 0,
     val episodes: Int = 0,
     val runtimeMinutes: Int = 0,
     val networks: List<String> = emptyList(),
@@ -655,13 +668,32 @@ data class DiscoverDetail(
     val imdbId: String? = null,
     val request: RequestRow? = null,
     val requestsEnabled: Boolean = false,
+    val seasons: List<DiscoverSeason> = emptyList(),
 ) {
     val isMovie: Boolean get() = type == "movie"
     val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()
+    /** Seasons with something still to fetch (not complete in the library, not requested). */
+    val missingSeasons: List<DiscoverSeason> get() = seasons.filter { !it.complete && !it.requested }
 }
 
 @Serializable
-private data class DiscoverRequestBody(val type: String, val tmdbId: Int)
+private data class DiscoverRequestBody(val type: String, val tmdbId: Int, val seasons: List<Int> = emptyList())
+
+/** One season on a Discover title page, with what the library holds and whether it is requested. */
+@Serializable
+data class DiscoverSeason(
+    val number: Int,
+    val name: String = "",
+    val episodes: Int = 0,
+    val airDate: String? = null,
+    val poster: String? = null,
+    val have: Int = 0,
+    val known: Int = 0,
+    val requested: Boolean = false,
+) {
+    val complete: Boolean get() = episodes > 0 && have >= episodes
+    val partial: Boolean get() = have > 0 && !complete
+}
 
 /** The Discover filter bar. Defaults mean "no filter": the curated rows show instead of a grid. */
 @Serializable
@@ -723,6 +755,25 @@ data class ArrProbe(val version: String = "", val appName: String = "", val root
 
 @Serializable
 private data class ArrTestBody(val kind: String, val url: String, val apiKey: String)
+
+@Serializable
+data class ApiKeyRow(val id: String, val name: String = "", val createdAt: String = "")
+
+@Serializable
+data class ApiKeysResponse(val keys: List<ApiKeyRow> = emptyList())
+
+@Serializable
+data class ApiKeyCreated(val id: String, val name: String = "", val token: String = "")
+
+@Serializable
+private data class NameBody(val name: String)
+
+/** One Sonarr / Radarr notification the server received and what it did. */
+@Serializable
+data class WebhookEvent(val id: Long = 0, val at: String = "", val source: String = "", val eventType: String = "", val title: String = "", val path: String = "", val result: String = "")
+
+@Serializable
+data class WebhookEventsResponse(val events: List<WebhookEvent> = emptyList())
 
 @Serializable
 private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null)

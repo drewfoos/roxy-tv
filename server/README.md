@@ -46,6 +46,8 @@ media URLs the player fetches itself may carry the token as `?api_key=<token>` i
 | POST/GET/DELETE | `/v1/discover/request`, `/v1/discover/requests[/{id}]` | request a title (Sonarr/Radarr when `ROXY_SONARR_*` / `ROXY_RADARR_*` are set, else pending), list, withdraw |
 | GET | `/v1/discover/browse?...`, `/v1/discover/genres?type=` | filtered TMDB browsing (type, sort, genres, language, anime, years, rating, status; paged) |
 | GET/PUT/POST | `/v1/settings/arr`, `/v1/settings/arr/test` | admin: Sonarr / Radarr connection and defaults (request app-style), test connection lists root folders / profiles / tags |
+| POST | `/v1/webhooks/sonarr`, `/v1/webhooks/radarr` | arr Webhook connections (API key): import / rename / delete without a rescan; `GET /v1/webhooks/events` (admin) |
+| GET/POST/DELETE | `/v1/auth/keys[/{id}]` | admin: API keys for the arr apps |
 | GET | `/v1/apps/tv/latest?package=` | newest published build of the app for that applicationId (`{versionCode, versionName, notes, size, url}`), from `data/apps/tv/latest.json` written by `apps/tv/tools/publish-apk.ps1` |
 | GET | `/v1/apps/tv/download?package=` | that APK |
 | POST | `/v1/segments/detect?season=&dry=1` | intro/outro detection by audio fingerprint for a season (report), or queue all seasons missing segments (202) |

@@ -97,6 +97,7 @@ import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.DiscoverDetail
 import tv.roxy.tv.api.DiscoverItem
 import tv.roxy.tv.api.DiscoverRow
+import tv.roxy.tv.api.DiscoverSeason
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.theme.RoxyColors
 
@@ -410,6 +411,16 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
     }
     LaunchedEffect(type, tmdbId) { reload() }
 
+    fun requestSeasons(seasons: List<Int>) {
+        val cur = detail ?: return
+        if (busy) return
+        busy = true
+        scope.launch {
+            runCatching { app.api.discoverRequest(cur.type, cur.tmdbId, seasons) }.onFailure { t -> Timber.w(t, "request failed"); error = t.message }
+            reload(); busy = false
+        }
+    }
+
     val d = detail
     if (d == null) {
         if (error != null) Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(PhonePad)) { BackCircle(onBack); Text(error ?: "", color = RoxyColors.error, modifier = Modifier.padding(top = 16.dp)) }
@@ -440,7 +451,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                     }
                     val facts = listOfNotNull(
                         d.year?.toString(),
-                        d.seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
+                        d.seasonCount.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
                         d.episodes.takeIf { it > 0 && !d.isMovie }?.let { "$it Episodes" },
                         d.runtimeMinutes.takeIf { it > 0 }?.let { if (d.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "${it}m" },
                         d.status?.takeIf { it.isNotBlank() },
@@ -453,6 +464,12 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                             maxLines = if (expanded) Int.MAX_VALUE else 5, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
                         )
+                    }
+                    if (d.seasons.isNotEmpty()) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 22.dp)) {
+                            Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                            d.seasons.forEach { sn -> SeasonRow(sn, onRequest = { requestSeasons(listOf(sn.number)) }) }
+                        }
                     }
                     d.request?.let { r ->
                         val line = when (r.status) {
@@ -477,12 +494,15 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                 .background(Brush.verticalGradient(0f to Color.Transparent, 0.35f to RoxyColors.background.copy(alpha = 0.96f), 1f to RoxyColors.background))
                 .navigationBarsPadding().padding(start = PhonePad, end = PhonePad, top = 24.dp, bottom = 12.dp),
         ) {
+            val missing = d.missingSeasons
+            val openLibrary = { val id = d.libraryItemId; if (id != null) { if (d.isMovie) onOpenMovie(id, d.title) else onOpenSeries(id, d.title) } }
             when {
-                d.inLibrary -> PlayButton("Watch", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = {
-                    val id = d.libraryItemId ?: return@PlayButton
-                    if (d.isMovie) onOpenMovie(id, d.title) else onOpenSeries(id, d.title)
-                })
-                d.request != null && d.request.status != "failed" -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                d.inLibrary && (d.seasons.isEmpty() || missing.isEmpty()) -> PlayButton("Watch", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
+                d.inLibrary -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PlayButton("Watch", modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
+                    GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }) })
+                }
+                d.request != null && d.request.status != "failed" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     PlayButton("Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
                     GreyButton("Withdraw", modifier = Modifier.height(44.dp), onClick = {
                         if (busy) return@GreyButton
@@ -491,7 +511,12 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                     })
                 }
                 else -> PlayButton(
-                    if (busy) "Requesting…" else if (d.request?.status == "failed") "Request again" else "Request",
+                    when {
+                        busy -> "Requesting…"
+                        d.request?.status == "failed" -> "Request again"
+                        missing.isNotEmpty() && missing.size < d.seasons.size -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
+                        else -> "Request"
+                    },
                     modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.AddCircleOutline, height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand,
                     onClick = {
                         if (busy) return@PlayButton
@@ -502,6 +527,31 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                         }
                     },
                 )
+            }
+        }
+    }
+}
+
+/** One season on the Discover title page: name and size, then its state or a Request chip. */
+@Composable
+private fun SeasonRow(sn: DiscoverSeason, onRequest: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(sn.name.ifEmpty { "Season ${sn.number}" }, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground)
+            Text(listOfNotNull(sn.episodes.takeIf { it > 0 }?.let { "$it episode${if (it == 1) "" else "s"}" }, sn.airDate?.take(4)).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted)
+        }
+        when {
+            sn.complete -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Check, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
+                Text("In library", fontSize = 13.sp, color = RoxyColors.accent, modifier = Modifier.padding(start = 4.dp))
+            }
+            sn.requested -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Schedule, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(18.dp))
+                Text(if (sn.partial) "${sn.have}/${sn.episodes}  ·  Requested" else "Requested", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
+            }
+            else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                if (sn.partial) Text("${sn.have}/${sn.episodes}", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(end = 10.dp))
+                Chip("Request", selected = false, onClick = onRequest)
             }
         }
     }

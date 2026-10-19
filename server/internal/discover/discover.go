@@ -40,19 +40,32 @@ type Item struct {
 	RequestStatus string `json:"requestStatus,omitempty"`
 }
 
+// Season is one TMDB season with what the library and the request list say about it.
+type Season struct {
+	Number    int    `json:"number"`
+	Name      string `json:"name"`
+	Episodes  int    `json:"episodes"`
+	AirDate   string `json:"airDate,omitempty"`
+	Poster    string `json:"poster,omitempty"`
+	Have      int    `json:"have"`      // episodes with a file in the library
+	Known     int    `json:"known"`     // episodes the library knows (files + placeholders)
+	Requested bool   `json:"requested"` // covered by a pending / sent request
+}
+
 // Detail is the title page's data.
 type Detail struct {
 	Item
-	Tagline  string         `json:"tagline,omitempty"`
-	Status   string         `json:"status,omitempty"`
-	Seasons  int            `json:"seasons,omitempty"`
-	Episodes int            `json:"episodes,omitempty"`
-	RuntimeM int            `json:"runtimeMinutes,omitempty"`
-	Networks []string       `json:"networks,omitempty"`
-	TVDBID   int            `json:"tvdbId,omitempty"`
-	IMDBID   string         `json:"imdbId,omitempty"`
-	Request  *store.Request `json:"request,omitempty"`
-	Requests bool           `json:"requestsEnabled"` // Sonarr / Radarr configured for this type
+	Seasons     []Season       `json:"seasons,omitempty"`
+	Tagline     string         `json:"tagline,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	SeasonCount int            `json:"seasonCount,omitempty"`
+	Episodes    int            `json:"episodes,omitempty"`
+	RuntimeM    int            `json:"runtimeMinutes,omitempty"`
+	Networks    []string       `json:"networks,omitempty"`
+	TVDBID      int            `json:"tvdbId,omitempty"`
+	IMDBID      string         `json:"imdbId,omitempty"`
+	Request     *store.Request `json:"request,omitempty"`
+	Requests    bool           `json:"requestsEnabled"` // Sonarr / Radarr configured for this type
 }
 
 type Row struct {
@@ -66,6 +79,14 @@ type Row struct {
 type ArrSettings struct {
 	Sonarr arr.Config `json:"sonarr"`
 	Radarr arr.Config `json:"radarr"`
+	// Webhook paths: how the arr apps' paths map onto Roxy's (Docker mounts differ).
+	// Read by internal/arrhook; empty means "match by suffix under the library roots".
+	PathMappings []PathMapping `json:"pathMappings,omitempty"`
+}
+
+type PathMapping struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 const settingsKey = "arr"
@@ -673,8 +694,15 @@ type tmdbDetail struct {
 	Networks []struct {
 		Name string `json:"name"`
 	} `json:"networks"`
-	NumSeasons     int   `json:"number_of_seasons"`
-	NumEpisodes    int   `json:"number_of_episodes"`
+	NumSeasons  int `json:"number_of_seasons"`
+	NumEpisodes int `json:"number_of_episodes"`
+	SeasonList  []struct {
+		SeasonNumber int    `json:"season_number"`
+		Name         string `json:"name"`
+		EpisodeCount int    `json:"episode_count"`
+		AirDate      string `json:"air_date"`
+		PosterPath   string `json:"poster_path"`
+	} `json:"seasons"`
 	EpisodeRunTime []int `json:"episode_run_time"`
 	ExternalIDs    *struct {
 		TvdbID int    `json:"tvdb_id"`
@@ -699,12 +727,18 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 		item := s.toItem(ctx, d.tmdbListEntry, kind)
 		item.Backdrop = s.tmdb.ImageURL("w1280", d.BackdropPath)
 		item.Poster = s.tmdb.ImageURL("w500", d.PosterPath)
-		base = &Detail{Item: item, Tagline: d.Tagline, Status: d.Status, Seasons: d.NumSeasons, Episodes: d.NumEpisodes, RuntimeM: d.Runtime}
+		base = &Detail{Item: item, Tagline: d.Tagline, Status: d.Status, SeasonCount: d.NumSeasons, Episodes: d.NumEpisodes, RuntimeM: d.Runtime}
 		if base.RuntimeM == 0 && len(d.EpisodeRunTime) > 0 {
 			base.RuntimeM = d.EpisodeRunTime[0]
 		}
 		for _, n := range d.Networks {
 			base.Networks = append(base.Networks, n.Name)
+		}
+		for _, sn := range d.SeasonList {
+			if sn.SeasonNumber == 0 {
+				continue // specials are not requestable as a unit
+			}
+			base.Seasons = append(base.Seasons, Season{Number: sn.SeasonNumber, Name: sn.Name, Episodes: sn.EpisodeCount, AirDate: sn.AirDate, Poster: s.tmdb.ImageURL("w185", sn.PosterPath)})
 		}
 		if d.ExternalIDs != nil {
 			base.TVDBID, base.IMDBID = d.ExternalIDs.TvdbID, d.ExternalIDs.ImdbID
@@ -721,6 +755,21 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 	if r, err := s.store.GetRequest(ctx, kind, tmdbID); err == nil && r != nil {
 		det.Request = r
 	}
+	// Seasons: library counts and request coverage are live; copy the slice first.
+	det.Seasons = append([]Season(nil), base.Seasons...)
+	if det.LibraryItemID != "" {
+		if counts, err := s.store.SeasonAvailability(ctx, det.LibraryItemID); err == nil {
+			for i := range det.Seasons {
+				c := counts[det.Seasons[i].Number]
+				det.Seasons[i].Have, det.Seasons[i].Known = c.Have, c.Total
+			}
+		}
+	}
+	if det.Request != nil && det.Request.Status != "failed" {
+		for i := range det.Seasons {
+			det.Seasons[i].Requested = len(det.Request.Seasons) == 0 || contains(det.Request.Seasons, det.Seasons[i].Number)
+		}
+	}
 	return &det, nil
 }
 
@@ -728,23 +777,77 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 
 // Request records a request and forwards it to Sonarr / Radarr when configured.
 // Without them it stays "pending" (shown to the household; sent when configured and
-// retried through RetryPending).
-func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *model.Principal) (*store.Request, error) {
+// retried through RetryPending). For series, seasons narrows it (empty = everything
+// the library lacks); a later request for more seasons widens the existing one.
+func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *model.Principal, seasons []int) (*store.Request, error) {
 	det, err := s.Detail(ctx, kind, tmdbID)
 	if err != nil {
 		return nil, err
 	}
-	if det.LibraryItemID != "" {
-		return nil, errors.New("already in the library")
+	if kind == "movie" {
+		seasons = nil
+		if det.LibraryItemID != "" {
+			return nil, errors.New("already in the library")
+		}
+	} else {
+		// Everything requestable that is not complete in the library.
+		var missing []int
+		for _, sn := range det.Seasons {
+			if sn.Known == 0 || sn.Have < sn.Episodes {
+				missing = append(missing, sn.Number)
+			}
+		}
+		if len(seasons) == 0 {
+			if len(det.Seasons) > 0 && len(missing) == 0 {
+				return nil, errors.New("every season is already in the library")
+			}
+			if len(missing) < len(det.Seasons) {
+				seasons = missing // only ask for what is not there
+			}
+		} else {
+			var keep []int
+			for _, n := range seasons {
+				if contains(missing, n) || len(det.Seasons) == 0 {
+					keep = append(keep, n)
+				}
+			}
+			if len(keep) == 0 {
+				return nil, errors.New("those seasons are already in the library")
+			}
+			seasons = keep
+		}
 	}
 	r := det.Request
 	if r == nil {
-		r = &store.Request{ID: newID(), MediaType: kind, TMDBID: tmdbID, Title: det.Title, Year: det.Year, PosterPath: det.Poster, UserID: user.UserID, Status: "pending"}
+		r = &store.Request{ID: newID(), MediaType: kind, TMDBID: tmdbID, Title: det.Title, Year: det.Year, PosterPath: det.Poster, UserID: user.UserID, Status: "pending", Seasons: seasons}
 		if user.User != nil {
 			r.UserName = user.User.Name
 		}
-	} else if r.Status == "sent" {
-		return r, nil
+		// Several people share one login as profiles: name the profile that asked.
+		if user.ScopeID != "" {
+			if pr, err := s.store.GetProfile(ctx, user.ScopeID); err == nil && pr != nil && pr.Name != "" {
+				r.UserName = pr.Name
+			}
+		}
+	} else {
+		// Widen: union of seasons; whole-series stays whole. New seasons mean a new send.
+		if len(r.Seasons) > 0 && len(seasons) > 0 {
+			added := false
+			for _, n := range seasons {
+				if !contains(r.Seasons, n) {
+					r.Seasons = append(r.Seasons, n)
+					added = true
+				}
+			}
+			if !added && r.Status == "sent" {
+				return r, nil
+			}
+		} else if len(r.Seasons) > 0 && len(seasons) == 0 {
+			r.Seasons = nil
+		} else if r.Status == "sent" {
+			return r, nil
+		}
+		r.Status, r.Error = "pending", ""
 	}
 	s.send(ctx, r, det)
 	if err := s.store.UpsertRequest(ctx, r); err != nil {
@@ -764,7 +867,7 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 			r.Status, r.Error = "failed", "TMDB has no TVDB id for this series"
 			return
 		}
-		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime)
+		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, r.Seasons)
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: sonarr add failed", "title", r.Title, "err", err)
@@ -814,6 +917,15 @@ func (s *Service) Delete(ctx context.Context, id string, user *model.Principal) 
 		}
 	}
 	return errors.New("request not found")
+}
+
+func contains(xs []int, n int) bool {
+	for _, x := range xs {
+		if x == n {
+			return true
+		}
+	}
+	return false
 }
 
 func newID() string {

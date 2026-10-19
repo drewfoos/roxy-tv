@@ -154,10 +154,13 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     PhoneBrowse(onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) }, onSearch = { nav.navigate(Route.Search) }, bottomInset = bottomInset)
                 }
                 composable<Route.Account> {
-                    PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) })
+                    PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) })
                 }
                 composable<Route.ArrSettings> {
                     PhoneArrSettings(onBack = { nav.popBackStack() })
+                }
+                composable<Route.Webhooks> {
+                    PhoneWebhooks(onBack = { nav.popBackStack() })
                 }
                 composable<Route.Search> {
                     PhoneSearch(onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) })

@@ -153,6 +153,16 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   availability for Radarr, season folders, search on add. Saved on the server (settings
   table, migration 0010); pending requests are sent on save and every 10 min. The owner's
   arr stack lives on their server, so the live add calls stay untested until deploy day.
+- Also done (2026-10-20): **arr webhooks** (`server/internal/arrhook`): Download / Rename /
+  file and title deletes keep the library in step without a rescan; arr-side paths are
+  mapped by explicit mappings or by the longest tail under a library root; outcomes are
+  logged (`webhook_events`, migration 0011) and shown on Account → Server → Webhooks,
+  which also makes the API keys and shows the URLs to paste. **Per-season requests**
+  (migration 0012/0013): Discover's title page lists every TMDB season with In library /
+  Requested / Request; the library's season dropdown includes seasons TMDB knows and the
+  library lacks, with a Request row; Sonarr gets per-season monitoring + SeasonSearch;
+  `requested_by` names the profile. Verified end to end against the test library with
+  replayed payloads (Download → Rename → EpisodeFileDelete → SeriesDelete).
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

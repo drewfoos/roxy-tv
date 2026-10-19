@@ -32,6 +32,7 @@ app/src/main/kotlin/tv/roxy/tv/
                              PhoneBrowse / Watchlist / Search grids, PhoneSeries / PhoneMovie title pages, PhoneAccount
   ui/phone/PhoneDiscover.kt  Discover tab (TMDB rows, search, filter bar + sheet with paged grid, request badges) and the Discover title page (Watch / Request)
   ui/phone/PhoneArrSettings.kt admin: Sonarr / Radarr connection (test, pickers, anime settings), saved on the server
+  ui/phone/PhoneWebhooks.kt  admin: webhook URLs, API keys, recent notifications
   ui/phone/PhoneDownloads.kt episode/season/movie download controls, the Downloads page (grouped by show, storage bar), downloaded-show page
   ui/profiles/ProfilePicker.kt "Who's watching?" picker + profile editor (AniList character avatars); both layouts
   ui/login/LoginScreen.kt    server URL / user / password -> POST /v1/auth/login
