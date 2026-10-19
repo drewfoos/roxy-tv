@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -286,7 +287,7 @@ private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () ->
 }
 
 /** Height of the banner at the top of a title page. */
-private val BannerHeight = 400.dp
+private val BannerHeight = 470.dp
 
 /**
  * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
@@ -351,6 +352,23 @@ fun TitlePageScaffold(
     }
 }
 
+/** Crunchyroll's age badge: short label on a grey block. */
+@Composable
+private fun AgePill(text: String) {
+    Box(modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFF4A4A52)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+        Text(text, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 0.5.sp)
+    }
+}
+
+/** TV and MPAA ratings folded into Crunchyroll's short labels; anything unknown shows as is. */
+private fun ageLabel(rating: String): String = when (rating.uppercase().removePrefix("US-")) {
+    "TV-Y", "TV-Y7", "TV-G", "G" -> "ALL"
+    "TV-PG", "PG" -> "PG"
+    "TV-14", "PG-13" -> "14+"
+    "TV-MA", "R", "NC-17" -> "18+"
+    else -> rating
+}
+
 /** A 44 dp white glyph for the title page header (no circle behind it, like Crunchyroll's). */
 @Composable
 private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Color.White, onClick: (() -> Unit)? = null) {
@@ -381,7 +399,16 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
         // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
         val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
         RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
-        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0xE6000000), 0.12f to Color(0x80000000), 0.32f to Color.Transparent)))
+        // Solid black through the status bar and a little under it, then a fade into the
+        // art: the picture starts below the clock, the way Crunchyroll's banners do.
+        val density = LocalDensity.current
+        val solidPx = with(density) { (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 6.dp).toPx() }
+        val fadePx = with(density) { 150.dp.toPx() }
+        Box(
+            modifier = Modifier.matchParentSize().background(
+                Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, solidPx / (solidPx + fadePx) to Color.Black, 1f to Color.Transparent), startY = 0f, endY = solidPx + fadePx),
+            ),
+        )
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 0.8f to RoxyColors.background.copy(alpha = 0.88f), 1f to RoxyColors.background)))
         val logo = api.imageUrl(item, "logo", widthPx(320.dp))
         if (logo != null) {
@@ -405,8 +432,17 @@ fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = nul
         if (showTitle) {
             Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 10.dp))
         }
-        val tags = listOfNotNull(item.officialRating, badge, item.genres.take(3).joinToString(", ").ifEmpty { null }).joinToString("  •  ")
-        if (tags.isNotEmpty()) Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // "14+" as a grey pill with Dub | Sub beside it; the genres get their own line.
+        val age = item.officialRating?.let { ageLabel(it) }
+        if (age != null || badge != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (age != null) AgePill(age)
+                if (age != null && badge != null) Spacer(Modifier.width(10.dp))
+                if (badge != null) Text(badge, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+            }
+        }
+        val genres = item.genres.take(3).joinToString(", ")
+        if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         FactsLine(
             rating = item.communityRating,
             facts = listOfNotNull(
