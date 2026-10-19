@@ -20,6 +20,8 @@ data class Session(
     val serverUrl: String = "",
     val token: String? = null,
     val userName: String = "",
+    /** Server admin (from login / auth/me): unlocks the Server section under Account. */
+    val isAdmin: Boolean = false,
     /** The chosen profile (null = show the picker). Sent as X-Roxy-Profile on every request. */
     val profileId: String? = null,
     val profileName: String = "",
@@ -114,6 +116,12 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    /** Keep the admin flag in step with what the server says at start-up. */
+    suspend fun setAdmin(admin: Boolean) {
+        val cur = _session.value
+        if (cur.isAdmin != admin) saveSession(cur.copy(isAdmin = admin))
+    }
+
     suspend fun setDownloadsWifiOnly(on: Boolean) {
         _downloadsWifiOnly.value = on
         ds.edit { it[KEY_DL_WIFI] = on }
@@ -130,6 +138,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_SERVER] = s.serverUrl
             if (s.token == null) it.remove(KEY_TOKEN) else it[KEY_TOKEN] = s.token
             it[KEY_USER] = s.userName
+            it[KEY_ADMIN] = s.isAdmin
             if (s.profileId == null) it.remove(KEY_PROFILE_ID) else it[KEY_PROFILE_ID] = s.profileId
             it[KEY_PROFILE_NAME] = s.profileName
             it[KEY_PROFILE_AVATAR] = s.profileHasAvatar
@@ -182,6 +191,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         serverUrl = this[KEY_SERVER].orEmpty(),
         token = this[KEY_TOKEN]?.takeIf { it.isNotEmpty() },
         userName = this[KEY_USER].orEmpty(),
+        isAdmin = this[KEY_ADMIN] ?: false,
         profileId = this[KEY_PROFILE_ID]?.takeIf { it.isNotEmpty() },
         profileName = this[KEY_PROFILE_NAME].orEmpty(),
         profileHasAvatar = this[KEY_PROFILE_AVATAR] ?: false,
@@ -206,6 +216,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_SERVER = stringPreferencesKey("server_url")
         val KEY_TOKEN = stringPreferencesKey("token")
         val KEY_USER = stringPreferencesKey("user_name")
+        val KEY_ADMIN = booleanPreferencesKey("is_admin")
         val KEY_PROFILE_ID = stringPreferencesKey("profile_id")
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_AVATAR = booleanPreferencesKey("profile_has_avatar")

@@ -30,7 +30,8 @@ app/src/main/kotlin/tv/roxy/tv/
   ui/components/             MediaCard, MediaRow, RoxyImage (placeholder tile), buttons, text field (TV, tv-material)
   ui/phone/                  phone layout (Material 3): PhoneRoot bottom bar, PhoneHome hero carousel + rows,
                              PhoneBrowse / Watchlist / Search grids, PhoneSeries / PhoneMovie title pages, PhoneAccount
-  ui/phone/PhoneDiscover.kt  Discover tab (TMDB rows, search, request badges) and the Discover title page (Watch / Request)
+  ui/phone/PhoneDiscover.kt  Discover tab (TMDB rows, search, filter bar + sheet with paged grid, request badges) and the Discover title page (Watch / Request)
+  ui/phone/PhoneArrSettings.kt admin: Sonarr / Radarr connection (test, pickers, anime settings), saved on the server
   ui/phone/PhoneDownloads.kt episode/season/movie download controls, the Downloads page (grouped by show, storage bar), downloaded-show page
   ui/profiles/ProfilePicker.kt "Who's watching?" picker + profile editor (AniList character avatars); both layouts
   ui/login/LoginScreen.kt    server URL / user / password -> POST /v1/auth/login

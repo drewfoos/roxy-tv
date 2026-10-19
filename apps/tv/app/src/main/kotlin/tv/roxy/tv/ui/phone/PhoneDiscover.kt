@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,9 +21,26 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.derivedStateOf
+import tv.roxy.tv.api.BrowseFilters
+import tv.roxy.tv.api.Genre
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -99,6 +117,13 @@ data class DiscoverUiState(
     val query: String = "",
     val results: List<DiscoverItem>? = null, // null = not searching
     val searching: Boolean = false,
+    // Filters: when active, a paged grid from TMDB discover replaces the rows.
+    val filters: BrowseFilters = BrowseFilters(),
+    val browseItems: List<DiscoverItem>? = null,
+    val browsePage: Int = 0,
+    val browseTotalPages: Int = 1,
+    val browseLoading: Boolean = false,
+    val genres: Map<String, List<Genre>> = emptyMap(),
 )
 
 class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
@@ -112,6 +137,37 @@ class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
                 .onSuccess { d -> _state.value = _state.value.copy(rows = d.rows, requestsEnabled = d.requestsEnabled, error = null) }
                 .onFailure { t -> Timber.w(t, "discover failed"); _state.value = _state.value.copy(error = t.message) }
             runCatching { api.discoverRequests() }.onSuccess { r -> _state.value = _state.value.copy(requests = r) }
+        }
+    }
+
+    /** New filters: the grid starts over from page one (the type alone keeps the rows). */
+    fun setFilters(f: BrowseFilters) {
+        _state.value = _state.value.copy(filters = f, browseItems = null, browsePage = 0, browseTotalPages = 1)
+        if (f.isActive) loadMore()
+    }
+
+    /** Next page of the filtered grid; a no-op while loading or past the last page. */
+    fun loadMore() {
+        val s = _state.value
+        if (s.browseLoading || !s.filters.isActive || (s.browsePage > 0 && s.browsePage >= s.browseTotalPages)) return
+        val f = s.filters
+        val page = s.browsePage + 1
+        _state.value = s.copy(browseLoading = true)
+        viewModelScope.launch {
+            runCatching { api.discoverBrowse(f, page) }
+                .onSuccess { r ->
+                    val cur = _state.value
+                    if (cur.filters != f) return@onSuccess
+                    _state.value = cur.copy(browseItems = cur.browseItems.orEmpty() + r.items, browsePage = r.page, browseTotalPages = r.totalPages, browseLoading = false)
+                }
+                .onFailure { t -> Timber.w(t, "browse"); _state.value = _state.value.copy(browseLoading = false, browseItems = _state.value.browseItems ?: emptyList()) }
+        }
+    }
+
+    fun loadGenres(type: String) {
+        if (_state.value.genres.containsKey(type)) return
+        viewModelScope.launch {
+            runCatching { api.discoverGenres(type) }.onSuccess { g -> _state.value = _state.value.copy(genres = _state.value.genres + (type to g)) }
         }
     }
 
@@ -143,7 +199,33 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
             Text("Discover", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
         }
         SearchBox(query = state.query, onChange = vm::search, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
+        var sheet by rememberSaveable { mutableStateOf(false) }
+        if (state.results == null && !state.searching) {
+            FilterBar(filters = state.filters, onChange = vm::setFilters, onOpenSheet = { vm.loadGenres(state.filters.type); sheet = true })
+        }
+        if (sheet) {
+            FilterSheet(filters = state.filters, genres = state.genres[state.filters.type].orEmpty(), onDismiss = { sheet = false }, onApply = { f -> sheet = false; vm.setFilters(f) })
+        }
         when {
+            state.results == null && !state.searching && state.filters.isActive -> {
+                val items = state.browseItems
+                val gridState = rememberLazyGridState()
+                // Infinite scroll: ask for the next page when the last row comes into view.
+                val nearEnd by remember { derivedStateOf { val info = gridState.layoutInfo; info.visibleItemsInfo.lastOrNull()?.index ?: 0 >= info.totalItemsCount - 6 } }
+                LaunchedEffect(nearEnd, items?.size) { if (nearEnd && !items.isNullOrEmpty()) vm.loadMore() }
+                when {
+                    items == null -> GridSkeleton(modifier = Modifier.padding(top = 8.dp))
+                    items.isEmpty() -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text("Nothing matches these filters.", color = RoxyColors.muted, textAlign = TextAlign.Center) }
+                    else -> LazyVerticalGrid(
+                        columns = GridCells.Fixed(3), state = gridState, modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 8.dp, bottom = bottomInset + 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(items, key = { "${it.type}:${it.tmdbId}" }) { DiscoverCard(it, modifier = Modifier.fillMaxWidth(), onClick = { onOpen(it) }) }
+                        if (state.browseLoading) item(span = { GridItemSpan(3) }) { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = RoxyColors.accent, modifier = Modifier.size(24.dp), strokeWidth = 2.dp) } }
+                    }
+                }
+            }
             state.results != null || state.searching -> {
                 val results = state.results
                 when {
@@ -175,6 +257,73 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
                 }
             }
         }
+    }
+}
+
+private val sortChoices = listOf("popular" to "Popular", "top" to "Top rated", "newest" to "Newest", "oldest" to "Oldest", "votes" to "Most voted")
+private val languageChoices = listOf("" to "Any language", "ja" to "Japanese", "ko" to "Korean", "en" to "English", "zh" to "Chinese", "es" to "Spanish", "fr" to "French", "de" to "German", "hi" to "Hindi")
+private val ratingChoices = listOf(0.0 to "Any rating", 6.0 to "6+", 7.0 to "7+", 8.0 to "8+", 8.5 to "8.5+")
+private val yearChoices: List<Pair<Pair<Int, Int>, String>> = listOf((0 to 0) to "Any year", (2020 to 0) to "2020s", (2010 to 2019) to "2010s", (2000 to 2009) to "2000s", (1990 to 1999) to "1990s", (0 to 1989) to "Before 1990")
+
+/**
+ * Chips under the search box: Series / Movies, Anime, Sort, and a Filters chip with a
+ * count; Clear when anything is set. Chips flip the obvious things in place; the rest
+ * opens the sheet.
+ */
+@Composable
+private fun FilterBar(filters: BrowseFilters, onChange: (BrowseFilters) -> Unit, onOpenSheet: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip(if (filters.type == "movie") "Movies" else "Series", selected = false, trailing = Icons.Filled.SwapHoriz, onClick = { onChange(filters.copy(type = if (filters.type == "movie") "tv" else "movie", genres = emptyList(), status = "")) })
+        Chip("Anime", selected = filters.anime, onClick = { onChange(filters.copy(anime = !filters.anime, language = "")) })
+        Chip(sortChoices.firstOrNull { it.first == filters.sort }?.second ?: "Sort", selected = filters.sort != "popular", trailing = Icons.Filled.ArrowDropDown, onClick = onOpenSheet)
+        val n = filters.count - (if (filters.anime) 1 else 0)
+        Chip(if (n > 0) "Filters · $n" else "Filters", selected = n > 0, trailing = Icons.Filled.Tune, onClick = onOpenSheet)
+        if (filters.isActive) Chip("Clear", selected = false, trailing = Icons.Filled.Close, onClick = { onChange(BrowseFilters(type = filters.type)) })
+    }
+}
+
+/** The full filter form in a bottom sheet: sort, genres, language, years, rating, status. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterSheet(filters: BrowseFilters, genres: List<Genre>, onDismiss: () -> Unit, onApply: (BrowseFilters) -> Unit) {
+    var f by remember(filters) { mutableStateOf(filters) }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = RoxyColors.surface, dragHandle = { BottomSheetDefaults.DragHandle(color = RoxyColors.muted) }) {
+        Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = PhonePad)) {
+                Text("Filters", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
+                Text("Reset", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.clickable { f = BrowseFilters(type = f.type) }.padding(8.dp))
+            }
+            // The sections scroll; Show results stays pinned underneath.
+            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = PhonePad).padding(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            FilterGroup("Show") {
+                Chip("Series", selected = f.type == "tv", onClick = { f = f.copy(type = "tv", genres = emptyList()) })
+                Chip("Movies", selected = f.type == "movie", onClick = { f = f.copy(type = "movie", genres = emptyList(), status = "") })
+                Chip("Anime only", selected = f.anime, onClick = { f = f.copy(anime = !f.anime, language = "") })
+            }
+            FilterGroup("Sort by") { sortChoices.forEach { (v, l) -> Chip(l, selected = f.sort == v, onClick = { f = f.copy(sort = v) }) } }
+            FilterGroup("Genres") {
+                if (genres.isEmpty()) Text("Loading genres…", fontSize = 13.sp, color = RoxyColors.muted)
+                genres.forEach { g -> val on = g.id in f.genres; Chip(g.name, selected = on, onClick = { f = f.copy(genres = if (on) f.genres - g.id else f.genres + g.id) }) }
+            }
+            if (!f.anime) FilterGroup("Original language") { languageChoices.forEach { (v, l) -> Chip(l, selected = f.language == v, onClick = { f = f.copy(language = v) }) } }
+            FilterGroup("Years") { yearChoices.forEach { (range, l) -> val on = f.yearFrom == range.first && f.yearTo == range.second; Chip(l, selected = on, onClick = { f = f.copy(yearFrom = range.first, yearTo = range.second) }) } }
+            FilterGroup("Rating") { ratingChoices.forEach { (v, l) -> Chip(l, selected = f.minRating == v, onClick = { f = f.copy(minRating = v) }) } }
+            if (f.type == "tv") FilterGroup("Status") {
+                listOf("" to "Any", "airing" to "Airing", "ended" to "Ended").forEach { (v, l) -> Chip(l, selected = f.status == v, onClick = { f = f.copy(status = v) }) }
+            }
+            }
+            Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.surface).navigationBarsPadding().padding(horizontal = PhonePad, vertical = 12.dp)) {
+                PlayButton("Show results", pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), icon = Icons.Filled.Check, onClick = { onApply(f) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterGroup(title: String, content: @Composable () -> Unit) {
+    Column {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted, modifier = Modifier.padding(bottom = 8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
     }
 }
 

@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -51,11 +52,18 @@ func (t *TMDB) get(ctx context.Context, path string, q url.Values, out any) erro
 	} else {
 		q.Set("api_key", t.key)
 	}
-	return getJSON(ctx, t.client, t.lim, http.MethodGet, t.base+path+"?"+q.Encode(), headers, nil, out)
+	err := getJSON(ctx, t.client, t.lim, http.MethodGet, t.base+path+"?"+q.Encode(), headers, nil, out)
+	if err != nil && t.key != "" {
+		// Transport errors quote the URL; the key must never leave the server (logs or API).
+		return errors.New(strings.ReplaceAll(err.Error(), t.key, "***"))
+	}
+	return err
 }
 
 // Get performs an authenticated TMDB v3 request (for callers outside matching, such as Discover).
-func (t *TMDB) Get(ctx context.Context, path string, q url.Values, out any) error { return t.get(ctx, path, q, out) }
+func (t *TMDB) Get(ctx context.Context, path string, q url.Values, out any) error {
+	return t.get(ctx, path, q, out)
+}
 
 // ImageURL builds a TMDB image URL ("w342", "w780", "original") or "" for no path.
 func (t *TMDB) ImageURL(size, path string) string { return t.image(size, path) }

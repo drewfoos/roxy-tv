@@ -78,6 +78,7 @@ private fun AppRoot(tv: Boolean) {
         runCatching { app.api.me() }
             .onSuccess {
                 Timber.i("session ok: %s @ %s", it.name ?: "api-key", session.serverUrl)
+                app.prefs.setAdmin(it.isAdmin)
                 // Positions watched offline (downloads) reach the server now; queued downloads resume.
                 app.downloads.syncProgress(app.api)
                 app.downloads.kick()

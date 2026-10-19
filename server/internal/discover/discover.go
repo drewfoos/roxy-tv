@@ -61,12 +61,23 @@ type Row struct {
 	Items []Item `json:"items"`
 }
 
+// ArrSettings is the admin-editable arr configuration (settings key "arr"); the
+// ROXY_SONARR_* / ROXY_RADARR_* variables seed it when nothing is saved.
+type ArrSettings struct {
+	Sonarr arr.Config `json:"sonarr"`
+	Radarr arr.Config `json:"radarr"`
+}
+
+const settingsKey = "arr"
+
 type Service struct {
 	store  *store.Store
 	cfg    *config.Config
 	tmdb   *metadata.TMDB
 	sonarr *arr.Client
 	radarr *arr.Client
+	arrCfg ArrSettings
+	browse *ttlCache[*BrowseResult]
 
 	mu     sync.Mutex
 	genres map[string]map[int]string // "tv"/"movie" -> id -> name
@@ -125,26 +136,284 @@ func (c *ttlCache[T]) put(k string, v T) {
 }
 
 func New(st *store.Store, cfg *config.Config, tmdb *metadata.TMDB) *Service {
-	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300)}
-	s.sonarr = arr.New("sonarr", cfg.SonarrURL, cfg.SonarrAPIKey, cfg.SonarrRootFolder, cfg.SonarrQualityProfile)
-	s.radarr = arr.New("radarr", cfg.RadarrURL, cfg.RadarrAPIKey, cfg.RadarrRootFolder, cfg.RadarrQualityProfile)
+	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300)}
+	s.loadArr(context.Background())
+	return s
+}
+
+// loadArr builds the arr clients from the saved settings, falling back to the environment.
+func (s *Service) loadArr(ctx context.Context) {
+	cfg := ArrSettings{
+		Sonarr: arr.Config{URL: s.cfg.SonarrURL, APIKey: s.cfg.SonarrAPIKey, RootFolder: s.cfg.SonarrRootFolder, QualityProfileID: atoi(s.cfg.SonarrQualityProfile)},
+		Radarr: arr.Config{URL: s.cfg.RadarrURL, APIKey: s.cfg.RadarrAPIKey, RootFolder: s.cfg.RadarrRootFolder, QualityProfileID: atoi(s.cfg.RadarrQualityProfile)},
+	}
+	if ok, err := s.store.GetSetting(ctx, settingsKey, &cfg); err != nil {
+		slog.Warn("discover: arr settings unreadable; using environment", "err", err)
+	} else if !ok {
+		slog.Debug("discover: no saved arr settings; using environment")
+	}
+	s.mu.Lock()
+	s.arrCfg = cfg
+	s.sonarr = arr.New("sonarr", cfg.Sonarr)
+	s.radarr = arr.New("radarr", cfg.Radarr)
+	s.mu.Unlock()
 	if s.sonarr != nil {
-		slog.Info("discover: Sonarr configured", "url", cfg.SonarrURL)
+		slog.Info("discover: Sonarr configured", "url", cfg.Sonarr.URL)
 	}
 	if s.radarr != nil {
-		slog.Info("discover: Radarr configured", "url", cfg.RadarrURL)
+		slog.Info("discover: Radarr configured", "url", cfg.Radarr.URL)
 	}
-	return s
+}
+
+func atoi(v string) int { n, _ := strconv.Atoi(strings.TrimSpace(v)); return n }
+
+// ArrSettings returns the saved configuration (the caller masks secrets for the wire).
+func (s *Service) ArrSettings() ArrSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.arrCfg
+}
+
+// SaveArrSettings stores the configuration, rebuilds the clients and sends pending requests.
+func (s *Service) SaveArrSettings(ctx context.Context, cfg ArrSettings) error {
+	if err := s.store.SetSetting(ctx, settingsKey, cfg); err != nil {
+		return err
+	}
+	s.loadArr(ctx)
+	// A server that was removed or replaced: its failed requests go back to pending so
+	// they are retried against the new one instead of showing a stale error.
+	if all, err := s.store.ListRequests(ctx); err == nil {
+		for i := range all {
+			r := &all[i]
+			if r.Status == "failed" {
+				r.Status, r.Error = "pending", ""
+				_ = s.store.UpsertRequest(ctx, r)
+			}
+		}
+	}
+	go s.RetryPending(context.Background())
+	return nil
+}
+
+// TestArr probes an arr server with the given URL and key (not necessarily saved yet).
+func (s *Service) TestArr(ctx context.Context, kind string, cfg arr.Config) (*arr.Probe, error) {
+	if kind != "sonarr" && kind != "radarr" {
+		return nil, errors.New("kind must be sonarr or radarr")
+	}
+	c := arr.New(kind, cfg)
+	if c == nil {
+		return nil, errors.New("URL and API key are required")
+	}
+	return c.Test(ctx)
+}
+
+// RetryPending sends every pending (or failed) request to its arr app; a no-op for
+// kinds without a configured server. Called after settings change and periodically.
+func (s *Service) RetryPending(ctx context.Context) {
+	all, err := s.store.ListRequests(ctx)
+	if err != nil {
+		return
+	}
+	for i := range all {
+		r := &all[i]
+		if r.Status == "sent" || !s.RequestsEnabled(r.MediaType) {
+			continue
+		}
+		det, err := s.Detail(ctx, r.MediaType, r.TMDBID)
+		if err != nil {
+			slog.Warn("discover: retry detail", "title", r.Title, "err", err)
+			continue
+		}
+		if det.LibraryItemID != "" {
+			continue // already there; the request shows as available
+		}
+		s.send(ctx, r, det)
+		if err := s.store.UpsertRequest(ctx, r); err != nil {
+			slog.Warn("discover: retry save", "title", r.Title, "err", err)
+		}
+	}
+}
+
+// Start runs the pending-request retry every 10 minutes.
+func (s *Service) Start(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.RetryPending(ctx)
+			}
+		}
+	}()
 }
 
 // Enabled is false without a TMDB key.
 func (s *Service) Enabled() bool { return s != nil && s.tmdb != nil }
 
 func (s *Service) RequestsEnabled(mediaType string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if mediaType == "movie" {
 		return s.radarr != nil
 	}
 	return s.sonarr != nil
+}
+
+func (s *Service) clients() (*arr.Client, *arr.Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sonarr, s.radarr
+}
+
+// ---- browse (filters) ----
+
+// BrowseQuery is the filter bar: everything optional.
+type BrowseQuery struct {
+	Type      string // tv | movie
+	Sort      string // popular | top | newest | oldest | votes
+	Genres    []int  // all must match
+	Language  string // original language, ISO 639-1 ("ja", "ko", "en")
+	Anime     bool   // Animation + Japanese
+	YearFrom  int
+	YearTo    int
+	MinRating float64
+	Status    string // tv: airing | ended
+	Page      int
+}
+
+type BrowseResult struct {
+	Items      []Item `json:"items"`
+	Page       int    `json:"page"`
+	TotalPages int    `json:"totalPages"`
+}
+
+func (q BrowseQuery) key() string {
+	g := make([]string, len(q.Genres))
+	for i, x := range q.Genres {
+		g[i] = strconv.Itoa(x)
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%t|%d|%d|%.1f|%s|%d", q.Type, q.Sort, strings.Join(g, ","), q.Language, q.Anime, q.YearFrom, q.YearTo, q.MinRating, q.Status, q.Page)
+}
+
+// Browse maps the filter bar onto TMDB's discover endpoint.
+func (s *Service) Browse(ctx context.Context, q BrowseQuery) (*BrowseResult, error) {
+	if q.Type != "movie" {
+		q.Type = "tv"
+	}
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.Page > 50 {
+		q.Page = 50
+	}
+	if res, ok := s.browse.get(q.key()); ok {
+		out := &BrowseResult{Items: append([]Item(nil), res.Items...), Page: res.Page, TotalPages: res.TotalPages}
+		s.annotate(ctx, out.Items)
+		return out, nil
+	}
+	v := url.Values{"include_adult": {"false"}, "page": {strconv.Itoa(q.Page)}}
+	dateKey := "primary_release_date"
+	if q.Type == "tv" {
+		dateKey = "first_air_date"
+	}
+	switch q.Sort {
+	case "top":
+		v.Set("sort_by", "vote_average.desc")
+		v.Set("vote_count.gte", "200")
+	case "newest":
+		v.Set("sort_by", dateKey+".desc")
+		v.Set("vote_count.gte", "20")
+	case "oldest":
+		v.Set("sort_by", dateKey+".asc")
+		v.Set("vote_count.gte", "20")
+	case "votes":
+		v.Set("sort_by", "vote_count.desc")
+	default:
+		v.Set("sort_by", "popularity.desc")
+	}
+	genres := append([]int(nil), q.Genres...)
+	if q.Anime {
+		genres = append(genres, 16)
+		v.Set("with_original_language", "ja")
+	} else if q.Language != "" {
+		v.Set("with_original_language", q.Language)
+	}
+	if len(genres) > 0 {
+		g := make([]string, len(genres))
+		for i, x := range genres {
+			g[i] = strconv.Itoa(x)
+		}
+		v.Set("with_genres", strings.Join(g, ","))
+	}
+	if q.YearFrom > 0 {
+		v.Set(dateKey+".gte", fmt.Sprintf("%04d-01-01", q.YearFrom))
+	}
+	if q.YearTo > 0 {
+		v.Set(dateKey+".lte", fmt.Sprintf("%04d-12-31", q.YearTo))
+	}
+	if q.MinRating > 0 {
+		v.Set("vote_average.gte", fmt.Sprintf("%.1f", q.MinRating))
+		if v.Get("vote_count.gte") == "" {
+			v.Set("vote_count.gte", "50")
+		}
+	}
+	if q.Type == "tv" {
+		switch q.Status {
+		case "airing":
+			v.Set("with_status", "0")
+		case "ended":
+			v.Set("with_status", "3")
+		}
+	}
+	var resp struct {
+		Page       int             `json:"page"`
+		TotalPages int             `json:"total_pages"`
+		Results    []tmdbListEntry `json:"results"`
+	}
+	if err := s.tmdb.Get(ctx, "/discover/"+q.Type, v, &resp); err != nil {
+		return nil, err
+	}
+	res := &BrowseResult{Page: resp.Page, TotalPages: resp.TotalPages}
+	for _, e := range resp.Results {
+		if e.PosterPath == "" {
+			continue
+		}
+		res.Items = append(res.Items, s.toItem(ctx, e, q.Type))
+	}
+	if res.Items == nil {
+		res.Items = []Item{}
+	}
+	s.browse.put(q.key(), res)
+	out := &BrowseResult{Items: append([]Item(nil), res.Items...), Page: res.Page, TotalPages: res.TotalPages}
+	s.annotate(ctx, out.Items)
+	return out, nil
+}
+
+// Genre is one TMDB genre for the filter sheet.
+type Genre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Genres lists TMDB's genres for tv or movie, sorted by name.
+func (s *Service) Genres(ctx context.Context, kind string) []Genre {
+	if kind != "movie" {
+		kind = "tv"
+	}
+	names := s.genreNames(ctx, kind)
+	out := make([]Genre, 0, len(names))
+	for id, n := range names {
+		out = append(out, Genre{id, n})
+	}
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j].Name < out[j-1].Name; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
 }
 
 // ---- TMDB wire shapes (lists) ----
@@ -485,16 +754,17 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 }
 
 func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
+	sonarr, radarr := s.clients()
 	switch r.MediaType {
 	case "tv":
-		if s.sonarr == nil {
+		if sonarr == nil {
 			return
 		}
 		if det.TVDBID == 0 {
 			r.Status, r.Error = "failed", "TMDB has no TVDB id for this series"
 			return
 		}
-		id, err := s.sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime)
+		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime)
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: sonarr add failed", "title", r.Title, "err", err)
@@ -502,10 +772,10 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 		}
 		r.Status, r.ArrID, r.Error = "sent", id, ""
 	case "movie":
-		if s.radarr == nil {
+		if radarr == nil {
 			return
 		}
-		id, err := s.radarr.AddMovie(ctx, r.TMDBID)
+		id, err := radarr.AddMovie(ctx, r.TMDBID)
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: radarr add failed", "title", r.Title, "err", err)

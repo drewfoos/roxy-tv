@@ -59,7 +59,7 @@ class LoginViewModel(private val app: RoxyApp) : ViewModel() {
                 app.api.login(url, username.trim(), password, device = "${Build.MANUFACTURER} ${Build.MODEL}", deviceId = deviceId, version = BuildConfig.VERSION_NAME)
             }.onSuccess { resp ->
                 Timber.i("Logged in to %s as %s", url, resp.user.name)
-                app.prefs.saveSession(Session(serverUrl = url, token = resp.token, userName = resp.user.name))
+                app.prefs.saveSession(Session(serverUrl = url, token = resp.token, userName = resp.user.name, isAdmin = resp.user.isAdmin))
                 _state.value = LoginUiState()
             }.onFailure { t ->
                 Timber.w(t, "login failed")

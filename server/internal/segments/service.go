@@ -21,14 +21,14 @@ const (
 	MaxIntroSec    = 150.0
 	MinOutroSec    = 15.0
 	MaxOutroSec    = 300.0
-	MaxDiff        = 6   // Hamming distance for "same sound"
-	MaxGapSec      = 3.5 // a run may skip this much mismatching audio
-	SnapTolSec     = 2.5 // move a boundary onto a silence edge this close
-	OutroStartTol  = 6.0 // an ED often starts under the last scene: prefer the cut up to this much later
+	MaxDiff        = 6     // Hamming distance for "same sound"
+	MaxGapSec      = 3.5   // a run may skip this much mismatching audio
+	SnapTolSec     = 2.5   // move a boundary onto a silence edge this close
+	OutroStartTol  = 6.0   // an ED often starts under the last scene: prefer the cut up to this much later
 	MinEpisodeSec  = 300.0 // shorter files have no OP/ED structure (and identical test clips match whole)
-	StartSnapSec   = 5.0 // an intro starting this early starts at 0
-	MinPreviewSec  = 5.0 // after the ED: a next-episode preview this long or longer…
-	MaxPreviewSec  = 60.0 // …but not a whole post-credits scene
+	StartSnapSec   = 5.0   // an intro starting this early starts at 0
+	MinPreviewSec  = 5.0   // after the ED: a next-episode preview this long or longer…
+	MaxPreviewSec  = 60.0  // …but not a whole post-credits scene
 	Origin         = "fingerprint"
 	seasonDebounce = 20 * time.Second
 )
@@ -135,12 +135,12 @@ type Report struct {
 }
 
 type EpisodeReport struct {
-	ItemID   string               `json:"itemId"`
-	Index    int                  `json:"index"`
-	Found    []model.MediaSegment `json:"found"`
-	Chapters []model.MediaSegment `json:"chapters,omitempty"` // what the markers said, for comparison
-	MatchedWith int               `json:"matchedWith,omitempty"`
-	Note     string               `json:"note,omitempty"`
+	ItemID      string               `json:"itemId"`
+	Index       int                  `json:"index"`
+	Found       []model.MediaSegment `json:"found"`
+	Chapters    []model.MediaSegment `json:"chapters,omitempty"` // what the markers said, for comparison
+	MatchedWith int                  `json:"matchedWith,omitempty"`
+	Note        string               `json:"note,omitempty"`
 }
 
 // DetectSeason fingerprints the season's episodes (cached) and compares neighbours.

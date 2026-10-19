@@ -190,6 +190,36 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun deleteRequest(id: String) = delete("/v1/discover/requests/$id")
 
+    /** Filtered browsing over TMDB's discover endpoint (one page of 20). */
+    suspend fun discoverBrowse(f: BrowseFilters, page: Int): BrowseResult {
+        val q = buildList {
+            add("type=${f.type}")
+            add("sort=${f.sort}")
+            if (f.anime) add("anime=1")
+            if (f.genres.isNotEmpty()) add("genres=" + f.genres.joinToString(","))
+            if (f.language.isNotEmpty()) add("lang=${f.language}")
+            if (f.yearFrom > 0) add("yearFrom=${f.yearFrom}")
+            if (f.yearTo > 0) add("yearTo=${f.yearTo}")
+            if (f.minRating > 0) add("minRating=${f.minRating}")
+            if (f.status.isNotEmpty()) add("status=${f.status}")
+            add("page=$page")
+        }.joinToString("&")
+        return get("/v1/discover/browse?$q")
+    }
+
+    suspend fun discoverGenres(type: String): List<Genre> = get<GenresResponse>("/v1/discover/genres?type=$type").genres
+
+    // ---- arr settings (admin) ----
+
+    suspend fun arrSettings(): ArrSettingsResponse = get("/v1/settings/arr")
+
+    suspend fun saveArrSettings(s: ArrSettings): ArrSettingsResponse = putJson("/v1/settings/arr", json.encodeToString(ArrSettings.serializer(), s))
+
+    suspend fun testArr(kind: String, url: String, apiKey: String): ArrProbe =
+        postJson("/v1/settings/arr/test", json.encodeToString(ArrTestBody.serializer(), ArrTestBody(kind, url, apiKey)))
+
+    suspend fun retryRequests(): List<DiscoverItem> = postJson<DiscoverItemsResponse>("/v1/discover/requests/retry", "{}").items
+
     // ---- app updates ----
 
     /** The newest build of this app the server hosts (404 when none is published). */
@@ -274,6 +304,10 @@ class RoxyApi(private val prefs: Prefs) {
         execute<T>(request(path).patch(body.toRequestBody(JSON_TYPE)).build())
     }
 
+    private suspend inline fun <reified T> putJson(path: String, body: String): T = withContext(Dispatchers.IO) {
+        execute<T>(request(path).put(body.toRequestBody(JSON_TYPE)).build())
+    }
+
     private suspend fun delete(path: String) = withContext(Dispatchers.IO) {
         val req = request(path).delete().build()
         http.newCall(req).execute().use { resp ->
@@ -288,11 +322,16 @@ class RoxyApi(private val prefs: Prefs) {
             val text = resp.body.string()
             if (!resp.isSuccessful) {
                 Timber.w("HTTP %d %s %s", resp.code, req.method, req.url.encodedPath)
-                throw ApiException(resp.code, "HTTP ${resp.code} ${req.method} ${req.url.encodedPath}: ${text.take(200)}")
+                throw ApiException(resp.code, serverMessage(text) ?: "HTTP ${resp.code} ${req.method} ${req.url.encodedPath}: ${text.take(200)}")
             }
             return json.decodeFromString(text)
         }
     }
+
+    /** The server's `{"error": "..."}` text when the body is one, for messages shown to people. */
+    private fun serverMessage(body: String): String? = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(body).let { (it as? kotlinx.serialization.json.JsonObject)?.get("error") as? kotlinx.serialization.json.JsonPrimitive }?.content
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 
     private companion object {
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -623,6 +662,65 @@ data class DiscoverDetail(
 
 @Serializable
 private data class DiscoverRequestBody(val type: String, val tmdbId: Int)
+
+/** The Discover filter bar. Defaults mean "no filter": the curated rows show instead of a grid. */
+@Serializable
+data class BrowseFilters(
+    val type: String = "tv",        // tv | movie
+    val sort: String = "popular",   // popular | top | newest | oldest | votes
+    val anime: Boolean = false,
+    val genres: List<Int> = emptyList(),
+    val language: String = "",      // ISO 639-1 original language
+    val yearFrom: Int = 0,
+    val yearTo: Int = 0,
+    val minRating: Double = 0.0,
+    val status: String = "",        // tv: airing | ended
+) {
+    /** Anything beyond the default rows? Type alone does not count. */
+    val isActive: Boolean get() = sort != "popular" || anime || genres.isNotEmpty() || language.isNotEmpty() || yearFrom > 0 || yearTo > 0 || minRating > 0 || status.isNotEmpty()
+    val count: Int get() = listOf(anime, genres.isNotEmpty(), language.isNotEmpty(), yearFrom > 0 || yearTo > 0, minRating > 0, status.isNotEmpty()).count { it }
+}
+
+@Serializable
+data class BrowseResult(val items: List<DiscoverItem> = emptyList(), val page: Int = 1, val totalPages: Int = 1)
+
+@Serializable
+data class Genre(val id: Int, val name: String)
+
+@Serializable
+data class GenresResponse(val genres: List<Genre> = emptyList())
+
+/** One arr server's connection and defaults (request app's Services page). */
+@Serializable
+data class ArrConfig(
+    val url: String = "",
+    val apiKey: String = "",
+    val rootFolder: String = "",
+    val qualityProfileId: Int = 0,
+    val animeRootFolder: String = "",
+    val animeQualityProfileId: Int = 0,
+    val tags: List<Int> = emptyList(),
+    val animeTags: List<Int> = emptyList(),
+    val seasonFolders: Boolean? = null,
+    val minimumAvailability: String = "",
+    val searchOnAdd: Boolean? = null,
+    val externalUrl: String = "",
+)
+
+@Serializable
+data class ArrSettings(val sonarr: ArrConfig = ArrConfig(), val radarr: ArrConfig = ArrConfig())
+
+@Serializable
+data class ArrSettingsResponse(val sonarr: ArrConfig = ArrConfig(), val radarr: ArrConfig = ArrConfig(), val requestsEnabled: Map<String, Boolean> = emptyMap())
+
+@Serializable
+data class ArrNamed(val id: Int = 0, val name: String = "", val label: String = "", val path: String = "", val freeSpace: Long = 0)
+
+@Serializable
+data class ArrProbe(val version: String = "", val appName: String = "", val rootFolders: List<ArrNamed> = emptyList(), val qualityProfiles: List<ArrNamed> = emptyList(), val tags: List<ArrNamed> = emptyList())
+
+@Serializable
+private data class ArrTestBody(val kind: String, val url: String, val apiKey: String)
 
 @Serializable
 private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null)

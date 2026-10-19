@@ -62,9 +62,13 @@ func New(st *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Service {
 	return &Service{store: st, ff: ff, cfg: cfg, queue: make(chan string, queueSize), pending: map[string]bool{}, failed: map[string]time.Time{}}
 }
 
-func (s *Service) dir(sourceID string) string { return filepath.Join(s.cfg.CacheDir(), "trickplay", sourceID) }
+func (s *Service) dir(sourceID string) string {
+	return filepath.Join(s.cfg.CacheDir(), "trickplay", sourceID)
+}
 
-func (s *Service) manifestPath(sourceID string) string { return filepath.Join(s.dir(sourceID), "manifest.json") }
+func (s *Service) manifestPath(sourceID string) string {
+	return filepath.Join(s.dir(sourceID), "manifest.json")
+}
 
 // SheetPath is the file for sheet n (0-based) of a source.
 func (s *Service) SheetPath(sourceID string, n int) string {

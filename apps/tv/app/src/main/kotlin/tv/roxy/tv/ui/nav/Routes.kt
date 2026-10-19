@@ -12,6 +12,8 @@ sealed interface Route {
     // Discover: TMDB browsing and requests ("our own request app"); a title page per TMDB id.
     @Serializable data object Discover : Route
     @Serializable data class DiscoverDetail(val type: String, val tmdbId: Int) : Route
+    // Admin: the Sonarr / Radarr connection Discover requests go to.
+    @Serializable data object ArrSettings : Route
     @Serializable data object Watchlist : Route
     @Serializable data object Browse : Route
     @Serializable data object Account : Route

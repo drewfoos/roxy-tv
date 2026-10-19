@@ -18,16 +18,16 @@ import (
 
 // Result is the normalized probe of one file.
 type Result struct {
-	Path        string             `json:"path"`
-	Container   string             `json:"container"`
-	Size        int64              `json:"size"`
-	DurationMs  int64              `json:"durationMs"`
-	Bitrate     int64              `json:"bitrate"`
-	ModTime     time.Time          `json:"modTime"`
+	Path        string              `json:"path"`
+	Container   string              `json:"container"`
+	Size        int64               `json:"size"`
+	DurationMs  int64               `json:"durationMs"`
+	Bitrate     int64               `json:"bitrate"`
+	ModTime     time.Time           `json:"modTime"`
 	Streams     []model.MediaStream `json:"streams"`
-	Attachments []model.Attachment `json:"attachments"`
-	Chapters    []Chapter          `json:"chapters,omitempty"`
-	Raw         json.RawMessage    `json:"-"`
+	Attachments []model.Attachment  `json:"attachments"`
+	Chapters    []Chapter           `json:"chapters,omitempty"`
+	Raw         json.RawMessage     `json:"-"`
 }
 
 type Chapter struct {

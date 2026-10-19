@@ -224,7 +224,25 @@ TMDB client has its own token bucket, so the app cannot hammer TMDB.
   `ROXY_SONARR_URL` / `ROXY_SONARR_API_KEY` / `ROXY_RADARR_URL` / `ROXY_RADARR_API_KEY`
   are set (`ROXY_*_ROOT_FOLDER`, `ROXY_*_QUALITY_PROFILE` optional); otherwise kept as
   `pending`. 409 when the library already has it.
+- `GET /v1/discover/browse?type=tv|movie&sort=popular|top|newest|oldest|votes&genres=16,35&lang=ja&anime=1&yearFrom=&yearTo=&minRating=&status=airing|ended&page=`
+  → `{items, page, totalPages}` (TMDB discover; cached 5 min per query; `anime` =
+  Animation + Japanese original language). `GET /v1/discover/genres?type=` → `{genres}`.
 - `GET /v1/discover/requests` → `{items}` (everyone's, newest first).
+- `POST /v1/discover/requests/retry` (admin) → resend pending requests now.
+
+### Sonarr / Radarr settings (admin)
+
+request app's Services model, saved on the server (settings key `arr`, migration 0010); the
+`ROXY_SONARR_*` / `ROXY_RADARR_*` variables seed it when nothing is saved.
+
+- `GET /v1/settings/arr` → `{sonarr, radarr, requestsEnabled}` with API keys masked as `••••••••`.
+- `PUT /v1/settings/arr` `{sonarr: {url, apiKey, rootFolder, qualityProfileId,
+  animeRootFolder, animeQualityProfileId, tags, animeTags, seasonFolders, searchOnAdd,
+  externalUrl}, radarr: {url, apiKey, rootFolder, qualityProfileId, tags,
+  minimumAvailability, searchOnAdd, externalUrl}}`; a masked key keeps the saved one.
+  Saving rebuilds the clients and sends pending requests (also retried every 10 min).
+- `POST /v1/settings/arr/test` `{kind, url, apiKey}` → `{version, appName, rootFolders,
+  qualityProfiles, tags}` so the app can offer dropdowns.
 - `DELETE /v1/discover/requests/{id}` → 204; the requester or an admin only.
 
 ## App updates

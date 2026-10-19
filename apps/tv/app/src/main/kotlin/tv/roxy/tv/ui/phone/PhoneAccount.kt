@@ -57,7 +57,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -121,6 +121,11 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}) {
             pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
         }
         SwitchRow("Stats overlay", settings.showStats) { save(settings.copy(showStats = it)) }
+
+        if (session.isAdmin) {
+            SectionTitle("Server", modifier = Modifier.padding(top = 8.dp))
+            SettingRow("Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)
+        }
 
         SectionTitle("Account", modifier = Modifier.padding(top = 8.dp))
         SoonRow("Notifications", "New-episode alerts are coming")

@@ -214,4 +214,3 @@ func snap(t float64, sil []Silence, tol float64) float64 {
 	}
 	return best
 }
-

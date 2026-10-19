@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -26,7 +27,7 @@ func (s *Server) discoverRows(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.discover.Rows(r.Context())
 	if err != nil {
-		writeError(w, 502, err.Error())
+		upstreamError(w, "discover rows", err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{
@@ -42,7 +43,7 @@ func (s *Server) discoverSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.discover.Search(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
-		writeError(w, 502, err.Error())
+		upstreamError(w, "discover search", err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
@@ -60,7 +61,7 @@ func (s *Server) discoverDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := s.discover.Detail(r.Context(), chi.URLParam(r, "type"), id)
 	if err != nil {
-		writeError(w, 502, err.Error())
+		upstreamError(w, "discover detail", err)
 		return
 	}
 	writeJSON(w, 200, d)
@@ -89,6 +90,13 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, req)
+}
+
+// upstreamError logs the real cause and tells the client only that TMDB did not answer:
+// transport errors quote URLs and must not reach the app.
+func upstreamError(w http.ResponseWriter, what string, err error) {
+	slog.Warn(what+" failed", "err", err)
+	writeError(w, 502, "TMDB did not answer; try again in a moment")
 }
 
 // GET /v1/discover/requests -> {items}

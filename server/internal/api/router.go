@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -39,6 +40,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 	if meta != nil && meta.TMDB() != nil {
 		s.discover = discover.New(st, cfg, meta.TMDB())
+		s.discover.Start(context.Background())
 	}
 
 	r := chi.NewRouter()
@@ -67,7 +69,13 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/discover/requests", s.discoverRequests)
 			r.Delete("/discover/requests/{id}", s.discoverDeleteRequest)
 			r.Post("/discover/request", s.discoverRequest)
+			r.Get("/discover/browse", s.discoverBrowse)
+			r.Get("/discover/genres", s.discoverGenres)
+			r.Post("/discover/requests/retry", s.discoverRetry)
 			r.Get("/discover/{type}/{tmdbId}", s.discoverDetail)
+			r.Get("/settings/arr", s.arrSettingsGet)
+			r.Put("/settings/arr", s.arrSettingsPut)
+			r.Post("/settings/arr/test", s.arrSettingsTest)
 			r.Get("/apps/{app}/latest", s.appLatest)
 			r.Get("/apps/{app}/download", s.appDownload)
 			r.Get("/items", s.listItems)

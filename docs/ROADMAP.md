@@ -143,6 +143,16 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   withdraw restricted to the requester or an admin, strict file names on the app-update
   endpoint, sanitised ids in download paths, and the Bearer token is only sent to the
   Roxy host (TMDB images go bare).
+- Also done (2026-10-20, early): **Discover filters and arr settings**. Filter bar under the
+  search box (Series / Movies, Anime, Sort, Filters · n, Clear) and a bottom sheet (sort,
+  genres, original language, years, rating, status) over `GET /v1/discover/browse`
+  (TMDB discover, paged, infinite scroll, cached 5 min per query). Admin page Account →
+  Server → Sonarr & Radarr, laid out like request app's Services page: URL, API key, Test
+  connection (lists root folders, quality profiles, tags from the server), root folder /
+  quality profile pickers, anime root folder / profile / tags for Sonarr, minimum
+  availability for Radarr, season folders, search on add. Saved on the server (settings
+  table, migration 0010); pending requests are sent on save and every 10 min. The owner's
+  arr stack lives on their server, so the live add calls stay untested until deploy day.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks
