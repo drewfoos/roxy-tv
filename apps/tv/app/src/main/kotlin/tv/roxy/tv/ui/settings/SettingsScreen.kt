@@ -26,6 +26,7 @@ import timber.log.Timber
 import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.PlayerSettings
+import tv.roxy.tv.data.Languages
 import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.ui.components.ChoiceRow
 import tv.roxy.tv.ui.components.ScreenPadding
@@ -53,18 +54,21 @@ fun SettingsScreen(onLoggedOut: () -> Unit) {
         Text("Player", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
         ChoiceRow("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
         ChoiceRow("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
-        ChoiceRow(
-            "Audio language",
-            PlayerSettings.audioChoices.map { it.label() },
-            settings.audioLangs.label(),
-        ) { picked -> PlayerSettings.audioChoices.firstOrNull { it.label() == picked }?.let { save(settings.copy(audioLangs = it)) } }
-        ChoiceRow("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
-            PlayerSettings.subModeChoices.firstOrNull { it.subLabel() == picked }?.let { save(settings.copy(subMode = it)) }
+        // The TV cycles through the common languages with the D-pad; the phone has the full searchable list.
+        val tvLangs = Languages.all.take(12)
+        ChoiceRow("Audio language", tvLangs.map { it.name }, Languages.name(settings.audioLangs.firstOrNull() ?: "eng")) { picked ->
+            tvLangs.firstOrNull { it.name == picked }?.let { save(settings.copy(audioLangs = listOf(it.iso3))) }
+        }
+        ChoiceRow("Subtitle language", tvLangs.map { it.name }, Languages.name(settings.subLang)) { picked ->
+            tvLangs.firstOrNull { it.name == picked }?.let { save(settings.copy(subLang = it.iso3)) }
+        }
+        ChoiceRow("Subtitles", PlayerSettings.subModeChoices.map { PlayerSettings.subModeLabel(it) }, PlayerSettings.subModeLabel(settings.subMode)) { picked ->
+            PlayerSettings.subModeChoices.firstOrNull { PlayerSettings.subModeLabel(it) == picked }?.let { save(settings.copy(subMode = it)) }
         }
         ChoiceRow("Stats overlay", listOf("off", "on"), if (settings.showStats) "on" else "off") { save(settings.copy(showStats = it == "on")) }
         Text(
-            "Subtitles: \"full\" picks the dialogue track (for Japanese audio), \"signs\" the signs & songs track (for an English dub). " +
-                "The stats overlay can also be toggled in the player with Up or Menu.",
+            "Smart subtitles stay off when the audio is already in your language; Always on keeps a track up regardless. " +
+                "Either way an anime dub gets the signs & songs track when the file has one. The stats overlay can also be toggled in the player with Up or Menu.",
             color = RoxyColors.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 
@@ -84,15 +88,4 @@ fun SettingsScreen(onLoggedOut: () -> Unit) {
     }
 }
 
-private fun List<String>.label() = when (this) {
-    listOf("eng", "jpn") -> "English dub, else Japanese"
-    listOf("jpn", "eng") -> "Japanese, else English"
-    else -> joinToString(",")
-}
 
-private fun String.subLabel() = when (this) {
-    "full" -> "full dialogue"
-    "signs" -> "signs & songs"
-    "none" -> "off"
-    else -> this
-}

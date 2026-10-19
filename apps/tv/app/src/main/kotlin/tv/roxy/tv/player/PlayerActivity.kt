@@ -67,7 +67,9 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_ALANG = "alang"      // comma-separated audio language order
         const val EXTRA_STATS = "stats"      // show the stats overlay from the start; adb: --ez stats true
         const val EXTRA_SUBTITLE_LINE = "subtitleLine" // second title line (series + SxxEyy, or year)
-        const val EXTRA_LOCAL = "local"      // url is a downloaded file: segments and sub languages come from the download snapshot
+        const val EXTRA_LOCAL = "local"
+        const val EXTRA_ANIME = "anime"      // the title is anime: smart subtitles pair a dub with signs & songs
+        const val EXTRA_SLANG = "slang"      // preferred subtitle language, ISO 639-2      // url is a downloaded file: segments and sub languages come from the download snapshot
         private const val AUTO_HIDE_MS = 4000L
 
         private const val PROGRESS_INTERVAL_MS = 10_000L
@@ -84,7 +86,10 @@ class PlayerActivity : ComponentActivity() {
             settings: PlayerSettings,
             subtitleLine: String = "",
             local: Boolean = false,
+            anime: Boolean = false,
         ): Intent = Intent(context, PlayerActivity::class.java)
+            .putExtra(EXTRA_ANIME, anime)
+            .putExtra(EXTRA_SLANG, settings.subLang)
             .putExtra(EXTRA_URL, url)
             .putExtra(EXTRA_TITLE, title)
             .putExtra(EXTRA_SUBTITLE_LINE, subtitleLine)
@@ -99,7 +104,7 @@ class PlayerActivity : ComponentActivity() {
             .putExtra(EXTRA_STATS, settings.showStats)
 
         fun intent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
-            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local)
+            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime)
     }
 
     private lateinit var app: RoxyApp
@@ -185,7 +190,11 @@ class PlayerActivity : ComponentActivity() {
 
         player = MpvPlayer(
             context = this,
-            options = MpvPlayer.Options(hwdec = hwdec, vo = vo, startSeconds = start, subMode = subMode, forceSid = forceSid, audioLangs = audioLangs),
+            options = MpvPlayer.Options(
+                hwdec = hwdec, vo = vo, startSeconds = start, subMode = subMode, forceSid = forceSid, audioLangs = audioLangs,
+                subLangs = tv.roxy.tv.data.Languages.mpvCodes(intent.getStringExtra(EXTRA_SLANG) ?: settings.subLang),
+                anime = intent.getBooleanExtra(EXTRA_ANIME, false),
+            ),
             fontsDir = app.fontsDir,
             displayRefreshRate = DeviceReport.refreshRate(this),
         )

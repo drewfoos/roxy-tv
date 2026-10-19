@@ -45,26 +45,48 @@ data class PlayerSettings(
     val hwdec: String = "mediacodec-copy",
     /** "gpu" | "gpu-next" */
     val vo: String = "gpu",
-    /** Audio language order, ISO 639-2 codes. Owner default: English dub first, Japanese otherwise. */
-    val audioLangs: List<String> = listOf("eng", "jpn"),
-    /** "full" | "signs" | "none" */
-    val subMode: String = "full",
+    /** Preferred audio languages in order, ISO 639-2 codes; the file's default track when none match. */
+    val audioLangs: List<String> = listOf("eng"),
+    /** Preferred subtitle language, ISO 639-2. */
+    val subLang: String = "eng",
+    /**
+     * "smart" = subtitles only when the audio is not in your language; "full" = always
+     * some track; "none" = off. Both smart and full pair an anime dub with the signs &
+     * songs track when the file has one. "signs" is the old name for smart.
+     */
+    val subMode: String = "smart",
     val showStats: Boolean = false,
     /** Play the next episode when one ends. Always on; kept as a field for the queue logic. */
     val autoplay: Boolean = true,
     /** Jump over intro/outro segments automatically instead of showing a Skip button. */
     val autoSkip: Boolean = false,
 ) {
-    /** mpv `alang` list: each 3-letter code followed by its 2-letter twin, since tags vary. */
+    /** mpv `alang` list: every spelling of each preferred language, since tags vary. */
     val mpvAudioLangs: List<String>
-        get() = audioLangs.flatMap { listOf(it, twoLetter[it] ?: it) }.distinct()
+        get() = audioLangs.flatMap { Languages.mpvCodes(it) }.distinct()
+
+    /** mpv `slang` list for the subtitle language. */
+    val mpvSubLangs: List<String>
+        get() = Languages.mpvCodes(subLang)
 
     companion object {
         val hwdecChoices = listOf("mediacodec", "mediacodec-copy", "no")
         val voChoices = listOf("gpu", "gpu-next")
-        val audioChoices = listOf(listOf("eng", "jpn"), listOf("jpn", "eng"))
-        val subModeChoices = listOf("full", "signs", "none")
-        private val twoLetter = mapOf("eng" to "en", "jpn" to "ja")
+        val subModeChoices = listOf("smart", "full", "none")
+
+        fun subModeLabel(mode: String): String = when (mode) {
+            "smart", "signs" -> "Smart"
+            "full" -> "Always on"
+            "none" -> "Off"
+            else -> mode
+        }
+
+        fun subModeHint(mode: String): String = when (mode) {
+            "smart", "signs" -> "Only when the audio isn't in your language; an anime dub gets signs & songs"
+            "full" -> "Always a track: dialogue, or signs & songs over an anime dub"
+            "none" -> "No subtitles unless you turn them on"
+            else -> ""
+        }
     }
 }
 
@@ -193,6 +215,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_VO] = s.vo
             it[KEY_ALANG] = s.audioLangs.joinToString(",")
             it[KEY_SUBMODE] = s.subMode
+            it[KEY_SLANG] = s.subLang
             it[KEY_STATS] = s.showStats
             it[KEY_AUTOPLAY] = s.autoplay
             it[KEY_AUTOSKIP] = s.autoSkip
@@ -220,6 +243,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             vo = this[KEY_VO] ?: d.vo,
             audioLangs = this[KEY_ALANG]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: d.audioLangs,
             subMode = this[KEY_SUBMODE] ?: d.subMode,
+            subLang = this[KEY_SLANG] ?: d.subLang,
             showStats = this[KEY_STATS] ?: d.showStats,
             autoplay = this[KEY_AUTOPLAY] ?: d.autoplay,
             autoSkip = this[KEY_AUTOSKIP] ?: d.autoSkip,
@@ -242,6 +266,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_VO = stringPreferencesKey("vo")
         val KEY_ALANG = stringPreferencesKey("audio_langs")
         val KEY_SUBMODE = stringPreferencesKey("sub_mode")
+        val KEY_SLANG = stringPreferencesKey("sub_lang")
         val KEY_STATS = booleanPreferencesKey("show_stats")
         val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
         val KEY_AUTOSKIP = booleanPreferencesKey("auto_skip")

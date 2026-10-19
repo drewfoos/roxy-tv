@@ -23,6 +23,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import tv.roxy.tv.data.Languages
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.material.icons.outlined.ClosedCaption
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -108,6 +117,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
     }
 
     var advanced by rememberSaveable { mutableStateOf(false) }
+    var langPick by remember { mutableStateOf<String?>(null) } // "audio" | "sub"
     var confirmLogout by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 24.dp)) {
@@ -132,15 +142,13 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
         }
 
         GroupCard("Playback") {
-            SettingRow(Icons.Outlined.Subtitles, "Subtitles", settings.subMode.subLabel()) {
-                pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
-                    PlayerSettings.subModeChoices.firstOrNull { it.subLabel() == picked }?.let { save(settings.copy(subMode = it)) }
-                }
-            }
+            SettingRow(Icons.Outlined.Translate, "Audio language", Languages.name(settings.audioLangs.firstOrNull() ?: "eng")) { langPick = "audio" }
             Divider()
-            SettingRow(Icons.Outlined.Translate, "Audio language", settings.audioLangs.label()) {
-                pick = Pick("Audio language", PlayerSettings.audioChoices.map { it.label() }, settings.audioLangs.label()) { picked ->
-                    PlayerSettings.audioChoices.firstOrNull { it.label() == picked }?.let { save(settings.copy(audioLangs = it)) }
+            SettingRow(Icons.Outlined.Subtitles, "Subtitle language", Languages.name(settings.subLang)) { langPick = "sub" }
+            Divider()
+            SettingRow(Icons.Outlined.ClosedCaption, "Subtitles", PlayerSettings.subModeLabel(settings.subMode) + "  ·  " + PlayerSettings.subModeHint(settings.subMode)) {
+                pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { PlayerSettings.subModeLabel(it) }, PlayerSettings.subModeLabel(settings.subMode)) { picked ->
+                    PlayerSettings.subModeChoices.firstOrNull { PlayerSettings.subModeLabel(it) == picked }?.let { save(settings.copy(subMode = it)) }
                 }
             }
             Divider()
@@ -200,6 +208,18 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
             Text("Log out", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.error, modifier = Modifier.padding(start = 8.dp))
         }
         Text("Signed in as ${session.userName}", fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+    }
+
+    langPick?.let { which ->
+        LanguagePickerDialog(
+            title = if (which == "audio") "Audio language" else "Subtitle language",
+            selected = if (which == "audio") settings.audioLangs.firstOrNull() ?: "eng" else settings.subLang,
+            onDismiss = { langPick = null },
+            onPick = { code ->
+                if (which == "audio") save(settings.copy(audioLangs = listOf(code))) else save(settings.copy(subLang = code))
+                langPick = null
+            },
+        )
     }
 
     if (confirmLogout) {
@@ -293,15 +313,39 @@ private fun SwitchRow(icon: ImageVector?, label: String, checked: Boolean, onCha
     }
 }
 
-private fun List<String>.label() = when (this) {
-    listOf("eng", "jpn") -> "English dub, else Japanese"
-    listOf("jpn", "eng") -> "Japanese, else English"
-    else -> joinToString(",")
+/** Searchable list of every language, common ones first; the current choice ticked. */
+@Composable
+fun LanguagePickerDialog(title: String, selected: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val shown = remember(query) {
+        val q = query.trim()
+        if (q.isEmpty()) Languages.all else Languages.all.filter { it.name.contains(q, ignoreCase = true) || it.iso3.startsWith(q.lowercase()) || it.iso2 == q.lowercase() }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+        title = { Text(title) },
+        text = {
+            Column {
+                Row(modifier = Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(20.dp)).background(RoxyColors.surface).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Search, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(18.dp))
+                    Box(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                        if (query.isEmpty()) Text("Search languages", color = RoxyColors.muted, fontSize = 14.sp)
+                        BasicTextField(value = query, onValueChange = { query = it }, singleLine = true, textStyle = TextStyle(color = RoxyColors.onBackground, fontSize = 14.sp), cursorBrush = SolidColor(RoxyColors.accent), modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).padding(top = 8.dp)) {
+                    items(shown, key = { it.iso3 }) { l ->
+                        Row(modifier = Modifier.fillMaxWidth().clickable { onPick(l.iso3) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = l.iso3 == Languages.canonical(selected), onClick = null, colors = RadioButtonDefaults.colors(selectedColor = RoxyColors.accent, unselectedColor = RoxyColors.muted))
+                            Text(l.name, fontSize = 15.sp, color = RoxyColors.onBackground, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                            Text(l.iso3, fontSize = 12.sp, color = RoxyColors.muted)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Color.White) } },
+    )
 }
 
-private fun String.subLabel() = when (this) {
-    "full" -> "full dialogue"
-    "signs" -> "signs & songs"
-    "none" -> "off"
-    else -> this
-}
