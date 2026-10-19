@@ -584,19 +584,44 @@ private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, on
             when {
                 eps == null -> Column(modifier = Modifier.padding(start = 28.dp, bottom = 8.dp)) { repeat(3) { BoneLine(width = 240.dp, height = 12.dp, modifier = Modifier.padding(vertical = 6.dp)) } }
                 eps.isEmpty() -> Text("No episode list on TMDB yet.", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
-                else -> eps.forEach { e ->
-                    Row(modifier = Modifier.fillMaxWidth().padding(start = 28.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            if (e.have) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = null,
-                            tint = if (e.have) RoxyColors.accent else RoxyColors.muted.copy(alpha = 0.5f), modifier = Modifier.size(16.dp),
-                        )
-                        Text("${e.number}.  ${e.title.ifEmpty { "Episode ${e.number}" }}", fontSize = 13.sp, color = if (e.have) RoxyColors.onBackground else RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                        when {
-                            sn.special && !e.have && e.requested -> Text("Requested", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
-                            sn.special && !e.have -> Text("Request", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(12.dp)).clickable { onRequestEpisode("S0E${e.number}") }.padding(horizontal = 8.dp, vertical = 4.dp))
-                            else -> e.airDate?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 11.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp)) }
-                        }
-                    }
+                else -> eps.forEach { e -> EpisodeRow(e, special = sn.special, onRequest = { onRequestEpisode("S0E${e.number}") }) }
+            }
+        }
+    }
+}
+
+/**
+ * One episode under a season: tick or ring, the full title (wrapping) with the air date
+ * under it, and Request / Requested for specials. Tapping the row unfolds TMDB's still
+ * and synopsis, so a cut-off title or an unfamiliar special can be identified.
+ */
+@Composable
+private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Unit) {
+    var open by rememberSaveable(e.number) { mutableStateOf(false) }
+    val hasMore = !e.overview.isNullOrBlank() || !e.still.isNullOrBlank()
+    Column(modifier = Modifier.fillMaxWidth().clickable(enabled = hasMore) { open = !open }.padding(start = 28.dp, top = 6.dp, bottom = 6.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(
+                if (e.have) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = null,
+                tint = if (e.have) RoxyColors.accent else RoxyColors.muted.copy(alpha = 0.5f), modifier = Modifier.padding(top = 2.dp).size(16.dp),
+            )
+            Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                Text("${e.number}.  ${e.title.ifEmpty { "Episode ${e.number}" }}", fontSize = 13.sp, lineHeight = 17.sp, color = if (e.have) RoxyColors.onBackground else RoxyColors.muted)
+                val sub = listOfNotNull(e.airDate?.takeIf { it.isNotBlank() }, if (hasMore && !open) "tap for details" else null).joinToString("  ·  ")
+                if (sub.isNotEmpty()) Text(sub, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), modifier = Modifier.padding(top = 1.dp))
+            }
+            when {
+                special && !e.have && e.requested -> Text("Requested", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp, top = 2.dp))
+                special && !e.have -> Text("Request", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onRequest).padding(horizontal = 8.dp, vertical = 4.dp))
+            }
+        }
+        if (open) {
+            Row(modifier = Modifier.fillMaxWidth().padding(start = 24.dp, top = 8.dp, end = 4.dp), verticalAlignment = Alignment.Top) {
+                e.still?.takeIf { it.isNotBlank() }?.let {
+                    AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.width(120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh))
+                }
+                e.overview?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.onBackground.copy(alpha = 0.85f), modifier = Modifier.weight(1f).padding(start = if (e.still.isNullOrBlank()) 0.dp else 10.dp))
                 }
             }
         }
