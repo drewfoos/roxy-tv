@@ -273,8 +273,8 @@ private val yearChoices: List<Pair<Pair<Int, Int>, String>> = listOf((0 to 0) to
 @Composable
 private fun FilterBar(filters: BrowseFilters, onChange: (BrowseFilters) -> Unit, onOpenSheet: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Chip(if (filters.type == "movie") "Movies" else "Series", selected = false, trailing = Icons.Filled.SwapHoriz, onClick = { onChange(filters.copy(type = if (filters.type == "movie") "tv" else "movie", genres = emptyList(), status = "")) })
-        Chip("Anime", selected = filters.anime, onClick = { onChange(filters.copy(anime = !filters.anime, language = "")) })
+        Chip(if (filters.type == "movie") "Movies" else "Series", selected = filters.browsing, trailing = Icons.Filled.SwapHoriz, onClick = { onChange(filters.copy(type = if (filters.type == "movie") "tv" else "movie", genres = emptyList(), status = "", browsing = true)) })
+        Chip("Anime", selected = filters.anime, onClick = { onChange(filters.copy(anime = !filters.anime, language = "", browsing = true)) })
         Chip(sortChoices.firstOrNull { it.first == filters.sort }?.second ?: "Sort", selected = filters.sort != "popular", trailing = Icons.Filled.ArrowDropDown, onClick = onOpenSheet)
         val n = filters.count - (if (filters.anime) 1 else 0)
         Chip(if (n > 0) "Filters · $n" else "Filters", selected = n > 0, trailing = Icons.Filled.Tune, onClick = onOpenSheet)
@@ -313,7 +313,7 @@ private fun FilterSheet(filters: BrowseFilters, genres: List<Genre>, onDismiss: 
             }
             }
             Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.surface).navigationBarsPadding().padding(horizontal = PhonePad, vertical = 12.dp)) {
-                PlayButton("Show results", pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), icon = Icons.Filled.Check, onClick = { onApply(f) })
+                PlayButton("Show results", pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), icon = Icons.Filled.Check, onClick = { onApply(f.copy(browsing = true)) })
             }
         }
     }

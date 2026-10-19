@@ -675,9 +675,11 @@ data class BrowseFilters(
     val yearTo: Int = 0,
     val minRating: Double = 0.0,
     val status: String = "",        // tv: airing | ended
+    /** The user touched the bar or applied the sheet: show the grid even with default values. */
+    val browsing: Boolean = false,
 ) {
-    /** Anything beyond the default rows? Type alone does not count. */
-    val isActive: Boolean get() = sort != "popular" || anime || genres.isNotEmpty() || language.isNotEmpty() || yearFrom > 0 || yearTo > 0 || minRating > 0 || status.isNotEmpty()
+    /** Show the filtered grid instead of the curated rows? */
+    val isActive: Boolean get() = browsing || sort != "popular" || anime || genres.isNotEmpty() || language.isNotEmpty() || yearFrom > 0 || yearTo > 0 || minRating > 0 || status.isNotEmpty()
     val count: Int get() = listOf(anime, genres.isNotEmpty(), language.isNotEmpty(), yearFrom > 0 || yearTo > 0, minRating > 0, status.isNotEmpty()).count { it }
 }
 
