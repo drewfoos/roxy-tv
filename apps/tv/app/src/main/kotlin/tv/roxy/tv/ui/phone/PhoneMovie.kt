@@ -47,7 +47,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenDetails: (Item) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
-    val vm: MovieViewModel = viewModel(key = "movie:$movieId") { MovieViewModel(app.api, movieId) }
+    val vm: MovieViewModel = viewModel(key = "movie:$movieId") { MovieViewModel(app.api, movieId, initial = app.items[movieId]) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }

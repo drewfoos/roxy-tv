@@ -82,8 +82,10 @@ data class SeriesUiState(
     val showRelated: Boolean = false,
 )
 
-class SeriesViewModel(private val api: RoxyApi, private val seriesId: String) : ViewModel() {
-    private val _state = MutableStateFlow(SeriesUiState())
+class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, initial: Item? = null) : ViewModel() {
+    // Seeded from the list that opened the page, so the header paints at once and only the
+    // episode rows wait on the network.
+    private val _state = MutableStateFlow(SeriesUiState(series = initial, episodesLoading = initial != null))
     val state: StateFlow<SeriesUiState> = _state
 
     fun load() {

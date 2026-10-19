@@ -54,6 +54,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -128,7 +130,9 @@ fun PhoneHome(
     }
 
     when (val s = state) {
-        HomeUiState.Loading -> HomeSkeleton(bottomInset)
+        HomeUiState.Loading -> Box(Modifier.fillMaxSize().padding(bottom = bottomInset), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = RoxyColors.accent, strokeWidth = 3.dp, strokeCap = StrokeCap.Round, modifier = Modifier.size(40.dp))
+        }
         is HomeUiState.Error -> when {
             s.offline -> {
                 val index by app.downloads.index.collectAsStateWithLifecycle()
@@ -206,16 +210,6 @@ private fun rowTitle(key: String) = when (key) {
     "series" -> "Series"
     "movies" -> "Movies"
     else -> key
-}
-
-/** Home while the first load runs: the full-bleed banner and two rows as shimmer. */
-@Composable
-private fun HomeSkeleton(bottomInset: Dp) {
-    Column(modifier = Modifier.fillMaxSize().padding(bottom = bottomInset)) {
-        Bone(Modifier.fillMaxWidth().height(HeroHeight), shape = RoundedCornerShape(0.dp))
-        RowSkeleton(modifier = Modifier.padding(top = 22.dp), thumbs = true)
-        RowSkeleton(modifier = Modifier.padding(top = 22.dp))
-    }
 }
 
 /**

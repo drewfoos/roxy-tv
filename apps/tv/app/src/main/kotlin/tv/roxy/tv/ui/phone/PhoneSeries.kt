@@ -93,7 +93,7 @@ fun PhoneSeries(
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
-    val vm: SeriesViewModel = viewModel(key = "series:$seriesId") { SeriesViewModel(app.api, seriesId) }
+    val vm: SeriesViewModel = viewModel(key = "series:$seriesId") { SeriesViewModel(app.api, seriesId, initial = app.items[seriesId]) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
@@ -129,6 +129,7 @@ fun PhoneSeries(
         ?: playable.firstOrNull()
     val resumable = next != null && (next.userData?.positionMs ?: 0) > 0
     val label = when {
+        next == null && (state.loading || state.episodesLoading) -> "Play" // the list is still on its way; don't claim there is nothing
         next == null -> "Nothing to play yet"
         resumable -> "Resume ${next.episodeCode}"
         else -> "Start watching ${next.episodeCode}".trim()

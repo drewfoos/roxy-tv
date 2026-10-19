@@ -2,6 +2,15 @@ package tv.roxy.tv.ui.phone
 
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import tv.roxy.tv.api.Item
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
+import androidx.navigation.NavDestination
+import androidx.navigation.NavBackStackEntry
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,14 +78,22 @@ private enum class Tab(val label: String, val route: Route) {
     Account("Account", Route.Account),
 }
 
+private fun NavDestination.isTab() = Tab.entries.any { hasRoute(it.route::class) }
+
+/** Push/pop slide timing: quick with a soft landing. */
+private fun <T> pushSpec() = tween<T>(300, easing = FastOutSlowInEasing)
+
+/** Both ends of a navigation are bottom-bar tabs, so the pages swap in place rather than push. */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabToTab() = initialState.destination.isTab() && targetState.destination.isTab()
+
 /** Height of the bottom bar's content (small, like most apps); the system inset is added on top. */
 private val BarHeight = 54.dp
 
 /**
  * Phone shell: a compact bottom bar (Home, Watchlist, Browse, Account) over a Navigation
  * Compose graph. Tabs are top-level destinations with saved state; detail pages and
- * Search push on top and hide the bar. Transitions are plain short fades so the system
- * back gesture does not zoom or slide anything.
+ * Search push on top and hide the bar. Tabs swap with a short fade; pushed pages slide
+ * in from the right and the predictive back gesture drags them out the same way.
  */
 @Composable
 fun PhoneRoot(onUnauthorized: () -> Unit) {
@@ -96,22 +113,31 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     }
     val bottomInset = BarHeight + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    fun openSeries(id: String, title: String) = nav.navigate(Route.Series(id, title))
-    fun openMovie(id: String, title: String) = nav.navigate(Route.Movie(id, title))
+    // The tapped item goes into the cache first, so the page can paint its header from it
+    // while it slides in.
+    fun openSeries(item: Item) { app.items.put(item); nav.navigate(Route.Series(item.id, item.title)) }
+    fun openMovie(item: Item) { app.items.put(item); nav.navigate(Route.Movie(item.id, item.title)) }
 
     PhoneTheme {
         Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
             NavHost(
                 nav, startDestination = Route.Home, modifier = Modifier.fillMaxSize(),
-                enterTransition = { fadeIn(tween(160)) },
-                exitTransition = { fadeOut(tween(160)) },
-                popEnterTransition = { fadeIn(tween(160)) },
-                popExitTransition = { fadeOut(tween(160)) },
+                // Tab to tab: a short fade. Pushing a page (series, movie, search, details):
+                // it slides in from the right over the page beneath, which stays put, like
+                // Crunchyroll. Back slides it out to the right again. The predictive back
+                // gesture gets the same slide explicitly, otherwise Navigation's default
+                // shrinks the page while the finger moves.
+                enterTransition = { if (tabToTab()) fadeIn(tween(160)) else slideInHorizontally(pushSpec()) { it } },
+                exitTransition = { if (tabToTab()) fadeOut(tween(160)) else ExitTransition.KeepUntilTransitionsFinished },
+                popEnterTransition = { if (tabToTab()) fadeIn(tween(160)) else EnterTransition.None },
+                popExitTransition = { if (tabToTab()) fadeOut(tween(160)) else slideOutHorizontally(pushSpec()) { it } },
+                predictivePopEnterTransition = { _ -> EnterTransition.None },
+                predictivePopExitTransition = { _ -> slideOutHorizontally(pushSpec()) { it } },
             ) {
                 composable<Route.Home> {
                     PhoneHome(
-                        onOpenSeries = { openSeries(it.id, it.title) },
-                        onOpenMovie = { openMovie(it.id, it.title) },
+                        onOpenSeries = { openSeries(it) },
+                        onOpenMovie = { openMovie(it) },
                         onSearch = { nav.navigate(Route.Search) },
                         onDownloads = { nav.navigate(Route.Downloads) },
                         onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
@@ -143,15 +169,15 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     PhoneDiscoverDetail(
                         type = r.type, tmdbId = r.tmdbId,
                         onBack = { nav.popBackStack() },
-                        onOpenSeries = { id, title -> openSeries(id, title) },
-                        onOpenMovie = { id, title -> openMovie(id, title) },
+                        onOpenSeries = { id, title -> nav.navigate(Route.Series(id, title)) }, // Discover has no library item to seed from
+                        onOpenMovie = { id, title -> nav.navigate(Route.Movie(id, title)) },
                     )
                 }
                 composable<Route.Watchlist> {
-                    PhoneWatchlist(onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) }, bottomInset = bottomInset)
+                    PhoneWatchlist(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset)
                 }
                 composable<Route.Browse> {
-                    PhoneBrowse(onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) }, onSearch = { nav.navigate(Route.Search) }, bottomInset = bottomInset)
+                    PhoneBrowse(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, onSearch = { nav.navigate(Route.Search) }, bottomInset = bottomInset)
                 }
                 composable<Route.Account> {
                     PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) })
@@ -166,21 +192,21 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     PhoneLegal(doc = e.toRoute<Route.Legal>().doc, onBack = { nav.popBackStack() })
                 }
                 composable<Route.Search> {
-                    PhoneSearch(onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) })
+                    PhoneSearch(onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) })
                 }
                 composable<Route.Series> { e ->
                     val r = e.toRoute<Route.Series>()
                     PhoneSeries(
                         seriesId = r.id, fallbackTitle = r.title,
                         onBack = { nav.popBackStack() },
-                        onOpenMovie = { openMovie(it.id, it.title) },
-                        onOpenSeries = { openSeries(it.id, it.title) },
+                        onOpenMovie = { openMovie(it) },
+                        onOpenSeries = { openSeries(it) },
                         onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) },
                     )
                 }
                 composable<Route.Movie> { e ->
                     val r = e.toRoute<Route.Movie>()
-                    PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it.id, it.title) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) })
+                    PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) })
                 }
                 composable<Route.Details> { e ->
                     val r = e.toRoute<Route.Details>()

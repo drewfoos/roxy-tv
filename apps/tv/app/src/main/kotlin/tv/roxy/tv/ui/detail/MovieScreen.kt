@@ -36,8 +36,8 @@ import tv.roxy.tv.ui.theme.RoxyColors
 
 data class MovieUiState(val loading: Boolean = true, val error: String? = null, val movie: Item? = null, val partOf: List<Item> = emptyList())
 
-class MovieViewModel(private val api: RoxyApi, private val movieId: String) : ViewModel() {
-    private val _state = MutableStateFlow(MovieUiState())
+class MovieViewModel(private val api: RoxyApi, private val movieId: String, initial: Item? = null) : ViewModel() {
+    private val _state = MutableStateFlow(MovieUiState(movie = initial))
     val state: StateFlow<MovieUiState> = _state
 
     fun load() {
