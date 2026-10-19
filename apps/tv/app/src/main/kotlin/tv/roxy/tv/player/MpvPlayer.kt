@@ -43,7 +43,8 @@ class MpvPlayer(
         val anime: Boolean = false,
         /**
          * Which subtitle track to pick among the preferred language: "full" = the dialogue
-         * track (never a signs/songs-only track), "signs" = signs/songs only, "none".
+         * track whatever the audio, "signs" = signs & songs over an anime dub, "foreign" =
+         * subtitles only on foreign audio, "none" = off. See [chooseSubtitle].
          * The real app derives this from the chosen audio and the user's profile.
          */
         val subMode: String = "full",
@@ -207,9 +208,9 @@ class MpvPlayer(
 
     fun setAudioTrack(id: Int) {
         if (id <= 0) mpv.setPropertyString("aid", "no") else mpv.setPropertyInt("aid", id)
-        // Smart subtitles follow the audio: switching to the Japanese track brings the
-        // dialogue subs in, switching to the dub takes them back out.
-        if (options.subMode == "smart" || options.subMode == "signs") {
+        // Subtitles follow the audio: switching to the Japanese track brings the dialogue
+        // subs in, switching back to the dub drops to signs & songs (or off).
+        if (options.subMode != "none") {
             val overrides = subtitleLanguageOverrides
             val all = tracks().map { t -> val o = overrides[t.id]; if (t.type == "sub" && o != null && o != t.lang) t.copy(lang = o) else t }
             val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.lang.orEmpty()
@@ -304,14 +305,15 @@ class MpvPlayer(
         fun styled(t: Track) = if (t.codec == "ass" || t.codec == "ssa") 5 else 0
 
         val dubbed = audioLang.isNotEmpty() && sameLang(audioLang, subLang)
-        if (dubbed) {
+        if (dubbed && mode != "full") {
+            // Audio already in the viewer's language. "signs" pairs an anime dub with its
+            // signs & songs track; both "signs" and "foreign" otherwise show at most a
+            // forced track. Only "full" carries on to the dialogue track below.
             val pool = mine.ifEmpty { subs.filter { it.lang.isEmpty() } }
-            val signsTrack = if (anime) pool.filter { signs(it) }.maxByOrNull { styled(it) + (if (it.isDefault) 1 else 0) } else null
-            // Both modes pair an anime dub with its signs & songs track: dialogue subs
-            // over a dub never match the script. They differ when there is no such track:
-            // smart goes quiet (forced track at most), always-on falls through to dialogue.
-            if (signsTrack != null) return signsTrack
-            if (mode == "smart" || mode == "signs") return pool.firstOrNull { it.isForced }
+            if (anime && (mode == "signs" || mode == "smart")) {
+                pool.filter { signs(it) }.maxByOrNull { styled(it) + (if (it.isDefault) 1 else 0) }?.let { return it }
+            }
+            return pool.firstOrNull { it.isForced }
         }
         // Dialogue in the preferred language (or the best guess when no track is tagged).
         fun score(t: Track): Int {
@@ -322,11 +324,7 @@ class MpvPlayer(
             if (t.isDefault) sc += 1
             return sc
         }
-        val best = subs.maxByOrNull { score(it) } ?: return null
-        // Nothing in the preferred language and nothing untagged: show the best there is
-        // only when the audio is foreign (a Japanese file with Spanish subs beats none).
-        if (!sameLang(best.lang, subLang) && best.lang.isNotEmpty() && mode == "smart" && audioLang.isNotEmpty() && sameLang(audioLang, subLang)) return null
-        return best
+        return subs.maxByOrNull { score(it) }
     }
 
     /** The language mpv ended up playing, from the current audio track. */

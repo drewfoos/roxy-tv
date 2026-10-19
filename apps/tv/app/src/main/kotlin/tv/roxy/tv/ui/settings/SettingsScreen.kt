@@ -67,8 +67,8 @@ fun SettingsScreen(onLoggedOut: () -> Unit) {
         }
         ChoiceRow("Stats overlay", listOf("off", "on"), if (settings.showStats) "on" else "off") { save(settings.copy(showStats = it == "on")) }
         Text(
-            "Smart subtitles stay off when the audio is already in your language; Always on keeps a track up regardless. " +
-                "Either way an anime dub gets the signs & songs track when the file has one. The stats overlay can also be toggled in the player with Up or Menu.",
+            "Subtitles: signs & songs pairs an anime dub with its signs track; foreign audio only turns them off for a dub; " +
+                "always full dialogue keeps the dialogue track up whatever the audio. The stats overlay can also be toggled in the player with Up or Menu.",
             color = RoxyColors.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 

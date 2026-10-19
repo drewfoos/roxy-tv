@@ -50,11 +50,11 @@ data class PlayerSettings(
     /** Preferred subtitle language, ISO 639-2. */
     val subLang: String = "eng",
     /**
-     * "smart" = subtitles only when the audio is not in your language; "full" = always
-     * some track; "none" = off. Both smart and full pair an anime dub with the signs &
-     * songs track when the file has one. "signs" is the old name for smart.
+     * "signs" = dialogue subs on foreign audio, signs & songs over an anime dub;
+     * "foreign" = dialogue subs on foreign audio only; "full" = the dialogue track
+     * always; "none" = off. "smart" is an older stored spelling of "signs".
      */
-    val subMode: String = "smart",
+    val subMode: String = "signs",
     val showStats: Boolean = false,
     /** Play the next episode when one ends. Always on; kept as a field for the queue logic. */
     val autoplay: Boolean = true,
@@ -72,18 +72,21 @@ data class PlayerSettings(
     companion object {
         val hwdecChoices = listOf("mediacodec", "mediacodec-copy", "no")
         val voChoices = listOf("gpu", "gpu-next")
-        val subModeChoices = listOf("smart", "full", "none")
+        /** One explicit behaviour per choice; "smart" is an older stored name for "signs". */
+        val subModeChoices = listOf("signs", "foreign", "full", "none")
 
         fun subModeLabel(mode: String): String = when (mode) {
-            "smart", "signs" -> "Smart"
-            "full" -> "Always on"
+            "signs", "smart" -> "Signs & songs with a dub"
+            "foreign" -> "Foreign audio only"
+            "full" -> "Always full dialogue"
             "none" -> "Off"
             else -> mode
         }
 
         fun subModeHint(mode: String): String = when (mode) {
-            "smart", "signs" -> "Only when the audio isn't in your language; an anime dub gets signs & songs"
-            "full" -> "Always a track: dialogue, or signs & songs over an anime dub"
+            "signs", "smart" -> "Dialogue subs on foreign audio; an anime dub shows just signs & songs"
+            "foreign" -> "Dialogue subs only when the audio isn't in your language"
+            "full" -> "The dialogue track whatever the audio, even over a dub"
             "none" -> "No subtitles unless you turn them on"
             else -> ""
         }
