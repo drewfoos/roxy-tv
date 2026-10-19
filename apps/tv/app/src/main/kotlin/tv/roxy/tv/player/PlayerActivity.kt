@@ -36,6 +36,8 @@ import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.diagnostics.DeviceReport
+import tv.roxy.tv.ui.PlayRequest
+import tv.roxy.tv.ui.nextEpisode
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.CircleShape
@@ -65,9 +67,12 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_ALANG = "alang"      // comma-separated audio language order
         const val EXTRA_STATS = "stats"      // show the stats overlay from the start; adb: --ez stats true
         const val EXTRA_SUBTITLE_LINE = "subtitleLine" // second title line (series + SxxEyy, or year)
+        const val EXTRA_LOCAL = "local"      // url is a downloaded file: segments and sub languages come from the download snapshot
         private const val AUTO_HIDE_MS = 4000L
 
         private const val PROGRESS_INTERVAL_MS = 10_000L
+        /** Seconds the next-episode card counts down before it plays (Netflix uses about this). */
+        private const val NEXT_COUNTDOWN_S = 10
 
         fun intent(
             context: Context,
@@ -78,10 +83,12 @@ class PlayerActivity : ComponentActivity() {
             startSeconds: Int,
             settings: PlayerSettings,
             subtitleLine: String = "",
+            local: Boolean = false,
         ): Intent = Intent(context, PlayerActivity::class.java)
             .putExtra(EXTRA_URL, url)
             .putExtra(EXTRA_TITLE, title)
             .putExtra(EXTRA_SUBTITLE_LINE, subtitleLine)
+            .putExtra(EXTRA_LOCAL, local)
             .putExtra(EXTRA_ITEM_ID, itemId)
             .putExtra(EXTRA_SOURCE_ID, sourceId)
             .putExtra(EXTRA_START, startSeconds)
@@ -90,6 +97,9 @@ class PlayerActivity : ComponentActivity() {
             .putExtra(EXTRA_SUBMODE, settings.subMode)
             .putExtra(EXTRA_ALANG, settings.audioLangs.joinToString(","))
             .putExtra(EXTRA_STATS, settings.showStats)
+
+        fun intent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
+            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local)
     }
 
     private lateinit var app: RoxyApp
@@ -126,7 +136,20 @@ class PlayerActivity : ComponentActivity() {
     private var hwdec = ""
     private var vo = ""
     private var itemId: String? = null
+    private var sourceId: String? = null
+    private var local = false
     private var lastReportedMs = -1L
+    @Volatile private var serverDownUntil = 0L
+
+    // Next-episode queue (Netflix): resolved in the background once an episode starts;
+    // the card appears at the outro (or the last 15 s) and counts down when autoplay is on.
+    private var autoplay = true
+    private var next: PlayRequest? = null
+    private var nextCard by mutableStateOf<NextCard?>(null)
+    private var nextCardDismissed = false
+    private var countdownJob: Job? = null
+    /** True from "load the next file" until it has loaded, so the old file's end events are ignored. */
+    @Volatile private var switching = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -154,9 +177,11 @@ class PlayerActivity : ComponentActivity() {
             ?: settings.mpvAudioLangs
         showStats = intent.getBooleanExtra(EXTRA_STATS, settings.showStats)
         autoSkip = settings.autoSkip
+        autoplay = settings.autoplay
         itemId = intent.getStringExtra(EXTRA_ITEM_ID)
-        val sourceId = intent.getStringExtra(EXTRA_SOURCE_ID)
+        sourceId = intent.getStringExtra(EXTRA_SOURCE_ID)
             ?: url.substringAfterLast("/stream/").substringBefore('?').takeIf { it.matches(uuidRegex) }
+        local = intent.getBooleanExtra(EXTRA_LOCAL, false)
 
         player = MpvPlayer(
             context = this,
@@ -165,9 +190,20 @@ class PlayerActivity : ComponentActivity() {
             displayRefreshRate = DeviceReport.refreshRate(this),
         )
         player.listener = object : MpvPlayer.Listener {
+            override fun onFileLoaded() { switching = false }
+
             override fun onEndFile() {
+                if (switching) return // the old file giving way to the next episode
                 Timber.i("end of file")
                 reportProgress("end")
+            }
+
+            override fun onEofReached() {
+                if (switching) return
+                Timber.i("reached the end")
+                reportProgress("end")
+                // Ran out while the card was up (or with no outro marker): go on now.
+                if (autoplay && next != null) runOnUiThread { if (!isDestroyed) playNext() }
             }
 
             override fun onPauseChanged(paused: Boolean) {
@@ -175,35 +211,7 @@ class PlayerActivity : ComponentActivity() {
                 reportProgress(if (paused) "pause" else "resume")
             }
         }
-        if (sourceId != null && app.prefs.session.value.isLoggedIn) {
-            // Skippable segments (intro/outro) from the server's chapter analysis.
-            lifecycleScope.launch {
-                runCatching { app.api.source(sourceId).segments }
-                    .onSuccess { segs -> segments = segs; segs.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) } }
-                    .onFailure { Timber.w(it, "segments for %s", sourceId) }
-            }
-            // Seek-preview thumbnails: ask once now and, if the server is still generating
-            // them (202), a few more times while the episode plays.
-            lifecycleScope.launch {
-                repeat(6) { attempt ->
-                    val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
-                    if (m != null && m.sheets > 0) { trickplay = TrickplayPreview(app.api, sourceId, m); return@launch }
-                    delay(if (attempt == 0) 5_000 else 20_000)
-                }
-            }
-            // Ask the server which language each subtitle track really is, then play.
-            lifecycleScope.launch {
-                runCatching { app.api.subtitleStreams(sourceId) }
-                    .onSuccess { subs ->
-                        subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
-                        player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
-                    }
-                    .onFailure { Timber.w(it, "could not fetch subtitle languages for %s", sourceId) }
-                player.play(url)
-            }
-        } else {
-            player.play(url)
-        }
+        prepareAndPlay(url, sourceId, local, start)
 
         val actions = object : PlayerActions {
             override fun togglePause() = player.togglePause()
@@ -233,7 +241,7 @@ class PlayerActivity : ComponentActivity() {
             }
             override fun toggleFill() { player.setFill(!player.isFill()); refreshUi() }
             override fun enterPip() { this@PlayerActivity.enterPip() }
-            override fun next() { /* next-episode queue arrives with the series player session */ }
+            override fun next() { playNext() }
             override fun back() = finish()
         }
         scheduleHide()
@@ -316,6 +324,13 @@ class PlayerActivity : ComponentActivity() {
                     actions = actions,
                     trickplay = trickplay,
                 )
+                nextCard?.let { card ->
+                    NextEpisodeCard(
+                        card = card, controlsVisible = controlsVisible,
+                        onPlayNow = { playNext() },
+                        onDismiss = { countdownJob?.cancel(); nextCard = null; nextCardDismissed = true },
+                    )
+                }
                 osd?.let { text ->
                     Box(
                         modifier = Modifier
@@ -370,6 +385,117 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Fetch what the server knows about the source (segments, sniffed subtitle languages,
+     * trickplay) and start the file. For a download the snapshot answers instead, so
+     * playback never waits on the network. Then resolve the episode after this one.
+     */
+    private fun prepareAndPlay(url: String, sourceId: String?, local: Boolean, start: Int) {
+        val snapshot = if (local) itemId?.let { app.downloads.entry(it)?.item } else null
+        if (snapshot != null) {
+            val src = snapshot.primarySource
+            segments = src?.segments.orEmpty()
+            player.subtitleLanguageOverrides = tv.roxy.tv.api.subtitleInfos(src?.streams.orEmpty()).filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+            player.play(url, start)
+            // Seek previews are a bonus when the server happens to be reachable.
+            if (sourceId != null && app.prefs.session.value.isLoggedIn) lifecycleScope.launch {
+                val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
+                if (m != null && m.sheets > 0 && this@PlayerActivity.sourceId == sourceId) trickplay = TrickplayPreview(app.api, sourceId, m)
+            }
+        } else if (sourceId != null && app.prefs.session.value.isLoggedIn) {
+            // Skippable segments (intro/outro) from the server's chapter analysis.
+            lifecycleScope.launch {
+                runCatching { app.api.source(sourceId).segments }
+                    .onSuccess { segs -> if (this@PlayerActivity.sourceId == sourceId) { segments = segs; segs.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) } } }
+                    .onFailure { Timber.w(it, "segments for %s", sourceId) }
+            }
+            // Seek-preview thumbnails: ask once now and, if the server is still generating
+            // them (202), a few more times while the episode plays.
+            lifecycleScope.launch {
+                repeat(6) { attempt ->
+                    val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
+                    if (this@PlayerActivity.sourceId != sourceId) return@launch
+                    if (m != null && m.sheets > 0) { trickplay = TrickplayPreview(app.api, sourceId, m); return@launch }
+                    delay(if (attempt == 0) 5_000 else 20_000)
+                }
+            }
+            // Ask the server which language each subtitle track really is, then play.
+            lifecycleScope.launch {
+                runCatching { app.api.subtitleStreams(sourceId) }
+                    .onSuccess { subs ->
+                        subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
+                        player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+                    }
+                    .onFailure { Timber.w(it, "could not fetch subtitle languages for %s", sourceId) }
+                player.play(url, start)
+            }
+        } else {
+            player.play(url, start)
+        }
+        // What comes after this one (null for movies and the last episode).
+        val id = itemId ?: return
+        lifecycleScope.launch {
+            val n = nextEpisode(this@PlayerActivity, id)
+            if (itemId == id) { next = n; Timber.i("next episode: %s", n?.item?.displayLabel ?: "none"); refreshUi() }
+        }
+    }
+
+    /** Switch to the resolved next episode on the same player (no activity restart, no black gap). */
+    private fun playNext() {
+        val req = next ?: return
+        if (switching) return
+        countdownJob?.cancel()
+        nextCard = null
+        nextCardDismissed = false
+        // Moving on counts as finishing this one (Netflix): report the last position and mark it watched.
+        reportProgress("end")
+        itemId?.let { finished -> markWatched(finished) }
+        Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
+        switching = true
+        next = null
+        itemId = req.item.id
+        sourceId = req.sourceId
+        local = req.local
+        title = req.title
+        subtitleLine = req.subtitleLine
+        lastReportedMs = -1
+        skipped.clear()
+        segments = emptyList()
+        trickplay = null
+        flashOsd(null)
+        prepareAndPlay(req.url, req.sourceId, req.local, req.startSeconds)
+        refreshUi()
+    }
+
+    private fun markWatched(id: String) {
+        if (!app.prefs.session.value.isLoggedIn) return
+        app.scope.launch {
+            val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
+            if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
+        }
+    }
+
+    /** Put the card up; with autoplay the countdown runs (pausing while the video is paused) and then plays. */
+    private fun showNextCard(req: PlayRequest) {
+        val ep = req.item
+        val thumb = app.downloads.image(app.api, ep, "thumb", 448)
+        nextCard = NextCard(
+            title = listOf(ep.episodeCode, ep.title).filter { it.isNotEmpty() }.joinToString("  "),
+            thumbUrl = thumb,
+            secondsLeft = if (autoplay) NEXT_COUNTDOWN_S else null,
+        )
+        if (!autoplay) return
+        countdownJob?.cancel()
+        countdownJob = lifecycleScope.launch {
+            for (s in NEXT_COUNTDOWN_S - 1 downTo 0) {
+                delay(1000)
+                while (ui.paused && !isDestroyed) delay(250)
+                nextCard = nextCard?.copy(secondsLeft = s) ?: return@launch
+            }
+            playNext()
+        }
+    }
+
     /** Pulls position, tracks and state from mpv into the controls' state. */
     private fun refreshUi() {
         // Callbacks posted by mpv (e.g. the pause from onStop) can land after onDestroy.
@@ -386,6 +512,8 @@ class PlayerActivity : ComponentActivity() {
             speed = player.speed(),
             fillScreen = player.isFill(),
             pipSupported = pipSupported,
+            hasNext = next != null,
+            nextCardShown = nextCard != null,
             segments = segments,
             autoSkip = autoSkip,
             subtitleTracks = tracks.filter { it.type == "sub" },
@@ -404,6 +532,25 @@ class PlayerActivity : ComponentActivity() {
                     flashOsd("Skipped ${seg.type}")
                 }
             }
+        }
+        // Next-episode card. Where it appears depends on what follows the credits:
+        //  - outro running to the end of the file: at the outro's start (Play now = skip credits);
+        //  - something after the outro (post-credits scene, season-ender epilogue): the Skip
+        //    outro button handles the credits and the card waits for the next-episode
+        //    `preview` segment, or the last 15 s when there is none;
+        //  - no markers at all: the last 15 s.
+        // An auto-skipped outro that ends the file simply reaches EOF and onEofReached moves on.
+        val n = next
+        if (n != null && nextCard == null && !nextCardDismissed && !switching && !ui.paused && ui.durationSec > 0 && !isInPictureInPictureMode) {
+            val outro = segments.firstOrNull { it.type == "outro" }
+            val preview = segments.firstOrNull { it.type == "preview" }
+            val outroEndsFile = outro != null && outro.endSec >= ui.durationSec - 5.0
+            val triggerAt = when {
+                outroEndsFile -> if (autoSkip) Double.MAX_VALUE else outro!!.startSec
+                preview != null -> preview.startSec
+                else -> ui.durationSec - 15.0
+            }
+            if (ui.positionSec >= triggerAt) showNextCard(n)
         }
     }
 
@@ -481,9 +628,19 @@ class PlayerActivity : ComponentActivity() {
         val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
         val subIndex = runCatching { player.currentStreamIndex("sub") }.getOrNull()
         app.scope.launch {
-            runCatching { app.api.progress(id, positionMs, audioIndex, subIndex) }
+            // While the server is unreachable (playing a download away from home) skip the
+            // network for a minute at a time instead of timing out on every tick.
+            val skip = System.currentTimeMillis() < serverDownUntil
+            val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex) }
                 .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
-                .onFailure { Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message) }
+                .onFailure {
+                    Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
+                    if (it !is tv.roxy.tv.api.ApiException) serverDownUntil = System.currentTimeMillis() + 60_000
+                }
+                .isSuccess
+            // Downloaded items keep their position locally too (Downloads page offline); a
+            // failed report is queued and replayed when the server is back.
+            if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
         }
     }
 

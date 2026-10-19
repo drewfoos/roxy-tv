@@ -19,10 +19,18 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.ui.text.style.TextOverflow
+import tv.roxy.tv.data.UpdateState
+import tv.roxy.tv.data.downloads.formatBytes
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -101,9 +109,27 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                         onOpenSeries = { openSeries(it.id, it.title) },
                         onOpenMovie = { openMovie(it.id, it.title) },
                         onSearch = { nav.navigate(Route.Search) },
+                        onDownloads = { nav.navigate(Route.Downloads) },
+                        onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
                         onUnauthorized = onUnauthorized,
                         bottomInset = bottomInset,
                     )
+                }
+                composable<Route.Downloads> {
+                    PhoneDownloads(
+                        onBack = { nav.popBackStack() },
+                        onOpenTitle = { nav.navigate(Route.DownloadedTitle(it)) },
+                        onBrowse = {
+                            nav.navigate(Tab.Browse.route) {
+                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                    )
+                }
+                composable<Route.DownloadedTitle> { e ->
+                    PhoneDownloadedTitle(titleId = e.toRoute<Route.DownloadedTitle>().id, onBack = { nav.popBackStack() })
                 }
                 composable<Route.Watchlist> {
                     PhoneWatchlist(onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) }, bottomInset = bottomInset)
@@ -112,7 +138,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     PhoneBrowse(onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) }, onSearch = { nav.navigate(Route.Search) }, bottomInset = bottomInset)
                 }
                 composable<Route.Account> {
-                    PhoneAccount(bottomInset = bottomInset)
+                    PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) })
                 }
                 composable<Route.Search> {
                     PhoneSearch(onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) })
@@ -132,20 +158,69 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
             }
             if (currentTab != null) {
-                BottomBar(
-                    current = currentTab,
-                    profileName = session.profileName.ifEmpty { session.userName },
-                    avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarVersion) },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    onSelect = { tab ->
-                        if (tab == currentTab) return@BottomBar
-                        nav.navigate(tab.route) {
-                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                val update by app.updates.state.collectAsStateWithLifecycle()
+                Column(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    UpdateBar(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() })
+                    BottomBar(
+                        current = currentTab,
+                        profileName = session.profileName.ifEmpty { session.userName },
+                        avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarVersion) },
+                        onSelect = { tab ->
+                            if (tab == currentTab) return@BottomBar
+                            nav.navigate(tab.route) {
+                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A slim strip above the bottom bar when the server has a newer build: "Roxy 0.3.0 is
+ * available" with Update and a close; shows download progress, then "Install" once the
+ * APK is down (the installer opens by itself; this is the way back if it was dismissed).
+ */
+@Composable
+private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -> Unit) {
+    if (state is UpdateState.None) return
+    val update = when (state) {
+        is UpdateState.Available -> state.update
+        is UpdateState.Downloading -> state.update
+        is UpdateState.Ready -> state.update
+        is UpdateState.Failed -> state.update
+        UpdateState.None -> return
+    }
+    Column(modifier = Modifier.fillMaxWidth().background(RoxyColors.surfaceHigh)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.SystemUpdate, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
+            Column(modifier = Modifier.weight(1f).padding(start = 12.dp, end = 16.dp)) {
+                val title = when (state) {
+                    is UpdateState.Downloading -> "Downloading Roxy ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
+                    is UpdateState.Ready -> "Roxy ${update.versionName} is ready to install"
+                    is UpdateState.Failed -> "Update failed  ·  ${state.message}"
+                    else -> "Roxy ${update.versionName} is available"
+                }
+                Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val sub = listOfNotNull(update.notes.takeIf { it.isNotBlank() }, update.size.takeIf { it > 0 }?.let { formatBytes(it) }).joinToString("  ·  ")
+                if (sub.isNotEmpty() && state !is UpdateState.Downloading) Text(sub, fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (state !is UpdateState.Downloading) {
+                Text(
+                    when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Retry"; else -> "Update" },
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnBrand,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(RoxyColors.accent).clickable(onClick = onInstall).padding(horizontal = 16.dp, vertical = 8.dp),
                 )
+                Icon(Icons.Filled.Close, contentDescription = "Not now", tint = RoxyColors.muted, modifier = Modifier.padding(start = 10.dp).size(32.dp).clip(CircleShape).clickable(onClick = onDismiss).padding(7.dp))
+            }
+        }
+        if (state is UpdateState.Downloading) {
+            Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(ChipGrey)) {
+                Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(state.fraction.coerceIn(0.02f, 1f)).background(RoxyColors.accent))
             }
         }
     }

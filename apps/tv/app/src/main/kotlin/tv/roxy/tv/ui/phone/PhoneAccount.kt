@@ -43,6 +43,7 @@ import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Profile
 import tv.roxy.tv.data.PlayerSettings
+import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.profiles.ProfilePicker
@@ -56,11 +57,13 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
     val session by app.prefs.session.collectAsStateWithLifecycle()
+    val downloadIndex by app.downloads.index.collectAsStateWithLifecycle()
+    val wifiOnly by app.prefs.downloadsWifiOnly.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var pick by remember { mutableStateOf<Pick?>(null) }
     var editingProfile by remember { mutableStateOf(false) }
@@ -88,6 +91,16 @@ fun PhoneAccount(bottomInset: Dp) {
         SettingRow("Edit profile", "Name and avatar") { editingProfile = true }
         SettingRow("Switch profile", "Back to \"Who's watching?\"") { scope.launch { app.prefs.clearProfile() } }
 
+        SectionTitle("Downloads", modifier = Modifier.padding(top = 8.dp))
+        val dlDone = downloadIndex.entries.values.count { it.isDone }
+        val dlActive = downloadIndex.entries.values.count { it.state.isActive }
+        val dlLine = buildList {
+            add(if (dlDone == 0) "Nothing downloaded yet" else "$dlDone ${if (dlDone == 1) "item" else "items"}  ·  ${formatBytes(app.downloads.usedBytes())}")
+            if (dlActive > 0) add("$dlActive downloading")
+        }.joinToString("  ·  ")
+        SettingRow("Downloads", dlLine, onClick = onOpenDownloads)
+        SwitchRow("Download over Wi-Fi only", wifiOnly) { scope.launch { app.prefs.setDownloadsWifiOnly(it) } }
+
         SectionTitle("Playback", modifier = Modifier.padding(top = 8.dp))
         SettingRow("Subtitles", settings.subMode.subLabel()) {
             pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { it.subLabel() }, settings.subMode.subLabel()) { picked ->
@@ -100,6 +113,7 @@ fun PhoneAccount(bottomInset: Dp) {
             }
         }
         SwitchRow("Auto-skip intro & outro", settings.autoSkip) { save(settings.copy(autoSkip = it)) }
+        SwitchRow("Autoplay next episode", settings.autoplay) { save(settings.copy(autoplay = it)) }
         SettingRow("Hardware decoding", settings.hwdec) {
             pick = Pick("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
         }

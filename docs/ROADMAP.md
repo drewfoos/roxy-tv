@@ -93,6 +93,43 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   and character search, Edit / Switch profile on Account, the avatar in the bottom bar.
   Verified on the phone: a new profile starts with no Continue Watching. TV uses the same
   picker (no focus highlight yet). Launcher icon and TV banner are the witch hat.
+- Also done (2026-10-19): **downloads** (Netflix model). Per-episode control on episode rows,
+  "Download Season N · size" under the season dropdown, Download on movies, "Download all
+  episodes" in every card's three-dot menu. A data-sync foreground service fetches one video
+  at a time with HTTP-range resume (pause / resume / cancel, Wi-Fi-only default, progress
+  notification), plus poster/backdrop/logo/thumb and Bazarr sidecars. Downloads page (Account,
+  and Home when the server is away: hat + sonar rings + "Your downloads" row) grouped by
+  show with a storage bar. Downloaded items play from disk even at home; segments and sniffed
+  subtitle languages come from the snapshot; positions watched offline queue and sync on the
+  next launch; "Who's watching?" uses a cached profile list. Home shows the offline state
+  within 3 s (probe beside the request). Watched episodes get a full red bar. Verified on the
+  S25 Ultra: KonoSuba S1 (11 episodes, 2.8 GB) downloaded, paused, resumed, played offline,
+  progress synced. Not yet: smart downloads (delete watched / fetch next), downloads on TV.
+- Also done (2026-10-19, later): **next-episode queue**. The player resolves the episode after
+  the current one (server order; downloads only when offline), shows the Netflix end card at
+  the outro marker when the credits end the file, at the `preview` marker when something
+  follows the credits (post-credits scene: Skip outro handles the credits), else the last 15 s, with a 10 s countdown, Play now / Watch credits, and a
+  Next button in the control bar; the next file loads on the same mpv instance (no activity
+  restart). Moving on marks the finished episode watched (queued offline). "Autoplay next
+  episode" switch under Account > Playback. Verified on the S25 Ultra: S01E03 → E04 → E05.
+- Also done (2026-10-19, night): **intro/outro detection by audio fingerprint** for files
+  without chapter markers (`server/internal/segments`, Intro Skipper's method): Chromaprint
+  via jellyfin-ffmpeg of the first 10 and last 6 minutes per episode (cached in
+  `audio_fingerprints`, migration 0008), pairwise longest shared run with neighbours
+  (Hamming ≤ 6, gaps ≤ 3.5 s), silence-snapped edges, preview = what follows the ED
+  (5..60 s). Runs per season 20 s after ingest settles and at start-up for seasons missing
+  segments; `POST /v1/segments/detect?season=&dry=1` reports. Graded against the 22
+  chaptered KonoSuba episodes: 22/22 OPs and EDs found, edges within ~1 s of the markers
+  on most, a few seconds on EDs that fade in under the last shot. ~2 s per episode the
+  first time (fingerprints), ~1 s after. Not yet: recap detection, black-frame credits
+  fallback for live action, a per-series "no OP" opt-out.
+- Also done (2026-10-19, late): **in-app updates**. The server hosts the newest APK per
+  applicationId (`data/apps/tv/latest.json` + file, written by `apps/tv/tools/publish-apk.ps1`;
+  `GET /v1/apps/tv/latest|download`). The app checks after login and shows a bar above the
+  bottom navigation ("Roxy 0.3.1 is available · notes · Update · ×"), downloads with
+  progress, then opens the package installer (REQUEST_INSTALL_PACKAGES + FileProvider).
+  Verified on the S25 Ultra: 0.2.0 → 0.3.0 installed through the bar. Phone layout only
+  so far (the TV needs a focusable version).
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

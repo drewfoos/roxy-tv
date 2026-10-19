@@ -13,6 +13,8 @@ import kotlinx.coroutines.SupervisorJob
 import timber.log.Timber
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.data.Prefs
+import tv.roxy.tv.data.Updates
+import tv.roxy.tv.data.downloads.Downloads
 import java.io.File
 
 class RoxyApp : Application(), SingletonImageLoader.Factory {
@@ -26,6 +28,14 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     lateinit var api: RoxyApi
         private set
 
+    /** Offline downloads: the index, the files and the queue (see data/downloads). */
+    lateinit var downloads: Downloads
+        private set
+
+    /** App updates published on the server (bar above the nav, install through the system). */
+    lateinit var updates: Updates
+        private set
+
     /** Directory holding the bundled fallback fonts for libass (copied from assets). */
     lateinit var fontsDir: File
         private set
@@ -36,6 +46,8 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
         fontsDir = Fonts.install(this)
         prefs = Prefs(this, scope)
         api = RoxyApi(prefs)
+        downloads = Downloads(this, prefs, scope)
+        updates = Updates(this, api, prefs, scope)
         Timber.i("Roxy TV started. server=%s user=%s fontsDir=%s", prefs.session.value.serverUrl, prefs.session.value.userName, fontsDir)
     }
 

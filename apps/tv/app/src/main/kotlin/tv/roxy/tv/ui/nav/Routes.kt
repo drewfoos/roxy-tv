@@ -13,6 +13,9 @@ sealed interface Route {
     @Serializable data object Browse : Route
     @Serializable data object Account : Route
     @Serializable data object Search : Route
+    // Phone: the Downloads page (from Account, and from Home when the server is away) and one downloaded show.
+    @Serializable data object Downloads : Route
+    @Serializable data class DownloadedTitle(val id: String) : Route
     // TV-only: the D-pad screens keep Settings as a page and have no tabs.
     @Serializable data object SeriesLibrary : Route
     @Serializable data object MovieLibrary : Route

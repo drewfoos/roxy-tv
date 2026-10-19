@@ -71,6 +71,19 @@ func (f *FFmpeg) Run(ctx context.Context, dir string, args ...string) ([]byte, e
 	return runBin(ctx, f.FFmpeg, dir, args...)
 }
 
+// RunCombined executes ffmpeg and returns stdout and stderr together (for filters such
+// as silencedetect that report on stderr).
+func (f *FFmpeg) RunCombined(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, f.FFmpeg, args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		return buf.Bytes(), fmt.Errorf("ffmpeg: %w: %s", err, tail(buf.String(), 2000))
+	}
+	return buf.Bytes(), nil
+}
+
 // Probe executes ffprobe with args and returns stdout.
 func (f *FFmpeg) Probe(ctx context.Context, args ...string) ([]byte, error) {
 	return runBin(ctx, f.FFprobe, "", args...)

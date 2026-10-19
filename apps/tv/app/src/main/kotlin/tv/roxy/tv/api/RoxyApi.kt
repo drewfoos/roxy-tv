@@ -171,6 +171,11 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun source(id: String): MediaSource = get("/v1/sources/$id")
 
+    // ---- app updates ----
+
+    /** The newest build of this app the server hosts (404 when none is published). */
+    suspend fun latestAppBuild(applicationId: String): tv.roxy.tv.data.AppUpdate = get("/v1/apps/tv/latest?package=$applicationId")
+
     // ---- watch state ----
 
     suspend fun resume(limit: Int = 20): ItemsResponse = get("/v1/me/resume?limit=$limit")
@@ -195,16 +200,7 @@ class RoxyApi(private val prefs: Prefs) {
     // ---- player helpers ----
 
     /** Subtitle streams of one source, with the server's sniffed language (tags lie). */
-    suspend fun subtitleStreams(sourceId: String): List<SubtitleInfo> {
-        val src = source(sourceId)
-        var n = 0
-        return src.streams.filter { it.type == "subtitle" }.map { s ->
-            // mpv numbers subtitle tracks 1..N in container order; embedded tracks come
-            // first in Roxy's stream list, sidecars after (same order mpv --sub-auto uses).
-            n += 1
-            SubtitleInfo(mpvId = n, index = s.index, codec = s.codec, language = s.language, detectedLanguage = s.detectedLanguage, title = s.title.orEmpty(), isExternal = s.isExternal)
-        }
-    }
+    suspend fun subtitleStreams(sourceId: String): List<SubtitleInfo> = subtitleInfos(source(sourceId).streams)
 
     /** Label + stream summary + direct-play URL for an item that carries `mediaSources`. */
     fun Item.toEpisode(): Episode {
@@ -439,6 +435,8 @@ data class Item(
     data class Source(
         val id: String,
         val container: String? = null,
+        /** File size in bytes (what a download will take). */
+        val size: Long = 0,
         val durationMs: Long? = null,
         val isPrimary: Boolean = false,
         val streams: List<MediaStream> = emptyList(),
@@ -479,13 +477,16 @@ data class Item(
     val displayLabel: String
         get() = if (isEpisode) listOfNotNull(seriesTitle, episodeCode, title).filter { it.isNotEmpty() }.joinToString(" - ") else title
 
-    /** 0..1 fraction watched when there is a resumable position, else null. */
+    /**
+     * The red bar under a thumbnail (Netflix): 0..1 of the runtime when there is a
+     * resumable position, a full bar once the episode counts as watched, null otherwise.
+     */
     val progressFraction: Float?
         get() {
-            val pos = userData?.positionMs ?: return null
-            val len = runtimeMs ?: primarySource?.durationMs ?: return null
-            if (pos <= 0 || len <= 0) return null
-            return (pos.toFloat() / len.toFloat()).coerceIn(0f, 1f)
+            val ud = userData ?: return null
+            val len = runtimeMs ?: primarySource?.durationMs
+            if (ud.positionMs > 0 && len != null && len > 0) return (ud.positionMs.toFloat() / len.toFloat()).coerceIn(0f, 1f)
+            return if (ud.played) 1f else null
         }
 }
 
@@ -530,6 +531,19 @@ data class Attachment(val index: Int = 0, val filename: String = "", val mime: S
 
 @Serializable
 private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null)
+
+/**
+ * Subtitle tracks as mpv will number them (1..N in container order; embedded first,
+ * sidecars after, the order `--sub-auto` uses), paired with the server's sniffed language.
+ * Works on a live source or on a downloaded item's snapshot.
+ */
+fun subtitleInfos(streams: List<MediaStream>): List<SubtitleInfo> {
+    var n = 0
+    return streams.filter { it.type == "subtitle" }.map { s ->
+        n += 1
+        SubtitleInfo(mpvId = n, index = s.index, codec = s.codec, language = s.language, detectedLanguage = s.detectedLanguage, title = s.title.orEmpty(), isExternal = s.isExternal)
+    }
+}
 
 /** A subtitle track as the player sees it, with the server's sniffed language. */
 data class SubtitleInfo(

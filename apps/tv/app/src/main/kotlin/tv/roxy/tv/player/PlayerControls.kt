@@ -97,6 +97,8 @@ data class PlayerUiState(
     val fillScreen: Boolean = false,      // crop to fill (fullscreen button) vs letterbox
     val pipSupported: Boolean = false,
     val hasNext: Boolean = false,
+    /** The next-episode card is up: the Skip button yields its corner to it. */
+    val nextCardShown: Boolean = false,
     val segments: List<MediaSegment> = emptyList(),
     val autoSkip: Boolean = false,
 ) {
@@ -147,7 +149,7 @@ fun PlayerControls(
 ) {
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
     state.activeSegment?.let { seg ->
-        if (!state.autoSkip) {
+        if (!state.autoSkip && !state.nextCardShown) {
             SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, modifier = Modifier.fillMaxSize().padding(end = 32.dp, bottom = if (visible) 118.dp else 40.dp))
         }
     }

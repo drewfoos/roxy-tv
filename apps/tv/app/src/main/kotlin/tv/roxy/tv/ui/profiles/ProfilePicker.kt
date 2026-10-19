@@ -67,8 +67,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.api.Character
 import tv.roxy.tv.api.Profile
 import tv.roxy.tv.api.RoxyApi
@@ -106,8 +109,16 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
 
     suspend fun reload() {
         runCatching { app.api.profiles().profiles }
-            .onSuccess { profiles = it; error = null }
-            .onFailure { t -> Timber.w(t, "profiles failed"); error = t.message }
+            .onSuccess { list ->
+                profiles = list; error = null
+                // Remembered for the next launch away from the server (downloads still play).
+                runCatching { app.prefs.cacheProfiles(Json.encodeToString(ListSerializer(Profile.serializer()), list)) }
+            }
+            .onFailure { t ->
+                Timber.w(t, "profiles failed")
+                val cached = app.prefs.cachedProfiles.value?.let { runCatching { Json.decodeFromString(ListSerializer(Profile.serializer()), it) }.getOrNull() }
+                if (!cached.isNullOrEmpty() && t !is ApiException) { profiles = cached; error = null } else error = t.message
+            }
     }
     LaunchedEffect(Unit) { reload() }
 

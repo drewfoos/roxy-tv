@@ -60,7 +60,10 @@ class MpvPlayer(
 
     interface Listener {
         fun onFileLoaded() {}
+        /** The file finished or was replaced (also fires when the next episode loads over it). */
         fun onEndFile() {}
+        /** Playback ran to the natural end of the file (keep-open holds the last frame). */
+        fun onEofReached() {}
         fun onPauseChanged(paused: Boolean) {}
     }
 
@@ -157,7 +160,12 @@ class MpvPlayer(
 
     // ---- playback control ----
 
-    fun play(url: String) {
+    /** Start position for the next loaded file; the first file takes it from [Options.startSeconds]. */
+    @Volatile private var startSeconds: Int = options.startSeconds
+
+    /** Load [url]; [start] applies to this file only (the next-episode queue plays several files on one player). */
+    fun play(url: String, start: Int = options.startSeconds) {
+        startSeconds = start
         pendingUrl = url
         if (surfaceReady) loadPending()
     }
@@ -165,7 +173,9 @@ class MpvPlayer(
     private fun loadPending() {
         val url = pendingUrl ?: return
         pendingUrl = null
-        Timber.i("loadfile %s", url.substringBefore("?"))
+        Timber.i("loadfile %s start=%ds", url.substringBefore("?"), startSeconds)
+        // `start` is a file-local option: set it as a property right before the load.
+        mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
         mpv.command(arrayOf("loadfile", url, "replace"))
         mpv.setPropertyBoolean("pause", false)
     }
@@ -395,7 +405,7 @@ class MpvPlayer(
     override fun eventProperty(property: String, value: Boolean) {
         when (property) {
             "pause" -> listener?.onPauseChanged(value)
-            "eof-reached" -> if (value) listener?.onEndFile()
+            "eof-reached" -> if (value) listener?.onEofReached()
         }
     }
 
@@ -405,8 +415,8 @@ class MpvPlayer(
                 Timber.i("file loaded: codec=%s hwdec=%s start-opt=%s time-pos=%s", str("video-codec"), str("hwdec-current"), str("start"), str("time-pos"))
                 // Belt and braces: the `start` option is set before init, but seek anyway if
                 // the file came up at 0 (seen on the refactored player; cheap to be sure).
-                if (options.startSeconds > 0 && (dbl("time-pos") ?: 0.0) < options.startSeconds - 2.0) {
-                    seekTo(options.startSeconds.toDouble())
+                if (startSeconds > 0 && (dbl("time-pos") ?: 0.0) < startSeconds - 2.0) {
+                    seekTo(startSeconds.toDouble())
                 }
                 applyTrackPolicy()
                 listener?.onFileLoaded()

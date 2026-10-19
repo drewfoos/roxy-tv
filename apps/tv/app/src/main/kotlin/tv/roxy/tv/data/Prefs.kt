@@ -74,21 +74,54 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
 
     private val _session: MutableStateFlow<Session>
     private val _settings: MutableStateFlow<PlayerSettings>
+    private val _downloadsWifiOnly: MutableStateFlow<Boolean>
+    private val _cachedProfiles: MutableStateFlow<String?>
 
     val session: StateFlow<Session> get() = _session
     val settings: StateFlow<PlayerSettings> get() = _settings
+
+    /** Downloads only run on unmetered networks (default on, like Netflix). */
+    val downloadsWifiOnly: StateFlow<Boolean> get() = _downloadsWifiOnly
+
+    /** The last profiles list from the server as JSON, so "Who's watching?" works offline. */
+    val cachedProfiles: StateFlow<String?> get() = _cachedProfiles
+
+    /** versionCode of an app update the user dismissed (the bar stays hidden for that build). */
+    val dismissedUpdate: StateFlow<Int> get() = _dismissedUpdate
+    private val _dismissedUpdate: MutableStateFlow<Int>
+
+    suspend fun setDismissedUpdate(code: Int) {
+        _dismissedUpdate.value = code
+        ds.edit { it[KEY_DISMISSED_UPDATE] = code }
+    }
 
     init {
         // The preferences file is tiny; reading it once at startup keeps every later read synchronous.
         val seed = runBlocking { ds.data.first() }
         _session = MutableStateFlow(seed.toSession())
         _settings = MutableStateFlow(seed.toSettings())
+        _downloadsWifiOnly = MutableStateFlow(seed[KEY_DL_WIFI] ?: true)
+        _cachedProfiles = MutableStateFlow(seed[KEY_PROFILES_CACHE])
+        _dismissedUpdate = MutableStateFlow(seed[KEY_DISMISSED_UPDATE] ?: 0)
         scope.launch {
             ds.data.collect { p ->
                 _session.value = p.toSession()
                 _settings.value = p.toSettings()
+                _downloadsWifiOnly.value = p[KEY_DL_WIFI] ?: true
+                _cachedProfiles.value = p[KEY_PROFILES_CACHE]
+                _dismissedUpdate.value = p[KEY_DISMISSED_UPDATE] ?: 0
             }
         }
+    }
+
+    suspend fun setDownloadsWifiOnly(on: Boolean) {
+        _downloadsWifiOnly.value = on
+        ds.edit { it[KEY_DL_WIFI] = on }
+    }
+
+    suspend fun cacheProfiles(json: String) {
+        _cachedProfiles.value = json
+        ds.edit { it[KEY_PROFILES_CACHE] = json }
     }
 
     suspend fun saveSession(s: Session) {
@@ -128,6 +161,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it.remove(KEY_PROFILE_NAME)
             it.remove(KEY_PROFILE_AVATAR)
             it.remove(KEY_LAST_PROFILE)
+            it.remove(KEY_PROFILES_CACHE)
         }
     }
 
@@ -184,5 +218,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_STATS = booleanPreferencesKey("show_stats")
         val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
         val KEY_AUTOSKIP = booleanPreferencesKey("auto_skip")
+        val KEY_DL_WIFI = booleanPreferencesKey("downloads_wifi_only")
+        val KEY_PROFILES_CACHE = stringPreferencesKey("profiles_cache")
+        val KEY_DISMISSED_UPDATE = intPreferencesKey("dismissed_update")
     }
 }

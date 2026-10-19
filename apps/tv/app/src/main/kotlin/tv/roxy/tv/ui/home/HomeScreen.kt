@@ -34,8 +34,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,9 +81,22 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
 
+    private var loadJob: Job? = null
+
     fun load(silent: Boolean = false) {
         if (!silent) _state.value = HomeUiState.Loading
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            // A 3 s probe runs beside the real request so the offline state (and the way to
+            // the downloads) shows up fast: a firewall that drops packets would otherwise
+            // make the request sit out its full connect timeout.
+            val probe = launch {
+                if (!api.reachable() && _state.value !is HomeUiState.Ready) {
+                    Timber.w("server unreachable; showing the offline state")
+                    _state.value = HomeUiState.Error("Server unreachable", offline = true)
+                    this@launch.cancel()
+                }
+            }
             val result = runCatching { fromHomeEndpoint() }
                 .recoverCatching { t ->
                     if (t is ApiException && t.isNotFound) {
@@ -88,12 +104,14 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
                         composeRows()
                     } else throw t
                 }
+            probe.cancel()
             result.onSuccess { ready ->
                 // Keep the previous carousel while the new one resolves, so a silent reload does not blank it.
                 val previous = (_state.value as? HomeUiState.Ready)?.heroes.orEmpty()
                 _state.value = ready.copy(heroes = previous)
                 _state.value = ready.copy(heroes = resolveHeroes(ready.rows))
             }.onFailure { t ->
+                if (t is CancellationException) return@onFailure // the probe already decided
                 Timber.e(t, "home failed")
                 val unauthorized = t is ApiException && t.isUnauthorized
                 val offline = t !is ApiException && !api.reachable()

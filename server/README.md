@@ -42,6 +42,9 @@ media URLs the player fetches itself may carry the token as `?api_key=<token>` i
 | POST | `/v1/auth/logout` | revoke the calling device token |
 | GET | `/v1/libraries` | libraries |
 | POST | `/v1/libraries/scan` | rescan everything (async, 202) |
+| GET | `/v1/apps/tv/latest?package=` | newest published build of the app for that applicationId (`{versionCode, versionName, notes, size, url}`), from `data/apps/tv/latest.json` written by `apps/tv/tools/publish-apk.ps1` |
+| GET | `/v1/apps/tv/download?package=` | that APK |
+| POST | `/v1/segments/detect?season=&dry=1` | intro/outro detection by audio fingerprint for a season (report), or queue all seasons missing segments (202) |
 | GET | `/v1/items?type=episode,movie&parent=&recursive=1&library=&sort=date_created|title|index&desc=1&limit=&offset=&include=sources` | list items; episodes carry `seriesId` + `seriesTitle`; every item carries `images` and (for a user token) `userData` |
 | GET | `/v1/items/{id}` | item with media sources, streams, attachments, metadata, `images`, `userData` |
 | GET | `/v1/items/{id}/images/{type}?w=` | cached poster / backdrop / logo / thumb as JPEG (`max-age=86400`); `?w=<px>` resizes and caches the variant; 404 when none |

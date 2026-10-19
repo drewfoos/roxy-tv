@@ -17,7 +17,10 @@ app/src/main/kotlin/tv/roxy/tv/
   RoxyApp.kt                 Application: fonts install, Prefs, RoxyApi, Coil ImageLoader (Bearer token)
   MainActivity.kt            Login vs. the TV or phone graph; portrait on phones, landscape on TV; token check via GET /v1/auth/me
   api/RoxyApi.kt             suspend client + wire types (Item, UserData, HomeResponse, MediaSource, ...)
-  data/Prefs.kt              DataStore: Session (server, token, user) and PlayerSettings
+  data/Prefs.kt              DataStore: Session (server, token, user), PlayerSettings, downloads Wi-Fi-only flag, cached profiles
+  data/Updates.kt            update check against GET /v1/apps/tv/latest, APK download, package-installer hand-off
+  data/downloads/Downloads.kt   download index (JSON) + files under Android/data/<app>/files/downloads/<itemId>/; offline progress queue
+  data/downloads/DownloadService.kt  dataSync foreground service: one video at a time, HTTP-range resume, images + sidecar subs, notification
   diagnostics/DeviceReport.kt SoC / display / decoder report (logged at start, shown in Settings)
   player/MpvPlayer.kt        libmpv wrapper: fonts.conf + FONTCONFIG_FILE, track policy (from the spike)
   player/MpvStats.kt         stats overlay snapshot + CPU sampler
@@ -27,13 +30,15 @@ app/src/main/kotlin/tv/roxy/tv/
   ui/components/             MediaCard, MediaRow, RoxyImage (placeholder tile), buttons, text field (TV, tv-material)
   ui/phone/                  phone layout (Material 3): PhoneRoot bottom bar, PhoneHome hero carousel + rows,
                              PhoneBrowse / Watchlist / Search grids, PhoneSeries / PhoneMovie title pages, PhoneAccount
+  ui/phone/PhoneDownloads.kt episode/season/movie download controls, the Downloads page (grouped by show, storage bar), downloaded-show page
   ui/profiles/ProfilePicker.kt "Who's watching?" picker + profile editor (AniList character avatars); both layouts
   ui/login/LoginScreen.kt    server URL / user / password -> POST /v1/auth/login
   ui/home/HomeScreen.kt      hero + rows from GET /v1/home (falls back to /v1/items on 404)
   ui/detail/SeriesScreen.kt  backdrop header, season row, episode list (GET /v1/items?parent=...)
   ui/detail/MovieScreen.kt   same header without seasons
   ui/settings/SettingsScreen.kt hwdec, vo, audio language order, subtitle mode, stats overlay, log out
-  ui/Playback.kt             builds the stream URL (api_key) and start position, launches the player
+  ui/Playback.kt             PlayRequest (local file or stream URL + start), playItem, nextEpisode (series order; downloads when offline)
+  player/NextEpisodeCard.kt  Netflix end card: thumb, countdown, Play now / Watch credits
 ```
 
 Architecture: no DI framework. `RoxyApp` owns `Prefs` and `RoxyApi`; screens get simple

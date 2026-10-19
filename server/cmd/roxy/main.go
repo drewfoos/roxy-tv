@@ -23,6 +23,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
+	"github.com/roxy-media/roxy/server/internal/segments"
 	"github.com/roxy-media/roxy/server/internal/trickplay"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/probe"
@@ -129,7 +130,11 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	// Seek-preview thumbnails, generated after ingest (and swept for anything missing).
 	trick := trickplay.New(db, ff, cfg)
 	trick.Start(ctx)
-	lib.OnSourceIngested = trick.Enqueue
+	// Intro/outro detection by audio fingerprint for files without chapter markers; runs
+	// per season once its episodes have settled.
+	segs := segments.New(db, ff, cfg)
+	segs.Start(ctx)
+	lib.OnSourceIngested = func(id string) { trick.Enqueue(id); segs.EnqueueSource(id) }
 
 	if cfg.ScanOnStart {
 		go func() {
@@ -137,6 +142,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 				slog.Error("initial scan failed", "err", err)
 			}
 			trick.SweepMissing(ctx)
+			segs.SweepAll(ctx)
 		}()
 	} else {
 		// No scan: still sweep for missing/stale metadata and thumbnails.
@@ -147,12 +153,13 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 				}
 			}
 			trick.SweepMissing(ctx)
+			segs.SweepAll(ctx)
 		}()
 	}
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick),
+		Handler:           api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

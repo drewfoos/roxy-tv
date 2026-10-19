@@ -16,6 +16,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
+	"github.com/roxy-media/roxy/server/internal/segments"
 	"github.com/roxy-media/roxy/server/internal/store"
 	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
@@ -28,11 +29,12 @@ type Server struct {
 	authSvc *auth.Service
 	meta    *metadata.Service // may be nil (scan-only runs)
 	trick   *trickplay.Service
+	segs    *segments.Service // may be nil (scan-only runs)
 	start   time.Time
 }
 
-func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service) http.Handler {
-	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, start: time.Now()}
+func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service, segs *segments.Service) http.Handler {
+	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
@@ -54,6 +56,9 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/auth/logout", s.logout)
 			r.Get("/libraries", s.listLibraries)
 			r.Post("/libraries/scan", s.scanAll)
+			r.Post("/segments/detect", s.detectSegments)
+			r.Get("/apps/{app}/latest", s.appLatest)
+			r.Get("/apps/{app}/download", s.appDownload)
 			r.Get("/items", s.listItems)
 			r.Get("/items/{id}", s.getItem)
 			r.Get("/items/{id}/images/{type}", s.getItemImage)

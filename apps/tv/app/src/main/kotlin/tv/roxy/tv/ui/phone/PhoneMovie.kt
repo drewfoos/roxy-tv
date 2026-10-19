@@ -61,6 +61,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
 
     val resumable = (movie.userData?.positionMs ?: 0) > 0
     val listState = rememberLazyListState()
+    val startDownload = rememberDownloadStarter()
 
     TitlePageScaffold(
         item = movie, api = app.api, listState = listState, onBack = onBack,
@@ -83,6 +84,9 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                         GreyButton("Play from start", modifier = Modifier.fillMaxWidth().padding(top = 16.dp), icon = Icons.Filled.Replay, onClick = {
                             scope.launch { playItem(context, movie, fromStart = true) }
                         })
+                    }
+                    if (movie.isPlayable) {
+                        MovieDownloadButton(movie, modifier = Modifier.padding(top = if (resumable) 10.dp else 16.dp), onDownload = { startDownload(listOf(movie), movie, null) })
                     }
                     movie.studio?.let { Text("Studio: $it", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 14.dp)) }
                     val episode = with(app.api) { movie.toEpisode() }

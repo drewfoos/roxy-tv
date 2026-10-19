@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.outlined.ArrowCircleDown
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -278,14 +279,43 @@ fun BadgePill(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * The three-dot menu on a card: Watch now, Add to Watchlist (the show, for an episode),
- * Mark as watched, Share (TMDB / AniList page when known, else the title).
+ * The three-dot menu on a card: Watch now, Download (every episode of a show, or the
+ * episode / movie itself), Add to Watchlist (the show, for an episode), Mark as watched,
+ * Share (TMDB / AniList page when known, else the title).
  */
 @Composable
 fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
+    val startDownload = rememberDownloadStarter()
+    val downloadLabel = when {
+        item.isSeries -> "Download all episodes"
+        item.isEpisode -> "Download episode"
+        else -> "Download"
+    }
+    /** Resolve what the card stands for into downloadable items plus the title snapshot, then queue them. */
+    fun download() = scope.launch {
+        runCatching {
+            when {
+                item.isSeries -> {
+                    val eps = api.items(type = "episode", parent = item.id, recursive = true, includeSources = true, sort = "index").items
+                    eps.groupBy { it.seasonAired ?: 0 }.forEach { (season, list) ->
+                        startDownload(list, item, if (season == 0) "Specials" else "Season $season")
+                    }
+                }
+                item.isEpisode -> {
+                    val full = if (item.mediaSources.isEmpty()) api.item(item.id) else item
+                    val series = item.seriesId?.let { api.item(it) } ?: full
+                    startDownload(listOf(full), series, full.seasonAired?.let { if (it == 0) "Specials" else "Season $it" })
+                }
+                else -> {
+                    val full = if (item.mediaSources.isEmpty()) api.item(item.id) else item
+                    startDownload(listOf(full), full, null)
+                }
+            }
+        }.onFailure { Timber.w(it, "download from card failed") }
+    }
     Box(modifier = modifier) {
         Icon(
             Icons.Filled.MoreVert, contentDescription = "More", tint = RoxyColors.muted,
@@ -294,6 +324,7 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
             if (item.isPlayable || item.isSeries) {
                 DropdownMenuItem(text = { Text("Watch now", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null, tint = Color.White) }, onClick = { open = false; onPlay() })
+                DropdownMenuItem(text = { Text(downloadLabel, color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.ArrowCircleDown, null, tint = Color.White) }, onClick = { open = false; download() })
             }
             DropdownMenuItem(
                 text = { Text("Add to Watchlist", color = Color.White) },

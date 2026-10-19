@@ -2,7 +2,17 @@ package tv.roxy.tv.ui.phone
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.drawscope.Stroke
+import tv.roxy.tv.data.downloads.DownloadedTitle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,7 +44,9 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,6 +103,8 @@ fun PhoneHome(
     onOpenSeries: (Item) -> Unit,
     onOpenMovie: (Item) -> Unit,
     onSearch: () -> Unit,
+    onDownloads: () -> Unit,
+    onOpenDownloadedTitle: (String) -> Unit,
     onUnauthorized: () -> Unit,
     bottomInset: Dp,
 ) {
@@ -115,7 +129,11 @@ fun PhoneHome(
     when (val s = state) {
         HomeUiState.Loading -> HomeSkeleton(bottomInset)
         is HomeUiState.Error -> when {
-            s.offline -> OfflineState(serverUrl = app.api.baseUrl, onRetry = { vm.load() })
+            s.offline -> {
+                val index by app.downloads.index.collectAsStateWithLifecycle()
+                val titles = remember(index) { app.downloads.titles().filter { it.doneCount > 0 } }
+                OfflineState(serverUrl = app.api.baseUrl, titles = titles, bottomInset = bottomInset, onRetry = { vm.load() }, onDownloads = onDownloads, onOpenTitle = onOpenDownloadedTitle)
+            }
             else -> Column(modifier = Modifier.fillMaxSize().padding(PhonePad), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Text(if (s.unauthorized) "Your session has expired." else "Could not load the library", color = RoxyColors.error, fontSize = 16.sp)
                 Text(s.message, color = RoxyColors.muted, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
@@ -199,18 +217,76 @@ private fun HomeSkeleton(bottomInset: Dp) {
     }
 }
 
-/** The server did not answer: likely off the home network. Downloads will live here. */
+/**
+ * The server did not answer: likely off the home network. The hat sends out sonar rings
+ * while we look for it; the downloads on the device are shown as a poster row so there is
+ * something to watch straight away.
+ */
 @Composable
-private fun OfflineState(serverUrl: String, onRetry: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(56.dp))
-        Text("Can't reach your server", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 16.dp))
+private fun OfflineState(serverUrl: String, titles: List<DownloadedTitle>, bottomInset: Dp, onRetry: () -> Unit, onDownloads: () -> Unit, onOpenTitle: (String) -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val downloaded = titles.sumOf { it.doneCount }
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Sonar(modifier = Modifier.padding(top = 56.dp)) { WitchHat(size = 64.dp) }
+        Text("Can't reach your server", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 8.dp))
         Text(serverUrl, fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp))
         Text(
-            "You may be away from your home network or Tailscale. Downloads for offline viewing are coming.",
-            fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 20.dp),
+            if (downloaded > 0) "You may be away from your home network or Tailscale. Your downloads still play."
+            else "You may be away from your home network or Tailscale. Download episodes while you are home to watch them anywhere.",
+            fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 20.dp),
         )
-        PlayButton("Try again", icon = Icons.Filled.Search, onClick = onRetry)
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (downloaded > 0) {
+                PlayButton("Watch downloads", icon = Icons.Outlined.Download, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.weight(1f), onClick = onDownloads)
+            }
+            GreyButton("Try again", icon = Icons.Filled.Refresh, modifier = Modifier.weight(1f), onClick = onRetry)
+        }
+        if (titles.isNotEmpty()) {
+            Spacer(Modifier.height(36.dp))
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text("Your downloads", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, bottom = 10.dp))
+                LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(titles, key = { it.id }) { t ->
+                        Column(modifier = Modifier.width(PosterW + 20.dp)) {
+                            Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable { onOpenTitle(t.id) }) {
+                                RoxyImage(app.downloads.image(app.api, t.title, "poster", widthPx(PosterW + 20.dp) * 2), t.title.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
+                            }
+                            Text(t.title.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                            Text(if (t.title.isMovie) "Movie" else "${t.doneCount} episode${if (t.doneCount == 1) "" else "s"}", fontSize = 12.sp, color = RoxyColors.muted)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Three rings in the brand blue swelling out from the centre and fading, like a sonar
+ * ping, with [content] (the hat) sitting still in the middle.
+ */
+@Composable
+private fun Sonar(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val transition = rememberInfiniteTransition(label = "sonar")
+    val phases = (0 until 3).map { i ->
+        transition.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(2700, easing = LinearEasing), initialStartOffset = StartOffset(i * 900)),
+            label = "ring$i",
+        )
+    }
+    Box(modifier = modifier.size(220.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val maxR = size.minDimension / 2
+            for (p in phases) {
+                val t = p.value
+                val r = 36.dp.toPx() + (maxR - 36.dp.toPx()) * t
+                val alpha = (1f - t) * 0.55f
+                drawCircle(color = RoxyColors.accent.copy(alpha = alpha), radius = r, style = Stroke(width = 2.dp.toPx()))
+                drawCircle(color = RoxyColors.accent.copy(alpha = alpha * 0.12f), radius = r)
+            }
+        }
+        Box(modifier = Modifier.size(88.dp).clip(CircleShape).background(RoxyColors.surface), contentAlignment = Alignment.Center) { content() }
     }
 }
 

@@ -99,6 +99,12 @@ fun PhoneSeries(
     }
 
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
+    val startDownload = rememberDownloadStarter()
+    val seasonLabel = when {
+        state.showRelated || state.seasons.isEmpty() -> "Episodes"
+        else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
+    }
+    fun download(items: List<Item>) = startDownload(items, series, seasonLabel.takeIf { it != "Episodes" })
     val playable = state.episodes.filter { it.isPlayable }
     val next = playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
         ?: playable.firstOrNull { it.userData?.played != true }
@@ -164,9 +170,12 @@ fun PhoneSeries(
                 items(4) { EpisodeRowSkeleton() }
             } else if (state.episodes.isEmpty()) {
                 item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
+            } else {
+                // Netflix's "Download Season N" sits between the dropdown and the first episode.
+                item(key = "season-download") { SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download) }
             }
             items(state.episodes, key = { it.id }) { ep ->
-                PhoneEpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) })
+                PhoneEpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) }, onDownload = { download(listOf(ep)) })
             }
         }
         }
@@ -305,9 +314,9 @@ private fun EpisodeRowSkeleton() {
     }
 }
 
-/** Netflix's episode row: thumb with a play badge, "N. Title", runtime and a watched tick, then the synopsis. */
+/** Netflix's episode row: thumb with a play badge, "N. Title", runtime and a watched tick, the download control, then the synopsis. */
 @Composable
-private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit) {
+private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit) {
     val thumbWidth = 130.dp
     val placeholder = !ep.isPlayable
     val watched = ep.userData?.played == true
@@ -344,6 +353,7 @@ private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit) {
                     }
                 }
             }
+            if (!placeholder) DownloadButton(ep, onDownload = onDownload, size = 24.dp)
         }
         ep.overview?.takeIf { it.isNotBlank() }?.let {
             Text(it, fontSize = 13.sp, lineHeight = 17.sp, color = RoxyColors.muted, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))

@@ -205,6 +205,22 @@ anime characters: `avatarUrl` on create/update must be an AniList CDN image (as 
 by the two `/v1/avatars` endpoints); the server caches a copy and serves it from
 `/v1/me/profiles/{id}/avatar`. `/v1/auth/me` also returns `profileId`.
 
+## App updates
+
+Self-hosted apps have no store, so Roxy Server is the update channel. After a build,
+`apps/tv/tools/publish-apk.ps1 -Notes "..."` copies the APK into `<data>/apps/tv/` and
+writes `latest.json` keyed by applicationId (debug and release tracked separately).
+
+- `GET /v1/apps/tv/latest?package=<applicationId>` → `{versionCode, versionName, notes,
+  publishedAt, size, url}`; 404 when nothing is published for that package.
+- `GET /v1/apps/tv/download?package=<applicationId>` → the APK (Bearer or `api_key`).
+
+The app checks once per launch (and at most every 6 h) after the session is validated,
+compares `versionCode` with its own, and shows a bar above the bottom navigation:
+Update downloads the APK to its cache and hands it to the system installer (Android asks
+once to allow installs from Roxy); the close button hides that build until a newer one
+appears.
+
 ## Not yet (see ROADMAP)
 
 Playback decision (`/v1/items/{id}/playback`), device-code login, websocket events,
