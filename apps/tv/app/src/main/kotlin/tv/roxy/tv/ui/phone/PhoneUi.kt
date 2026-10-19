@@ -286,7 +286,7 @@ fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifie
     Text(
         buildAnnotatedString {
             if (rating != null) {
-                withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
                 if (rest.isNotEmpty()) append("  ·  ")
             }
             append(rest.joinToString("  ·  "))

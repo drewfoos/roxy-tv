@@ -489,7 +489,7 @@ fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra:
             item.overview?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
-                    maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
+                    maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
                 )
             }
