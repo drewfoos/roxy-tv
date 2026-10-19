@@ -72,6 +72,7 @@ import tv.roxy.tv.api.RelatedEntry
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.ProgressBar
 import tv.roxy.tv.ui.components.RoxyImage
+import tv.roxy.tv.ui.components.ImageMemo
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.detail.SeriesViewModel
 import tv.roxy.tv.ui.playItem
@@ -289,7 +290,12 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
             translationY = off * 0.45f
         },
     ) {
-        RoxyImage(api.imageUrl(item, "backdrop", widthPx(420.dp) * 2) ?: api.imageUrl(item, "poster", widthPx(420.dp) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16)
+        val backdrop = api.imageUrl(item, "backdrop", widthPx(420.dp) * 2)
+        val poster = api.imageUrl(item, "poster", widthPx(420.dp) * 2)
+        // Start from whichever rendition of this art a list already loaded (the card's
+        // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
+        val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
+        RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.25f to Color.Transparent)))
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to RoxyColors.background)))
     }

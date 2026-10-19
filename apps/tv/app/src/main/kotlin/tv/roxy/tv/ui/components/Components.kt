@@ -53,6 +53,8 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.compose.LocalPlatformContext
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.theme.RoxyColors
@@ -72,8 +74,27 @@ val PosterWidth = 112.dp
 val ThumbWidth = 176.dp
 
 /** Image with a dark tile + title underneath; the tile stays visible when there is no image or it fails. */
+/**
+ * Remembers the exact URL (with its `?w=` size) each image path was last shown at, so a
+ * bigger view of the same art can start from the bitmap Coil already holds in memory
+ * instead of a grey box while the larger file arrives.
+ */
+object ImageMemo {
+    private val last = LinkedHashMap<String, String>()
+
+    fun saw(url: String) { synchronized(last) { last[url.substringBefore('?')] = url; if (last.size > 600) last.remove(last.keys.first()) } }
+
+    /** The URL this image path was last loaded at, if any view has shown it. */
+    fun lastFor(url: String?): String? = url?.let { synchronized(last) { last[it.substringBefore('?')] } }
+}
+
+/**
+ * [placeholderKey]: a URL already loaded elsewhere (see [ImageMemo]); its cached bitmap
+ * stands in until [url] lands.
+ */
 @Composable
-fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeholderTextSize: Int = 14) {
+fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeholderTextSize: Int = 14, placeholderKey: String? = null) {
+    if (url != null) ImageMemo.saw(url)
     Box(modifier = modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
         Text(
             title,
@@ -85,7 +106,11 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
             modifier = Modifier.padding(8.dp),
         )
         if (url != null) {
-            AsyncImage(model = url, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            val context = LocalPlatformContext.current
+            val request = remember(url, placeholderKey) {
+                ImageRequest.Builder(context).data(url).apply { if (placeholderKey != null && placeholderKey != url) placeholderMemoryCacheKey(placeholderKey) }.build()
+            }
+            AsyncImage(model = request, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }
