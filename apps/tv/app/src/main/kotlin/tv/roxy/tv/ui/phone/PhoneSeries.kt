@@ -65,7 +65,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -167,7 +166,7 @@ fun PhoneSeries(
             item(key = "banner") { TitleBanner(series, app.api, listState) }
             item(key = "info") {
                 TitleInfo(
-                    item = series, api = app.api, listState = listState,
+                    item = series, api = app.api,
                     badge = audioBadge(series) ?: audioBadge(playable.firstOrNull()),
                     // The provider's count (3 for KonoSuba) even when the library holds fewer; known from the list item, so it never pops in.
                     seasons = series.seasonCount ?: state.seasons.size,
@@ -288,7 +287,7 @@ private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () ->
 }
 
 /** Height of the banner at the top of a title page. */
-private val BannerHeight = 560.dp
+private val BannerHeight = 440.dp
 
 /**
  * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
@@ -311,12 +310,14 @@ fun TitlePageScaffold(
 ) {
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val barHeight = 44.dp + 24.dp
-    // The header strip goes from transparent over the banner to the page colour once the
-    // banner has scrolled away, so the back button never floats over the text.
-    val fadePx = with(LocalDensity.current) { (BannerHeight - 80.dp).toPx() }
-    val headerAlpha by remember {
+    // Crunchyroll's strip is solid black from the start (the picture starts under it,
+    // not behind it); the name fades in once the logo block has scrolled under the strip.
+    val density = LocalDensity.current
+    val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
+    val titleOverPx = with(density) { 70.dp.toPx() }
+    val titleAlpha by remember {
         derivedStateOf {
-            if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / fadePx).coerceIn(0f, 1f)
+            if (listState.firstVisibleItemIndex > 0) 1f else ((listState.firstVisibleItemScrollOffset - titleFromPx) / titleOverPx).coerceIn(0f, 1f)
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
@@ -324,14 +325,14 @@ fun TitlePageScaffold(
         // Crunchyroll's header: a plain white X at the left, Cast and the three-dot menu
         // at the right, over the banner's top fade; the strip turns solid once scrolled.
         Row(
-            modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().background(RoxyColors.background).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             HeaderIcon(Icons.Filled.Close, "Close", onClick = onBack)
             // The name takes the strip over once the banner (which carries the logo) is gone.
             Text(
                 item.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = 6.dp).alpha(((headerAlpha - 0.6f) / 0.4f).coerceIn(0f, 1f)),
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp).alpha(titleAlpha),
             )
             HeaderIcon(Icons.Filled.Cast, "Cast (coming soon)", tint = Color.White.copy(alpha = 0.6f))
             if (onMarkWatched != null) {
@@ -386,19 +387,24 @@ private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Col
     )
 }
 
+/** The header strip's height below the status bar: the X, Cast and menu row. */
+private val HeaderRow = 52.dp
+
 /**
- * Full-bleed key art (the backdrop, cropped tall), pinned behind the page: the content
- * scrolls up over it while it fades to black, so the picture is gone by the time the
- * synopsis reaches where it was. The logo is not here; it scrolls with the content.
+ * Full-bleed key art (the backdrop, cropped tall) under the header strip. Pinned where
+ * it is while the page scrolls over it, dimming to black on the way, like Crunchyroll's:
+ * the content brings its own fade (see [TitleInfo]), so nothing bright is ever under the
+ * text. The logo is not here; it scrolls with the content.
  */
 @Composable
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
     val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + HeaderRow
     Box(
-        modifier = Modifier.fillMaxWidth().height(BannerHeight).graphicsLayer {
+        modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
             translationY = off
-            alpha = (1f - off / (heightPx * 0.6f)).coerceIn(0f, 1f)
+            alpha = (1f - off / (heightPx * 0.55f)).coerceIn(0f, 1f)
         },
     ) {
         val backdrop = api.imageUrl(item, "backdrop", widthPx(420.dp) * 2)
@@ -407,22 +413,11 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
         // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
         val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
         RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
-        // Solid black through the status bar and a little under it, then a fade into the
-        // art: the picture starts below the clock, the way Crunchyroll's banners do.
-        val density = LocalDensity.current
-        val solidPx = with(density) { (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 6.dp).toPx() }
-        val fadePx = with(density) { 150.dp.toPx() }
-        Box(
-            modifier = Modifier.matchParentSize().background(
-                Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, solidPx / (solidPx + fadePx) to Color.Black, 1f to Color.Transparent), startY = 0f, endY = solidPx + fadePx),
-            ),
-        )
-        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 0.85f to RoxyColors.background.copy(alpha = 0.85f), 1f to RoxyColors.background)))
     }
 }
 
-/** How far the logo block reaches up into the banner's faded foot. */
-private val LogoOverlap = 110.dp
+/** How far the logo block (and its fade) reaches up over the banner. */
+private val LogoOverlap = 230.dp
 
 /**
  * Reports a shorter height than the content and places it that much higher, so a list
@@ -436,21 +431,21 @@ private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints
 
 /**
  * The title block under (and reaching into) the banner, Crunchyroll's order: the logo
- * (or name) with "14+  Dub | Sub" under it on a black band that appears as the page
- * scrolls, so the block stays legible while it rides up over the picture; then the
- * star rating with year and season count, the genres, the synopsis (tap to expand)
- * and "More details".
+ * (or name) on the banner's faded foot with "14+  Dub | Sub" under it; then the star
+ * rating with year and season count, the genres, the synopsis (tap to expand) and
+ * "More details".
  */
 @Composable
-fun TitleInfo(item: Item, api: RoxyApi, listState: LazyListState, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
+fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    val bandPx = with(LocalDensity.current) { 120.dp.toPx() }
     Column(modifier = Modifier.fillMaxWidth().pullUp(LogoOverlap), horizontalAlignment = Alignment.CenterHorizontally) {
+        // The fade belongs to the content, not the picture: transparent at the top, black
+        // by the logo's foot, so it rides up with the logo and the "14+" line below it is
+        // always on solid black.
         Column(
-            modifier = Modifier.fillMaxWidth().drawBehind {
-                val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else bandPx
-                drawRect(Color.Black.copy(alpha = (off / bandPx).coerceIn(0f, 1f) * 0.6f))
-            }.padding(horizontal = PhonePad, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth()
+                .background(Brush.verticalGradient(0f to Color.Transparent, 0.42f to RoxyColors.background.copy(alpha = 0.75f), 0.62f to RoxyColors.background, 1f to RoxyColors.background))
+                .padding(horizontal = PhonePad).padding(top = 120.dp, bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val logo = api.imageUrl(item, "logo", widthPx(320.dp))
@@ -468,7 +463,9 @@ fun TitleInfo(item: Item, api: RoxyApi, listState: LazyListState, badge: String?
                 }
             }
         }
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Solid from here down: the pinned picture is still fading behind the page, and
+        // only the gradient above the logo is meant to show it.
+        Column(modifier = Modifier.fillMaxWidth().background(RoxyColors.background).padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
             FactsLine(
                 rating = item.communityRating,
                 facts = listOfNotNull(
