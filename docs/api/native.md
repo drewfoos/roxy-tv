@@ -236,7 +236,9 @@ A series detail carries `seasons: [{number, name, episodes, airDate, poster, hav
 requested}]` (`have` = episodes with a file, `known` = files + placeholders). `POST
 /v1/discover/request` takes `seasons: [n, …]` to ask for those only (empty = every season
 the library lacks); a later request widens the existing one; seasons already complete are
-refused. Sonarr gets per-season monitoring and a SeasonSearch per requested season (or
+refused. `GET /v1/discover/tv/{tmdbId}/season/{n}` → `{episodes: [{number, title,
+overview, airDate, still, have}]}` marks which episodes the library holds, so a
+half-complete season shows which half. Sonarr gets per-season monitoring and a SeasonSearch per requested season (or
 the seasons monitored on an already-added series). `requested_by` names the profile that
 asked when the login is shared.
 

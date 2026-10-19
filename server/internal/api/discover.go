@@ -49,6 +49,25 @@ func (s *Server) discoverSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items})
 }
 
+// GET /v1/discover/tv/{tmdbId}/season/{n} -> {episodes: [{number, title, overview, airDate, still, have}]}
+func (s *Server) discoverEpisodes(w http.ResponseWriter, r *http.Request) {
+	if !s.discoverGuard(w) {
+		return
+	}
+	id, err1 := strconv.Atoi(chi.URLParam(r, "tmdbId"))
+	n, err2 := strconv.Atoi(chi.URLParam(r, "n"))
+	if err1 != nil || err2 != nil {
+		writeError(w, 400, "bad id")
+		return
+	}
+	eps, err := s.discover.Episodes(r.Context(), id, n)
+	if err != nil {
+		upstreamError(w, "discover episodes", err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"episodes": eps})
+}
+
 // GET /v1/discover/{type}/{tmdbId}
 func (s *Server) discoverDetail(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) {

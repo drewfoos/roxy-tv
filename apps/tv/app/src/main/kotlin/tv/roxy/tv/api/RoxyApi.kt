@@ -208,6 +208,8 @@ class RoxyApi(private val prefs: Prefs) {
         return get("/v1/discover/browse?$q")
     }
 
+    suspend fun discoverEpisodes(tmdbId: Int, season: Int): List<DiscoverEpisode> = get<DiscoverEpisodesResponse>("/v1/discover/tv/$tmdbId/season/$season").episodes
+
     suspend fun discoverGenres(type: String): List<Genre> = get<GenresResponse>("/v1/discover/genres?type=$type").genres
 
     // ---- arr settings (admin) ----
@@ -619,6 +621,12 @@ data class DiscoverItem(
     val isMovie: Boolean get() = type == "movie"
     val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()
 }
+
+@Serializable
+data class DiscoverEpisode(val number: Int, val title: String = "", val overview: String? = null, val airDate: String? = null, val still: String? = null, val have: Boolean = false)
+
+@Serializable
+data class DiscoverEpisodesResponse(val episodes: List<DiscoverEpisode> = emptyList())
 
 @Serializable
 data class DiscoverRow(val key: String, val title: String = "", val items: List<DiscoverItem> = emptyList())

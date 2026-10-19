@@ -48,6 +48,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import tv.roxy.tv.api.DiscoverEpisode
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -468,7 +473,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                     if (d.seasons.isNotEmpty()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(top = 22.dp)) {
                             Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-                            d.seasons.forEach { sn -> SeasonRow(sn, onRequest = { requestSeasons(listOf(sn.number)) }) }
+                            d.seasons.forEach { sn -> SeasonRow(sn, tmdbId = d.tmdbId, onRequest = { requestSeasons(listOf(sn.number)) }) }
                         }
                     }
                     d.request?.let { r ->
@@ -532,26 +537,58 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
     }
 }
 
-/** One season on the Discover title page: name and size, then its state or a Request chip. */
+/**
+ * One season on the Discover title page: name and size, its state (In library, N of M,
+ * Requested) or a Request chip, and a chevron that unfolds the episode list with a tick
+ * on each one the library holds, so a half-complete season shows which half.
+ */
 @Composable
-private fun SeasonRow(sn: DiscoverSeason, onRequest: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(sn.name.ifEmpty { "Season ${sn.number}" }, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground)
-            Text(listOfNotNull(sn.episodes.takeIf { it > 0 }?.let { "$it episode${if (it == 1) "" else "s"}" }, sn.airDate?.take(4)).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted)
+private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    var open by rememberSaveable(tmdbId, sn.number) { mutableStateOf(false) }
+    var episodes by remember(tmdbId, sn.number) { mutableStateOf<List<DiscoverEpisode>?>(null) }
+    LaunchedEffect(open) {
+        if (open && episodes == null) episodes = runCatching { app.api.discoverEpisodes(tmdbId, sn.number) }.getOrDefault(emptyList())
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(22.dp))
+            Column(modifier = Modifier.weight(1f).padding(start = 6.dp)) {
+                Text(sn.name.ifEmpty { "Season ${sn.number}" }, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground)
+                val count = when {
+                    sn.episodes <= 0 -> null
+                    sn.have in 1 until sn.episodes -> "${sn.have} of ${sn.episodes} episodes"
+                    else -> "${sn.episodes} episode${if (sn.episodes == 1) "" else "s"}"
+                }
+                Text(listOfNotNull(count, sn.airDate?.take(4)).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted)
+            }
+            when {
+                sn.complete -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
+                    Text("In library", fontSize = 13.sp, color = RoxyColors.accent, modifier = Modifier.padding(start = 4.dp))
+                }
+                sn.requested -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Schedule, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(18.dp))
+                    Text("Requested", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
+                }
+                else -> Chip(if (sn.partial) "Request rest" else "Request", selected = false, onClick = onRequest)
+            }
         }
-        when {
-            sn.complete -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Check, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
-                Text("In library", fontSize = 13.sp, color = RoxyColors.accent, modifier = Modifier.padding(start = 4.dp))
-            }
-            sn.requested -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Schedule, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(18.dp))
-                Text(if (sn.partial) "${sn.have}/${sn.episodes}  ·  Requested" else "Requested", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
-            }
-            else -> Row(verticalAlignment = Alignment.CenterVertically) {
-                if (sn.partial) Text("${sn.have}/${sn.episodes}", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(end = 10.dp))
-                Chip("Request", selected = false, onClick = onRequest)
+        if (open) {
+            val eps = episodes
+            when {
+                eps == null -> Column(modifier = Modifier.padding(start = 28.dp, bottom = 8.dp)) { repeat(3) { BoneLine(width = 240.dp, height = 12.dp, modifier = Modifier.padding(vertical = 6.dp)) } }
+                eps.isEmpty() -> Text("No episode list on TMDB yet.", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
+                else -> eps.forEach { e ->
+                    Row(modifier = Modifier.fillMaxWidth().padding(start = 28.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (e.have) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = null,
+                            tint = if (e.have) RoxyColors.accent else RoxyColors.muted.copy(alpha = 0.5f), modifier = Modifier.size(16.dp),
+                        )
+                        Text("${e.number}.  ${e.title.ifEmpty { "Episode ${e.number}" }}", fontSize = 13.sp, color = if (e.have) RoxyColors.onBackground else RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                        e.airDate?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 11.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp)) }
+                    }
+                }
             }
         }
     }

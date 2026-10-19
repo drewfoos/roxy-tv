@@ -107,8 +107,9 @@ type Service struct {
 	// TMDB is a shared public service: besides the client's own token bucket (shared
 	// with metadata matching), details and searches are cached so typing in the search
 	// box or reopening a page does not cost another call.
-	details *ttlCache[*Detail]
-	search  *ttlCache[[]Item]
+	details  *ttlCache[*Detail]
+	search   *ttlCache[[]Item]
+	episodes *ttlCache[[]Episode]
 }
 
 // ttlCache is a small bounded map with per-entry expiry.
@@ -157,7 +158,7 @@ func (c *ttlCache[T]) put(k string, v T) {
 }
 
 func New(st *store.Store, cfg *config.Config, tmdb *metadata.TMDB) *Service {
-	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300)}
+	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), episodes: newTTLCache[[]Episode](10*time.Minute, 500)}
 	s.loadArr(context.Background())
 	return s
 }
@@ -932,4 +933,52 @@ func newID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// Episode is one episode of a season on Discover, with whether the library has it.
+type Episode struct {
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	Overview string `json:"overview,omitempty"`
+	AirDate  string `json:"airDate,omitempty"`
+	Still    string `json:"still,omitempty"`
+	Have     bool   `json:"have"`
+}
+
+// Episodes lists a season's episodes from TMDB (cached 10 min) marked with what the
+// library holds, so a half-complete season shows which half.
+func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, error) {
+	key := fmt.Sprintf("eps:%d:%d", tmdbID, season)
+	base, ok := s.episodes.get(key)
+	if !ok {
+		var resp struct {
+			Episodes []struct {
+				EpisodeNumber int    `json:"episode_number"`
+				Name          string `json:"name"`
+				Overview      string `json:"overview"`
+				AirDate       string `json:"air_date"`
+				StillPath     string `json:"still_path"`
+			} `json:"episodes"`
+		}
+		if err := s.tmdb.Get(ctx, fmt.Sprintf("/tv/%d/season/%d", tmdbID, season), nil, &resp); err != nil {
+			return nil, err
+		}
+		base = make([]Episode, 0, len(resp.Episodes))
+		for _, e := range resp.Episodes {
+			base = append(base, Episode{Number: e.EpisodeNumber, Title: e.Name, Overview: e.Overview, AirDate: e.AirDate, Still: s.tmdb.ImageURL("w300", e.StillPath)})
+		}
+		s.episodes.put(key, base)
+	}
+	out := append([]Episode(nil), base...)
+	lib, err := s.store.ItemsByProviderIDs(ctx, "tmdb", []string{strconv.Itoa(tmdbID)})
+	if err == nil {
+		if li, ok := lib["tmdb:"+strconv.Itoa(tmdbID)]; ok && li.Type == model.TypeSeries {
+			if files, err := s.store.EpisodeFiles(ctx, li.ID); err == nil {
+				for i := range out {
+					out[i].Have = files[season][out[i].Number]
+				}
+			}
+		}
+	}
+	return out, nil
 }

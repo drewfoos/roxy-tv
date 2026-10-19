@@ -154,3 +154,28 @@ func itoa(n int) string {
 	}
 	return string(b[i:])
 }
+
+// EpisodeFiles lists, per aired season, the episode numbers that have a file, for a series.
+func (s *Store) EpisodeFiles(ctx context.Context, seriesID string) (map[int]map[int]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(e.season_aired, 0), COALESCE(e.index_aired, 0)
+		FROM items e JOIN items sn ON e.parent_id = sn.id
+		WHERE sn.parent_id = ? AND e.type = 'episode'
+		  AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = e.id)`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]map[int]bool{}
+	for rows.Next() {
+		var sn, ep int
+		if err := rows.Scan(&sn, &ep); err != nil {
+			return nil, err
+		}
+		if out[sn] == nil {
+			out[sn] = map[int]bool{}
+		}
+		out[sn][ep] = true
+	}
+	return out, rows.Err()
+}
