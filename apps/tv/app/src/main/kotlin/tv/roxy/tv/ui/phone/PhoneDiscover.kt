@@ -464,7 +464,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                             d.seasonCount.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
                             d.episodes.takeIf { it > 0 && !d.isMovie }?.let { "$it Episodes" },
                             d.runtimeMinutes.takeIf { it > 0 }?.let { if (d.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "${it}m" },
-                            d.status?.takeIf { it.isNotBlank() },
+                            d.status?.let { statusWord(it) },
                         ),
                     )
                     d.networks.firstOrNull()?.let { Text(it, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
@@ -631,6 +631,17 @@ private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Un
             }
         }
     }
+}
+
+/** TMDB's status phrases, shortened so the facts line stays on one line. */
+private fun statusWord(status: String): String? = when (status.trim().lowercase()) {
+    "returning series" -> "Airing"
+    "ended" -> "Ended"
+    "canceled", "cancelled" -> "Cancelled"
+    "in production", "planned", "post production" -> "Upcoming"
+    "released" -> null
+    "" -> null
+    else -> status
 }
 
 @Suppress("unused")
