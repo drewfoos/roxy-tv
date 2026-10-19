@@ -78,6 +78,16 @@ private enum class Tab(val label: String, val route: Route) {
     Account("Account", Route.Account),
 }
 
+/**
+ * Every destination paints its own black page. The slide transitions put one page over
+ * another, and a page that let the background colour show through from the host would
+ * be see-through everywhere but its images.
+ */
+@Composable
+private fun Page(content: @Composable () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) { content() }
+}
+
 private fun NavDestination.isTab() = Tab.entries.any { hasRoute(it.route::class) }
 
 /** Push/pop slide timing: quick with a soft landing. */
@@ -135,82 +145,112 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 predictivePopExitTransition = { _ -> slideOutHorizontally(pushSpec()) { it } },
             ) {
                 composable<Route.Home> {
-                    PhoneHome(
-                        onOpenSeries = { openSeries(it) },
-                        onOpenMovie = { openMovie(it) },
-                        onSearch = { nav.navigate(Route.Search) },
-                        onDownloads = { nav.navigate(Route.Downloads) },
-                        onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
-                        onUnauthorized = onUnauthorized,
-                        bottomInset = bottomInset,
-                    )
+                    Page {
+                        PhoneHome(
+                            onOpenSeries = { openSeries(it) },
+                            onOpenMovie = { openMovie(it) },
+                            onSearch = { nav.navigate(Route.Search) },
+                            onDownloads = { nav.navigate(Route.Downloads) },
+                            onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
+                            onUnauthorized = onUnauthorized,
+                            bottomInset = bottomInset,
+                        )
+                    }
                 }
                 composable<Route.Downloads> {
-                    PhoneDownloads(
-                        onBack = { nav.popBackStack() },
-                        onOpenTitle = { nav.navigate(Route.DownloadedTitle(it)) },
-                        onBrowse = {
-                            nav.navigate(Tab.Browse.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                    )
+                    Page {
+                        PhoneDownloads(
+                            onBack = { nav.popBackStack() },
+                            onOpenTitle = { nav.navigate(Route.DownloadedTitle(it)) },
+                            onBrowse = {
+                                nav.navigate(Tab.Browse.route) {
+                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                        )
+                    }
                 }
                 composable<Route.DownloadedTitle> { e ->
-                    PhoneDownloadedTitle(titleId = e.toRoute<Route.DownloadedTitle>().id, onBack = { nav.popBackStack() })
+                    Page {
+                        PhoneDownloadedTitle(titleId = e.toRoute<Route.DownloadedTitle>().id, onBack = { nav.popBackStack() })
+                    }
                 }
                 composable<Route.Discover> {
-                    PhoneDiscover(onOpen = { nav.navigate(Route.DiscoverDetail(it.type, it.tmdbId)) }, bottomInset = bottomInset)
+                    Page {
+                        PhoneDiscover(onOpen = { nav.navigate(Route.DiscoverDetail(it.type, it.tmdbId)) }, bottomInset = bottomInset)
+                    }
                 }
                 composable<Route.DiscoverDetail> { e ->
-                    val r = e.toRoute<Route.DiscoverDetail>()
-                    PhoneDiscoverDetail(
-                        type = r.type, tmdbId = r.tmdbId,
-                        onBack = { nav.popBackStack() },
-                        onOpenSeries = { id, title -> nav.navigate(Route.Series(id, title)) }, // Discover has no library item to seed from
-                        onOpenMovie = { id, title -> nav.navigate(Route.Movie(id, title)) },
-                    )
+                    Page {
+                        val r = e.toRoute<Route.DiscoverDetail>()
+                        PhoneDiscoverDetail(
+                            type = r.type, tmdbId = r.tmdbId,
+                            onBack = { nav.popBackStack() },
+                            onOpenSeries = { id, title -> nav.navigate(Route.Series(id, title)) }, // Discover has no library item to seed from
+                            onOpenMovie = { id, title -> nav.navigate(Route.Movie(id, title)) },
+                        )
+                    }
                 }
                 composable<Route.Watchlist> {
-                    PhoneWatchlist(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset)
+                    Page {
+                        PhoneWatchlist(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset)
+                    }
                 }
                 composable<Route.Browse> {
-                    PhoneBrowse(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, onSearch = { nav.navigate(Route.Search) }, bottomInset = bottomInset)
+                    Page {
+                        PhoneBrowse(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, onSearch = { nav.navigate(Route.Search) }, bottomInset = bottomInset)
+                    }
                 }
                 composable<Route.Account> {
-                    PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) })
+                    Page {
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) })
+                    }
                 }
                 composable<Route.ArrSettings> {
-                    PhoneArrSettings(onBack = { nav.popBackStack() })
+                    Page {
+                        PhoneArrSettings(onBack = { nav.popBackStack() })
+                    }
                 }
                 composable<Route.Webhooks> {
-                    PhoneWebhooks(onBack = { nav.popBackStack() })
+                    Page {
+                        PhoneWebhooks(onBack = { nav.popBackStack() })
+                    }
                 }
                 composable<Route.Legal> { e ->
-                    PhoneLegal(doc = e.toRoute<Route.Legal>().doc, onBack = { nav.popBackStack() })
+                    Page {
+                        PhoneLegal(doc = e.toRoute<Route.Legal>().doc, onBack = { nav.popBackStack() })
+                    }
                 }
                 composable<Route.Search> {
-                    PhoneSearch(onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) })
+                    Page {
+                        PhoneSearch(onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) })
+                    }
                 }
                 composable<Route.Series> { e ->
-                    val r = e.toRoute<Route.Series>()
-                    PhoneSeries(
-                        seriesId = r.id, fallbackTitle = r.title,
-                        onBack = { nav.popBackStack() },
-                        onOpenMovie = { openMovie(it) },
-                        onOpenSeries = { openSeries(it) },
-                        onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) },
-                    )
+                    Page {
+                        val r = e.toRoute<Route.Series>()
+                        PhoneSeries(
+                            seriesId = r.id, fallbackTitle = r.title,
+                            onBack = { nav.popBackStack() },
+                            onOpenMovie = { openMovie(it) },
+                            onOpenSeries = { openSeries(it) },
+                            onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) },
+                        )
+                    }
                 }
                 composable<Route.Movie> { e ->
-                    val r = e.toRoute<Route.Movie>()
-                    PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) })
+                    Page {
+                        val r = e.toRoute<Route.Movie>()
+                        PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) })
+                    }
                 }
                 composable<Route.Details> { e ->
-                    val r = e.toRoute<Route.Details>()
-                    PhoneDetails(itemId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() })
+                    Page {
+                        val r = e.toRoute<Route.Details>()
+                        PhoneDetails(itemId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() })
+                    }
                 }
             }
             if (currentTab != null) {
