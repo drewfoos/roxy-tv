@@ -73,7 +73,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
     if (editingProfile) {
         val id = session.profileId
         if (id != null) {
-            ProfilePicker(editOnly = Profile(id = id, name = session.profileName, hasAvatar = session.profileHasAvatar), onDone = { editingProfile = false })
+            ProfilePicker(editOnly = Profile(id = id, name = session.profileName, hasAvatar = session.profileHasAvatar, avatarKey = session.profileAvatarKey), onDone = { editingProfile = false })
             return
         }
         editingProfile = false
@@ -81,7 +81,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 16.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            val avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(56.dp) * 2, session.profileAvatarVersion) }
+            val avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(56.dp) * 2, session.profileAvatarKey.ifEmpty { session.profileAvatarVersion.toString() }) }
             AvatarCircle(name = session.profileName.ifEmpty { session.userName }, imageUrl = avatarUrl, size = 56.dp)
             Column(modifier = Modifier.padding(start = 14.dp)) {
                 Text(session.profileName.ifEmpty { session.userName }, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)

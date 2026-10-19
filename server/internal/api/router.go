@@ -93,6 +93,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/items/{id}/images/{type}", s.getItemImage)
 			r.Post("/items/{id}/refresh", s.refreshItem)
 			r.Get("/items/{id}/related", s.related)
+			r.Get("/items/{id}/details", s.itemDetails)
 			r.Get("/home", s.home)
 			r.Get("/me/resume", s.resume)
 			r.Post("/me/progress", s.progress)

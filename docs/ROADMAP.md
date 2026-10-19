@@ -166,6 +166,13 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   ignores episodes that already have files. Specials are listed last and requested per
   episode (requests.episodes, migration 0014; Sonarr episode monitor + EpisodeSearch). Verified end to end against the test library with
   replayed payloads (Download → Rename → EpisodeFileDelete → SeriesDelete).
+- Also done (2026-10-20): **More details** page (Crunchyroll-style text link in the brand
+  blue under the synopsis on series and movie pages): full synopsis, original title,
+  status, dates, network, studio, production, country, languages, counts, runtime,
+  genres, ratings; audio / subtitle languages and formats and video quality from the
+  files on the server; cast with photos; keywords; links to TMDB / AniList / MAL / IMDb /
+  TVDB / official site (`GET /v1/items/{id}/details`). **Profile avatar fix**: a changed
+  picture was served from the image cache (same URL); profiles now carry `avatarKey`.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

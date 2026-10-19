@@ -172,11 +172,16 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                         onBack = { nav.popBackStack() },
                         onOpenMovie = { openMovie(it.id, it.title) },
                         onOpenSeries = { openSeries(it.id, it.title) },
+                        onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) },
                     )
                 }
                 composable<Route.Movie> { e ->
                     val r = e.toRoute<Route.Movie>()
-                    PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it.id, it.title) })
+                    PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it.id, it.title) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) })
+                }
+                composable<Route.Details> { e ->
+                    val r = e.toRoute<Route.Details>()
+                    PhoneDetails(itemId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() })
                 }
             }
             if (currentTab != null) {
@@ -186,7 +191,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     BottomBar(
                         current = currentTab,
                         profileName = session.profileName.ifEmpty { session.userName },
-                        avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarVersion) },
+                        avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarKey.ifEmpty { session.profileAvatarVersion.toString() }) },
                         onSelect = { tab ->
                             if (tab == currentTab) return@BottomBar
                             nav.navigate(tab.route) {

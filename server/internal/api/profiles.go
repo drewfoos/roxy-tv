@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"image"
 	"image/jpeg"
 	"io"
@@ -26,6 +27,16 @@ import (
 // Profiles (docs/api/native.md "Profiles"): several viewers on one login. Clients send
 // X-Roxy-Profile: <id> on every request; watch state, favourites and /v1/home follow it.
 
+// avatarKey is a short hash of the avatar's source URL.
+func avatarKey(url string) string {
+	if url == "" {
+		return ""
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(url))
+	return fmt.Sprintf("%08x", h.Sum32())
+}
+
 func profileJSON(p *model.Profile) map[string]any {
 	return map[string]any{
 		"id":         p.ID,
@@ -34,6 +45,7 @@ func profileJSON(p *model.Profile) map[string]any {
 		"avatarName": p.AvatarName,
 		"hasAvatar":  p.AvatarURL != "",
 		"avatarUrl":  "/v1/me/profiles/" + p.ID + "/avatar",
+		"avatarKey":  avatarKey(p.AvatarURL), // changes with the picture: clients put it on the URL so caches miss
 		"createdAt":  p.CreatedAt,
 	}
 }

@@ -89,6 +89,7 @@ fun PhoneSeries(
     onBack: () -> Unit,
     onOpenMovie: (Item) -> Unit,
     onOpenSeries: (Item) -> Unit,
+    onOpenDetails: (Item) -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
@@ -145,6 +146,7 @@ fun PhoneSeries(
                     item = series,
                     badge = audioBadge(playable.firstOrNull()),
                     seasons = state.seasons.size,
+                    onMoreDetails = { onOpenDetails(series) },
                 )
             }
         if (state.seasons.isNotEmpty() || state.related.isNotEmpty() || extraSeasons.isNotEmpty()) {
@@ -297,7 +299,7 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
  * description (tap to expand) and the year / season count line.
  */
 @Composable
-fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = null) {
+fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
@@ -317,6 +319,13 @@ fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = nul
                 it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
                 maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
+            )
+        }
+        // Crunchyroll's "More details": a plain link in the brand colour, not a button.
+        if (onMoreDetails != null) {
+            Text(
+                "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
+                modifier = Modifier.align(Alignment.Start).padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp),
             )
         }
     }

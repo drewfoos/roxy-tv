@@ -30,6 +30,7 @@ app/src/main/kotlin/tv/roxy/tv/
   ui/components/             MediaCard, MediaRow, RoxyImage (placeholder tile), buttons, text field (TV, tv-material)
   ui/phone/                  phone layout (Material 3): PhoneRoot bottom bar, PhoneHome hero carousel + rows,
                              PhoneBrowse / Watchlist / Search grids, PhoneSeries / PhoneMovie title pages, PhoneAccount
+  ui/phone/PhoneDetails.kt  "More details" page: synopsis, facts, audio/subs/video from the files, cast, keywords, links
   ui/phone/PhoneDiscover.kt  Discover tab (TMDB rows, search, filter bar + sheet with paged grid, request badges) and the Discover title page (Watch / Request)
   ui/phone/PhoneArrSettings.kt admin: Sonarr / Radarr connection (test, pickers, anime settings), saved on the server
   ui/phone/PhoneWebhooks.kt  admin: webhook URLs, API keys, recent notifications

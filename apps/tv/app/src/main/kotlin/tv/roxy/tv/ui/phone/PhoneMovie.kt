@@ -44,7 +44,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 
 /** Netflix's phone movie page: backdrop, title and meta, Play, synopsis, the franchise it belongs to. */
 @Composable
-fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpenSeries: (Item) -> Unit) {
+fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenDetails: (Item) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: MovieViewModel = viewModel(key = "movie:$movieId") { MovieViewModel(app.api, movieId) }
@@ -76,6 +76,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                     item = movie,
                     badge = audioBadge(movie),
                     extra = movie.runtimeMinutes?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
+                    onMoreDetails = { onOpenDetails(movie) },
                 )
             }
             item(key = "more") {

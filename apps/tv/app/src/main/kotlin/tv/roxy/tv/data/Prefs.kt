@@ -28,6 +28,8 @@ data class Session(
     val profileHasAvatar: Boolean = false,
     /** Bumped when the avatar changes so cached images are refetched. */
     val profileAvatarVersion: Int = 0,
+    /** The server's avatarKey for the active profile (changes with the picture). */
+    val profileAvatarKey: String = "",
     /** The profile used last, kept across Switch profile so the picker can mark it and offer a way back. */
     val lastProfileId: String? = null,
 ) {
@@ -143,15 +145,16 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_PROFILE_NAME] = s.profileName
             it[KEY_PROFILE_AVATAR] = s.profileHasAvatar
             it[KEY_PROFILE_AVATAR_V] = s.profileAvatarVersion
+            it[KEY_PROFILE_AVATAR_KEY] = s.profileAvatarKey
             if (s.lastProfileId == null) it.remove(KEY_LAST_PROFILE) else it[KEY_LAST_PROFILE] = s.lastProfileId
         }
     }
 
     /** Choose (or update) the active profile; a new avatar bumps the version so Coil refetches it. */
-    suspend fun selectProfile(id: String, name: String, hasAvatar: Boolean) {
+    suspend fun selectProfile(id: String, name: String, hasAvatar: Boolean, avatarKey: String = "") {
         val cur = _session.value
         val bump = if (cur.profileId == id) cur.profileAvatarVersion + 1 else 0
-        saveSession(cur.copy(profileId = id, profileName = name, profileHasAvatar = hasAvatar, profileAvatarVersion = bump, lastProfileId = id))
+        saveSession(cur.copy(profileId = id, profileName = name, profileHasAvatar = hasAvatar, profileAvatarVersion = bump, profileAvatarKey = avatarKey, lastProfileId = id))
     }
 
     /** Back to the picker (Switch profile); remembers which profile we came from. */
@@ -196,6 +199,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         profileName = this[KEY_PROFILE_NAME].orEmpty(),
         profileHasAvatar = this[KEY_PROFILE_AVATAR] ?: false,
         profileAvatarVersion = this[KEY_PROFILE_AVATAR_V] ?: 0,
+        profileAvatarKey = this[KEY_PROFILE_AVATAR_KEY].orEmpty(),
         lastProfileId = this[KEY_LAST_PROFILE]?.takeIf { it.isNotEmpty() },
     )
 
@@ -221,6 +225,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_PROFILE_NAME = stringPreferencesKey("profile_name")
         val KEY_PROFILE_AVATAR = booleanPreferencesKey("profile_has_avatar")
         val KEY_PROFILE_AVATAR_V = intPreferencesKey("profile_avatar_v")
+        val KEY_PROFILE_AVATAR_KEY = stringPreferencesKey("profile_avatar_key")
         val KEY_LAST_PROFILE = stringPreferencesKey("last_profile_id")
         val KEY_HWDEC = stringPreferencesKey("hwdec")
         val KEY_VO = stringPreferencesKey("vo")

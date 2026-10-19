@@ -28,4 +28,6 @@ sealed interface Route {
     @Serializable data object Settings : Route
     @Serializable data class Series(val id: String, val title: String) : Route
     @Serializable data class Movie(val id: String, val title: String) : Route
+    // Phone: the "More details" page of a series or movie.
+    @Serializable data class Details(val id: String, val title: String) : Route
 }

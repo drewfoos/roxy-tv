@@ -133,7 +133,7 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
                     onSaved = { saved ->
                         scope.launch {
                             // Keep the session in step when the active profile was edited.
-                            if (app.prefs.session.value.profileId == saved.id) app.prefs.selectProfile(saved.id, saved.name, saved.hasAvatar)
+                            if (app.prefs.session.value.profileId == saved.id) app.prefs.selectProfile(saved.id, saved.name, saved.hasAvatar, saved.avatarKey)
                             reload()
                             creating = false; editing = null
                             if (editOnly != null) onDone()
@@ -153,11 +153,11 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
                     onToggleManage = { managing = !managing },
                     onPick = { p ->
                         if (managing) editing = p
-                        else scope.launch { app.prefs.selectProfile(p.id, p.name, p.hasAvatar); onDone() }
+                        else scope.launch { app.prefs.selectProfile(p.id, p.name, p.hasAvatar, p.avatarKey); onDone() }
                     },
                     onAdd = { creating = true },
                     onRetry = { scope.launch { reload() } },
-                    onBack = last?.let { l -> { scope.launch { app.prefs.selectProfile(l.id, l.name, l.hasAvatar); onDone() } } },
+                    onBack = last?.let { l -> { scope.launch { app.prefs.selectProfile(l.id, l.name, l.hasAvatar, l.avatarKey); onDone() } } },
                     onLogout = {
                         scope.launch {
                             runCatching { app.api.logout() }.onFailure { Timber.w("logout: %s", it.message) }
@@ -318,7 +318,7 @@ fun CatOnRing(modifier: Modifier = Modifier, width: Dp = 44.dp) {
 /** Round avatar: the cached character picture, or the initial on the brand blue. */
 @Composable
 fun ProfileAvatar(profile: Profile, api: RoxyApi, size: Dp, version: Int = 0, modifier: Modifier = Modifier) {
-    AvatarCircle(name = profile.name, imageUrl = if (profile.hasAvatar) api.profileAvatarUrl(profile.id, widthPx(size) * 2, version) else null, size = size, modifier = modifier)
+    AvatarCircle(name = profile.name, imageUrl = if (profile.hasAvatar) api.profileAvatarUrl(profile.id, widthPx(size) * 2, profile.avatarKey.ifEmpty { version.toString() }) else null, size = size, modifier = modifier)
 }
 
 @Composable
@@ -376,7 +376,7 @@ private fun ProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) ->
         }
         // Preview and name.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 12.dp)) {
-            val preview = picked?.image ?: profile?.takeIf { it.hasAvatar }?.let { api.profileAvatarUrl(it.id, widthPx(72.dp) * 2) }
+            val preview = picked?.image ?: profile?.takeIf { it.hasAvatar }?.let { api.profileAvatarUrl(it.id, widthPx(72.dp) * 2, it.avatarKey) }
             AvatarCircle(name = name.ifBlank { "?" }, imageUrl = preview, size = 72.dp)
             Box(modifier = Modifier.padding(start = 16.dp).weight(1f).clip(RoundedCornerShape(8.dp)).background(ChipGrey).padding(horizontal = 14.dp, vertical = 12.dp)) {
                 if (name.isEmpty()) Text("Name", color = RoxyColors.muted, fontSize = 16.sp)

@@ -130,8 +130,8 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun avatarSuggested(): List<Character> = get<CharactersResponse>("/v1/avatars/suggested").characters
 
-    /** The cached avatar; [version] busts Coil's cache after a change. */
-    fun profileAvatarUrl(id: String, widthPx: Int, version: Int = 0): String = "$baseUrl/v1/me/profiles/$id/avatar?w=$widthPx&v=$version"
+    /** The cached avatar; [key] (the server's avatarKey) busts Coil's cache after a change. */
+    fun profileAvatarUrl(id: String, widthPx: Int, key: String = ""): String = "$baseUrl/v1/me/profiles/$id/avatar?w=$widthPx&v=$key"
 
     /**
      * Is the server reachable right now? A fast probe (3 s) of the unauthenticated system
@@ -174,6 +174,9 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun related(id: String): RelatedResponse = get("/v1/items/$id/related")
 
     suspend fun source(id: String): MediaSource = get("/v1/sources/$id")
+
+    /** The "More details" page: item, library facts, TMDB extras, provider links. */
+    suspend fun itemDetails(id: String): ItemDetails = get("/v1/items/$id/details")
 
     // ---- discover (TMDB through the server; "our own request app") ----
 
@@ -381,7 +384,44 @@ data class Profile(
     val isDefault: Boolean = false,
     val avatarName: String = "",
     val hasAvatar: Boolean = false,
+    /** Changes with the picture; goes on the avatar URL so a new picture is never served from cache. */
+    val avatarKey: String = "",
 )
+
+@Serializable
+data class MediaFacts(
+    val files: Int = 0,
+    val bytes: Long = 0,
+    val video: List<String> = emptyList(),
+    val audio: List<String> = emptyList(),
+    val subtitles: List<String> = emptyList(),
+    val subFormats: List<String> = emptyList(),
+)
+
+@Serializable
+data class CastMember(val name: String, val character: String = "", val photo: String? = null)
+
+@Serializable
+data class TmdbExtras(
+    val originalTitle: String = "",
+    val firstAired: String = "",
+    val lastAired: String = "",
+    val status: String = "",
+    val episodes: Int = 0,
+    val seasons: Int = 0,
+    val runtimeMinutes: Int = 0,
+    val networks: List<String> = emptyList(),
+    val companies: List<String> = emptyList(),
+    val countries: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val keywords: List<String> = emptyList(),
+    val cast: List<CastMember> = emptyList(),
+    val homepage: String = "",
+    val tagline: String = "",
+)
+
+@Serializable
+data class ItemDetails(val item: Item, val facts: MediaFacts? = null, val tmdb: TmdbExtras? = null, val links: Map<String, String> = emptyMap())
 
 @Serializable
 data class ProfilesResponse(val profiles: List<Profile> = emptyList(), val current: String? = null)

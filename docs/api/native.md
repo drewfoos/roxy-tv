@@ -120,6 +120,16 @@ and mostly recaps.
   (`/v1/stream`, images, trickplay, attachments, subtitles) are exempt.
 - Placeholders the provider stops listing are removed on the next refresh.
 
+## Details page
+
+`GET /v1/items/{id}/details` (a season or episode id resolves to its series) →
+`{item, facts: {files, bytes, video[], audio[], subtitles[], subFormats[]}, tmdb:
+{originalTitle, firstAired, lastAired, status, episodes, seasons, runtimeMinutes,
+networks[], companies[], countries[], languages[], keywords[], cast[{name, character,
+photo}], homepage, tagline}, links: {tmdb, imdb, anilist, mal, tvdb}}`. The TMDB part is
+cached 10 minutes. Profiles carry `avatarKey` (a hash of the picture's source); clients
+put it on the avatar URL so a changed picture is never served from an image cache.
+
 ## Segments (skip intro / outro)
 
 `MediaSource.segments[]`: `{type: intro | outro | recap | preview, startMs, endMs,
