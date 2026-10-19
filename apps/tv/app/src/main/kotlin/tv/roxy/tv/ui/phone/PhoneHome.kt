@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.drawscope.Stroke
 import tv.roxy.tv.data.downloads.DownloadedTitle
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -304,12 +305,17 @@ private fun HeroCarousel(heroes: List<HeroPick>, api: RoxyApi, onPlay: (HeroPick
     val pager = rememberPagerState(pageCount = { count })
     val progress = remember { Animatable(0f) }
 
-    // Timer: fill the current bar over the dwell, then move on. Any scroll restarts it.
-    LaunchedEffect(count, pager.currentPage, pager.isScrollInProgress) {
-        if (count < 2 || pager.isScrollInProgress) return@LaunchedEffect
+    // Timer: fill the current bar over the dwell, then move on. A finger on the pager
+    // restarts it. The effect must not key on isScrollInProgress: its own scroll to the
+    // next page would cancel it mid-animation and the pager would settle back where it was.
+    val dragged by pager.interactionSource.collectIsDraggedAsState()
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(count, pager.currentPage, dragged) {
+        if (count < 2 || dragged) return@LaunchedEffect
         progress.snapTo(0f)
         progress.animateTo(1f, tween(HERO_DWELL_MS, easing = LinearEasing))
-        pager.animateScrollToPage((pager.currentPage + 1) % count)
+        val next = (pager.currentPage + 1) % count
+        scope.launch { pager.animateScrollToPage(next) }
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
