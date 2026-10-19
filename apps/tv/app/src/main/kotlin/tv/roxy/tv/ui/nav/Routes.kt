@@ -9,6 +9,9 @@ import kotlinx.serialization.Serializable
  */
 sealed interface Route {
     @Serializable data object Home : Route
+    // Discover: TMDB browsing and requests ("our own request app"); a title page per TMDB id.
+    @Serializable data object Discover : Route
+    @Serializable data class DiscoverDetail(val type: String, val tmdbId: Int) : Route
     @Serializable data object Watchlist : Route
     @Serializable data object Browse : Route
     @Serializable data object Account : Route

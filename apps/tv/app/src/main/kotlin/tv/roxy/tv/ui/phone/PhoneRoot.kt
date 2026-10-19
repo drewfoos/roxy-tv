@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
@@ -61,6 +63,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 
 private enum class Tab(val label: String, val route: Route) {
     Home("Home", Route.Home),
+    Discover("Discover", Route.Discover),
     Watchlist("Watchlist", Route.Watchlist),
     Browse("Browse", Route.Browse),
     Account("Account", Route.Account),
@@ -85,6 +88,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     val currentTab = when {
         dest == null -> null
         dest.hasRoute<Route.Home>() -> Tab.Home
+        dest.hasRoute<Route.Discover>() -> Tab.Discover
         dest.hasRoute<Route.Watchlist>() -> Tab.Watchlist
         dest.hasRoute<Route.Browse>() -> Tab.Browse
         dest.hasRoute<Route.Account>() -> Tab.Account
@@ -130,6 +134,18 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.DownloadedTitle> { e ->
                     PhoneDownloadedTitle(titleId = e.toRoute<Route.DownloadedTitle>().id, onBack = { nav.popBackStack() })
+                }
+                composable<Route.Discover> {
+                    PhoneDiscover(onOpen = { nav.navigate(Route.DiscoverDetail(it.type, it.tmdbId)) }, bottomInset = bottomInset)
+                }
+                composable<Route.DiscoverDetail> { e ->
+                    val r = e.toRoute<Route.DiscoverDetail>()
+                    PhoneDiscoverDetail(
+                        type = r.type, tmdbId = r.tmdbId,
+                        onBack = { nav.popBackStack() },
+                        onOpenSeries = { id, title -> openSeries(id, title) },
+                        onOpenMovie = { id, title -> openMovie(id, title) },
+                    )
                 }
                 composable<Route.Watchlist> {
                     PhoneWatchlist(onOpenSeries = { openSeries(it.id, it.title) }, onOpenMovie = { openMovie(it.id, it.title) }, bottomInset = bottomInset)
@@ -248,6 +264,7 @@ private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, mod
                 } else {
                     val icon: ImageVector = when (tab) {
                         Tab.Home -> if (selected) Icons.Filled.Home else Icons.Outlined.Home
+                        Tab.Discover -> if (selected) Icons.Filled.Explore else Icons.Outlined.Explore
                         Tab.Watchlist -> Icons.Outlined.Bookmark
                         else -> Icons.Outlined.GridView
                     }

@@ -39,16 +39,16 @@ type deviceProfile struct {
 }
 
 type playbackInfoRequest struct {
-	DeviceProfile       *deviceProfile `json:"DeviceProfile"`
-	MaxStreamingBitrate int64          `json:"MaxStreamingBitrate"`
-	StartTimeTicks      int64          `json:"StartTimeTicks"`
-	AudioStreamIndex    *int           `json:"AudioStreamIndex"`
-	SubtitleStreamIndex *int           `json:"SubtitleStreamIndex"`
-	MediaSourceId       string         `json:"MediaSourceId"`
-	EnableDirectPlay    *bool          `json:"EnableDirectPlay"`
-	EnableDirectStream  *bool          `json:"EnableDirectStream"`
-	EnableTranscoding   *bool          `json:"EnableTranscoding"`
-	AlwaysBurnInSubtitleWhenTranscoding bool `json:"AlwaysBurnInSubtitleWhenTranscoding"`
+	DeviceProfile                       *deviceProfile `json:"DeviceProfile"`
+	MaxStreamingBitrate                 int64          `json:"MaxStreamingBitrate"`
+	StartTimeTicks                      int64          `json:"StartTimeTicks"`
+	AudioStreamIndex                    *int           `json:"AudioStreamIndex"`
+	SubtitleStreamIndex                 *int           `json:"SubtitleStreamIndex"`
+	MediaSourceId                       string         `json:"MediaSourceId"`
+	EnableDirectPlay                    *bool          `json:"EnableDirectPlay"`
+	EnableDirectStream                  *bool          `json:"EnableDirectStream"`
+	EnableTranscoding                   *bool          `json:"EnableTranscoding"`
+	AlwaysBurnInSubtitleWhenTranscoding bool           `json:"AlwaysBurnInSubtitleWhenTranscoding"`
 }
 
 // playbackInfo is the Phase 2 decision: direct play only. It still honours the
@@ -161,4 +161,3 @@ func subtitleMethod(p *deviceProfile, st model.MediaStream) string {
 	// SRT can be converted to VTT for HLS later; ASS/SSA cannot: burn-in.
 	return "Encode"
 }
-

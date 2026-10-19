@@ -205,6 +205,28 @@ anime characters: `avatarUrl` on create/update must be an AniList CDN image (as 
 by the two `/v1/avatars` endpoints); the server caches a copy and serves it from
 `/v1/me/profiles/{id}/avatar`. `/v1/auth/me` also returns `profileId`.
 
+## Discover (requests; "our own request app")
+
+TMDB through the server (the key stays there; posters are absolute `image.tmdb.org`
+URLs the app loads directly). Every item carries `libraryItemId` when the library has
+it (matched on the TMDB id) and `requestStatus` (`pending` | `sent` | `failed`) when
+someone asked for it. Rows are cached 30 min, details 10 min, searches 5 min, and the
+TMDB client has its own token bucket, so the app cannot hammer TMDB.
+
+- `GET /v1/discover` → `{rows: [{key, title, items}], requestsEnabled: {tv, movie}}`.
+  Rows: trending, new anime this season, popular anime, top rated anime, anime movies,
+  popular movies, upcoming movies, popular series.
+- `GET /v1/discover/search?q=` → `{items}` (TV and movies).
+- `GET /v1/discover/{tv|movie}/{tmdbId}` → the item plus `tagline, status, seasons,
+  episodes, runtimeMinutes, networks, tvdbId, imdbId, request, requestsEnabled`.
+- `POST /v1/discover/request` `{type, tmdbId}` → the request row. Sent to Sonarr
+  (by TVDB id, series type "anime" for anime) or Radarr (by TMDB id) when
+  `ROXY_SONARR_URL` / `ROXY_SONARR_API_KEY` / `ROXY_RADARR_URL` / `ROXY_RADARR_API_KEY`
+  are set (`ROXY_*_ROOT_FOLDER`, `ROXY_*_QUALITY_PROFILE` optional); otherwise kept as
+  `pending`. 409 when the library already has it.
+- `GET /v1/discover/requests` → `{items}` (everyone's, newest first).
+- `DELETE /v1/discover/requests/{id}` → 204; the requester or an admin only.
+
 ## App updates
 
 Self-hosted apps have no store, so Roxy Server is the update channel. After a build,

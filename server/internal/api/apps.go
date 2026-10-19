@@ -48,6 +48,10 @@ func (s *Server) readLatest(app string) (map[string]appBuild, error) {
 func (s *Server) appLatest(w http.ResponseWriter, r *http.Request) {
 	app := safeName(chi.URLParam(r, "app"))
 	pkg := r.URL.Query().Get("package")
+	if app == "" {
+		writeError(w, 400, "bad app name")
+		return
+	}
 	m, err := s.readLatest(app)
 	if err != nil {
 		writeError(w, 404, "no builds published")
@@ -85,7 +89,12 @@ func (s *Server) appDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "no build for this package")
 		return
 	}
-	path := filepath.Join(s.appsDir(app), safeName(b.File))
+	file := safeName(b.File)
+	if app == "" || file == "" {
+		writeError(w, 404, "build file missing")
+		return
+	}
+	path := filepath.Join(s.appsDir(app), file)
 	f, err := os.Open(path)
 	if err != nil {
 		writeError(w, 404, "build file missing")
@@ -98,8 +107,16 @@ func (s *Server) appDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }
 
-// safeName keeps a file name inside its directory.
+// safeName keeps a file name inside its directory: only letters, digits, dot, dash and
+// underscore survive, and ".." is rejected outright (a bad name yields "", which opens nothing).
 func safeName(name string) string {
-	name = strings.ReplaceAll(name, "\\", "/")
-	return filepath.Base(name)
+	if name == "" || strings.Contains(name, "..") {
+		return ""
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_') {
+			return ""
+		}
+	}
+	return name
 }

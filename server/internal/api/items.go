@@ -26,6 +26,12 @@ func (s *Server) listLibraries(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/libraries/scan?force=1 re-probes unchanged files too.
 func (s *Server) scanAll(w http.ResponseWriter, r *http.Request) {
+	if p := userFrom(w, r); p == nil {
+		return
+	} else if !p.IsAdmin {
+		writeError(w, 403, "admin only")
+		return
+	}
 	if f := r.URL.Query().Get("force"); f == "1" || f == "true" {
 		s.lib.Force = true
 	}

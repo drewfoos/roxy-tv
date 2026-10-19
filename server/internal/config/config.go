@@ -21,6 +21,16 @@ type Config struct {
 	ScanOnStart bool     // ROXY_SCAN_ON_START, default true
 	Debug       bool     // ROXY_DEBUG
 	TMDBAPIKey  string   // ROXY_TMDB_API_KEY; empty disables the TMDB provider (AniList still runs)
+	// Discover requests are forwarded to Sonarr / Radarr when these are set; without
+	// them requests are recorded and shown as pending.
+	SonarrURL            string // ROXY_SONARR_URL, e.g. http://sonarr:8989
+	SonarrAPIKey         string // ROXY_SONARR_API_KEY
+	SonarrRootFolder     string // ROXY_SONARR_ROOT_FOLDER (default: the first one Sonarr reports)
+	SonarrQualityProfile string // ROXY_SONARR_QUALITY_PROFILE: id or name (default: the first)
+	RadarrURL            string // ROXY_RADARR_URL
+	RadarrAPIKey         string // ROXY_RADARR_API_KEY
+	RadarrRootFolder     string // ROXY_RADARR_ROOT_FOLDER
+	RadarrQualityProfile string // ROXY_RADARR_QUALITY_PROFILE
 	// First-run admin account (only used when the users table is empty).
 	AdminUser     string // ROXY_ADMIN_USER, default roxy
 	AdminPassword string // ROXY_ADMIN_PASSWORD, default roxy (dev only; set it in production)
@@ -28,16 +38,24 @@ type Config struct {
 
 func Load() (*Config, error) {
 	c := &Config{
-		Listen:      env("ROXY_LISTEN", ":8096"),
-		DataDir:     env("ROXY_DATA_DIR", "data"),
-		FFmpegPath:  env("ROXY_FFMPEG_PATH", ""),
-		FFprobePath: env("ROXY_FFPROBE_PATH", ""),
-		FontsDir:    env("ROXY_FONTS_DIR", ""),
-		ScanOnStart: envBool("ROXY_SCAN_ON_START", true),
-		Debug:       envBool("ROXY_DEBUG", false),
-		TMDBAPIKey:  env("ROXY_TMDB_API_KEY", ""),
-		AdminUser:     env("ROXY_ADMIN_USER", "roxy"),
-		AdminPassword: env("ROXY_ADMIN_PASSWORD", "roxy"),
+		Listen:               env("ROXY_LISTEN", ":8096"),
+		DataDir:              env("ROXY_DATA_DIR", "data"),
+		FFmpegPath:           env("ROXY_FFMPEG_PATH", ""),
+		FFprobePath:          env("ROXY_FFPROBE_PATH", ""),
+		FontsDir:             env("ROXY_FONTS_DIR", ""),
+		ScanOnStart:          envBool("ROXY_SCAN_ON_START", true),
+		Debug:                envBool("ROXY_DEBUG", false),
+		TMDBAPIKey:           env("ROXY_TMDB_API_KEY", ""),
+		SonarrURL:            strings.TrimRight(env("ROXY_SONARR_URL", ""), "/"),
+		SonarrAPIKey:         env("ROXY_SONARR_API_KEY", ""),
+		SonarrRootFolder:     env("ROXY_SONARR_ROOT_FOLDER", ""),
+		SonarrQualityProfile: env("ROXY_SONARR_QUALITY_PROFILE", ""),
+		RadarrURL:            strings.TrimRight(env("ROXY_RADARR_URL", ""), "/"),
+		RadarrAPIKey:         env("ROXY_RADARR_API_KEY", ""),
+		RadarrRootFolder:     env("ROXY_RADARR_ROOT_FOLDER", ""),
+		RadarrQualityProfile: env("ROXY_RADARR_QUALITY_PROFILE", ""),
+		AdminUser:            env("ROXY_ADMIN_USER", "roxy"),
+		AdminPassword:        env("ROXY_ADMIN_PASSWORD", "roxy"),
 	}
 	for _, r := range strings.Split(env("ROXY_MEDIA_ROOTS", ""), ",") {
 		r = strings.TrimSpace(r)

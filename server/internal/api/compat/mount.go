@@ -28,7 +28,10 @@ func New(cfg *config.Config, st *store.Store, a *auth.Service, lib *library.Libr
 // Mount registers the compat routes on the root router. Public routes are the ones a
 // client needs before it has a token; everything else requires a device token or API key.
 func (h *Handler) Mount(r chi.Router) {
-	ping := func(w http.ResponseWriter, _ *http.Request) { w.Header().Set("Content-Type", "application/json"); w.Write([]byte(`"Roxy Server"`)) }
+	ping := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`"Roxy Server"`))
+	}
 
 	// ---- public ----
 	r.Group(func(r chi.Router) {

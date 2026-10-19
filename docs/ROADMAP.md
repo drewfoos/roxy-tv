@@ -130,6 +130,19 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   progress, then opens the package installer (REQUEST_INSTALL_PACKAGES + FileProvider).
   Verified on the S25 Ultra: 0.2.0 → 0.3.0 installed through the bar. Phone layout only
   so far (the TV needs a focusable version).
+- Also done (2026-10-19, night): **Discover tab** ("our own request app"). Server
+  `internal/discover` over the existing TMDB client: trending, new anime this season,
+  popular / top-rated anime, anime movies, popular / upcoming movies, popular series;
+  search; title detail; every item marked when the library has it (TMDB id match) or
+  someone requested it. Requests (migration 0009) go to Sonarr / Radarr through
+  `internal/arr` when `ROXY_SONARR_*` / `ROXY_RADARR_*` are set (untested until the
+  server machine exists), else stay pending for the household to see. App: Discover is
+  the second tab (search box, "Your requests" row, poster rows with badges), a title
+  page with Watch / Request / Requested + Withdraw. Hardening pass the same night:
+  TMDB detail and search caches, request body limits, admin-only scan and detect,
+  withdraw restricted to the requester or an admin, strict file names on the app-update
+  endpoint, sanitised ids in download paths, and the Bearer token is only sent to the
+  Roxy host (TMDB images go bare).
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

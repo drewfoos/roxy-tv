@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Dispatcher
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -40,6 +41,9 @@ class RoxyApi(private val prefs: Prefs) {
         .addInterceptor(Interceptor { chain ->
             val s = prefs.session.value
             val req = chain.request()
+            // Only Roxy Server gets the token and profile; images from TMDB (Discover) go bare.
+            val serverHost = runCatching { s.serverUrl.toHttpUrl().host }.getOrNull()
+            if (serverHost == null || req.url.host != serverHost) return@Interceptor chain.proceed(req)
             val b = req.newBuilder()
             if (s.token != null && req.header("Authorization") == null) b.header("Authorization", "Bearer ${s.token}")
             // Watch state, favourites and Home are per profile (docs/api/native.md "Profiles").
@@ -170,6 +174,21 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun related(id: String): RelatedResponse = get("/v1/items/$id/related")
 
     suspend fun source(id: String): MediaSource = get("/v1/sources/$id")
+
+    // ---- discover (TMDB through the server; "our own request app") ----
+
+    suspend fun discover(): DiscoverResponse = get("/v1/discover")
+
+    suspend fun discoverSearch(q: String): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")).items
+
+    suspend fun discoverDetail(type: String, tmdbId: Int): DiscoverDetail = get("/v1/discover/$type/$tmdbId")
+
+    suspend fun discoverRequest(type: String, tmdbId: Int): RequestRow =
+        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId)))
+
+    suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
+
+    suspend fun deleteRequest(id: String) = delete("/v1/discover/requests/$id")
 
     // ---- app updates ----
 
@@ -528,6 +547,82 @@ data class MediaStream(
 
 @Serializable
 data class Attachment(val index: Int = 0, val filename: String = "", val mime: String? = null)
+
+/** A TMDB title on Discover, with what the library and the request list know about it. */
+@Serializable
+data class DiscoverItem(
+    val tmdbId: Int,
+    val type: String, // tv | movie
+    val title: String = "",
+    val year: Int? = null,
+    val overview: String? = null,
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val rating: Double? = null,
+    val genres: List<String> = emptyList(),
+    val isAnime: Boolean = false,
+    val libraryItemId: String? = null,
+    /** pending | sent | failed when someone asked for it. */
+    val requestStatus: String? = null,
+) {
+    val isMovie: Boolean get() = type == "movie"
+    val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()
+}
+
+@Serializable
+data class DiscoverRow(val key: String, val title: String = "", val items: List<DiscoverItem> = emptyList())
+
+@Serializable
+data class DiscoverResponse(val rows: List<DiscoverRow> = emptyList(), val requestsEnabled: Map<String, Boolean> = emptyMap())
+
+@Serializable
+data class DiscoverItemsResponse(val items: List<DiscoverItem> = emptyList())
+
+@Serializable
+data class RequestRow(
+    val id: String,
+    val type: String = "",
+    val tmdbId: Int = 0,
+    val title: String = "",
+    val year: Int? = null,
+    val userName: String = "",
+    val status: String = "pending",
+    val error: String? = null,
+    val createdAt: String = "",
+)
+
+/** The Discover title page: a [DiscoverItem]'s fields plus the longer facts. */
+@Serializable
+data class DiscoverDetail(
+    val tmdbId: Int,
+    val type: String,
+    val title: String = "",
+    val year: Int? = null,
+    val overview: String? = null,
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val rating: Double? = null,
+    val genres: List<String> = emptyList(),
+    val isAnime: Boolean = false,
+    val libraryItemId: String? = null,
+    val requestStatus: String? = null,
+    val tagline: String? = null,
+    val status: String? = null,
+    val seasons: Int = 0,
+    val episodes: Int = 0,
+    val runtimeMinutes: Int = 0,
+    val networks: List<String> = emptyList(),
+    val tvdbId: Int = 0,
+    val imdbId: String? = null,
+    val request: RequestRow? = null,
+    val requestsEnabled: Boolean = false,
+) {
+    val isMovie: Boolean get() = type == "movie"
+    val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()
+}
+
+@Serializable
+private data class DiscoverRequestBody(val type: String, val tmdbId: Int)
 
 @Serializable
 private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null)

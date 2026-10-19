@@ -218,8 +218,8 @@ class DownloadService : Service() {
         val src = e.item.primarySource ?: return
         src.streams.filter { it.type == "subtitle" && it.isExternal }.forEach { s ->
             val ext = when (s.codec.lowercase()) { "ass", "ssa" -> "ass"; "subrip", "srt" -> "srt"; "webvtt", "vtt" -> "vtt"; else -> s.codec.lowercase().ifEmpty { "srt" } }
-            val lang = (s.detectedLanguage ?: s.language ?: "und").lowercase()
-            val f = File(dir, "video.$lang.${s.index}.$ext")
+            val lang = (s.detectedLanguage ?: s.language ?: "und").lowercase().filter { it.isLetterOrDigit() }.ifEmpty { "und" }
+            val f = File(dir, "video.$lang.${s.index}.${ext.filter { it.isLetterOrDigit() }.ifEmpty { "srt" }}")
             if (f.exists()) return@forEach
             saveUrl("${app.api.baseUrl}/v1/sources/${src.id}/subtitles/${s.index}", f)
         }

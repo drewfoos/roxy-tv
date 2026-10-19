@@ -118,7 +118,10 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
 
     fun entry(itemId: String): DownloadEntry? = _index.value.entries[itemId]
 
-    fun dir(itemId: String): File = File(root, itemId)
+    /** Ids come from the server; keep them from ever becoming path segments ("../"). */
+    private fun safeSegment(s: String): String = s.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.ifEmpty { "x" }
+
+    fun dir(itemId: String): File = File(root, safeSegment(itemId))
 
     fun videoFile(e: DownloadEntry): File = File(dir(e.itemId), "video.${e.container}")
 
@@ -141,7 +144,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         return api.imageUrl(snap ?: item, type, widthPx)
     }
 
-    fun imageFile(itemId: String, type: String): File = File(dir(itemId), "$type.img")
+    fun imageFile(itemId: String, type: String): File = File(dir(itemId), "${safeSegment(type)}.img")
 
     /** Downloads grouped by show / movie, newest show first, entries in season and episode order. */
     fun titles(): List<DownloadedTitle> {
@@ -183,7 +186,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                     bytesDone = existing?.bytesDone ?: 0,
                     bytesTotal = src.size,
                     addedAt = existing?.addedAt ?: now,
-                    container = (src.container ?: "mkv").lowercase().removePrefix("."),
+                    container = (src.container ?: "mkv").lowercase().filter { it.isLetterOrDigit() }.ifEmpty { "mkv" },
                 )
             }
             idx.copy(entries = entries, titles = idx.titles + (title.id to TitleSnapshot(title, idx.titles[title.id]?.images.orEmpty())))

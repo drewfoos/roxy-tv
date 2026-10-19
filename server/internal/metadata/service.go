@@ -51,6 +51,16 @@ type job struct {
 	force  bool
 }
 
+// TMDB exposes the TMDB client when configured (Discover), else nil.
+func (s *Service) TMDB() *TMDB {
+	for _, p := range s.providers {
+		if t, ok := p.(*TMDB); ok {
+			return t
+		}
+	}
+	return nil
+}
+
 // AniList exposes the AniList client for non-matching uses (profile avatars).
 func (s *Service) AniList() *AniList { a, _ := s.anilist.(*AniList); return a }
 

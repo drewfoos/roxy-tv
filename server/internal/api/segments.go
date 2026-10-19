@@ -16,6 +16,12 @@ func (s *Server) detectSegments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "segment detection not running")
 		return
 	}
+	if p := userFrom(w, r); p == nil {
+		return
+	} else if !p.IsAdmin {
+		writeError(w, 403, "admin only")
+		return
+	}
 	season := r.URL.Query().Get("season")
 	if season == "" {
 		go s.segs.SweepAll(context.Background())
