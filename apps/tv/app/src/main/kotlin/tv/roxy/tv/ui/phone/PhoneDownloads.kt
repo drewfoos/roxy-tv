@@ -220,7 +220,8 @@ fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: 
     Box {
         if (compact) {
             // Icon only, for the end of the season row; the colour carries the state and the label is the description.
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(20.dp)).clickable(onClick = onTap).padding(8.dp))
+            // Same 36 dp box and 24 dp glyph as DownloadButton, so it lines up with the episode rows below.
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onTap).padding(6.dp))
         } else Row(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onTap).padding(horizontal = PhonePad, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

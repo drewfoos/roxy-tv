@@ -51,8 +51,8 @@ func TestTMDBMovieResult(t *testing.T) {
 		t.Errorf("provider ids = %v", r.ProviderIDs)
 	}
 	want := map[string]string{
-		"poster":   "https://image.tmdb.org/t/p/w780/poster.jpg",
-		"backdrop": "https://image.tmdb.org/t/p/w1280/backdrop.jpg",
+		"poster":   "https://image.tmdb.org/t/p/original/poster.jpg",
+		"backdrop": "https://image.tmdb.org/t/p/original/backdrop.jpg",
 		"logo":     "https://image.tmdb.org/t/p/w500/logo-en.png",
 	}
 	for k, v := range want {

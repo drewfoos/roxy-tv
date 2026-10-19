@@ -64,6 +64,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -159,18 +161,16 @@ fun PhoneSeries(
         // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
         // the list is a skeleton: the header is drawn from the card that opened the page
         // and the episodes simply appear under the season row when they land.
-        val hasLogo = app.api.imageUrl(series, "logo") != null
         val tabs = if (series.relatedCount > 0 || state.related.isNotEmpty()) listOf("Episodes", "Movies & OVAs") else listOf("Episodes")
         val selectedTab = if (state.showRelated && tabs.size > 1) 1 else 0
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(series, app.api, listState) }
             item(key = "info") {
                 TitleInfo(
-                    item = series,
+                    item = series, api = app.api, listState = listState,
                     badge = audioBadge(series) ?: audioBadge(playable.firstOrNull()),
                     // The provider's count (3 for KonoSuba) even when the library holds fewer; known from the list item, so it never pops in.
                     seasons = series.seasonCount ?: state.seasons.size,
-                    showTitle = !hasLogo,
                     onMoreDetails = { onOpenDetails(series) },
                 )
             }
@@ -269,7 +269,7 @@ fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier
 private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () -> Unit) -> Unit, trailing: @Composable () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Column {
-        Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad - 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalAlignment = Alignment.CenterVertically) {
             Box {
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(vertical = 12.dp),
@@ -288,7 +288,7 @@ private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () ->
 }
 
 /** Height of the banner at the top of a title page. */
-private val BannerHeight = 520.dp
+private val BannerHeight = 560.dp
 
 /**
  * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
@@ -328,7 +328,11 @@ fun TitlePageScaffold(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             HeaderIcon(Icons.Filled.Close, "Close", onClick = onBack)
-            Spacer(Modifier.weight(1f))
+            // The name takes the strip over once the banner (which carries the logo) is gone.
+            Text(
+                item.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp).alpha(((headerAlpha - 0.6f) / 0.4f).coerceIn(0f, 1f)),
+            )
             HeaderIcon(Icons.Filled.Cast, "Cast (coming soon)", tint = Color.White.copy(alpha = 0.6f))
             if (onMarkWatched != null) {
                 Box {
@@ -352,6 +356,9 @@ fun TitlePageScaffold(
         }
     }
 }
+
+/** The quiet white the facts, genres and year share; the star rating is a shade brighter. */
+val FactsGrey = Color.White.copy(alpha = 0.72f)
 
 /** Crunchyroll's age badge: short label on a grey block. */
 @Composable
@@ -380,19 +387,18 @@ private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Col
 }
 
 /**
- * Full-bleed key art (the backdrop, cropped tall) that fades and slides up as the page
- * scrolls, melting into the page colour at its foot. The show's logo sits in that fade,
- * like Crunchyroll's banners, so the page needs no title line when one exists.
+ * Full-bleed key art (the backdrop, cropped tall), pinned behind the page: the content
+ * scrolls up over it while it fades to black, so the picture is gone by the time the
+ * synopsis reaches where it was. The logo is not here; it scrolls with the content.
  */
 @Composable
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
     val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
     Box(
-        // Scrolls with the page (no parallax: a banner that lags behind lets the text
-        // ride up into the picture) and dims to black on the way out.
         modifier = Modifier.fillMaxWidth().height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
-            alpha = (1f - off / (heightPx * 0.9f)).coerceIn(0f, 1f)
+            translationY = off
+            alpha = (1f - off / (heightPx * 0.6f)).coerceIn(0f, 1f)
         },
     ) {
         val backdrop = api.imageUrl(item, "backdrop", widthPx(420.dp) * 2)
@@ -411,61 +417,82 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
                 Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, solidPx / (solidPx + fadePx) to Color.Black, 1f to Color.Transparent), startY = 0f, endY = solidPx + fadePx),
             ),
         )
-        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 0.8f to RoxyColors.background.copy(alpha = 0.88f), 1f to RoxyColors.background)))
-        val logo = api.imageUrl(item, "logo", widthPx(320.dp))
-        if (logo != null) {
-            AsyncImage(
-                model = logo, contentDescription = item.title, contentScale = ContentScale.Fit,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp).fillMaxWidth(0.7f).heightIn(max = 84.dp),
-            )
-        }
+        Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 0.85f to RoxyColors.background.copy(alpha = 0.85f), 1f to RoxyColors.background)))
     }
 }
 
+/** How far the logo block reaches up into the banner's faded foot. */
+private val LogoOverlap = 110.dp
+
 /**
- * Centred title block under the banner, Crunchyroll's order: the name only when the
- * banner carries no logo; "TV-14 • Dub | Sub • genres"; the star rating with the year
- * and season count; the synopsis (tap to expand); "More details" as a link.
+ * Reports a shorter height than the content and places it that much higher, so a list
+ * item can sit over the foot of the one above it (the logo over the banner's fade).
+ */
+private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val up = by.roundToPx()
+    layout(placeable.width, (placeable.height - up).coerceAtLeast(0)) { placeable.placeRelative(0, -up) }
+}
+
+/**
+ * The title block under (and reaching into) the banner, Crunchyroll's order: the logo
+ * (or name) with "14+  Dub | Sub" under it on a black band that appears as the page
+ * scrolls, so the block stays legible while it rides up over the picture; then the
+ * star rating with year and season count, the genres, the synopsis (tap to expand)
+ * and "More details".
  */
 @Composable
-fun TitleInfo(item: Item, badge: String?, seasons: Int = 0, extra: String? = null, showTitle: Boolean = true, onMoreDetails: (() -> Unit)? = null) {
+fun TitleInfo(item: Item, api: RoxyApi, listState: LazyListState, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (showTitle) {
-            Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 10.dp))
-        }
-        // "14+" as a grey pill with Dub | Sub beside it; the genres get their own line.
-        val age = item.officialRating?.let { ageLabel(it) }
-        if (age != null || badge != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (age != null) AgePill(age)
-                if (age != null && badge != null) Spacer(Modifier.width(10.dp))
-                if (badge != null) Text(badge, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+    val bandPx = with(LocalDensity.current) { 120.dp.toPx() }
+    Column(modifier = Modifier.fillMaxWidth().pullUp(LogoOverlap), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.fillMaxWidth().drawBehind {
+                val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else bandPx
+                drawRect(Color.Black.copy(alpha = (off / bandPx).coerceIn(0f, 1f) * 0.6f))
+            }.padding(horizontal = PhonePad, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val logo = api.imageUrl(item, "logo", widthPx(320.dp))
+            if (logo != null) {
+                AsyncImage(model = logo, contentDescription = item.title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth(0.7f).heightIn(max = 84.dp))
+            } else {
+                Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
+            }
+            val age = item.officialRating?.let { ageLabel(it) }
+            if (age != null || badge != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 14.dp)) {
+                    if (age != null) AgePill(age)
+                    if (age != null && badge != null) Spacer(Modifier.width(10.dp))
+                    if (badge != null) Text(badge, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
+                }
             }
         }
-        val genres = item.genres.take(3).joinToString(", ")
-        if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
-        FactsLine(
-            rating = item.communityRating,
-            facts = listOfNotNull(
-                (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
-                seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-                extra,
-            ),
-        )
-        item.overview?.takeIf { it.isNotBlank() }?.let {
-            Text(
-                it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
-                maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
+            FactsLine(
+                rating = item.communityRating,
+                facts = listOfNotNull(
+                    (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
+                    seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
+                    extra,
+                ),
             )
-        }
-        // Crunchyroll's "More details": a centred link in the brand colour, not a button.
-        if (onMoreDetails != null) {
-            Text(
-                "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
-                modifier = Modifier.padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp, horizontal = 8.dp),
-            )
+            val genres = item.genres.take(3).joinToString(", ")
+            if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = FactsGrey, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+            item.overview?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
+                    maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
+                )
+            }
+            // Crunchyroll's "More details": a centred link in the brand colour, not a button.
+            if (onMoreDetails != null) {
+                Text(
+                    "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
+                    modifier = Modifier.padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp, horizontal = 8.dp),
+                )
+            }
         }
     }
 }

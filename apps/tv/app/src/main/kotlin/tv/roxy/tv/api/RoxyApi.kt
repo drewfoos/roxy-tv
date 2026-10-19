@@ -273,7 +273,8 @@ class RoxyApi(private val prefs: Prefs) {
     fun imageUrl(item: Item, type: String, widthPx: Int? = null): String? {
         val rel = item.images[type] ?: return null
         val abs = if (rel.startsWith("http")) rel else baseUrl + rel
-        return if (widthPx != null && widthPx > 0) "$abs?w=$widthPx" else abs
+        if (widthPx == null || widthPx <= 0) return abs
+        return abs + (if ('?' in abs) "&w=" else "?w=") + widthPx
     }
 
     // ---- player helpers ----

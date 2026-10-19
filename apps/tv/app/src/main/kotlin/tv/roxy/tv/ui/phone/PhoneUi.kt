@@ -286,12 +286,12 @@ fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifie
     Text(
         buildAnnotatedString {
             if (rating != null) {
-                withStyle(SpanStyle(color = RoxyColors.accent, fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
+                withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
                 if (rest.isNotEmpty()) append("  ·  ")
             }
             append(rest.joinToString("  ·  "))
         },
-        fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = modifier.padding(top = 8.dp),
+        fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center, modifier = modifier.padding(top = 8.dp),
     )
 }
 

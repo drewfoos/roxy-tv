@@ -304,10 +304,14 @@ func (t *TMDB) seasonResult(s *tmdbSeason) *Season {
 }
 
 func (t *TMDB) setImages(r *Result, poster, backdrop string, imgs *tmdbImages) {
-	if p := t.image("w780", poster); p != "" {
+	// Full-size originals: the phone crops the backdrop into a banner taller than it is
+	// wide and shows the poster across the whole screen, so a 1280 px backdrop or a
+	// 780 px poster gets stretched to mush. The server resizes to what each view asks
+	// for and caches the variants, so only the stored file grows.
+	if p := t.image("original", poster); p != "" {
 		r.Images["poster"] = p
 	}
-	if b := t.image("w1280", backdrop); b != "" {
+	if b := t.image("original", backdrop); b != "" {
 		r.Images["backdrop"] = b
 	}
 	if imgs != nil {

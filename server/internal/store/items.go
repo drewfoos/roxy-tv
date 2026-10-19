@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -150,13 +151,13 @@ func (s *Store) fillItemExtras(ctx context.Context, items []model.Item) error {
 		}
 		rows.Close()
 
-		rows, err = s.db.QueryContext(ctx, `SELECT item_id, type FROM item_images WHERE item_id IN (`+ph+`)`, args...)
+		rows, err = s.db.QueryContext(ctx, `SELECT item_id, type, fetched_at FROM item_images WHERE item_id IN (`+ph+`)`, args...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var id, t string
-			if err := rows.Scan(&id, &t); err != nil {
+			var id, t, fetched string
+			if err := rows.Scan(&id, &t, &fetched); err != nil {
 				rows.Close()
 				return err
 			}
@@ -164,7 +165,7 @@ func (s *Store) fillItemExtras(ctx context.Context, items []model.Item) error {
 				if items[i].Images == nil {
 					items[i].Images = map[string]string{}
 				}
-				items[i].Images[t] = ImageURL(id, t)
+				items[i].Images[t] = ImageURLAt(id, t, fetched)
 			}
 		}
 		rows.Close()
@@ -191,6 +192,16 @@ func (s *Store) fillItemExtras(ctx context.Context, items []model.Item) error {
 // ImageURL is the relative URL the native API serves an item image at.
 func ImageURL(itemID, imageType string) string {
 	return "/v1/items/" + itemID + "/images/" + imageType
+}
+
+// ImageURLAt is ImageURL with a version tag from the fetch time, so a client's image
+// cache (keyed by URL) drops the old file when the art is replaced.
+func ImageURLAt(itemID, imageType, fetchedAt string) string {
+	u := ImageURL(itemID, imageType)
+	if t := ParseTime(fetchedAt); !t.IsZero() {
+		u += "?v=" + strconv.FormatInt(t.Unix(), 36)
+	}
+	return u
 }
 
 // ItemQuery is the filter for ListItems. Zero values mean "no filter".
