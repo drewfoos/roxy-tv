@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.BottomSheetDefaults
@@ -266,18 +265,18 @@ private val ratingChoices = listOf(0.0 to "Any rating", 6.0 to "6+", 7.0 to "7+"
 private val yearChoices: List<Pair<Pair<Int, Int>, String>> = listOf((0 to 0) to "Any year", (2020 to 0) to "2020s", (2010 to 2019) to "2010s", (2000 to 2009) to "2000s", (1990 to 1999) to "1990s", (0 to 1989) to "Before 1990")
 
 /**
- * Chips under the search box: Series / Movies, Anime, Sort, and a Filters chip with a
- * count; Clear when anything is set. Chips flip the obvious things in place; the rest
- * opens the sheet.
+ * Chips under the search box: Series / Movies, Anime, one chip for the sheet (named after
+ * the sort, with a count of the other filters), and Clear when anything is set.
  */
 @Composable
 private fun FilterBar(filters: BrowseFilters, onChange: (BrowseFilters) -> Unit, onOpenSheet: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip(if (filters.type == "movie") "Movies" else "Series", selected = filters.browsing, trailing = Icons.Filled.SwapHoriz, onClick = { onChange(filters.copy(type = if (filters.type == "movie") "tv" else "movie", genres = emptyList(), status = "", browsing = true)) })
         Chip("Anime", selected = filters.anime, onClick = { onChange(filters.copy(anime = !filters.anime, language = "", browsing = true)) })
-        Chip(sortChoices.firstOrNull { it.first == filters.sort }?.second ?: "Sort", selected = filters.sort != "popular", trailing = Icons.Filled.ArrowDropDown, onClick = onOpenSheet)
+        // One chip for the sheet; it names the sort and counts the other filters, e.g. "Top rated · 2".
         val n = filters.count - (if (filters.anime) 1 else 0)
-        Chip(if (n > 0) "Filters · $n" else "Filters", selected = n > 0, trailing = Icons.Filled.Tune, onClick = onOpenSheet)
+        val sortLabel = sortChoices.firstOrNull { it.first == filters.sort }?.second ?: "Popular"
+        Chip(if (n > 0) "$sortLabel · $n" else sortLabel, selected = n > 0 || filters.sort != "popular", trailing = Icons.Filled.Tune, onClick = onOpenSheet)
         if (filters.isActive) Chip("Clear", selected = false, trailing = Icons.Filled.Close, onClick = { onChange(BrowseFilters(type = filters.type)) })
     }
 }
