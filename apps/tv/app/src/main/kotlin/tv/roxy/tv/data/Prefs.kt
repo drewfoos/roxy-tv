@@ -30,6 +30,8 @@ data class Session(
     val profileAvatarVersion: Int = 0,
     /** The server's avatarKey for the active profile (changes with the picture). */
     val profileAvatarKey: String = "",
+    /** Terms version this login accepted, as last confirmed with the server ("" = unknown / not yet). */
+    val acceptedTerms: String = "",
     /** The profile used last, kept across Switch profile so the picker can mark it and offer a way back. */
     val lastProfileId: String? = null,
 ) {
@@ -118,6 +120,11 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    suspend fun setAcceptedTerms(version: String) {
+        val cur = _session.value
+        if (cur.acceptedTerms != version) saveSession(cur.copy(acceptedTerms = version))
+    }
+
     /** Keep the admin flag in step with what the server says at start-up. */
     suspend fun setAdmin(admin: Boolean) {
         val cur = _session.value
@@ -146,6 +153,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_PROFILE_AVATAR] = s.profileHasAvatar
             it[KEY_PROFILE_AVATAR_V] = s.profileAvatarVersion
             it[KEY_PROFILE_AVATAR_KEY] = s.profileAvatarKey
+            it[KEY_TERMS] = s.acceptedTerms
             if (s.lastProfileId == null) it.remove(KEY_LAST_PROFILE) else it[KEY_LAST_PROFILE] = s.lastProfileId
         }
     }
@@ -174,6 +182,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it.remove(KEY_PROFILE_AVATAR)
             it.remove(KEY_LAST_PROFILE)
             it.remove(KEY_PROFILES_CACHE)
+            it.remove(KEY_TERMS)
         }
     }
 
@@ -200,6 +209,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         profileHasAvatar = this[KEY_PROFILE_AVATAR] ?: false,
         profileAvatarVersion = this[KEY_PROFILE_AVATAR_V] ?: 0,
         profileAvatarKey = this[KEY_PROFILE_AVATAR_KEY].orEmpty(),
+        acceptedTerms = this[KEY_TERMS].orEmpty(),
         lastProfileId = this[KEY_LAST_PROFILE]?.takeIf { it.isNotEmpty() },
     )
 
@@ -226,6 +236,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_PROFILE_AVATAR = booleanPreferencesKey("profile_has_avatar")
         val KEY_PROFILE_AVATAR_V = intPreferencesKey("profile_avatar_v")
         val KEY_PROFILE_AVATAR_KEY = stringPreferencesKey("profile_avatar_key")
+        val KEY_TERMS = stringPreferencesKey("accepted_terms")
         val KEY_LAST_PROFILE = stringPreferencesKey("last_profile_id")
         val KEY_HWDEC = stringPreferencesKey("hwdec")
         val KEY_VO = stringPreferencesKey("vo")

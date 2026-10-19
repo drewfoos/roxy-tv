@@ -16,6 +16,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import tv.roxy.tv.ui.Splash
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -67,32 +72,54 @@ fun isTelevision(context: Context): Boolean {
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 }
 
-/** Login when there is no session; otherwise the TV or phone navigation graph. The stored token is validated with GET /v1/auth/me. */
+/**
+ * Splash (hat breathing while the stored session is checked), then Login (which has the
+ * Terms of Use checkbox), then "Who's watching?", then the TV or phone graph. The stored token is validated with
+ * GET /v1/auth/me.
+ */
 @Composable
 private fun AppRoot(tv: Boolean) {
     val app = RoxyApp.get(LocalContext.current)
     val session by app.prefs.session.collectAsStateWithLifecycle()
+    var splash by remember { mutableStateOf(true) }
 
     LaunchedEffect(session.token) {
-        val token = session.token ?: return@LaunchedEffect
-        runCatching { app.api.me() }
-            .onSuccess {
-                Timber.i("session ok: %s @ %s", it.name ?: "api-key", session.serverUrl)
-                app.prefs.setAdmin(it.isAdmin)
-                // Positions watched offline (downloads) reach the server now; queued downloads resume.
-                app.downloads.syncProgress(app.api)
-                app.downloads.kick()
-                app.updates.check()
-            }
-            .onFailure { t ->
-                if (t is ApiException && t.isUnauthorized) {
-                    Timber.w("stored token rejected (401); logging out")
-                    app.prefs.clearSession()
-                } else Timber.w("auth/me check failed (%s); keeping session", t.message)
-            }
-        Timber.d("token check done for %s", token.take(6))
+        val started = System.currentTimeMillis()
+        val token = session.token
+        if (token != null) {
+            runCatching { app.api.me() }
+                .onSuccess {
+                    Timber.i("session ok: %s @ %s", it.name ?: "api-key", session.serverUrl)
+                    app.prefs.setAdmin(it.isAdmin)
+                    // Terms are agreed by the checkbox on the sign-in screen; record that with the
+                    // server once (it keeps the version per login), and mirror what it knows.
+                    runCatching { app.api.legalStatus() }.onSuccess { st ->
+                        if (st.accepted) app.prefs.setAcceptedTerms(st.version)
+                        else if (session.acceptedTerms.isNotEmpty()) runCatching { app.api.acceptLegal(st.version) }.onSuccess { app.prefs.setAcceptedTerms(st.version) }
+                    }
+                    // Positions watched offline (downloads) reach the server now; queued downloads resume.
+                    app.downloads.syncProgress(app.api)
+                    app.downloads.kick()
+                    app.updates.check()
+                }
+                .onFailure { t ->
+                    if (t is ApiException && t.isUnauthorized) {
+                        Timber.w("stored token rejected (401); logging out")
+                        app.prefs.clearSession()
+                    } else Timber.w("auth/me check failed (%s); keeping session", t.message)
+                }
+            Timber.d("token check done for %s", token.take(6))
+        }
+        // At least a beat of the hat, so a warm start never flashes from the icon into Home.
+        val remaining = 1200 - (System.currentTimeMillis() - started)
+        if (remaining > 0) delay(remaining)
+        splash = false
     }
 
+    if (splash) {
+        Splash()
+        return
+    }
     if (!session.isLoggedIn) {
         LoginScreen()
         return

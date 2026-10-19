@@ -237,6 +237,19 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun webhookEvents(limit: Int = 30): List<WebhookEvent> = get<WebhookEventsResponse>("/v1/webhooks/events?limit=$limit").events
 
+    // ---- legal ----
+
+    suspend fun legal(doc: String): LegalDoc = get("/v1/legal/$doc")
+
+    /** The same, from a server URL typed on the login screen (no session yet). */
+    suspend fun legalAt(serverUrl: String, doc: String): LegalDoc = withContext(Dispatchers.IO) {
+        execute<LegalDoc>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/legal/$doc").get().build())
+    }
+
+    suspend fun legalStatus(): LegalStatus = get("/v1/legal/status")
+
+    suspend fun acceptLegal(version: String) = postNoBody("/v1/legal/accept", json.encodeToString(VersionBody.serializer(), VersionBody(version)))
+
     // ---- app updates ----
 
     /** The newest build of this app the server hosts (404 when none is published). */
@@ -805,6 +818,15 @@ data class ArrProbe(val version: String = "", val appName: String = "", val root
 
 @Serializable
 private data class ArrTestBody(val kind: String, val url: String, val apiKey: String)
+
+@Serializable
+data class LegalDoc(val doc: String = "", val title: String = "", val version: String = "", val body: String = "")
+
+@Serializable
+data class LegalStatus(val version: String = "", val accepted: Boolean = false, val acceptedVersion: String = "")
+
+@Serializable
+private data class VersionBody(val version: String)
 
 @Serializable
 data class ApiKeyRow(val id: String, val name: String = "", val createdAt: String = "")

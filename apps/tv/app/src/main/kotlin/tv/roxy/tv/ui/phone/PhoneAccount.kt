@@ -57,7 +57,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -143,8 +143,8 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
 
         SectionTitle("About", modifier = Modifier.padding(top = 8.dp))
         InfoRow("Version", "${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
-        SoonRow("Terms of Service", "")
-        SoonRow("Privacy Policy", "")
+        SettingRow("Terms of Use", if (session.acceptedTerms.isNotEmpty()) "Accepted  ·  version ${session.acceptedTerms}" else "Read the terms") { onOpenLegal("terms") }
+        SettingRow("Privacy", "What stays on your server and your device") { onOpenLegal("privacy") }
     }
 
     pick?.let { p ->

@@ -59,10 +59,14 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/system/info", s.systemInfo)
 		r.Post("/auth/login", s.login)
+		r.Get("/legal/terms", s.legalDoc)
+		r.Get("/legal/privacy", s.legalDoc)
 
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.Middleware(true)) // Bearer token, or ?api_key= for player-fetched media
 			r.Get("/auth/me", s.me)
+			r.Get("/legal/status", s.legalStatus)
+			r.Post("/legal/accept", s.legalAccept)
 			r.Post("/auth/logout", s.logout)
 			r.Get("/libraries", s.listLibraries)
 			r.Post("/libraries/scan", s.scanAll)

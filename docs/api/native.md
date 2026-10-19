@@ -285,6 +285,15 @@ library knows) wins. Every notification lands in `GET /v1/webhooks/events?limit=
 (admin) with its outcome. API keys: `GET/POST /v1/auth/keys`, `DELETE
 /v1/auth/keys/{id}` (admin; the token is returned once on create).
 
+## Legal
+
+The Terms of Use and Privacy text live on the server so every device shows the same
+version. `GET /v1/legal/terms` and `/v1/legal/privacy` (no auth) → `{doc, title,
+version, body}`; `GET /v1/legal/status` → `{version, accepted, acceptedVersion}` for
+the login; `POST /v1/legal/accept {version}` records acceptance (409 on a stale
+version). The app requires the "I agree" checkbox on the sign-in screen and records the
+acceptance after login; Account → About links both documents.
+
 ## App updates
 
 Self-hosted apps have no store, so Roxy Server is the update channel. After a build,

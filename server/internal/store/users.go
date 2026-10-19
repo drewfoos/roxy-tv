@@ -159,3 +159,15 @@ func (s *Store) DeleteAPIKeyByHash(ctx context.Context, hash string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE token_hash = ?`, hash)
 	return err
 }
+
+// AcceptedTerms is the terms version this user accepted ("" = never).
+func (s *Store) AcceptedTerms(ctx context.Context, userID string) (string, error) {
+	var v sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT accepted_terms FROM users WHERE id = ?`, userID).Scan(&v)
+	return v.String, err
+}
+
+func (s *Store) SetAcceptedTerms(ctx context.Context, userID, version string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET accepted_terms = ? WHERE id = ?`, version, userID)
+	return err
+}

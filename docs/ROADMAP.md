@@ -173,6 +173,11 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   files on the server; cast with photos; keywords; links to TMDB / AniList / MAL / IMDb /
   TVDB / official site (`GET /v1/items/{id}/details`). **Profile avatar fix**: a changed
   picture was served from the image cache (same URL); profiles now carry `avatarKey`.
+- Also done (2026-10-20): **Terms of Use and Privacy** (server-served, versioned, per-login
+  acceptance; checkbox on the sign-in screen, readable from Account → About) and a
+  **splash screen** (the hat breathing with a glow and the Roxy TV wordmark while the
+  stored session is checked, at least 1.2 s). The repo still has no LICENSE file; pick one
+  before the first public release.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks
