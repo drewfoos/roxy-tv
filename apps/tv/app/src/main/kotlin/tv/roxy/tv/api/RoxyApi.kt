@@ -535,6 +535,10 @@ data class Item(
     val airDate: String? = null,
     val status: String? = null,
     val studio: String? = null,
+    /** Series: seasons the provider knows (specials excluded); the library may hold fewer. */
+    val seasonCount: Int? = null,
+    /** Series: linked movies / OVAs / side stories, so the title page knows to show the tab at once. */
+    val relatedCount: Int = 0,
     val indexAired: Int? = null,
     val seasonAired: Int? = null,
     val indexAbsolute: Int? = null,

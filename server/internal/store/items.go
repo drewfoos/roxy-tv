@@ -15,7 +15,8 @@ import (
 // unqualified SELECT list; itemColsFor(alias) qualifies them for joins.
 var itemColNames = []string{"id", "guid", "library_id", "type", "parent_id", "title", "sort_title", "year", "overview",
 	"index_aired", "season_aired", "index_absolute", "runtime_ms", "date_created", "date_modified",
-	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual"}
+	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual",
+	"season_count", "related_count"}
 
 var itemCols = strings.Join(itemColNames, ", ")
 
@@ -31,13 +32,13 @@ func itemColsFor(alias string) string {
 func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, error) {
 	var it model.Item
 	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed sql.NullString
-	var year, idxAired, seasonAired, idxAbs, runtime sql.NullInt64
+	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount sql.NullInt64
 	var rating sql.NullFloat64
 	var created, modified string
 	var virtual int
 	dest := []any{&it.ID, &it.GUID, &it.LibraryID, &it.Type, &parent, &it.Title, &sortTitle, &year, &overview,
 		&idxAired, &seasonAired, &idxAbs, &runtime, &created, &modified,
-		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual}
+		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount}
 	dest = append(dest, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return nil, err
@@ -68,6 +69,8 @@ func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, er
 	it.Status = status.String
 	it.Studio = studio.String
 	it.IsVirtual = virtual == 1
+	it.SeasonCount = ptrInt(seasonCount)
+	it.RelatedCount = int(relatedCount.Int64)
 	if refreshed.Valid {
 		if t := ParseTime(refreshed.String); !t.IsZero() {
 			it.MetadataRefreshedAt = &t

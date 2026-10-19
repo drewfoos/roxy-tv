@@ -23,6 +23,7 @@ type ItemMetadata struct {
 	Premiered       string // YYYY-MM-DD
 	Status          string
 	Studio          string
+	SeasonCount     int // series: 0 = unknown
 	ProviderIDs     map[string]string
 }
 
@@ -38,9 +39,9 @@ func (s *Store) UpdateItemMetadata(ctx context.Context, id string, m ItemMetadat
 		title = COALESCE(?, title), year = COALESCE(?, year), overview = COALESCE(?, overview), tagline = COALESCE(?, tagline),
 		genres = COALESCE(?, genres), community_rating = COALESCE(?, community_rating), official_rating = COALESCE(?, official_rating),
 		premiere_date = COALESCE(?, premiere_date), status = COALESCE(?, status), studio = COALESCE(?, studio),
-		metadata_refreshed_at = ?, date_modified = ? WHERE id = ?`,
+		season_count = COALESCE(?, season_count), metadata_refreshed_at = ?, date_modified = ? WHERE id = ?`,
 		nullStr(m.Title), intPtrNull(m.Year), nullStr(m.Overview), nullStr(m.Tagline), genres, nullFloat(m.CommunityRating),
-		nullStr(m.OfficialRating), nullStr(m.Premiered), nullStr(m.Status), nullStr(m.Studio), now, now, id)
+		nullStr(m.OfficialRating), nullStr(m.Premiered), nullStr(m.Status), nullStr(m.Studio), nullInt(m.SeasonCount), now, now, id)
 	if err != nil {
 		return err
 	}

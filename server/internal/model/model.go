@@ -56,6 +56,8 @@ type Item struct {
 	AirDate             string     `json:"airDate,omitempty"`   // episodes: same value as Premiered
 	Status              string     `json:"status,omitempty"`    // series: Continuing | Ended
 	Studio              string     `json:"studio,omitempty"`
+	SeasonCount         *int       `json:"seasonCount,omitempty"`  // series: seasons the provider knows, specials excluded
+	RelatedCount        int        `json:"relatedCount,omitempty"` // series: linked movies / OVAs / side stories
 	MetadataRefreshedAt *time.Time `json:"metadataRefreshedAt,omitempty"`
 	// Images maps an image type (poster, backdrop, logo, thumb) to its relative URL
 	// (/v1/items/{id}/images/{type}). Absent keys mean "no image".

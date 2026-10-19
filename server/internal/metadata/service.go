@@ -188,7 +188,23 @@ func (s *Service) process(ctx context.Context, j job) error {
 	}
 	merged := merge(primary, secondary)
 	if !onlyNewEpisodes {
-		if err := s.store.UpdateItemMetadata(ctx, it.ID, itemMetadata(merged, it.Type)); err != nil {
+		meta := itemMetadata(merged, it.Type)
+		if it.Type == model.TypeSeries {
+			// Season numbering follows TMDB (TVDB-style seasons), never AniList's chain of
+			// sequels, which counts spin-offs and split cours as seasons of their own. A
+			// season TMDB lists before it has any episodes (announced only) does not count.
+			for _, r := range []*Result{primary, secondary} {
+				if r != nil && r.Provider == "tmdb" {
+					meta.SeasonCount = 0
+					for _, se := range r.Seasons {
+						if se.Number > 0 && se.EpisodeCount > 0 {
+							meta.SeasonCount++
+						}
+					}
+				}
+			}
+		}
+		if err := s.store.UpdateItemMetadata(ctx, it.ID, meta); err != nil {
 			return err
 		}
 		for _, typ := range model.ImageTypes {

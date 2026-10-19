@@ -160,7 +160,7 @@ fun PhoneSeries(
         // the list is a skeleton: the header is drawn from the card that opened the page
         // and the episodes simply appear under the season row when they land.
         val hasLogo = app.api.imageUrl(series, "logo") != null
-        val tabs = if (state.related.isNotEmpty()) listOf("Episodes", "Movies & OVAs") else listOf("Episodes")
+        val tabs = if (series.relatedCount > 0 || state.related.isNotEmpty()) listOf("Episodes", "Movies & OVAs") else listOf("Episodes")
         val selectedTab = if (state.showRelated && tabs.size > 1) 1 else 0
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(series, app.api, listState) }
@@ -168,7 +168,8 @@ fun PhoneSeries(
                 TitleInfo(
                     item = series,
                     badge = audioBadge(series) ?: audioBadge(playable.firstOrNull()),
-                    seasons = state.seasons.size,
+                    // The provider's count (3 for KonoSuba) even when the library holds fewer; known from the list item, so it never pops in.
+                    seasons = series.seasonCount ?: state.seasons.size,
                     showTitle = !hasLogo,
                     onMoreDetails = { onOpenDetails(series) },
                 )
@@ -287,7 +288,7 @@ private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () ->
 }
 
 /** Height of the banner at the top of a title page. */
-private val BannerHeight = 470.dp
+private val BannerHeight = 520.dp
 
 /**
  * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
@@ -387,10 +388,11 @@ private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Col
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
     val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
     Box(
+        // Scrolls with the page (no parallax: a banner that lags behind lets the text
+        // ride up into the picture) and dims to black on the way out.
         modifier = Modifier.fillMaxWidth().height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
-            alpha = (1f - off / (heightPx * 0.8f)).coerceIn(0f, 1f)
-            translationY = off * 0.45f
+            alpha = (1f - off / (heightPx * 0.9f)).coerceIn(0f, 1f)
         },
     ) {
         val backdrop = api.imageUrl(item, "backdrop", widthPx(420.dp) * 2)

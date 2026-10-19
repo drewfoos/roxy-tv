@@ -36,6 +36,11 @@ func (s *Store) ReplaceRelations(ctx context.Context, itemID string, rels []Item
 			return err
 		}
 	}
+	// The count rides on the item row so a list item can say whether a title page gets
+	// a "Movies & OVAs" tab without a second request.
+	if _, err := tx.ExecContext(ctx, `UPDATE items SET related_count = ? WHERE id = ?`, len(rels), itemID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
