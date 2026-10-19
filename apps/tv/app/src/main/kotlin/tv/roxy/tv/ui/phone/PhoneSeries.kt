@@ -287,7 +287,7 @@ private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () ->
 }
 
 /** Height of the banner at the top of a title page. */
-private val BannerHeight = 440.dp
+private val BannerHeight = 520.dp
 
 /**
  * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
@@ -310,9 +310,16 @@ fun TitlePageScaffold(
 ) {
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val barHeight = 44.dp + 24.dp
-    // Crunchyroll's strip is solid black from the start (the picture starts under it,
-    // not behind it); the name fades in once the logo block has scrolled under the strip.
+    // The strip is transparent over the banner at rest (the X and icons sit on the art's
+    // dark top) and solid within the first 100 dp of scroll; the name fades in once the
+    // logo block has scrolled under it.
     val density = LocalDensity.current
+    val stripPx = with(density) { 100.dp.toPx() }
+    val headerAlpha by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / stripPx).coerceIn(0f, 1f)
+        }
+    }
     val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
     val titleOverPx = with(density) { 70.dp.toPx() }
     val titleAlpha by remember {
@@ -325,7 +332,7 @@ fun TitlePageScaffold(
         // Crunchyroll's header: a plain white X at the left, Cast and the three-dot menu
         // at the right, over the banner's top fade; the strip turns solid once scrolled.
         Row(
-            modifier = Modifier.fillMaxWidth().background(RoxyColors.background).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             HeaderIcon(Icons.Filled.Close, "Close", onClick = onBack)
@@ -391,17 +398,17 @@ private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Col
 private val HeaderRow = 52.dp
 
 /**
- * Full-bleed key art (the backdrop, cropped tall) under the header strip. Pinned where
- * it is while the page scrolls over it, dimming to black on the way, like Crunchyroll's:
- * the content brings its own fade (see [TitleInfo]), so nothing bright is ever under the
- * text. The logo is not here; it scrolls with the content.
+ * Full-bleed key art (the backdrop, cropped tall) from the very top of the screen, with
+ * the status bar and header row on its darkened top. Pinned where it is while the page
+ * scrolls over it, dimming to black on the way, like Crunchyroll's: the content brings
+ * its own fade (see [TitleInfo]), so nothing bright is ever under the text. The logo is
+ * not here; it scrolls with the content.
  */
 @Composable
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
     val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
-    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + HeaderRow
     Box(
-        modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
+        modifier = Modifier.fillMaxWidth().height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
             translationY = off
             alpha = (1f - off / (heightPx * 0.55f)).coerceIn(0f, 1f)
@@ -413,6 +420,15 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
         // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
         val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
         RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
+        // Black through the status bar, then a fade the X and icons sit on.
+        val density = LocalDensity.current
+        val solidPx = with(density) { WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx() }
+        val fadePx = with(density) { (HeaderRow + 90.dp).toPx() }
+        Box(
+            modifier = Modifier.matchParentSize().background(
+                Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, solidPx / (solidPx + fadePx) to Color(0xD9000000), 1f to Color.Transparent), startY = 0f, endY = solidPx + fadePx),
+            ),
+        )
     }
 }
 
