@@ -144,7 +144,8 @@ fun PhoneSeries(
     }
     val seasonLabel = when {
         selectedExtra != null -> "Season $selectedExtra"
-        state.showRelated || state.seasons.isEmpty() -> "Episodes"
+        state.showRelated -> "Movies & OVAs"
+        state.seasons.isEmpty() -> "Episodes"
         else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
     }
     fun download(items: List<Item>) = startDownload(items, series, seasonLabel.takeIf { it != "Episodes" })
@@ -171,13 +172,14 @@ fun PhoneSeries(
         // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
         // the list is a skeleton: the header is drawn from the card that opened the page
         // and the episodes simply appear under the season row when they land.
+        // Two tabs; the films and OVAs are an entry in the season dropdown, not a tab.
         val hasRelated = series.relatedCount > 0 || state.related.isNotEmpty()
-        val tabs = listOf("Episodes") + (if (hasRelated) listOf("Movies & OVAs") else emptyList()) + "More like this"
+        val tabs = listOf("Episodes", "More like this")
         // "More like this": TMDB's recommendations, fetched the first time the tab is opened.
         var moreLike by rememberSaveable(seriesId) { mutableStateOf(false) }
         var similar by remember(seriesId) { mutableStateOf<List<DiscoverItem>?>(null) }
         LaunchedEffect(moreLike, series.id) { if (moreLike && similar == null) similar = runCatching { app.api.similar(series.id) }.getOrDefault(emptyList()) }
-        val selectedTab = when { moreLike -> tabs.lastIndex; state.showRelated && hasRelated -> 1; else -> 0 }
+        val selectedTab = if (moreLike) 1 else 0
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(series, app.api, listState) }
             item(key = "info") {
@@ -190,11 +192,8 @@ fun PhoneSeries(
                 )
             }
             item(key = "tabs") {
-                SectionTabs(tabs, selectedTab, modifier = Modifier.padding(top = 22.dp)) { i ->
-                    selectedExtra = null
-                    moreLike = i == tabs.lastIndex
-                    if (i == 1 && hasRelated) vm.selectRelated() else if (!moreLike) vm.selectSeason(state.selectedSeason)
-                }
+                // The strip paints its own gap, or the pinned banner shows through it.
+                SectionTabs(tabs, selectedTab, modifier = Modifier.background(RoxyColors.background).padding(top = 22.dp)) { i -> moreLike = i == 1 }
             }
             if (moreLike) {
                 val list = similar
@@ -209,15 +208,8 @@ fun PhoneSeries(
                         }
                     }
                 }
-            } else if (selectedTab == 1) {
-                items(state.related.chunked(3)) { row ->
-                    RelatedGridRow(row, app.api, onOpen = { rel ->
-                        val item = rel.item ?: return@RelatedGridRow
-                        if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
-                    })
-                }
             } else {
-                if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty()) {
+                if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty() || hasRelated) {
                     item(key = "seasons") {
                         SeasonRow(
                             label = seasonLabel,
@@ -240,16 +232,29 @@ fun PhoneSeries(
                                         onClick = { close(); selectedExtra = sn.number },
                                     )
                                 }
+                                if (hasRelated) {
+                                    DropdownMenuItem(
+                                        text = { Text("Movies & OVAs", color = Color.White, fontWeight = if (state.showRelated) FontWeight.Bold else FontWeight.Normal) },
+                                        onClick = { close(); selectedExtra = null; vm.selectRelated() },
+                                    )
+                                }
                             },
                             trailing = {
                                 // Season download lives at the end of the season row as an icon, not a row of its own.
-                                if (selectedExtra == null && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
+                                if (selectedExtra == null && !state.showRelated && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
                             },
                         )
                     }
                 }
                 val extra = extraSeasons.firstOrNull { it.number == selectedExtra }
-                if (extra != null && tmdbId != null) {
+                if (state.showRelated && selectedExtra == null) {
+                    items(state.related.chunked(3)) { row ->
+                        RelatedGridRow(row, app.api, onOpen = { rel ->
+                            val item = rel.item ?: return@RelatedGridRow
+                            if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
+                        })
+                    }
+                } else if (extra != null && tmdbId != null) {
                     item(key = "extra-season") {
                         Column {
                             Text(

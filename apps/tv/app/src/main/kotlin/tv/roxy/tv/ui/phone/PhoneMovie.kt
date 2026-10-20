@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.background
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.aspectRatio
@@ -100,7 +101,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                     onMoreDetails = { onOpenDetails(movie) },
                 )
             }
-            item(key = "tabs") { SectionTabs(tabs, tab.coerceIn(0, tabs.size - 1), modifier = Modifier.padding(top = 22.dp)) { tab = it } }
+            item(key = "tabs") { SectionTabs(tabs, tab.coerceIn(0, tabs.size - 1), modifier = Modifier.background(RoxyColors.background).padding(top = 22.dp)) { tab = it } }
             if (moreLike) {
                 val list = similar
                 when {
