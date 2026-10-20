@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
     var inPip by mutableStateOf(false)
         private set
 
+    /** Runs on the PiP callback itself, before the surface resizes (a Compose effect would be a frame late). */
+    var onPipChanged: ((Boolean) -> Unit)? = null
+
     /** The page's player tells us whether a video is playing, so swiping home shrinks it. */
     private var pipAutoEnter: Boolean? = null
     private var pipSource: android.graphics.Rect? = null
@@ -98,6 +101,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        onPipChanged?.invoke(isInPictureInPictureMode)
         inPip = isInPictureInPictureMode
     }
 

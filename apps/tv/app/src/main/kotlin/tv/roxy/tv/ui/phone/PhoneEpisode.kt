@@ -148,8 +148,14 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     // Playing state is reported on change only; the box's position changes on rotation,
     // so push it as well when it moves.
     LaunchedEffect(videoBounds) { val s = session ?: return@LaunchedEffect; main?.updatePip(!s.ui.paused, videoBounds) }
-    LaunchedEffect(inPip) { session?.player?.suppressResizeBounce(); if (inPip) session?.hideControls() }
-    DisposableEffect(main) { onDispose { main?.clearPip() } }
+    LaunchedEffect(inPip) { if (inPip) session?.hideControls() }
+    // The PiP shrink and expand animate the live surface; the resize bounce (a black frame
+    // and an audio re-seek) must be off before the surface changes, so it is armed on the
+    // activity's callback rather than from a Compose effect.
+    DisposableEffect(main, session) {
+        main?.onPipChanged = { session?.player?.suppressResizeBounce(3000) }
+        onDispose { main?.onPipChanged = null; main?.clearPip() }
+    }
     host.isLandscape = landscape
     host.back = onBack
     host.nowPlaying = { req -> episode = req.item; expanded = false }
@@ -177,7 +183,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                 siblings = eps.sortedWith(compareBy({ (it.seasonAired ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
             }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { session?.onStop() }
+    // Stopped means off screen: the PiP window was dismissed, or the app was left while
+    // paused. Entering PiP never stops the activity, so this always pauses.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { session?.let { it.reportProgress("stop"); it.player.setPaused(true) } }
     // The system back gesture in fullscreen drops back to the mini player, not off the page.
     BackHandler(enabled = landscape) { setFullscreen(false) }
     // Pin the session the effect was keyed on: the lambda must not read the state delegate
