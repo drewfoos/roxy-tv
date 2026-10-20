@@ -141,6 +141,12 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             }
             .onFailure { t -> Timber.w(t, "episode"); error = t.message }
     }
+    // Episodes carry no rating of their own; the series' stands for them.
+    var seriesRating by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(episode?.seriesId) {
+        val seriesId = episode?.seriesId ?: return@LaunchedEffect
+        seriesRating = app.items[seriesId]?.officialRating ?: runCatching { app.api.item(seriesId).officialRating }.getOrNull()
+    }
     LaunchedEffect(episode?.seriesId, watchedKey) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
         runCatching { app.api.items(type = "episode", parent = seriesId, recursive = true, includeSources = true, sort = "index").items }
@@ -178,7 +184,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 4.dp),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                        val age = ep.officialRating?.let { ageLabel(it) }
+                        val rating = ep.officialRating ?: seriesRating
+                        val age = rating?.let { ageLabel(it) }
                         if (age != null) { AgePill(age); Spacer(Modifier.width(8.dp)) }
                         Text(diamondJoined(listOfNotNull(audioBadge(ep), ep.runtimeMinutes?.let { "${it}m" })), fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
                     }
@@ -202,7 +209,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     }
                     // Content advisory, Crunchyroll's row under the synopsis. The providers carry no
                     // descriptors (those are Crunchyroll's own), so it is the rating's meaning.
-                    ep.officialRating?.let { r -> advisoryFor(r)?.let { text ->
+                    (ep.officialRating ?: seriesRating)?.let { r -> advisoryFor(r)?.let { text ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
                             AgePill(ageLabel(r))
                             Text(text, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
