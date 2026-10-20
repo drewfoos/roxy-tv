@@ -36,6 +36,12 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import tv.roxy.tv.data.downloads.formatBytes
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.RemoveDone
@@ -105,6 +111,7 @@ fun PhoneSeries(
     onOpenMovie: (Item) -> Unit,
     onOpenSeries: (Item) -> Unit,
     onOpenDetails: (Item) -> Unit = {},
+    onOpenEpisode: (Item) -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
@@ -238,7 +245,12 @@ fun PhoneSeries(
                         if (tmdbId != null && seasonNumber != null) item(key = "season-request") { RequestSeasonRow(tmdbId, seasonNumber, seasonLabel) }
                     }
                     items(state.episodes, key = { it.id }) { ep ->
-                        PhoneEpisodeRow(ep, app.api, onClick = { if (ep.isPlayable) play(ep) }, onDownload = { download(listOf(ep)) })
+                        PhoneEpisodeRow(
+                            ep, app.api,
+                            onClick = { if (ep.isPlayable) onOpenEpisode(ep) },
+                            onDownload = { download(listOf(ep)) },
+                            onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(ep.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+                        )
                     }
                 }
             }
@@ -369,14 +381,14 @@ val FactsGrey = Color.White.copy(alpha = 0.72f)
 
 /** Crunchyroll's age badge: short label on a grey block. */
 @Composable
-private fun AgePill(text: String) {
+internal fun AgePill(text: String) {
     Box(modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFF4A4A52)).padding(horizontal = 6.dp, vertical = 2.dp)) {
         Text(text, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 0.5.sp)
     }
 }
 
 /** TV and MPAA ratings folded into Crunchyroll's short labels; anything unknown shows as is. */
-private fun ageLabel(rating: String): String = when (rating.uppercase().removePrefix("US-")) {
+internal fun ageLabel(rating: String): String = when (rating.uppercase().removePrefix("US-")) {
     "TV-Y", "TV-Y7", "TV-G", "G" -> "ALL"
     "TV-PG", "PG" -> "PG"
     "TV-14", "PG-13" -> "14+"
@@ -386,7 +398,7 @@ private fun ageLabel(rating: String): String = when (rating.uppercase().removePr
 
 /** A 44 dp white glyph for the title page header (no circle behind it, like Crunchyroll's). */
 @Composable
-private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Color.White, onClick: (() -> Unit)? = null) {
+internal fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Color.White, onClick: (() -> Unit)? = null) {
     Icon(
         icon, contentDescription = description, tint = tint,
         modifier = Modifier.size(44.dp).clip(CircleShape).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(10.dp),
@@ -394,7 +406,7 @@ private fun HeaderIcon(icon: ImageVector, description: String, tint: Color = Col
 }
 
 /** The header strip's height below the status bar: the X, Cast and menu row. */
-private val HeaderRow = 52.dp
+internal val HeaderRow = 52.dp
 
 /**
  * Full-bleed key art (the backdrop, cropped tall) starting just above the X, with the
@@ -539,48 +551,122 @@ private fun EpisodeRowSkeleton() {
 
 /** Netflix's episode row: thumb with a play badge, "N. Title", runtime and a watched tick, the download control, then the synopsis. */
 @Composable
-private fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit) {
-    val thumbWidth = 130.dp
+internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit, onMarkWatched: (Boolean) -> Unit, showOverview: Boolean = true) {
+    val thumbWidth = 150.dp
     val placeholder = !ep.isPlayable
     val watched = ep.userData?.played == true
+    val positionMs = ep.userData?.positionMs ?: 0L
+    val runtimeMs = ep.runtimeMs ?: 0L
     val badge = when (ep.availability) {
         "missing" -> "Missing"
         "unaired" -> ep.airDate?.takeIf { it.isNotBlank() }?.let { "Airs $it" } ?: "Unaired"
         else -> null
+    }
+    // Crunchyroll's thumbnail tag: the length, "7m left" once started, "Watched" when done.
+    val tag = when {
+        watched -> "Watched"
+        positionMs > 0 && runtimeMs > positionMs -> "${((runtimeMs - positionMs) / 60000L + 1).coerceAtLeast(1)}m left"
+        else -> ep.runtimeMinutes?.let { "${it}m" }
     }
     Column(
         modifier = Modifier.fillMaxWidth().clickable(enabled = !placeholder, onClick = onClick).padding(horizontal = PhonePad, vertical = 10.dp).alpha(if (placeholder) 0.45f else 1f),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(modifier = Modifier.width(thumbWidth).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
-                RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.6f else 1f), placeholderTextSize = 12)
+                RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f), placeholderTextSize = 12)
                 if (!placeholder) {
-                    PlayBadge(size = 34.dp, modifier = Modifier.align(Alignment.Center))
-                    ProgressBar(ep.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
+                    if (watched) ReplayBadge(size = 34.dp, modifier = Modifier.align(Alignment.Center)) else PlayBadge(size = 34.dp, modifier = Modifier.align(Alignment.Center))
+                    if (!watched) ProgressBar(ep.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
+                    if (tag != null) ThumbTag(tag, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
                 val n = (ep.indexAired ?: ep.indexAbsolute)?.let { "$it. " } ?: ""
                 Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 3.dp)) {
-                    val sub = listOfNotNull(
-                        ep.runtimeMinutes?.let { "${it}m" },
-                        badge,
-                        if (placeholder && ep.availability == "missing" && !ep.airDate.isNullOrBlank()) "Aired ${ep.airDate}" else null,
-                    ).joinToString("  ·  ")
-                    if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted)
-                    if (watched) {
-                        if (sub.isNotEmpty()) Spacer(Modifier.width(8.dp))
-                        WatchedCheck(size = 15.dp)
-                        Text("Watched", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
-                    }
-                }
+                val sub = listOfNotNull(
+                    badge,
+                    if (placeholder && ep.availability == "missing" && !ep.airDate.isNullOrBlank()) "Aired ${ep.airDate}" else null,
+                ).joinToString("  ·  ")
+                if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 3.dp))
             }
-            if (!placeholder) DownloadButton(ep, onDownload = onDownload, size = 24.dp)
+            if (!placeholder) {
+                DownloadButton(ep, onDownload = onDownload, size = 24.dp)
+                EpisodeMenu(ep, api, onMarkWatched = onMarkWatched)
+            }
         }
-        ep.overview?.takeIf { it.isNotBlank() }?.let {
+        if (showOverview) ep.overview?.takeIf { it.isNotBlank() }?.let {
             Text(it, fontSize = 13.sp, lineHeight = 17.sp, color = RoxyColors.muted, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         }
+    }
+}
+
+/** Small translucent label in a thumbnail's corner ("24m", "7m left", "Watched"). */
+@Composable
+private fun ThumbTag(text: String, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xB3000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+        Text(text, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** The play badge's twin for a watched episode: a replay arrow. */
+@Composable
+private fun ReplayBadge(size: Dp, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.size(size).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+        Icon(Icons.Filled.Replay, contentDescription = "Watch again", tint = Color.White, modifier = Modifier.size(size * 0.6f))
+    }
+}
+
+/**
+ * The three dots on an episode: mark it watched or unwatched, and the file's facts
+ * (codec, resolution, tracks, size), since episodes come from different releases.
+ */
+@Composable
+internal fun EpisodeMenu(ep: Item, api: RoxyApi, onMarkWatched: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = RoxyColors.muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { open = true }.padding(6.dp))
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+            val watched = ep.userData?.played == true
+            DropdownMenuItem(
+                text = { Text(if (watched) "Mark as unwatched" else "Mark as watched", color = Color.White) },
+                leadingIcon = { Icon(if (watched) Icons.Outlined.RemoveDone else Icons.Filled.Check, null, tint = Color.White) },
+                onClick = { open = false; onMarkWatched(!watched) },
+            )
+            DropdownMenuItem(text = { Text("File info", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Info, null, tint = Color.White) }, onClick = { open = false; info = true })
+        }
+    }
+    if (info) EpisodeInfoDialog(ep, api) { info = false }
+}
+
+@Composable
+private fun EpisodeInfoDialog(ep: Item, api: RoxyApi, onDismiss: () -> Unit) {
+    val e = with(api) { ep.toEpisode() }
+    val src = ep.primarySource
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+        title = { Text(listOfNotNull(ep.episodeCode.takeIf { it.isNotEmpty() }, ep.title.takeIf { it.isNotBlank() }).joinToString("  ·  "), fontSize = 17.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                InfoLine("Video", e.videoLine)
+                InfoLine("Tracks", e.tracksLine)
+                InfoLine("Size", src?.size?.takeIf { it > 0 }?.let { formatBytes(it) })
+                InfoLine("Container", src?.container)
+                val flags = listOfNotNull(if (e.isHi10p) "Hi10P" else null, if (e.hasAss) "ASS subtitles" else null).joinToString(", ")
+                if (flags.isNotEmpty()) InfoLine("Notes", flags)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close", color = Color.White) } },
+    )
+}
+
+@Composable
+private fun InfoLine(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Column {
+        Text(label, fontSize = 11.sp, color = RoxyColors.muted)
+        Text(value, fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.onBackground, fontFamily = FontFamily.Monospace)
     }
 }
 

@@ -127,6 +127,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     // while it slides in.
     fun openSeries(item: Item) { app.items.put(item); nav.navigate(Route.Series(item.id, item.title)) }
     fun openMovie(item: Item) { app.items.put(item); nav.navigate(Route.Movie(item.id, item.title)) }
+    fun openEpisode(item: Item) { app.items.put(item); nav.navigate(Route.Episode(item.id, item.title)) }
 
     PhoneTheme {
         Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
@@ -237,7 +238,14 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onOpenMovie = { openMovie(it) },
                             onOpenSeries = { openSeries(it) },
                             onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) },
+                            onOpenEpisode = { openEpisode(it) },
                         )
+                    }
+                }
+                composable<Route.Episode> { e ->
+                    Page {
+                        val r = e.toRoute<Route.Episode>()
+                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) })
                     }
                 }
                 composable<Route.Movie> { e ->

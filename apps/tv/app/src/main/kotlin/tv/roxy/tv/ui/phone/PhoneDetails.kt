@@ -39,6 +39,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -83,52 +88,21 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
     val x = d.tmdb
     val f = d.facts
 
+    // Same strip as the title page (X at the left, the name beside it) over a plain list
+    // of facts; the art stays on the title page.
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
+        val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + HeaderRow
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = top).navigationBarsPadding().padding(bottom = 24.dp)) {
             Box(modifier = Modifier.fillMaxWidth().height(220.dp)) {
                 RoxyImage(app.api.imageUrl(item, "backdrop", widthPx(420.dp) * 2) ?: app.api.imageUrl(item, "poster", widthPx(420.dp) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
-                Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.3f to Color.Transparent)))
-                Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to RoxyColors.background)))
+                Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to RoxyColors.background)))
             }
             Column(modifier = Modifier.padding(horizontal = PhonePad)) {
-                Text(item.title.ifEmpty { fallbackTitle }, fontSize = 22.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-                x?.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp)) }
+                x?.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp, fontStyle = FontStyle.Italic, color = RoxyColors.muted, modifier = Modifier.padding(top = 8.dp)) }
 
                 item.overview?.takeIf { it.isNotBlank() }?.let {
                     DetailSection("Synopsis")
                     Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f))
-                }
-
-                DetailSection("Details")
-                DetailRow("Original title", x?.originalTitle)
-                DetailRow("Type", when { item.isMovie -> "Movie"; item.isAnime -> "Anime series"; else -> "Series" })
-                DetailRow("Status", (x?.status ?: item.status)?.takeIf { it.isNotBlank() }?.let { statusLabel(it) })
-                DetailRow(if (item.isMovie) "Released" else "First aired", x?.firstAired?.takeIf { it.isNotBlank() } ?: item.premiered)
-                DetailRow("Last aired", x?.lastAired?.takeIf { it.isNotBlank() && !item.isMovie })
-                DetailRow(if (x?.networks.orEmpty().size > 1) "Networks" else "Network", x?.networks?.joinToString(", "))
-                // TMDB's first production company is the animation studio; the library's
-                // "studio" field sometimes holds the network instead, so it is the fallback.
-                val studio = x?.companies?.firstOrNull() ?: item.studio?.takeIf { it.isNotBlank() && it !in x?.networks.orEmpty() }
-                DetailRow("Studio", studio)
-                DetailRow("Production", x?.companies?.drop(1)?.take(4)?.joinToString(", "))
-                DetailRow("Country", x?.countries?.joinToString(", "))
-                DetailRow("Spoken languages", x?.languages?.joinToString(", "))
-                DetailRow("Seasons", x?.seasons?.takeIf { it > 0 }?.toString())
-                DetailRow("Episodes", x?.episodes?.takeIf { it > 0 }?.toString())
-                DetailRow(if (item.isMovie) "Runtime" else "Episode length", x?.runtimeMinutes?.takeIf { it > 0 }?.let { if (item.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "$it min" } ?: item.runtimeMinutes?.let { "$it min" })
-                DetailRow("Genres", item.genres.joinToString(", "))
-                DetailRow("Rating", item.communityRating?.let { "★ %.1f on TMDB".format(it) })
-                DetailRow("Content rating", item.officialRating)
-                DetailRow("Added to library", item.dateCreated?.take(10))
-
-                if (f != null && f.files > 0) {
-                    DetailSection("Audio & subtitles")
-                    DetailRow("Audio", f.audio.joinToString(", ") { languageName(it) }.ifEmpty { null })
-                    DetailRow("Subtitles", f.subtitles.joinToString(", ") { languageName(it) }.ifEmpty { null })
-                    DetailRow("Subtitle formats", f.subFormats.joinToString(", ").ifEmpty { null })
-                    DetailSection("Video")
-                    DetailRow("Quality", f.video.joinToString(", ").ifEmpty { null })
-                    DetailRow(if (item.isMovie) "File" else "Files", "${f.files}  ·  ${formatBytes(f.bytes)}")
                 }
 
                 if (!x?.cast.isNullOrEmpty()) {
@@ -150,6 +124,37 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
                 }
             }
             Column(modifier = Modifier.padding(horizontal = PhonePad)) {
+                DetailSection("Details")
+                DetailRow("Original title", x?.originalTitle)
+                DetailRow("Type", when { item.isMovie -> "Movie"; item.isAnime -> "Anime series"; else -> "Series" })
+                DetailRow("Status", (x?.status ?: item.status)?.takeIf { it.isNotBlank() }?.let { statusLabel(it) })
+                DetailRow(if (item.isMovie) "Released" else "First aired", x?.firstAired?.takeIf { it.isNotBlank() } ?: item.premiered)
+                DetailRow("Last aired", x?.lastAired?.takeIf { it.isNotBlank() && !item.isMovie })
+                DetailRow(if (x?.networks.orEmpty().size > 1) "Networks" else "Network", x?.networks?.joinToString(", "))
+                // TMDB's first production company is the animation studio; the library's
+                // "studio" field sometimes holds the network instead, so it is the fallback.
+                val studio = x?.companies?.firstOrNull() ?: item.studio?.takeIf { it.isNotBlank() && it !in x?.networks.orEmpty() }
+                DetailRow("Studio", studio)
+                DetailRow("Production", x?.companies?.drop(1)?.take(4)?.joinToString(", "))
+                DetailRow("Country", x?.countries?.joinToString(", "))
+                DetailRow("Spoken languages", x?.languages?.joinToString(", "))
+                DetailRow("Seasons", (item.seasonCount ?: x?.seasons)?.takeIf { it > 0 }?.toString())
+                DetailRow("Episodes", x?.episodes?.takeIf { it > 0 }?.toString())
+                DetailRow(if (item.isMovie) "Runtime" else "Episode length", x?.runtimeMinutes?.takeIf { it > 0 }?.let { if (item.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "$it min" } ?: item.runtimeMinutes?.let { "$it min" })
+                DetailRow("Genres", item.genres.joinToString(", "))
+                DetailRow("Rating", item.communityRating?.let { "★ %.1f on TMDB".format(it) })
+                DetailRow("Content rating", item.officialRating)
+                DetailRow("Added to library", item.dateCreated?.take(10))
+
+                // Languages only: codecs and resolutions differ from episode to episode (each
+                // row's three-dot menu has that file's facts).
+                if (f != null && f.files > 0) {
+                    DetailSection("Audio & subtitles")
+                    DetailRow("Audio", f.audio.joinToString(", ") { languageName(it) }.ifEmpty { null })
+                    DetailRow("Subtitles", f.subtitles.joinToString(", ") { languageName(it) }.ifEmpty { null })
+                    DetailRow(if (item.isMovie) "File" else "Files", "${f.files}  ·  ${formatBytes(f.bytes)}")
+                }
+
                 if (!x?.keywords.isNullOrEmpty()) {
                     DetailSection("Keywords")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -175,7 +180,13 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
             }
         }
-        Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp)) { BackCircle(onBack) }
+        Row(
+            modifier = Modifier.fillMaxWidth().background(RoxyColors.background).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            HeaderIcon(Icons.Filled.Close, "Close", onClick = onBack)
+            Text(item.title.ifEmpty { fallbackTitle }, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 6.dp))
+        }
     }
 }
 
