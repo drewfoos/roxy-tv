@@ -3,7 +3,14 @@
 # on one filesystem so Sonarr/Radarr hardlinks work.
 #
 # Roxy keeps Jellyfin's port (8096) so request app, Sonarr and Radarr only need a new
-# host/token when switching over. Run both side by side on different ports first.
+# host/token when switching over. Run both side by side on different ports first
+# (e.g. "8097:8096" while Jellyfin still has 8096).
+#
+# There is no published image yet, so Compose builds it from this repo:
+#   cd roxy/deploy && docker compose up -d --build roxy
+# AMD / Intel (VAAPI, /dev/dri) is the default below. For an NVIDIA card add the override:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build roxy
+# Check which encoder was picked:  docker logs roxy 2>&1 | grep "transcode: encoder"
 
 x-common: &common
   restart: unless-stopped
@@ -15,26 +22,40 @@ x-common: &common
 services:
   roxy:
     <<: *common
-    image: ghcr.io/roxy-media/roxy-server:latest
+    image: roxy-server:latest
+    build:
+      context: ..                    # the repo root (the Dockerfile copies server/ and deploy/)
+      dockerfile: deploy/Dockerfile
     container_name: roxy
     ports:
       - "8096:8096"
-      - "8096:8096/udp"            # LAN discovery: the apps' login screen finds the server by broadcast
+      # LAN discovery beacon. Docker's port mapping does not forward broadcasts, so on this
+      # bridge network the apps find the server by their HTTP sweep instead; for the
+      # broadcast to work too, use `network_mode: host` and drop `ports:`.
+      - "8096:8096/udp"
     volumes:
-      - ./config/roxy:/config
-      - /data:/data:ro
-      - ./fonts:/fonts:ro            # optional extra fonts for burn-in and client fallback
+      - ./config/roxy:/config        # roxy.db + caches (ROXY_DATA_DIR=/config in the image)
+      - /data:/data:ro               # TRaSH root; Roxy only reads media
+      - ./fonts:/fonts:ro            # optional extra fonts (ROXY_FONTS_DIR)
     devices:
-      - /dev/dri:/dev/dri            # RX 550: VAAPI/AMF for fallback transcodes
-    group_add:
-      - "video"
-      - "render"
-    tmpfs:
-      - /transcode:size=4g           # HLS segments for fallback transcodes
+      # RX 550 (or Intel iGPU): VAAPI transcodes via jellyfin-ffmpeg's bundled radeonsi/iHD
+      # drivers. The entrypoint joins the groups that own these nodes, so no group_add.
+      - /dev/dri:/dev/dri
     environment:
+      # Repeated from x-common: a service's own `environment:` replaces the merged one.
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "America/Los_Angeles"
       ROXY_MEDIA_ROOTS: "/data/media/movies,/data/media/tv"
-      ROXY_HWACCEL: "vaapi"          # auto | vaapi | amf | qsv | nvenc | none
-      ROXY_TMDB_API_KEY: "${TMDB_API_KEY:-}" # or drop a tmdb.key file in the data volume; release images carry a project default
+      # auto tries NVENC, Quick Sync, VAAPI, AMF, then software x264 with a 1 s test
+      # encode at startup. Force one with nvenc | qsv | vaapi | amf | none.
+      ROXY_HWACCEL: "auto"
+      # ROXY_VAAPI_DEVICE: "/dev/dri/renderD128"   # if the AMD card is not the first render node
+      # First run only (empty database): the admin account. Defaults are roxy / roxy.
+      ROXY_ADMIN_USER: "${ROXY_ADMIN_USER:-roxy}"
+      ROXY_ADMIN_PASSWORD: "${ROXY_ADMIN_PASSWORD:-roxy}"
+      # ROXY_ADVERTISE_URL: "http://192.168.1.10:8096"  # what clients should use if the LAN address is wrong
+      ROXY_TMDB_API_KEY: "${TMDB_API_KEY:-}" # or drop a tmdb.key file in ./config/roxy; release images carry a project default
       ROXY_SONARR_URL: "http://sonarr:8989"
       ROXY_SONARR_API_KEY: "${SONARR_API_KEY}"
       ROXY_RADARR_URL: "http://radarr:7878"
@@ -44,6 +65,21 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
+    # Transcodes stream Matroska straight to the client (no temp segments), so there is
+    # no /transcode volume or tmpfs.
+    #
+    # NVIDIA alternative (instead of `devices:` above; docker-compose.nvidia.yml does this).
+    # Needs the NVIDIA driver + nvidia-container-toolkit on the host. The `video`
+    # capability is what exposes NVENC; without it the encoder test fails and Roxy falls
+    # back to software.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video, compute, utility]
 
   # ---- existing arr stack (shown for the mount convention; keep your own definitions) ----
   request app:

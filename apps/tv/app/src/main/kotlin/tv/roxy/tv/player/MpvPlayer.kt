@@ -50,6 +50,8 @@ class MpvPlayer(
         val subMode: String = "full",
         /** Explicit subtitle track id (mpv numbering); overrides the policy when > 0. */
         val forceSid: Int = 0,
+        /** mpv `audio-spdif` codecs sent untouched to a soundbar (empty = decode everything here). */
+        val spdif: List<String> = emptyList(),
     )
 
     /**
@@ -120,6 +122,7 @@ class MpvPlayer(
         opt("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
         opt("ao", options.ao)
         opt("audio-set-media-role", "yes")
+        if (options.spdif.isNotEmpty()) opt("audio-spdif", options.spdif.joinToString(","))
 
         opt("video-sync", "audio")
         opt("display-fps-override", "%.3f".format(displayRefreshRate))
@@ -159,7 +162,7 @@ class MpvPlayer(
         mpv.addLogObserver(this)
 
         for ((name, fmt) in observed) mpv.observeProperty(name, fmt)
-        Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s", options.hwdec, options.vo, options.ao)
+        Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s spdif=%s", options.hwdec, options.vo, options.ao, options.spdif)
     }
 
     // ---- playback control ----
@@ -167,9 +170,17 @@ class MpvPlayer(
     /** Start position for the next loaded file; the first file takes it from [Options.startSeconds]. */
     @Volatile private var startSeconds: Int = options.startSeconds
 
-    /** Load [url]; [start] applies to this file only (the next-episode queue plays several files on one player). */
-    fun play(url: String, start: Int = options.startSeconds) {
-        startSeconds = start
+    /** The pending file is a server transcode (starts where the server began it, keeps the file's clock). */
+    @Volatile private var pendingTranscode = false
+
+    /**
+     * Load [url]; [start] applies to this file only (the next-episode queue plays several files on one player).
+     * [transcoded]: a server transcode stream, which already begins at the wanted position
+     * and carries the original file's timestamps; mpv must not rebase them to 0.
+     */
+    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false) {
+        startSeconds = if (transcoded) 0 else start
+        pendingTranscode = transcoded
         pendingUrl = url
         if (surfaceReady) loadPending()
     }
@@ -177,9 +188,12 @@ class MpvPlayer(
     private fun loadPending() {
         val url = pendingUrl ?: return
         pendingUrl = null
-        Timber.i("loadfile %s start=%ds", url.substringBefore("?"), startSeconds)
+        Timber.i("loadfile %s start=%ds transcoded=%s", url.substringBefore("?"), startSeconds, pendingTranscode)
         // `start` is a file-local option: set it as a property right before the load.
         mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
+        // A transcode started mid-file has its first frame at e.g. 300 s; keep that clock so
+        // the position, subtitles and skip segments line up with the original file.
+        mpv.setPropertyString("rebase-start-time", if (pendingTranscode) "no" else "yes")
         mpv.command(arrayOf("loadfile", url, "replace"))
         mpv.setPropertyBoolean("pause", false)
     }

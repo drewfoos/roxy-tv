@@ -12,7 +12,9 @@ import (
 )
 
 type Config struct {
-	Listen string // ROXY_LISTEN, default :8096
+	Listen      string // ROXY_LISTEN, default :8096
+	HWAccel     string // ROXY_HWACCEL: auto | nvenc | qsv | vaapi | amf | none (auto: the first that works, else software x264)
+	VAAPIDevice string // ROXY_VAAPI_DEVICE, default /dev/dri/renderD128
 	// LAN discovery: the UDP port the beacon answers "who is roxy?" on (same number as
 	// the HTTP default so there is one port to remember and publish); 0 turns it off.
 	DiscoveryPort int      // ROXY_DISCOVERY_PORT, default 8096
@@ -43,6 +45,8 @@ type Config struct {
 func Load() (*Config, error) {
 	c := &Config{
 		Listen:               env("ROXY_LISTEN", ":8096"),
+		HWAccel:              env("ROXY_HWACCEL", "auto"),
+		VAAPIDevice:          env("ROXY_VAAPI_DEVICE", ""),
 		DiscoveryPort:        envInt("ROXY_DISCOVERY_PORT", 8096),
 		AdvertiseURL:         strings.TrimRight(env("ROXY_ADVERTISE_URL", ""), "/"),
 		DataDir:              env("ROXY_DATA_DIR", "data"),

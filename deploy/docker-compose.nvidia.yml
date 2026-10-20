@@ -1,0 +1,19 @@
+# NVIDIA override: gives the roxy container the GPU for NVENC transcodes.
+# Host needs the NVIDIA driver and nvidia-container-toolkit
+# (`sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build roxy
+#
+# Tested 2026-10-20 on a GTX 1650 under WSL2: encoder=nvenc, 720p at ~6x realtime.
+services:
+  roxy:
+    devices: !reset []               # no /dev/dri needed on an NVIDIA-only box
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"   # video = NVENC/NVDEC
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video, compute, utility]

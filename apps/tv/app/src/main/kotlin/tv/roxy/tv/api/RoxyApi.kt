@@ -237,6 +237,10 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun fanartSettings(): FanartSettings = get("/v1/settings/fanart")
     suspend fun saveFanartSettings(apiKey: String): FanartSettings = putJson("/v1/settings/fanart", json.encodeToString(FanartSettings.serializer(), FanartSettings(apiKey)))
 
+    /** Which encoder the server transcodes with; the first call can take a few seconds (the server test-encodes). */
+    suspend fun transcodingSettings(): TranscodingSettings = get("/v1/settings/transcoding")
+    suspend fun saveTranscodingSettings(hwAccel: String): TranscodingSettings = putJson("/v1/settings/transcoding", json.encodeToString(TranscodingChoice.serializer(), TranscodingChoice(hwAccel)))
+
     suspend fun arrSettings(): ArrSettingsResponse = get("/v1/settings/arr")
 
     suspend fun saveArrSettings(s: ArrSettings): ArrSettingsResponse = putJson("/v1/settings/arr", json.encodeToString(ArrSettings.serializer(), s))
@@ -311,6 +315,14 @@ class RoxyApi(private val prefs: Prefs) {
 
     /** libmpv cannot send headers, so the token rides as `api_key`. */
     fun streamUrl(sourceId: String): String = "$baseUrl/v1/stream/$sourceId?api_key=$token"
+
+    /**
+     * The source re-encoded by the server (H.264 at [height]p, [kbps] video, AAC audio;
+     * subtitles, fonts and chapters copied) as a Matroska stream starting at [startSec].
+     * Timestamps keep the file's clock, so the stream's first frame is at [startSec].
+     */
+    fun transcodeUrl(sourceId: String, height: Int, kbps: Int, startSec: Double): String =
+        "$baseUrl/v1/sources/$sourceId/transcode?height=$height&bitrate=$kbps&start=${"%.3f".format(java.util.Locale.ROOT, startSec)}&api_key=$token"
 
     /** Absolute image URL for an item's image, or null when the server has none (no 404 spam). */
     fun imageUrl(item: Item, type: String, widthPx: Int? = null): String? {
@@ -891,6 +903,16 @@ private data class ImageUrlBody(val url: String)
 
 @Serializable
 data class FanartSettings(val apiKey: String = "", val enabled: Boolean = false)
+
+/** The server's transcoding encoder: [hwAccel] is the saved choice, [encoder] what runs now. */
+@Serializable
+data class TranscodingSettings(val hwAccel: String = "auto", val encoder: String = "", val options: List<EncoderOption> = emptyList())
+
+@Serializable
+data class EncoderOption(val id: String, val label: String, val available: Boolean = false, val suggested: String? = null)
+
+@Serializable
+data class TranscodingChoice(val hwAccel: String)
 
 @Serializable
 data class ArrSettings(val sonarr: ArrConfig = ArrConfig(), val radarr: ArrConfig = ArrConfig())

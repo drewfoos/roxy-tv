@@ -291,11 +291,37 @@ Policies (server-wide, overridable per user and per device): `burnWhenTranscodin
 | Direct play | `GET /stream/{sourceId}` (+ compat `/Videos/{id}/stream`) | `http.ServeContent` with ranges; `ETag` from inode+mtime; no buffering in Go beyond kernel sendfile |
 | Attachments | `GET /sources/{id}/attachments/{index}` (+ compat `/Videos/{id}/{sourceId}/Attachments/{index}`) | Serves pre-extracted fonts |
 | Sidecar subs | `GET /sources/{id}/subtitles/{streamIndex}` (+ compat `/Videos/{id}/{sourceId}/Subtitles/{index}/Stream.{ext}`) | Serves extracted text track untouched; never converts SSA<->ASS or to VTT |
-| Remux / transcode | `GET /hls/{sessionId}/master.m3u8`, `main.m3u8`, `seg/{n}.m4s` | Section 4.8 |
+| Transcode for libmpv clients | `GET /v1/sources/{id}/transcode?height=&bitrate=&start=` | Matroska from ffmpeg's stdout, piped to the response; section 4.8 |
+| Remux / transcode (planned, browsers and Cast) | `GET /hls/{sessionId}/master.m3u8`, `main.m3u8`, `seg/{n}.m4s` | Section 4.8 |
 
-### 4.8 Transcoding (deferred to Phase 3, designed now)
+### 4.8 Transcoding
 
-Copy Jellyfin's HLS design because it is correct:
+**Shipped (2026-10-20): the Matroska path for Roxy's own players.** The phone and TV play
+through libmpv with libass, so they never need subtitles burned in or converted. When the
+player's Quality menu asks for 1080p / 720p / 480p, the server
+(`internal/transcode`, `api/transcode.go`) runs one jellyfin-ffmpeg per request:
+
+- `-ss start -copyts -i file`, video re-encoded to H.264 (scaled, tone-mapped to SDR
+  with `tonemapx` for HDR, capped at the requested bitrate), every subtitle track,
+  attachment and chapter copied, `-f matroska pipe:1`. The response is that pipe; no
+  files, no playlist, no job table. A disconnect (stop or seek) kills ffmpeg through the
+  request context. Four slots; a fifth request gets 503.
+- HLS/MPEG-TS cannot carry ASS or fonts, which is why this is Matroska: the player keeps
+  libass rendering, dub/sub switching and skip markers exactly as in direct play.
+- Audio is decided per track (copy compact AAC/AC3/E-AC3/Opus; FLAC/TrueHD/DTS to AAC,
+  keeping 5.1; stereo AAC for 480p-class) so surround and soundbar passthrough survive.
+- The encoder: a `Detector` test-encodes one second with NVENC, Quick Sync, VAAPI (Linux),
+  AMF, else uses libx264, and caches the results. Admins pick Auto or one encoder in the
+  app (Account -> Server -> Transcoding; `GET/PUT /v1/settings/transcoding`), saved in the
+  settings table; `ROXY_HWACCEL` is only the default. NVIDIA decodes on the GPU too
+  (`-hwaccel cuda`, falling back for Hi10P); the others decode on the CPU and upload.
+- Player side (`PlayerSession`): the stream starts at the wanted position and keeps the
+  file's clock (`rebase-start-time=no`); the duration comes from the source; a seek
+  inside the buffer is local, anything else reloads the stream at the target; a reload
+  that does not start in 20 s gives up with a message.
+
+**Planned for browsers and Chromecast (Roxy Web, Cast): HLS.** Copy Jellyfin's HLS
+design because it is correct:
 
 - Synthesize the full VOD `main.m3u8` from duration (or keyframes when available) before
   starting ffmpeg.
@@ -431,14 +457,15 @@ stack lives in `deploy/docker-compose.yml` and `deploy/Dockerfile`.
 
 Image design:
 
-- Multi-stage build: Go build stage -> runtime stage on `debian:bookworm-slim`.
-- Runtime stage installs the **jellyfin-ffmpeg** `.deb` (which pulls in libass, VAAPI,
-  AMF, QSV and NVENC runtime bits), `fonts-noto-cjk`, `intel-media-va-driver-non-free` and
-  `mesa-va-drivers` for VAAPI, and nothing else.
-- Runs as a non-root user with `PUID`/`PGID` (linuxserver-style) so files in `/data` and
-  `/config` keep the owner's UID; adds the `render`/`video` groups for `/dev/dri`.
-- Volumes: `/config` (db, cache, extracted attachments and subtitles, logs), `/data` (media,
-  read-only), optional `/fonts` (extra fonts), optional `/transcode` (tmpfs recommended).
+- Multi-stage build: Go build stage (Go 1.27) -> runtime stage on `debian:bookworm-slim`.
+- Runtime stage installs the **jellyfin-ffmpeg** `.deb`, which bundles libass, libva with
+  the radeonsi / iHD / i965 drivers, Quick Sync, AMF and the NVENC loader; no separate
+  driver packages are needed. About 550 MB.
+- Runs as a non-root user with `PUID`/`PGID` (linuxserver-style) so files in `/config`
+  keep the owner's UID; the entrypoint adds the user to whatever groups own `/dev/dri/*`.
+- `ROXY_DATA_DIR=/config`. Volumes: `/config` (db, cache, extracted attachments and
+  subtitles), `/data` (media, read-only), optional `/fonts` (extra fonts). Transcodes
+  stream from ffmpeg's stdout and write nothing to disk.
 - Ports: `8096` (keep Jellyfin's port so request app/arr configs only change host and token)
   and `8096/udp` for LAN discovery (the beacon answers "who is roxy?"; `ROXY_DISCOVERY_PORT`,
   0 to turn off). On a bridge network the reply carries the container's address, so set
@@ -446,7 +473,11 @@ Image design:
 - Healthcheck: `GET /healthz`.
 - Published as `ghcr.io/roxy-media/roxy-server:<semver>` and `:latest`, multi-arch
   (`linux/amd64`, `linux/arm64`), from CI on every tag.
-- NVIDIA variant: same image, run with `--gpus all` and `NVIDIA_DRIVER_CAPABILITIES=video`.
+- GPUs: AMD/Intel pass `/dev/dri` (the compose default, for the RX 550); NVIDIA uses the
+  same image with `--gpus all` (`deploy/docker-compose.nvidia.yml`; the image sets
+  `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`). Tested 2026-10-20 in Docker on
+  WSL2 with a GTX 1650: NVENC about 6.5x realtime for 1080p HEVC to 720p, software x264
+  about 2x. VAAPI on real AMD hardware is still to be checked on the server.
 
 Conventions (TRaSH): `/data/torrents/{movies,tv}` for download client categories,
 `/data/media/{movies,tv}` for the library, hardlinks enabled in Sonarr/Radarr, Roxy mounts

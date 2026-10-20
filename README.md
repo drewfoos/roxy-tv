@@ -28,6 +28,10 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
 - Discover: trending, seasonal anime, search, filters, title pages with per-season and
   per-episode requests; requests go to Sonarr and Radarr when configured, else stay pending
   for the household. Sonarr and Radarr webhooks keep the library in step without a rescan.
+- Transcoding for lower qualities: H.264 in Matroska with every subtitle track, font and
+  chapter kept, audio chosen per track (5.1 kept where it can be), on NVIDIA NVENC, Intel
+  Quick Sync, VAAPI, AMD AMF or the CPU. Auto picks the best one; an admin can choose in
+  the app. Runs in Docker with the GPU passed through.
 - LAN discovery (a UDP beacon on 8096), in-app APK updates, server-served Terms of Use and
   Privacy, a Jellyfin-compatible subset for request app and the arr apps.
 
@@ -41,6 +45,8 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
   video plays inline at the top of the episode or movie page; turn the phone for full
   screen, swipe home for picture-in-picture. Skip intro / outro, auto-skip, next-episode
   queue, trickplay scrubbing, pinch zoom, audio and subtitle language policy per profile.
+  A Quality menu (Original, 1080p, 720p, 480p) switches to a server transcode for slow
+  connections; the TV app sends Dolby and DTS untouched to a soundbar when it finds one.
 - Offline downloads (Netflix model): per episode, per season, or a whole title, with
   resume, Wi-Fi-only, a storage check, offline playback and progress that syncs later.
 - The login screen lists servers found on the network; tap one to fill the address.
@@ -65,8 +71,37 @@ the app under Account → Server and stored in the database. Every setting is an
 variable with a `ROXY_` prefix; `server/internal/config/config.go` lists them all. Port
 8096 serves HTTP and the discovery beacon answers on 8096/udp.
 
-`deploy/` has a Dockerfile and a reference Compose stack beside the arr apps (built, not
-yet exercised on a real host).
+Transcoding uses the best GPU encoder it finds (`ROXY_HWACCEL=auto`); an admin can pick
+another in the app under Account -> Server -> Transcoding, which is saved and wins over
+the variable. `ROXY_VAAPI_DEVICE` picks the render node on Linux (default
+`/dev/dri/renderD128`).
+
+### Docker
+
+`deploy/` has the Dockerfile and a Compose stack beside the arr apps. The image carries
+jellyfin-ffmpeg with the GPU drivers it needs; the database and caches go in `/config`.
+
+```
+cd deploy
+ROXY_ADMIN_PASSWORD='something-strong' docker compose up -d --build roxy               # AMD / Intel (/dev/dri)
+docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build roxy   # NVIDIA
+docker logs roxy 2>&1 | grep "transcode: encoder"
+```
+
+NVIDIA needs the nvidia-container-toolkit on the host (`nvidia-ctk runtime configure
+--runtime=docker`). Use `"8097:8096"` while Jellyfin still owns 8096. Docker's port
+mapping does not pass UDP broadcasts, so on a bridge network the apps find the server by
+their HTTP sweep (or use `network_mode: host`). Tested on WSL2 with NVENC; VAAPI on an
+AMD card is next.
+
+### On Windows (WSL2)
+
+Smart App Control can block freshly built unsigned `roxy.exe` files, so the dev server
+runs under WSL2 (Ubuntu 24.04) with `networkingMode=mirrored` in
+`%USERPROFILE%\.wslconfig`, which keeps the PC's LAN address. WSL's Hyper-V firewall
+blocks inbound LAN traffic by default: run `deploy/wsl-firewall.ps1` once in an admin
+PowerShell to open 8096 (TCP and UDP). NVENC works inside WSL with the normal Windows
+NVIDIA driver.
 
 ## Building the app
 

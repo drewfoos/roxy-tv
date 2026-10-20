@@ -22,28 +22,35 @@ import (
 	"github.com/roxy-media/roxy/server/internal/segments"
 	"github.com/roxy-media/roxy/server/internal/sessions"
 	"github.com/roxy-media/roxy/server/internal/store"
+	"github.com/roxy-media/roxy/server/internal/transcode"
 	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
 
 type Server struct {
-	cfg      *config.Config
-	store    *store.Store
-	lib      *library.Library
-	ff       *ffmpeg.FFmpeg
-	authSvc  *auth.Service
-	meta     *metadata.Service // may be nil (scan-only runs)
-	trick    *trickplay.Service
-	segs     *segments.Service // may be nil (scan-only runs)
-	discover *discover.Service // nil without TMDB
-	hooks    *arrhook.Service
-	hub      *sessions.Hub // "Play on": connected players and their command queues
-	start    time.Time
+	cfg        *config.Config
+	store      *store.Store
+	lib        *library.Library
+	ff         *ffmpeg.FFmpeg
+	authSvc    *auth.Service
+	meta       *metadata.Service // may be nil (scan-only runs)
+	trick      *trickplay.Service
+	segs       *segments.Service // may be nil (scan-only runs)
+	discover   *discover.Service // nil without TMDB
+	hooks      *arrhook.Service
+	transcoder *transcode.Detector
+	hub        *sessions.Hub // "Play on": connected players and their command queues
+	start      time.Time
 }
 
 func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service, segs *segments.Service) http.Handler {
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 	s.hooks = arrhook.New(st, lib)
 	s.hub = sessions.New()
+	s.transcoder = transcode.NewDetector(ff.FFmpeg, cfg.HWAccel, cfg.VAAPIDevice)
+	go func() { // probe the GPU now, not on the first play; a saved choice beats ROXY_HWACCEL
+		s.loadTranscodingSetting()
+		s.transcoder.Encoder()
+	}()
 	if meta != nil && meta.TMDB() != nil {
 		s.discover = discover.New(st, cfg, meta.TMDB())
 		s.discover.Start(context.Background())
@@ -96,6 +103,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/settings/arr/test", s.arrSettingsTest)
 			r.Get("/settings/fanart", s.fanartSettingsGet)
 			r.Put("/settings/fanart", s.fanartSettingsPut)
+			r.Get("/settings/transcoding", s.transcodingSettingsGet)
+			r.Put("/settings/transcoding", s.transcodingSettingsPut)
 			r.Get("/items/{id}/images/{type}/candidates", s.imageCandidates)
 			r.Get("/apps/{app}/latest", s.appLatest)
 			r.Get("/apps/{app}/download", s.appDownload)
@@ -132,6 +141,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/sources/{id}/trickplay/{n}", s.trickplaySheet)
 			r.Get("/stream/{id}", s.stream)
 			r.Head("/stream/{id}", s.stream)
+			r.Get("/sources/{id}/transcode", s.transcodeStream)
+			r.Get("/system/transcoding", s.transcodingInfo)
 		})
 	})
 

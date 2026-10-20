@@ -67,6 +67,12 @@ data class PlayerSettings(
      * often puts a scene or the preview there, and Next sits in the player's top bar.
      */
     val nextCard: Boolean = false,
+    /**
+     * Soundbar / receiver passthrough: "auto" sends Dolby Digital, DTS and the like
+     * untouched to an HDMI audio output that takes them (see AudioPassthrough); "off"
+     * always decodes on the device.
+     */
+    val passthrough: String = "auto",
 ) {
     /** mpv `alang` list: every spelling of each preferred language, since tags vary. */
     val mpvAudioLangs: List<String>
@@ -234,6 +240,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_AUTOSKIP] = s.autoSkip
             it[KEY_SKIP_WINDOW] = s.skipWindowSec
             it[KEY_NEXT_CARD] = s.nextCard
+            it[KEY_PASSTHROUGH] = s.passthrough
         }
     }
 
@@ -264,6 +271,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             autoSkip = this[KEY_AUTOSKIP] ?: d.autoSkip,
             skipWindowSec = this[KEY_SKIP_WINDOW] ?: d.skipWindowSec,
             nextCard = this[KEY_NEXT_CARD] ?: d.nextCard,
+            passthrough = this[KEY_PASSTHROUGH] ?: d.passthrough,
         )
     }
 
@@ -289,6 +297,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_AUTOSKIP = booleanPreferencesKey("auto_skip")
         val KEY_SKIP_WINDOW = intPreferencesKey("skip_window_sec")
         val KEY_NEXT_CARD = booleanPreferencesKey("next_card")
+        val KEY_PASSTHROUGH = stringPreferencesKey("audio_passthrough")
         val KEY_DL_WIFI = booleanPreferencesKey("downloads_wifi_only")
         val KEY_PROFILES_CACHE = stringPreferencesKey("profiles_cache")
         val KEY_DISMISSED_UPDATE = intPreferencesKey("dismissed_update")

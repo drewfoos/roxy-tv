@@ -178,6 +178,18 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   **splash screen** (the hat breathing with a glow and the Roxy TV wordmark while the
   stored session is checked, at least 1.2 s). The repo still has no LICENSE file; pick one
   before the first public release.
+- Also done (2026-10-20, morning): **transcoding for the apps** (Phase 3, the libmpv part).
+  `GET /v1/sources/{id}/transcode` streams H.264 + per-track audio in Matroska with every
+  subtitle, font and chapter copied; GPU encoder auto-detected (NVENC / Quick Sync /
+  VAAPI / AMF / x264) and selectable in the app (Account -> Server -> Transcoding, with
+  Save; Auto shows what it picks). Player Quality menu: Original, 1080p 8 Mb/s, 720p
+  4 Mb/s, 480p 1.5 Mb/s (taller-than-source hidden; downloads stay Original); seeks
+  outside the buffer restart the stream. Audio keeps 5.1 where it can; the TV app sends
+  Dolby/DTS untouched to a soundbar on HDMI ARC when one is found (Settings -> Soundbar
+  passthrough, Auto / Off; **not yet tried on the TV**). **Docker** image fixed and tested
+  (WSL2 + Docker 29, NVENC in the container); the dev server now runs in WSL because Smart
+  App Control blocks fresh Windows builds (`deploy/wsl-firewall.ps1` opens 8096 in WSL's
+  Hyper-V firewall).
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks
@@ -187,7 +199,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   from the continue-watching episode's streams only).
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
-  metadata/images, websocket, Docker image build test.
+  metadata/images, websocket, VAAPI check of the Docker image on the RX 550.
 - TV sign-in by QR code (planned, on top of LAN discovery): the TV finds the server the
   same way the phone does, asks it for a short pairing code, and shows a QR of
   `roxy://pair?server=<id>&code=<code>`; the phone app, already signed in, scans it and
@@ -276,6 +288,10 @@ notifications land; the Roxy TV app works unchanged pointed at Roxy Server; the 
 thing runs from `docker compose up` next to the existing containers.
 
 ## Phase 3 — Transcoding fallback (2-3 months)
+
+Started 2026-10-20: the Matroska path for libmpv clients, the vendor argument builders and
+encoder selection are done (ARCHITECTURE 4.8). Left: HLS for browsers and Cast, burn-in,
+remux-only, policies.
 
 - HLS job manager (playlist-first, lazy segments, restart on seek, ping GC).
 - ffmpeg argument builders: software, VAAPI/AMF (RX 550), QSV, NVENC.

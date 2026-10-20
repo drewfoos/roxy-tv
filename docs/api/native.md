@@ -98,6 +98,43 @@ It is absent for bitmap subtitles and for tracks too short to classify.
 | GET/HEAD | `/v1/stream/{sourceId}` | the file, HTTP ranges honoured (`206`) |
 | GET | `/v1/sources/{id}/attachments/{index}` | attachment bytes (fonts), extracted eagerly at scan |
 | GET | `/v1/sources/{id}/subtitles/{index}` | text subtitle track, byte for byte |
+| GET | `/v1/sources/{id}/transcode?height=&bitrate=&start=` | the source re-encoded, as a Matroska stream (see Transcoding) |
+
+## Transcoding
+
+`GET /v1/sources/{id}/transcode?height=720&bitrate=4000&start=300.5` (Bearer or
+`?api_key=`, since libmpv cannot send headers) streams the file re-encoded to H.264 at up
+to `height` lines and `bitrate` kb/s of video, from `start` seconds, as **Matroska over a
+plain 200 response** (no ranges, no length). It is for Roxy's own libmpv players, which
+keep rendering ASS themselves: every subtitle track, font attachment and chapter is copied
+as-is (MP4 `mov_text` becomes SRT), so it plays like direct play at a lower bitrate.
+
+- Timestamps keep the file's clock (`-copyts`): the first frame of a stream started at
+  300 s is at 300 s. Players set mpv `rebase-start-time=no` and take the duration from the
+  source (`durationMs`), since the stream has none.
+- Seeking inside what the player has buffered is local; anything else is a new request
+  with a new `start`. Closing the connection stops the server's ffmpeg.
+- Audio: every track stays (dub/sub switching is instant). At 720p and above, compact
+  tracks (AAC, AC3, E-AC3, Opus, MP3 up to 640 kb/s) are copied, so 5.1 and soundbar
+  passthrough survive; FLAC, TrueHD, DTS and PCM become AAC (5.1 at 384 kb/s, or stereo
+  at 160 kb/s). At 480p-class settings (height 480 or less, or under 2.5 Mb/s) every
+  track is stereo AAC at 128 kb/s.
+- HDR sources are tone-mapped to SDR (`tonemapx`) when the build has the filter.
+- At most 4 transcodes run at once; a fifth gets `503`.
+- `GET /v1/system/transcoding` -> `{encoder}`: the encoder in use (`nvenc`, `qsv`,
+  `vaapi`, `amf` or `software`).
+
+### Transcoding settings (admin)
+
+- `GET /v1/settings/transcoding` -> `{hwAccel, encoder, options: [{id, label, available,
+  suggested?}]}`. `hwAccel` is the saved choice (`auto` or one encoder), `encoder` what
+  runs now. Every encoder is test-encoded once (a few seconds on the first call, cached
+  after); `available` says which work. The `auto` option's label names what Auto picks on
+  this server, e.g. `Auto (NVIDIA NVENC)`, and `suggested` carries its id.
+- `PUT /v1/settings/transcoding` `{hwAccel}` -> same as GET. A hardware encoder that fails
+  its test is refused with `422` and nothing is saved. The saved choice wins over
+  `ROXY_HWACCEL` (which only sets the default); if the saved encoder is gone at startup
+  (another machine, a container without the device) the server falls back to Auto.
 
 ## Metadata and images (Phase 1b contract)
 
@@ -350,4 +387,4 @@ appears.
 ## Not yet (see ROADMAP)
 
 Playback decision (`/v1/items/{id}/playback`), device-code login, websocket events,
-transcoding sessions.
+HLS transcoding for browsers and Cast, subtitle burn-in.

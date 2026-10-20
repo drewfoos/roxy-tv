@@ -132,6 +132,18 @@ class PlayerSession(
     var itemId: String? = params.itemId; private set
     private var sourceId: String? = params.sourceId
     private var local = params.local
+
+    // Quality: Original plays the file; a preset plays a server transcode of it. The choice
+    // holds for the rest of this playback, next episodes included (downloads always play
+    // their own file). A transcode is a live stream with no byte ranges: mpv can seek only
+    // inside what it has buffered, so any other seek restarts the stream at the target.
+    private var quality: QualityOption = QualityOption.Original
+    private var transcoding = false
+    private var directUrl = params.url
+    private var sourceHeight = 0
+    private var sourceDurationSec: Double? = null
+    /** Where a restarted stream will begin; shown as the position until it plays. */
+    @Volatile private var reloadTarget: Double? = null
     private var lastReportedMs = -1L
     @Volatile private var serverDownUntil = 0L
     @Volatile var destroyed = false; private set
@@ -161,6 +173,7 @@ class PlayerSession(
             options = MpvPlayer.Options(
                 hwdec = params.hwdec, vo = params.vo, startSeconds = params.startSeconds, subMode = params.subMode, forceSid = params.forceSid,
                 audioLangs = params.audioLangs, subLangs = params.subLangs, anime = params.anime,
+                spdif = AudioPassthrough.forSetting(context, settings.passthrough).map { it.mpv },
             ),
             fontsDir = app.fontsDir,
             displayRefreshRate = DeviceReport.refreshRate(context),
@@ -195,9 +208,10 @@ class PlayerSession(
             override fun seekTo(seconds: Double) {
                 // A manual seek backwards into a segment re-arms its auto-skip.
                 segments.filter { seconds < it.startSec }.forEach { skipped.remove(it.type) }
-                player.seekTo(seconds); refreshUi()
+                seek(seconds); refreshUi()
             }
-            override fun seekBy(seconds: Int) { player.seekRelative(seconds); refreshUi() }
+            override fun seekBy(seconds: Int) { seekRelative(seconds); refreshUi() }
+            override fun setQuality(key: String) { changeQuality(QualityOption.byKey(key)) }
             override fun selectSubtitle(id: Int) { if (id > 0) lastSid = id; player.setSubtitleTrack(id); refreshUi() }
             override fun selectAudio(id: Int) { player.setAudioTrack(id); refreshUi() }
             override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi() }
@@ -248,7 +262,7 @@ class PlayerSession(
     fun onTap() { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() }
 
     fun onDoubleTap(back: Boolean) {
-        player.seekRelative(if (back) -10 else 10)
+        seekRelative(if (back) -10 else 10)
         refreshUi()
         doubleTapFlash = if (back) -10 else 10
         flashJob?.cancel()
@@ -276,6 +290,12 @@ class PlayerSession(
      * playback never waits on the network. Then resolve the episode after this one.
      */
     private fun prepareAndPlay(url: String, sourceId: String?, local: Boolean, start: Int) {
+        directUrl = url
+        sourceHeight = 0
+        sourceDurationSec = null
+        reloadTarget = null
+        transcoding = !local && sourceId != null && !quality.isOriginal && app.prefs.session.value.isLoggedIn
+        val playUrl = if (transcoding) app.api.transcodeUrl(sourceId!!, quality.height, quality.kbps, start.toDouble()) else url
         val snapshot = if (local) itemId?.let { app.downloads.entry(it)?.item } else null
         if (snapshot != null) {
             val src = snapshot.primarySource
@@ -290,8 +310,14 @@ class PlayerSession(
         } else if (sourceId != null && app.prefs.session.value.isLoggedIn) {
             // Skippable segments (intro/outro) from the server's chapter analysis.
             scope.launch {
-                runCatching { app.api.source(sourceId).segments }
-                    .onSuccess { segs -> if (this@PlayerSession.sourceId == sourceId) { segments = segs; segs.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) } } }
+                runCatching { app.api.source(sourceId) }
+                    .onSuccess { src ->
+                        if (this@PlayerSession.sourceId != sourceId) return@onSuccess
+                        segments = src.segments
+                        segments.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) }
+                        sourceHeight = src.streams.firstOrNull { it.type == "video" }?.height ?: 0
+                        sourceDurationSec = src.durationMs?.let { it / 1000.0 }
+                    }
                     .onFailure { Timber.w(it, "segments for %s", sourceId) }
             }
             // Seek-preview thumbnails: ask once now and, if the server is still generating
@@ -312,7 +338,7 @@ class PlayerSession(
                         player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
                     }
                     .onFailure { Timber.w(it, "could not fetch subtitle languages for %s", sourceId) }
-                player.play(url, start)
+                player.play(playUrl, start, transcoded = transcoding)
             }
         } else {
             player.play(url, start)
@@ -390,11 +416,18 @@ class PlayerSession(
         if (player.destroyed || destroyed) return
         val tracks = runCatching { player.tracks() }.getOrDefault(emptyList())
         val wasPaused = ui.paused
+        val timePos = player.timePosSeconds()
+        if (timePos != null && !switching) reloadTarget = null
+        val offline = local || sourceId == null
         ui = PlayerUiState(
             title = title,
             subtitle = subtitleLine,
-            positionSec = player.timePosSeconds() ?: 0.0,
-            durationSec = player.durationSeconds() ?: 0.0,
+            positionSec = reloadTarget ?: timePos ?: 0.0,
+            // A transcode stream has no length of its own; the source knows it.
+            durationSec = (if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec ?: 0.0,
+            qualityOptions = if (offline) listOf(QualityOption.Original) else QualityOption.forSource(sourceHeight),
+            qualityKey = if (transcoding) quality.key else QualityOption.Original.key,
+            qualityNote = if (local) "Downloads play from this device at their original quality." else null,
             bufferedSec = player.cacheEndSeconds() ?: 0.0,
             paused = player.isPaused(),
             muted = player.isMuted(),
@@ -419,7 +452,7 @@ class PlayerSession(
             ui.activeSegment?.let { seg ->
                 if (skipped.add(seg.type)) {
                     Timber.i("auto-skip %s -> %.1f s", seg.type, seg.endSec)
-                    player.seekTo(seg.endSec)
+                    seek(seg.endSec)
                     flashOsd("Skipped ${seg.type}")
                 }
             }
@@ -444,6 +477,76 @@ class PlayerSession(
             }
             if (ui.positionSec >= triggerAt) showNextCard(n)
         }
+    }
+
+    // ---- seeking and quality ----
+
+    /** Every seek goes through here: a transcode restarts when the target is not buffered. */
+    private fun seek(target: Double) {
+        var t = target.coerceAtLeast(0.0)
+        sourceDurationSec?.let { d -> t = t.coerceAtMost((d - 1.0).coerceAtLeast(0.0)) }
+        if (transcoding && !buffered(t)) restartTranscode(t) else player.seekTo(t)
+    }
+
+    private fun seekRelative(seconds: Int) {
+        if (!transcoding) { player.seekRelative(seconds); return }
+        val from = reloadTarget ?: player.timePosSeconds() ?: return
+        seek(from + seconds)
+    }
+
+    /**
+     * Whether mpv can reach [t] in what it holds: ahead up to the end of the cache, behind
+     * a little (the back buffer is 32 MiB, about half a minute of an 8 Mb/s transcode).
+     */
+    private fun buffered(t: Double): Boolean {
+        if (reloadTarget != null) return false
+        val pos = player.timePosSeconds() ?: return false
+        val end = player.cacheEndSeconds() ?: return false
+        return t >= pos - 15.0 && t <= end - 1.0
+    }
+
+    /** Ask the server for a new stream beginning at [at] (the old one is dropped; the server stops its ffmpeg). */
+    private fun restartTranscode(at: Double) {
+        val sid = sourceId ?: return
+        Timber.i("transcode %s from %.1f s", quality.key, at)
+        transcoding = true
+        reloadTarget = at
+        switching = true // the replaced stream's end is not the end of the episode
+        player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at), 0, transcoded = true)
+        watchReload(at)
+    }
+
+    /** A stream that never loads (server busy: 503, or gone) must not leave the player stuck switching. */
+    private fun watchReload(at: Double) {
+        scope.launch {
+            delay(20_000)
+            if (!destroyed && switching && reloadTarget == at) {
+                Timber.w("reload at %.1f s did not start", at)
+                switching = false
+                reloadTarget = null
+                flashOsd("The server could not start this quality", 4000)
+            }
+        }
+    }
+
+    private fun changeQuality(q: QualityOption) {
+        if (local || sourceId == null) return
+        val current = if (transcoding) quality else QualityOption.Original
+        if (q == current) return
+        val pos = reloadTarget ?: player.timePosSeconds() ?: 0.0
+        quality = q
+        Timber.i("quality -> %s at %.1f s", q.key, pos)
+        if (q.isOriginal) {
+            transcoding = false
+            reloadTarget = pos
+            switching = true
+            player.play(directUrl, pos.toInt(), transcoded = false)
+            watchReload(pos)
+        } else {
+            restartTranscode(pos)
+        }
+        flashOsd(if (q.isOriginal) "Original quality" else "${q.label} · ${q.detail}")
+        refreshUi()
     }
 
     fun showControls() {

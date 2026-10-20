@@ -1,0 +1,17 @@
+# Only server/ and deploy/ go into the build context.
+.git
+.gitignore
+apps
+docs
+testdata
+server/bin
+server/data*
+server/config
+server/cache
+server/roxy.db*
+deploy/config
+deploy/fonts
+**/*.mkv
+**/*.mp4
+**/*.env
+.env

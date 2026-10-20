@@ -102,6 +102,11 @@ data class PlayerUiState(
     val currentSid: Int = 0,
     val currentAid: Int = 0,
     val quality: String = "",             // "1080p HEVC · hardware"
+    /** The Quality menu: Original plus the transcode presets this source can use. */
+    val qualityOptions: List<QualityOption> = listOf(QualityOption.Original),
+    val qualityKey: String = QualityOption.Original.key,
+    /** Why only Original is offered (a download plays from the phone), or null. */
+    val qualityNote: String? = null,
     val fillScreen: Boolean = false,      // crop to fill (fullscreen button) vs letterbox
     val pipSupported: Boolean = false,
     val hasNext: Boolean = false,
@@ -121,8 +126,34 @@ data class PlayerUiState(
     val skippableSegment: MediaSegment? get() = activeSegment?.takeIf { skipWindowSec <= 0 || positionSec < it.startSec + skipWindowSec }
 }
 
+/**
+ * One Quality menu entry. Original plays the file itself (direct play); the others ask
+ * the server for an H.264 transcode at that height and video bitrate.
+ */
+data class QualityOption(val key: String, val label: String, val height: Int, val kbps: Int) {
+    val isOriginal: Boolean get() = height == 0
+    val detail: String get() = if (isOriginal) "" else "%s Mb/s".format(java.util.Locale.ROOT, if (kbps % 1000 == 0) (kbps / 1000).toString() else "%.1f".format(java.util.Locale.ROOT, kbps / 1000.0))
+
+    companion object {
+        val Original = QualityOption("original", "Original", 0, 0)
+        val Presets = listOf(
+            Original,
+            QualityOption("1080", "1080p", 1080, 8000),
+            QualityOption("720", "720p", 720, 4000),
+            QualityOption("480", "480p", 480, 1500),
+        )
+
+        /** The presets that make sense for a video [sourceHeight] tall (unknown height: all). */
+        fun forSource(sourceHeight: Int): List<QualityOption> =
+            Presets.filter { it.isOriginal || sourceHeight <= 0 || it.height <= sourceHeight }
+
+        fun byKey(key: String): QualityOption = Presets.firstOrNull { it.key == key } ?: Original
+    }
+}
+
 /** What the controls ask the activity to do. */
 interface PlayerActions {
+    fun setQuality(key: String) {}
     fun togglePause()
     fun seekTo(seconds: Double)
     fun seekBy(seconds: Int)
@@ -276,7 +307,7 @@ fun PlayerControls(
                     Sheet.Settings -> MenuPopup(
                         title = null,
                         rows = listOf(
-                            MenuRow("quality", "Quality", state.quality.ifEmpty { "Original" }, submenu = true),
+                            MenuRow("quality", "Quality", QualityOption.byKey(state.qualityKey).label, submenu = true),
                             MenuRow("speed", "Playback speed", if (state.speed == 1.0) "Normal" else "${state.speed}×", submenu = true),
                             MenuRow("audio", "Audio", state.audioTracks.firstOrNull { it.id == state.currentAid }?.let { shortTrackName(it) } ?: "—", submenu = true),
                             MenuRow("subtitles", "Subtitles", state.subtitleTracks.firstOrNull { it.id == state.currentSid }?.let { shortTrackName(it) } ?: "Off", submenu = true),
@@ -305,9 +336,12 @@ fun PlayerControls(
                     )
                     Sheet.Quality -> MenuPopup(
                         title = "Quality",
-                        rows = listOf(MenuRow("original", "Original", state.quality.ifEmpty { "direct play" }, checked = true)),
-                        footer = "Direct play: the file is decoded on this device as-is. Lower qualities arrive with server transcoding.",
-                        onPick = { onSheet(Sheet.None) }, onBack = { onSheet(Sheet.Settings) }, onInteraction = onInteraction,
+                        rows = state.qualityOptions.map { o ->
+                            val detail = if (o.isOriginal) (if (state.qualityKey == o.key) state.quality else "").ifEmpty { "direct play" } else o.detail
+                            MenuRow(o.key, o.label, detail, checked = o.key == state.qualityKey)
+                        },
+                        footer = state.qualityNote ?: "Original plays the file as-is. Lower qualities are converted by the server, for slow connections; subtitles and audio tracks stay the same.",
+                        onPick = { actions.setQuality(it); onSheet(Sheet.None) }, onBack = { onSheet(Sheet.Settings) }, onInteraction = onInteraction,
                     )
                     Sheet.Speed -> MenuPopup(
                         title = "Playback speed",

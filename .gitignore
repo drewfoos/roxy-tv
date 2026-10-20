@@ -31,6 +31,7 @@ server/config/
 # ---- build output and runtime data ----
 server/bin/
 server/data/
+server/data-wsl/
 server/roxy.db*
 server/cache/
 deploy/fonts/

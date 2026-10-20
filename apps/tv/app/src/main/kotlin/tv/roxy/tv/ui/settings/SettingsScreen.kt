@@ -28,6 +28,7 @@ import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.data.Languages
 import tv.roxy.tv.diagnostics.DeviceReport
+import tv.roxy.tv.player.AudioPassthrough
 import tv.roxy.tv.ui.components.ChoiceRow
 import tv.roxy.tv.ui.components.ScreenPadding
 import tv.roxy.tv.ui.components.SecondaryButton
@@ -65,10 +66,16 @@ fun SettingsScreen(onLoggedOut: () -> Unit) {
         ChoiceRow("Subtitles", PlayerSettings.subModeChoices.map { PlayerSettings.subModeLabel(it) }, PlayerSettings.subModeLabel(settings.subMode)) { picked ->
             PlayerSettings.subModeChoices.firstOrNull { PlayerSettings.subModeLabel(it) == picked }?.let { save(settings.copy(subMode = it)) }
         }
+        val passthroughFound = remember { AudioPassthrough.detect(context) }
+        val passLabels = listOf("auto" to AudioPassthrough.autoLabel(passthroughFound), "off" to "Off (decode on the TV)")
+        ChoiceRow("Soundbar passthrough", passLabels.map { it.second }, passLabels.first { it.first == settings.passthrough }.second) { picked ->
+            passLabels.firstOrNull { it.second == picked }?.let { save(settings.copy(passthrough = it.first)) }
+        }
         ChoiceRow("Stats overlay", listOf("off", "on"), if (settings.showStats) "on" else "off") { save(settings.copy(showStats = it == "on")) }
         Text(
             "Subtitles: signs & songs pairs an anime dub with its signs track; foreign audio only turns them off for a dub; " +
-                "always full dialogue keeps the dialogue track up whatever the audio. The stats overlay can also be toggled in the player with Up or Menu.",
+                "always full dialogue keeps the dialogue track up whatever the audio. Soundbar passthrough sends Dolby and DTS audio untouched " +
+                "to a soundbar or receiver on HDMI ARC, so it plays the surround; the soundbar then controls the volume. The stats overlay can also be toggled in the player with Up or Menu.",
             color = RoxyColors.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 

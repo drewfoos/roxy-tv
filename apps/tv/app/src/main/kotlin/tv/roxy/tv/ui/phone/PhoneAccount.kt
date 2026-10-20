@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.Webhook
+import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.SwitchAccount
@@ -83,6 +84,7 @@ import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Profile
 import tv.roxy.tv.data.PlayerSettings
+import tv.roxy.tv.player.AudioPassthrough
 import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.profiles.AvatarCircle
@@ -97,7 +99,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -180,6 +182,14 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
                     pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
                 }
                 Divider()
+                val found = remember { AudioPassthrough.detect(context) }
+                val passLabels = listOf("auto" to AudioPassthrough.autoLabel(found), "off" to "Off (always decode here)")
+                SettingRow(null, "Soundbar passthrough", passLabels.first { it.first == settings.passthrough }.second) {
+                    pick = Pick("Soundbar passthrough", passLabels.map { it.second }, passLabels.first { it.first == settings.passthrough }.second) { picked ->
+                        passLabels.firstOrNull { it.second == picked }?.let { save(settings.copy(passthrough = it.first)) }
+                    }
+                }
+                Divider()
                 SwitchRow(null, "Stats overlay", settings.showStats) { save(settings.copy(showStats = it)) }
             }
         }
@@ -199,6 +209,8 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
         if (session.isAdmin) {
             GroupCard("Server") {
                 SettingRow(Icons.Outlined.Dns, "Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)
+                Divider()
+                SettingRow(Icons.Outlined.Memory, "Transcoding", "Which GPU converts video for lower qualities", onClick = onOpenTranscoding)
                 Divider()
                 SettingRow(Icons.Outlined.Image, "fanart.tv", "Logos and backgrounds for the art picker", onClick = onOpenFanart)
                 Divider()

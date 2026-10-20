@@ -179,8 +179,8 @@ class PlayerActivity : ComponentActivity() {
         when (keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_SPACE -> { player.togglePause(); session.showControls(); return true }
-            KeyEvent.KEYCODE_MEDIA_REWIND -> { player.seekRelative(-10); session.showControls(); return true }
-            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { player.seekRelative(10); session.showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { session.actions.seekBy(-10); session.showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { session.actions.seekBy(10); session.showControls(); return true }
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_I -> { session.toggleStats(); return true }
             KeyEvent.KEYCODE_CAPTIONS -> { session.openSheet(Sheet.Subtitles); return true }
             KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK, KeyEvent.KEYCODE_A -> { session.openSheet(Sheet.Audio); return true }
@@ -194,8 +194,8 @@ class PlayerActivity : ComponentActivity() {
             // Hidden: the first D-pad press reveals the controls (YouTube on TV); Left/Right
             // also seek straight away so a quick skip does not need two presses.
             when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> { player.seekRelative(-10); session.showControls(); return true }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> { player.seekRelative(10); session.showControls(); return true }
+                KeyEvent.KEYCODE_DPAD_LEFT -> { session.actions.seekBy(-10); session.showControls(); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { session.actions.seekBy(10); session.showControls(); return true }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { session.showControls(); return true }
             }
         } else {
