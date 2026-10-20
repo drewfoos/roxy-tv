@@ -96,14 +96,15 @@ type PathMapping struct {
 const settingsKey = "arr"
 
 type Service struct {
-	store  *store.Store
-	cfg    *config.Config
-	tmdb   *metadata.TMDB
-	sonarr *arr.Client
-	radarr *arr.Client
-	arrCfg ArrSettings
-	browse *ttlCache[*BrowseResult]
-	people *ttlCache[*Person]
+	store   *store.Store
+	cfg     *config.Config
+	tmdb    *metadata.TMDB
+	sonarr  *arr.Client
+	radarr  *arr.Client
+	arrCfg  ArrSettings
+	browse  *ttlCache[*BrowseResult]
+	people  *ttlCache[*Person]
+	similar *ttlCache[[]Item]
 
 	mu     sync.Mutex
 	genres map[string]map[int]string // "tv"/"movie" -> id -> name
@@ -163,7 +164,7 @@ func (c *ttlCache[T]) put(k string, v T) {
 }
 
 func New(st *store.Store, cfg *config.Config, tmdb *metadata.TMDB) *Service {
-	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), people: newTTLCache[*Person](time.Hour, 300), episodes: newTTLCache[[]Episode](10*time.Minute, 500)}
+	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), people: newTTLCache[*Person](time.Hour, 300), similar: newTTLCache[[]Item](time.Hour, 500), episodes: newTTLCache[[]Episode](10*time.Minute, 500)}
 	s.loadArr(context.Background())
 	return s
 }

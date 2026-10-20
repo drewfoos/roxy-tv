@@ -18,6 +18,12 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import tv.roxy.tv.api.DiscoverItem
 import tv.roxy.tv.api.RelatedEntry
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.height
@@ -48,7 +54,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 
 /** Netflix's phone movie page: backdrop, title and meta, Play, synopsis, the franchise it belongs to. */
 @Composable
-fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenDetails: (Item) -> Unit = {}) {
+fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenDetails: (Item) -> Unit = {}, onOpenMovie: (Item) -> Unit = {}, onOpenDiscover: (DiscoverItem) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: MovieViewModel = viewModel(key = "movie:$movieId") { MovieViewModel(app.api, movieId, initial = app.items[movieId]) }
@@ -79,8 +85,11 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
         // The series page's shape (Crunchyroll's): key art with the logo, facts and synopsis
         // centred, a tab strip, then the film as one row with its download and menu, and the
         // franchise it belongs to under a second tab when there is one.
-        val tabs = if (state.partOf.isNotEmpty()) listOf("Movie", "Part of") else listOf("Movie")
+        val tabs = listOf("Movie") + (if (state.partOf.isNotEmpty()) listOf("Part of") else emptyList()) + "More like this"
         var tab by rememberSaveable(movie.id) { mutableStateOf(0) }
+        val moreLike = tab == tabs.lastIndex
+        var similar by remember(movie.id) { mutableStateOf<List<DiscoverItem>?>(null) }
+        LaunchedEffect(moreLike, movie.id) { if (moreLike && similar == null) similar = runCatching { app.api.similar(movie.id) }.getOrDefault(emptyList()) }
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(movie, app.api, listState) }
             item(key = "info") {
@@ -92,7 +101,20 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                 )
             }
             item(key = "tabs") { SectionTabs(tabs, tab.coerceIn(0, tabs.size - 1), modifier = Modifier.padding(top = 22.dp)) { tab = it } }
-            if (tab == 1 && state.partOf.isNotEmpty()) {
+            if (moreLike) {
+                val list = similar
+                when {
+                    list == null -> item(key = "similar-wait") { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(3) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) } } }
+                    list.isEmpty() -> item(key = "similar-none") { Text("Nothing to suggest for this title yet.", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(PhonePad)) }
+                    else -> items(list.chunked(3), key = { row -> "sim:" + row.joinToString("|") { it.tmdbId.toString() } }) { row ->
+                        DiscoverGridRow(row) { c ->
+                            val id = c.libraryItemId
+                            if (id != null) { if (c.isMovie) onOpenMovie(Item(id = id, type = "movie", title = c.title)) else onOpenSeries(Item(id = id, type = "series", title = c.title)) }
+                            else onOpenDiscover(c)
+                        }
+                    }
+                }
+            } else if (tab == 1 && state.partOf.isNotEmpty()) {
                 items(state.partOf.chunked(3)) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
             } else {
                 item(key = "movie-row") {

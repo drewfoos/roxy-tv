@@ -111,3 +111,33 @@ func (s *Service) Person(ctx context.Context, tmdbID int) (*Person, error) {
 	s.annotate(ctx, out.Credits)
 	return &out, nil
 }
+
+// Similar is "More like this" for a title: TMDB's recommendations (what people who
+// watched it also watched), falling back to its "similar" list when there are none.
+// Cached an hour; the library and request marks are refreshed every call.
+func (s *Service) Similar(ctx context.Context, kind string, tmdbID int) ([]Item, error) {
+	if kind != "tv" && kind != "movie" {
+		return nil, fmt.Errorf("type must be tv or movie")
+	}
+	key := fmt.Sprintf("%s:%d", kind, tmdbID)
+	items, ok := s.similar.get(key)
+	if !ok {
+		var err error
+		items, err = s.list(ctx, fmt.Sprintf("/%s/%d/recommendations", kind, tmdbID), url.Values{}, kind, 30)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			if items, err = s.list(ctx, fmt.Sprintf("/%s/%d/similar", kind, tmdbID), url.Values{}, kind, 30); err != nil {
+				return nil, err
+			}
+		}
+		if items == nil {
+			items = []Item{}
+		}
+		s.similar.put(key, items)
+	}
+	out := append([]Item(nil), items...)
+	s.annotate(ctx, out)
+	return out, nil
+}

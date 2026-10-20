@@ -250,6 +250,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onOpenSeries = { openSeries(it) },
                             onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) },
                             onOpenEpisode = { openEpisode(it) },
+                            onOpenDiscover = { nav.navigate(Route.DiscoverDetail(it.type, it.tmdbId)) },
                         )
                     }
                 }
@@ -262,7 +263,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 composable<Route.Movie> { e ->
                     Page {
                         val r = e.toRoute<Route.Movie>()
-                        PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) })
+                        PhoneMovie(movieId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenSeries = { openSeries(it) }, onOpenDetails = { nav.navigate(Route.Details(it.id, it.title)) }, onOpenMovie = { openMovie(it) }, onOpenDiscover = { nav.navigate(Route.DiscoverDetail(it.type, it.tmdbId)) })
                     }
                 }
                 composable<Route.Details> { e ->

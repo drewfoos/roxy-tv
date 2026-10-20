@@ -100,7 +100,7 @@ fun PhonePerson(tmdbId: Int, fallbackName: String, onBack: () -> Unit, onOpenLib
                 }
                 items(p.credits.chunked(3), key = { row -> row.joinToString("|") { "${it.type}:${it.tmdbId}" } }) { row ->
                     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { c -> CreditCard(c, modifier = Modifier.weight(1f)) { if (c.inLibrary) onOpenLibrary(c) else onOpenDiscover(c) } }
+                        row.forEach { c -> DiscoverGridCard(c, modifier = Modifier.weight(1f)) { if (c.inLibrary) onOpenLibrary(c) else onOpenDiscover(c) } }
                         repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
@@ -128,8 +128,9 @@ private fun lifeLine(p: Person): String? {
     return parts.takeIf { it.isNotEmpty() }?.joinToString("  ·  ")
 }
 
+/** A poster with the library tick, the name, and the role (a person's credits) or the year (More like this). */
 @Composable
-private fun CreditCard(item: DiscoverItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun DiscoverGridCard(item: DiscoverItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
             if (item.poster != null) AsyncImage(model = item.poster, contentDescription = item.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -139,5 +140,14 @@ private fun CreditCard(item: DiscoverItem, modifier: Modifier = Modifier, onClic
         Text(item.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
         val sub = listOfNotNull(item.character.takeIf { it.isNotBlank() }?.let { "as $it" } ?: item.year?.toString()).joinToString()
         Text(sub, fontSize = 11.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Three [DiscoverGridCard]s to a row: the "More like this" tab on series and movie pages. */
+@Composable
+internal fun DiscoverGridRow(row: List<DiscoverItem>, onOpen: (DiscoverItem) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        row.forEach { c -> DiscoverGridCard(c, modifier = Modifier.weight(1f)) { onOpen(c) } }
+        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
     }
 }

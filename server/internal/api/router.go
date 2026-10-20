@@ -105,6 +105,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Put("/items/{id}/images/{type}", s.putItemImage)
 			r.Post("/items/{id}/refresh", s.refreshItem)
 			r.Get("/items/{id}/related", s.related)
+			r.Get("/items/{id}/similar", s.itemSimilar)
 			r.Get("/items/{id}/details", s.itemDetails)
 			r.Get("/home", s.home)
 			r.Get("/me/resume", s.resume)

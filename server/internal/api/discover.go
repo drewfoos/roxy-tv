@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/discover"
+	"github.com/roxy-media/roxy/server/internal/model"
 )
 
 // Discover ("our own request app"): TMDB rows and search annotated with what the library has
@@ -69,6 +71,35 @@ func (s *Server) discoverEpisodes(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/discover/{type}/{tmdbId}
+// GET /v1/items/{id}/similar -> {items: [Discover Item]}: "More like this" for a library
+// title, from TMDB by the title's TMDB id; empty for titles TMDB does not know.
+func (s *Server) itemSimilar(w http.ResponseWriter, r *http.Request) {
+	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if it == nil {
+		writeError(w, 404, "item not found")
+		return
+	}
+	id, _ := strconv.Atoi(it.ProviderIDs["tmdb"])
+	if s.discover == nil || id == 0 {
+		writeJSON(w, 200, map[string]any{"items": []discover.Item{}})
+		return
+	}
+	kind := "tv"
+	if it.Type == model.TypeMovie {
+		kind = "movie"
+	}
+	items, err := s.discover.Similar(r.Context(), kind, id)
+	if err != nil {
+		upstreamError(w, "similar", err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
 // GET /v1/people/{tmdbId} -> Person: a cast member and their credits, library titles marked.
 func (s *Server) person(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) {

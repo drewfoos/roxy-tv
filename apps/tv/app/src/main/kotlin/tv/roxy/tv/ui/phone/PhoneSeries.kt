@@ -88,6 +88,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.api.DiscoverItem
 import tv.roxy.tv.api.DiscoverSeason
 import tv.roxy.tv.api.RelatedEntry
 import tv.roxy.tv.api.RoxyApi
@@ -113,6 +114,7 @@ fun PhoneSeries(
     onOpenSeries: (Item) -> Unit,
     onOpenDetails: (Item) -> Unit = {},
     onOpenEpisode: (Item) -> Unit = {},
+    onOpenDiscover: (DiscoverItem) -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
@@ -169,8 +171,13 @@ fun PhoneSeries(
         // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
         // the list is a skeleton: the header is drawn from the card that opened the page
         // and the episodes simply appear under the season row when they land.
-        val tabs = if (series.relatedCount > 0 || state.related.isNotEmpty()) listOf("Episodes", "Movies & OVAs") else listOf("Episodes")
-        val selectedTab = if (state.showRelated && tabs.size > 1) 1 else 0
+        val hasRelated = series.relatedCount > 0 || state.related.isNotEmpty()
+        val tabs = listOf("Episodes") + (if (hasRelated) listOf("Movies & OVAs") else emptyList()) + "More like this"
+        // "More like this": TMDB's recommendations, fetched the first time the tab is opened.
+        var moreLike by rememberSaveable(seriesId) { mutableStateOf(false) }
+        var similar by remember(seriesId) { mutableStateOf<List<DiscoverItem>?>(null) }
+        LaunchedEffect(moreLike, series.id) { if (moreLike && similar == null) similar = runCatching { app.api.similar(series.id) }.getOrDefault(emptyList()) }
+        val selectedTab = when { moreLike -> tabs.lastIndex; state.showRelated && hasRelated -> 1; else -> 0 }
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(series, app.api, listState) }
             item(key = "info") {
@@ -185,10 +192,24 @@ fun PhoneSeries(
             item(key = "tabs") {
                 SectionTabs(tabs, selectedTab, modifier = Modifier.padding(top = 22.dp)) { i ->
                     selectedExtra = null
-                    if (i == 1) vm.selectRelated() else vm.selectSeason(state.selectedSeason)
+                    moreLike = i == tabs.lastIndex
+                    if (i == 1 && hasRelated) vm.selectRelated() else if (!moreLike) vm.selectSeason(state.selectedSeason)
                 }
             }
-            if (selectedTab == 1) {
+            if (moreLike) {
+                val list = similar
+                when {
+                    list == null -> item(key = "similar-wait") { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(3) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) } } }
+                    list.isEmpty() -> item(key = "similar-none") { Text("Nothing to suggest for this title yet.", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(PhonePad)) }
+                    else -> items(list.chunked(3), key = { row -> "sim:" + row.joinToString("|") { it.tmdbId.toString() } }) { row ->
+                        DiscoverGridRow(row) { c ->
+                            val id = c.libraryItemId
+                            if (id != null) { if (c.isMovie) onOpenMovie(Item(id = id, type = "movie", title = c.title)) else onOpenSeries(Item(id = id, type = "series", title = c.title)) }
+                            else onOpenDiscover(c)
+                        }
+                    }
+                }
+            } else if (selectedTab == 1) {
                 items(state.related.chunked(3)) { row ->
                     RelatedGridRow(row, app.api, onOpen = { rel ->
                         val item = rel.item ?: return@RelatedGridRow

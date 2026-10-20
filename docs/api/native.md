@@ -33,6 +33,12 @@ URL from the reply's source address and `port` unless `advertised` is true, when
 `GET /v1/system/info` on 8096 and keeping replies whose `product` is `roxy`. The sweep
 is the fallback for networks that drop broadcasts (Docker bridge, Wi-Fi client isolation).
 
+## More like this
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/items/{id}/similar` | `{items: [Discover Item]}`: TMDB's recommendations for a library title (its "similar" list when there are none), library titles marked; empty when TMDB does not know the title. Cached an hour. |
+
 ## People
 
 | Method | Path | Notes |

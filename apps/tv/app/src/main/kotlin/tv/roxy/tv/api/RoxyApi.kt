@@ -188,6 +188,9 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun person(tmdbId: Int): Person = get("/v1/people/$tmdbId")
 
+    /** "More like this" for a library title (TMDB recommendations, library titles marked). */
+    suspend fun similar(itemId: String): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/items/$itemId/similar").items
+
     /** Request a title; [seasons] narrows a series to those seasons (empty = everything the library lacks). */
     suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList(), episodes: List<String> = emptyList()): RequestRow =
         postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons, episodes)))
