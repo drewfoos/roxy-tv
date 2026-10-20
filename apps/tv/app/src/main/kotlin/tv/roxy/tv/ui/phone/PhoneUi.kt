@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -168,6 +170,52 @@ fun ThumbTile(item: Item, api: RoxyApi, width: Dp = ThumbW, onClick: () -> Unit)
                 Text(if (isMovie) item.title else item.seriesTitle ?: item.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val sub = if (isMovie) listOfNotNull(item.year?.toString(), "Movie").joinToString("  ·  ") else listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }.joinToString("  ")
                 Text(sub, fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            CardMenu(item, api, onPlay = onClick, modifier = Modifier.padding(start = 4.dp))
+        }
+    }
+}
+
+/**
+ * Continue Watching on the phone: one card nearly fills the width (the next peeks in at
+ * the right, so swiping is obvious): the episode's own still (a movie's scene backdrop),
+ * a progress bar along its bottom edge, and under it the show's name, then the episode
+ * and what is left of it.
+ */
+@Composable
+fun ContinueRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> Unit, modifier: Modifier = Modifier) {
+    val screen = LocalConfiguration.current.screenWidthDp.dp
+    val cardWidth = screen - PhonePad - 44.dp
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, bottom = 10.dp))
+        // Snaps card to card, so a swipe never leaves one half off the screen.
+        val state = rememberLazyListState()
+        LazyRow(state = state, flingBehavior = rememberSnapFlingBehavior(state), contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(items, key = { it.id }) { item -> ContinueCard(item, api, width = cardWidth, onClick = { onClick(item) }) }
+        }
+    }
+}
+
+@Composable
+private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
+    val isMovie = item.isMovie
+    Column(modifier = Modifier.width(width)) {
+        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
+            val px = widthPx(width) * 2
+            val url = if (isMovie) api.imageUrl(item, "backdrop", px) ?: api.imageUrl(item, "poster", px) else api.imageUrl(item, "thumb", px)
+            RoxyImage(url, item.seriesTitle ?: item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+            PlayBadge(size = 52.dp, modifier = Modifier.align(Alignment.Center))
+            audioBadge(item)?.let { BadgePill(it, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) }
+            // What is left, as a corner tag on the picture, where a long episode title cannot push it off.
+            item.userData?.positionMs?.takeIf { it > 0 }?.let { pos -> item.runtimeMs?.takeIf { it > pos }?.let { "${((it - pos) / 60000L + 1).coerceAtLeast(1)}m left" } }
+                ?.let { BadgePill(it, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 12.dp)) }
+            ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
+        }
+        Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 8.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(if (isMovie) item.title else item.seriesTitle ?: item.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val what = if (isMovie) listOfNotNull(item.year?.toString(), "Movie") else listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }
+                Text(what.joinToString("  ·  "), fontSize = 13.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
             }
             CardMenu(item, api, onPlay = onClick, modifier = Modifier.padding(start = 4.dp))
         }

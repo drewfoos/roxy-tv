@@ -171,7 +171,7 @@ fun PhoneHome(
                         item(key = "recent") { PhoneRow("Recently added", recent, app.api, onClick = ::open, modifier = Modifier.padding(top = 22.dp)) }
                     }
                     s.rows.firstOrNull { it.key == "continue" }?.let { row ->
-                        item(key = "continue") { PhoneRow("Continue Watching", row.items, app.api, onClick = ::open, modifier = Modifier.padding(top = 26.dp)) }
+                        item(key = "continue") { ContinueRow("Continue Watching", row.items, app.api, onClick = ::open, modifier = Modifier.padding(top = 26.dp)) }
                     }
                     items(s.rows.filter { it.key in setOf("series", "movies") }, key = { it.key }) { row ->
                         PhoneRow(row.title.ifEmpty { rowTitle(row.key) }, row.items, app.api, onClick = ::open, modifier = Modifier.padding(top = 26.dp))
@@ -386,11 +386,11 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
  */
 @Composable
 private fun TimerBars(count: Int, current: Int, progress: Float, width: Dp, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.padding(start = PhonePad, bottom = 10.dp).width(width), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(modifier = modifier.padding(start = PhonePad, bottom = 13.dp).width(width), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(count) { i ->
             val fill = when { i < current -> 1f; i == current -> progress; else -> 0f }
-            Box(modifier = Modifier.weight(1f).height(9.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(alpha = 0.28f))) {
-                Box(modifier = Modifier.fillMaxWidth(fill).height(9.dp).clip(RoundedCornerShape(5.dp)).background(RoxyColors.accent))
+            Box(modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.55f))) {
+                Box(modifier = Modifier.fillMaxWidth(fill).height(6.dp).clip(RoundedCornerShape(3.dp)).background(RoxyColors.accent))
             }
         }
     }
