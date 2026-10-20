@@ -104,6 +104,7 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
                 card = card, controlsVisible = session.controlsVisible,
                 onPlayNow = { session.playNext() },
                 onDismiss = { session.dismissNextCard() },
+                compact = session.ui.fullscreen == false,
             )
         }
         session.osd?.let { text ->

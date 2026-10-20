@@ -42,6 +42,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import tv.roxy.tv.ui.components.tapClick
@@ -62,9 +67,31 @@ data class NextCard(
  * D-pad: Play now has focus on arrival; Right moves to Watch credits.
  */
 @Composable
-fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> Unit, onDismiss: () -> Unit) {
+fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> Unit, onDismiss: () -> Unit, compact: Boolean = false) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
+    // In the page's 16:9 box the card is one slim row: countdown and name, Play, dismiss.
+    if (compact) {
+        Box(modifier = Modifier.fillMaxSize().padding(end = 10.dp, bottom = if (controlsVisible) 44.dp else 12.dp), contentAlignment = Alignment.BottomEnd) {
+            Row(
+                modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2141418)).border(BorderStroke(1.dp, Color(0x33FFFFFF)), RoundedCornerShape(8.dp)).padding(start = 10.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        when (val s = card.secondsLeft) { null -> "Next episode"; 0 -> "Starting..."; else -> "Next in $s s" },
+                        color = RoxyColors.accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(card.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.width(8.dp))
+                CardButton("Play", primary = true, focusRequester = playFocus, height = 28.dp, fontSize = 12.sp, onClick = onPlayNow)
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Filled.Close, contentDescription = "Watch credits", tint = Color.White, modifier = Modifier.size(28.dp).clip(CircleShape).tapClick(onDismiss).padding(6.dp))
+            }
+        }
+        return
+    }
     Box(modifier = Modifier.fillMaxSize().padding(end = 32.dp, bottom = if (controlsVisible) 118.dp else 40.dp), contentAlignment = Alignment.BottomEnd) {
         Column(
             modifier = Modifier.width(340.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2141418)).border(BorderStroke(1.dp, Color(0x33FFFFFF)), RoundedCornerShape(8.dp)).padding(12.dp),
@@ -90,20 +117,20 @@ fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> U
 }
 
 @Composable
-private fun CardButton(label: String, primary: Boolean, modifier: Modifier = Modifier, focusRequester: FocusRequester? = null, onClick: () -> Unit) {
+private fun CardButton(label: String, primary: Boolean, modifier: Modifier = Modifier, focusRequester: FocusRequester? = null, height: Dp = 38.dp, fontSize: TextUnit = 14.sp, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val bg = when { focused -> Color.White; primary -> RoxyColors.accent; else -> Color(0xFF2E2E36) }
     val fg = when { focused -> Color.Black; primary -> OnBrand; else -> Color.White }
     Row(
-        modifier = modifier.height(38.dp)
+        modifier = modifier.height(height)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
-            .clip(RoundedCornerShape(19.dp)).background(bg).tapClick(onClick),
+            .clip(RoundedCornerShape(19.dp)).background(bg).tapClick(onClick).padding(horizontal = if (height < 38.dp) 10.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
     ) {
-        if (primary) { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(4.dp)) }
-        Text(label, color = fg, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        if (primary) { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = fg, modifier = Modifier.size(if (height < 38.dp) 16.dp else 20.dp)); Spacer(Modifier.width(4.dp)) }
+        Text(label, color = fg, fontSize = fontSize, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }

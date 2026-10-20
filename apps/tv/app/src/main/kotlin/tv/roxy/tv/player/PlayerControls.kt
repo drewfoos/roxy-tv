@@ -168,7 +168,7 @@ fun PlayerControls(
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
     state.activeSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
-            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, modifier = Modifier.fillMaxSize().padding(end = if (compact) 12.dp else 32.dp, bottom = if (visible) (if (compact) 60.dp else 118.dp) else (if (compact) 16.dp else 40.dp)))
+            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (visible) (if (compact) 44.dp else 118.dp) else (if (compact) 12.dp else 40.dp)))
         }
     }
     if (!visible) return
@@ -323,7 +323,7 @@ private val LocalCompactMenu = compositionLocalOf { false }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
-private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier) {
+private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     Box(modifier = modifier, contentAlignment = Alignment.BottomEnd) {
         Row(
@@ -336,10 +336,10 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier) {
                 .background(if (focused) Color.White else Color(0xE6202020))
                 .border(BorderStroke(1.dp, Color(0x99FFFFFF)), RoundedCornerShape(4.dp))
                 .tapClick(onClick)
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 6.dp else 12.dp),
         ) {
-            Text(label, color = if (focused) Color.Black else Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Icon(Icons.Filled.SkipNext, contentDescription = null, tint = if (focused) Color.Black else Color.White, modifier = Modifier.padding(start = 6.dp).size(20.dp))
+            Text(label, color = if (focused) Color.Black else Color.White, fontSize = if (compact) 12.sp else 15.sp, fontWeight = FontWeight.SemiBold)
+            Icon(Icons.Filled.SkipNext, contentDescription = null, tint = if (focused) Color.Black else Color.White, modifier = Modifier.padding(start = 4.dp).size(if (compact) 16.dp else 20.dp))
         }
     }
 }
