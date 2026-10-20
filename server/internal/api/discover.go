@@ -69,6 +69,24 @@ func (s *Server) discoverEpisodes(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/discover/{type}/{tmdbId}
+// GET /v1/people/{tmdbId} -> Person: a cast member and their credits, library titles marked.
+func (s *Server) person(w http.ResponseWriter, r *http.Request) {
+	if !s.discoverGuard(w) {
+		return
+	}
+	id, err := strconv.Atoi(chi.URLParam(r, "tmdbId"))
+	if err != nil || id <= 0 {
+		writeError(w, 400, "bad tmdb id")
+		return
+	}
+	p, err := s.discover.Person(r.Context(), id)
+	if err != nil {
+		upstreamError(w, "person", err)
+		return
+	}
+	writeJSON(w, 200, p)
+}
+
 func (s *Server) discoverDetail(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) {
 		return

@@ -21,6 +21,7 @@ import (
 // provider pages. The TMDB part is cached for 10 minutes per item.
 
 type castMember struct {
+	TMDBID    int    `json:"tmdbId,omitempty"`
 	Name      string `json:"name"`
 	Character string `json:"character,omitempty"`
 	Photo     string `json:"photo,omitempty"`
@@ -147,6 +148,7 @@ func (s *Server) tmdbExtras(ctx context.Context, movie bool, tmdbID int) *tmdbEx
 		} `json:"spoken_languages"`
 		Credits struct {
 			Cast []struct {
+				ID          int    `json:"id"`
 				Name        string `json:"name"`
 				Character   string `json:"character"`
 				ProfilePath string `json:"profile_path"`
@@ -222,7 +224,7 @@ func (s *Server) tmdbExtras(ctx context.Context, movie bool, tmdbID int) *tmdbEx
 		if i >= 15 {
 			break
 		}
-		x.Cast = append(x.Cast, castMember{Name: c.Name, Character: c.Character, Photo: t.ImageURL("w185", c.ProfilePath)})
+		x.Cast = append(x.Cast, castMember{TMDBID: c.ID, Name: c.Name, Character: c.Character, Photo: t.ImageURL("w185", c.ProfilePath)})
 	}
 	detailsMu.Lock()
 	detailsCache[key] = struct {

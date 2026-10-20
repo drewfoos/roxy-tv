@@ -82,7 +82,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
  * autoplay moves to the next episode, the text follows.
  */
 @Composable
-fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, onOpenEpisode: (Item) -> Unit) {
+fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, onOpenEpisode: (Item) -> Unit, onOpenPerson: (CastMember) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
@@ -281,7 +281,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                 // page is where someone wonders who that voice is.
                 if (ep.isMovie && cast.isNotEmpty()) {
                     Text("Cast", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
-                    CastRow(cast, modifier = Modifier.padding(top = 4.dp))
+                    CastRow(cast, modifier = Modifier.padding(top = 4.dp), onClick = onOpenPerson)
                 }
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {
                     Text(if (ep.isMovie) "Back to the movie" else "All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 16.dp, vertical = 8.dp))
@@ -298,7 +298,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
  * Crunchyroll does it; tapping anywhere expands, and a synopsis that fits gets no link.
  */
 @Composable
-private fun ExpandableSynopsis(text: String, expanded: Boolean, onToggle: () -> Unit) {
+internal fun ExpandableSynopsis(text: String, expanded: Boolean, onToggle: () -> Unit) {
     val style = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = RoxyColors.onBackground.copy(alpha = 0.92f))
     val measurer = rememberTextMeasurer()
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onToggle)) {

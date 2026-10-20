@@ -390,7 +390,7 @@ private fun DiscoverCard(item: DiscoverItem, modifier: Modifier = Modifier, onCl
 
 /** Small round badge: brand check when the library has it, clock while requested. */
 @Composable
-private fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: Modifier = Modifier) {
+internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: Modifier = Modifier) {
     val (icon, bg) = when {
         inLibrary -> Icons.Filled.Check to RoxyColors.accent
         requestStatus == "failed" -> Icons.Filled.Close to RoxyColors.error

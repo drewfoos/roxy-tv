@@ -69,7 +69,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
  * links to the provider pages.
  */
 @Composable
-fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
+fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit, onOpenPerson: (CastMember) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     var details by remember { mutableStateOf<ItemDetails?>(null) }
@@ -110,7 +110,7 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
                     DetailSection("Cast")
                 }
             }
-            if (!x?.cast.isNullOrEmpty()) CastRow(x!!.cast, modifier = Modifier.padding(top = 4.dp))
+            if (!x?.cast.isNullOrEmpty()) CastRow(x!!.cast, modifier = Modifier.padding(top = 4.dp), onClick = onOpenPerson)
             Column(modifier = Modifier.padding(horizontal = PhonePad)) {
                 DetailSection("Details")
                 DetailRow("Original title", x?.originalTitle)
@@ -180,10 +180,10 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
 
 /** The cast as round photos with name and role, scrolling sideways (More details, and a movie's player page). */
 @Composable
-internal fun CastRow(cast: List<CastMember>, modifier: Modifier = Modifier) {
+internal fun CastRow(cast: List<CastMember>, modifier: Modifier = Modifier, onClick: (CastMember) -> Unit = {}) {
     LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = modifier) {
         items(cast, key = { it.name + it.character }) { c ->
-            Column(modifier = Modifier.width(84.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(modifier = Modifier.width(84.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = c.tmdbId > 0) { onClick(c) }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(72.dp).clip(CircleShape).background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
                     if (c.photo != null) AsyncImage(model = c.photo, contentDescription = c.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                     else Text(c.name.take(1), color = RoxyColors.muted, fontSize = 22.sp, fontWeight = FontWeight.Bold)

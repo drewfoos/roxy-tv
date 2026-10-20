@@ -256,7 +256,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 composable<Route.Episode> { e ->
                     Page {
                         val r = e.toRoute<Route.Episode>()
-                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) })
+                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) }, onOpenPerson = { nav.navigate(Route.Person(it.tmdbId, it.name)) })
                     }
                 }
                 composable<Route.Movie> { e ->
@@ -268,7 +268,17 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 composable<Route.Details> { e ->
                     Page {
                         val r = e.toRoute<Route.Details>()
-                        PhoneDetails(itemId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() })
+                        PhoneDetails(itemId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenPerson = { nav.navigate(Route.Person(it.tmdbId, it.name)) })
+                    }
+                }
+                composable<Route.Person> { e ->
+                    Page {
+                        val r = e.toRoute<Route.Person>()
+                        PhonePerson(
+                            tmdbId = r.tmdbId, fallbackName = r.name, onBack = { nav.popBackStack() },
+                            onOpenLibrary = { c -> val id = c.libraryItemId ?: return@PhonePerson; if (c.isMovie) nav.navigate(Route.Movie(id, c.title)) else nav.navigate(Route.Series(id, c.title)) },
+                            onOpenDiscover = { c -> nav.navigate(Route.DiscoverDetail(c.type, c.tmdbId)) },
+                        )
                     }
                 }
             }

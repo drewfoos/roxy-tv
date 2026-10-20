@@ -33,6 +33,12 @@ URL from the reply's source address and `port` unless `advertised` is true, when
 `GET /v1/system/info` on 8096 and keeping replies whose `product` is `roxy`. The sweep
 is the fallback for networks that drop broadcasts (Docker bridge, Wi-Fi client isolation).
 
+## People
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/people/{tmdbId}` | TMDB's person: `{tmdbId, name, biography, birthday, deathday, placeOfBirth, knownFor, photo, homepage, imdbId, credits: [Discover Item + character]}`. Credits are one per title, best known first; `libraryItemId` marks what the library has. Cached an hour. The cast on `/items/{id}/details` carries `tmdbId` to link here. |
+
 ## Sessions ("Play on")
 
 The phone picks a player signed in to the same login and the server relays commands to

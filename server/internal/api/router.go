@@ -75,6 +75,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/libraries/scan", s.scanAll)
 			r.Post("/segments/detect", s.detectSegments)
 			r.Get("/discover", s.discoverRows)
+			r.Get("/people/{tmdbId}", s.person)
 			r.Get("/discover/search", s.discoverSearch)
 			r.Get("/discover/requests", s.discoverRequests)
 			r.Delete("/discover/requests/{id}", s.discoverDeleteRequest)

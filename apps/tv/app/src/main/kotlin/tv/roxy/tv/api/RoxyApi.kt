@@ -186,6 +186,8 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun discoverDetail(type: String, tmdbId: Int): DiscoverDetail = get("/v1/discover/$type/$tmdbId")
 
+    suspend fun person(tmdbId: Int): Person = get("/v1/people/$tmdbId")
+
     /** Request a title; [seasons] narrows a series to those seasons (empty = everything the library lacks). */
     suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList(), episodes: List<String> = emptyList()): RequestRow =
         postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons, episodes)))
@@ -451,7 +453,14 @@ data class MediaFacts(
 )
 
 @Serializable
-data class CastMember(val name: String, val character: String = "", val photo: String? = null)
+data class CastMember(val name: String, val character: String = "", val photo: String? = null, val tmdbId: Int = 0)
+
+@Serializable
+data class Person(
+    val tmdbId: Int, val name: String = "", val biography: String? = null, val birthday: String? = null, val deathday: String? = null,
+    val placeOfBirth: String? = null, val knownFor: String? = null, val photo: String? = null, val homepage: String? = null, val imdbId: String? = null,
+    val credits: List<DiscoverItem> = emptyList(),
+)
 
 @Serializable
 data class TmdbExtras(
@@ -712,6 +721,8 @@ data class DiscoverItem(
     val rating: Double? = null,
     val genres: List<String> = emptyList(),
     val isAnime: Boolean = false,
+    /** The role, on a person's credits. */
+    val character: String = "",
     val libraryItemId: String? = null,
     /** pending | sent | failed when someone asked for it. */
     val requestStatus: String? = null,
