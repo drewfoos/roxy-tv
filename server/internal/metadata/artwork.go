@@ -49,8 +49,23 @@ func (t *TMDB) Candidates(ctx context.Context, isMovie bool, tmdbID int, typ str
 	if isMovie {
 		kind = "movie"
 	}
+	// TMDB's CDN resets a fair share of connections from some networks; the picker is
+	// an interactive one-shot, so try a few times before giving up on the whole set.
 	var list tmdbImageList
-	if err := t.get(ctx, "/"+kind+"/"+strconv.Itoa(tmdbID)+"/images", url.Values{"include_image_language": {"en,ja,null"}}, &list); err != nil {
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 300 * time.Millisecond):
+			}
+		}
+		if err = t.get(ctx, "/"+kind+"/"+strconv.Itoa(tmdbID)+"/images", url.Values{"include_image_language": {"en,ja,null"}}, &list); err == nil {
+			break
+		}
+	}
+	if err != nil {
 		return nil, err
 	}
 	var src []tmdbSizedImage

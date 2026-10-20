@@ -326,7 +326,9 @@ fun TitlePageScaffold(
 ) {
     val isAdmin = RoxyApp.get(LocalContext.current).prefs.session.collectAsStateWithLifecycle().value.isAdmin
     var pickArt by remember { mutableStateOf<String?>(null) } // "backdrop" | "poster" | "logo"
-    pickArt?.let { type -> ArtPickerDialog(item, type, onDismiss = { pickArt = null }, onChanged = onArtChanged) }
+    val cache = RoxyApp.get(LocalContext.current).items
+    // New art: every list that showed the old URL refetches on its next resume.
+    pickArt?.let { type -> ArtPickerDialog(item, type, onDismiss = { pickArt = null }, onChanged = { cache.touch(); onArtChanged() }) }
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val barHeight = 44.dp + 24.dp
     // The strip is clear over the banner and only goes solid as the picture itself goes

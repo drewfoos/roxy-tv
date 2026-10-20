@@ -73,10 +73,14 @@ class LibraryViewModel(private val api: RoxyApi, private val favoritesOnly: Bool
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state
     private var loadedAt = 0L
+    private var seenVersion = -1L
 
-    fun load(force: Boolean = false) {
+    /** [version] is the library version the caller sees (ItemCache.version); a change forces a refetch. */
+    fun load(force: Boolean = false, version: Long = seenVersion) {
         val now = System.currentTimeMillis()
-        if (!force && _state.value.items != null && now - loadedAt < 60_000) return
+        val stale = version != seenVersion
+        if (!force && !stale && _state.value.items != null && now - loadedAt < 60_000) return
+        seenVersion = version
         viewModelScope.launch {
             runCatching {
                 if (favoritesOnly) api.favorites().items
@@ -93,7 +97,8 @@ class LibraryViewModel(private val api: RoxyApi, private val favoritesOnly: Bool
 fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSearch: () -> Unit, bottomInset: Dp) {
     val vm = libraryViewModel()
     val state by vm.state.collectAsStateWithLifecycle()
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
+    val items = RoxyApp.get(LocalContext.current).items
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(version = items.version) }
     var movies by rememberSaveable { mutableStateOf(false) }
 
     val all = state.items
@@ -134,7 +139,8 @@ fun PhoneWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bo
 fun PhoneSearch(onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     val vm = libraryViewModel()
     val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { vm.load() }
+    val items = RoxyApp.get(LocalContext.current).items
+    LaunchedEffect(Unit) { vm.load(version = items.version) }
     var query by rememberSaveable { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
