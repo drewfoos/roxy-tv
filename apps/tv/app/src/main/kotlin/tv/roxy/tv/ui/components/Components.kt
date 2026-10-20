@@ -53,6 +53,7 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import tv.roxy.tv.ui.phone.shimmerBrush
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import coil3.request.ImageRequest
@@ -100,7 +101,10 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
     // The title only stands in when there is no picture or it failed; while one loads the
     // card is a plain tile (Netflix / Crunchyroll), so text never flashes behind art.
     var failed by remember(url) { mutableStateOf(false) }
+    var loaded by remember(url) { mutableStateOf(false) }
     Box(modifier = modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
+        // The skeleton shimmer while the picture is on its way (the same as the page skeletons).
+        if (url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
         if (url == null || failed) Text(
             title,
             color = RoxyColors.muted,
@@ -115,7 +119,7 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
             val request = remember(url, placeholderKey) {
                 ImageRequest.Builder(context).data(url).apply { if (placeholderKey != null && placeholderKey != url) placeholderMemoryCacheKey(placeholderKey) }.build()
             }
-            AsyncImage(model = request, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), onError = { failed = true })
+            AsyncImage(model = request, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), onError = { failed = true }, onSuccess = { loaded = true })
         }
     }
 }
