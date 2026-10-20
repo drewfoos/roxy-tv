@@ -14,6 +14,7 @@ sealed interface Route {
     @Serializable data class DiscoverDetail(val type: String, val tmdbId: Int) : Route
     // Admin: the Sonarr / Radarr connection Discover requests go to.
     @Serializable data object ArrSettings : Route
+    @Serializable data object FanartSettings : Route
     @Serializable data object Webhooks : Route
     @Serializable data class Legal(val doc: String) : Route
     @Serializable data object Watchlist : Route

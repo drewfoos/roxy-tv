@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.RemoveDone
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cast
@@ -162,6 +163,7 @@ fun PhoneSeries(
         item = series, api = app.api, listState = listState, onBack = onBack,
         playLabel = label, onPlay = { next?.let { play(it) } }, onSaved = { vm.load() },
         onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(series.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+        onArtChanged = { vm.load() },
     ) { bottomInset ->
         // Crunchyroll's order: key art with the logo, the facts and synopsis centred, a tab
         // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
@@ -318,8 +320,13 @@ fun TitlePageScaffold(
     /** The three-dot menu's "Mark … as watched / unwatched"; null hides the menu. */
     onMarkWatched: ((Boolean) -> Unit)? = null,
     markAll: Boolean = true,
+    /** After the admin picked new art: reload so the page shows it. */
+    onArtChanged: () -> Unit = {},
     content: @Composable (bottomInset: Dp) -> Unit,
 ) {
+    val isAdmin = RoxyApp.get(LocalContext.current).prefs.session.collectAsStateWithLifecycle().value.isAdmin
+    var pickArt by remember { mutableStateOf<String?>(null) } // "backdrop" | "poster" | "logo"
+    pickArt?.let { type -> ArtPickerDialog(item, type, onDismiss = { pickArt = null }, onChanged = onArtChanged) }
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val barHeight = 44.dp + 24.dp
     // The strip is clear over the banner and only goes solid as the picture itself goes
@@ -361,6 +368,12 @@ fun TitlePageScaffold(
                         val what = if (markAll) "all" else "movie"
                         DropdownMenuItem(text = { Text("Mark $what as watched", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Check, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(true) })
                         DropdownMenuItem(text = { Text("Mark $what as unwatched", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.RemoveDone, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(false) })
+                        if (isAdmin) {
+                            // Admin only: swap the art for any the providers hold (TMDB, fanart.tv).
+                            DropdownMenuItem(text = { Text("Change banner", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "backdrop" })
+                            DropdownMenuItem(text = { Text("Change poster", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "poster" })
+                            DropdownMenuItem(text = { Text("Change logo", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "logo" })
+                        }
                     }
                 }
             }

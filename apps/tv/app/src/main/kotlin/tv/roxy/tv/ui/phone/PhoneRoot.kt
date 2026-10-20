@@ -206,12 +206,17 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Account> {
                     Page {
-                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) })
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) })
                     }
                 }
                 composable<Route.ArrSettings> {
                     Page {
                         PhoneArrSettings(onBack = { nav.popBackStack() })
+                    }
+                }
+                composable<Route.FanartSettings> {
+                    Page {
+                        PhoneFanartSettings(onBack = { nav.popBackStack() })
                     }
                 }
                 composable<Route.Webhooks> {

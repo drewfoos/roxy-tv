@@ -217,6 +217,21 @@ class RoxyApi(private val prefs: Prefs) {
 
     // ---- arr settings (admin) ----
 
+    // ---- artwork (admin) ----
+
+    suspend fun imageCandidates(itemId: String, type: String): ArtCandidates = get("/v1/items/$itemId/images/$type/candidates")
+
+    /** Store [url] as the item's image of [type] and lock it against metadata refreshes. */
+    suspend fun setImage(itemId: String, type: String, url: String) = withContext(Dispatchers.IO) {
+        val req = request("/v1/items/$itemId/images/$type").put(json.encodeToString(ImageUrlBody.serializer(), ImageUrlBody(url)).toRequestBody(JSON_TYPE)).build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw ApiException(resp.code, "HTTP ${resp.code} PUT ${req.url.encodedPath}: ${resp.body.string().take(200)}")
+        }
+    }
+
+    suspend fun fanartSettings(): FanartSettings = get("/v1/settings/fanart")
+    suspend fun saveFanartSettings(apiKey: String): FanartSettings = putJson("/v1/settings/fanart", json.encodeToString(FanartSettings.serializer(), FanartSettings(apiKey)))
+
     suspend fun arrSettings(): ArrSettingsResponse = get("/v1/settings/arr")
 
     suspend fun saveArrSettings(s: ArrSettings): ArrSettingsResponse = putJson("/v1/settings/arr", json.encodeToString(ArrSettings.serializer(), s))
@@ -810,6 +825,18 @@ data class ArrConfig(
     val searchOnAdd: Boolean? = null,
     val externalUrl: String = "",
 )
+
+@Serializable
+data class ArtCandidate(val source: String = "", val url: String = "", val preview: String = "", val lang: String = "", val width: Int = 0, val height: Int = 0, val score: Double = 0.0, val selected: Boolean = false)
+
+@Serializable
+data class ArtCandidates(val candidates: List<ArtCandidate> = emptyList())
+
+@Serializable
+private data class ImageUrlBody(val url: String)
+
+@Serializable
+data class FanartSettings(val apiKey: String = "", val enabled: Boolean = false)
 
 @Serializable
 data class ArrSettings(val sonarr: ArrConfig = ArrConfig(), val radarr: ArrConfig = ArrConfig())

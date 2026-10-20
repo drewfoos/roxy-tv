@@ -51,6 +51,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ExpandLess
@@ -96,7 +97,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -198,6 +199,8 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
         if (session.isAdmin) {
             GroupCard("Server") {
                 SettingRow(Icons.Outlined.Dns, "Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)
+                Divider()
+                SettingRow(Icons.Outlined.Image, "fanart.tv", "Logos and backgrounds for the art picker", onClick = onOpenFanart)
                 Divider()
                 SettingRow(Icons.Outlined.Webhook, "Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
             }
