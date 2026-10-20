@@ -96,8 +96,9 @@ font set and how to fetch it (fonts are not in the repository).
 ## Secrets and media
 
 Nothing private is in the tree: API keys live in the data directory or the database,
-test media and fonts are fetched or generated locally (`testdata/`), and a pre-push check
-refuses commits that carry them. There is no LICENSE file yet; one is chosen before the
+test media and fonts are fetched or generated locally (`testdata/`), and `.gitignore`
+blocks every media, font, key and local-config pattern. Each commit is grepped for keys
+before it goes in; there is no git hook yet. There is no LICENSE file yet; one is chosen before the
 first public release.
 
 ## Naming
