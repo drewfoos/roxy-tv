@@ -98,16 +98,16 @@ fun PhonePerson(tmdbId: Int, fallbackName: String, onBack: () -> Unit, onOpenLib
                 item(key = "credits-title") {
                     Text("Known for", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, top = 22.dp, bottom = 10.dp))
                 }
-                items(p.credits.chunked(3), key = { row -> row.joinToString("|") { "${it.type}:${it.tmdbId}" } }) { row ->
-                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(p.credits.chunked(2), key = { row -> row.joinToString("|") { "${it.type}:${it.tmdbId}" } }) { row ->
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         row.forEach { c -> DiscoverGridCard(c, modifier = Modifier.weight(1f)) { if (c.inLibrary) onOpenLibrary(c) else onOpenDiscover(c) } }
-                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                        repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             } else if (p == null && error == null) {
                 item(key = "credits-bones") {
-                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        repeat(3) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f), shape = RoundedCornerShape(6.dp)) }
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        repeat(2) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f), shape = RoundedCornerShape(6.dp)) }
                     }
                 }
             }
@@ -137,17 +137,17 @@ internal fun DiscoverGridCard(item: DiscoverItem, modifier: Modifier = Modifier,
             else Text(item.title, color = RoxyColors.muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).padding(6.dp))
             StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
         }
-        Text(item.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         val sub = listOfNotNull(item.character.takeIf { it.isNotBlank() }?.let { "as $it" } ?: item.year?.toString()).joinToString()
-        Text(sub, fontSize = 11.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(sub, fontSize = 12.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
 /** Three [DiscoverGridCard]s to a row: the "More like this" tab on series and movie pages. */
 @Composable
 internal fun DiscoverGridRow(row: List<DiscoverItem>, onOpen: (DiscoverItem) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         row.forEach { c -> DiscoverGridCard(c, modifier = Modifier.weight(1f)) { onOpen(c) } }
-        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
     }
 }

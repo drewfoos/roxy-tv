@@ -198,15 +198,15 @@ fun PhoneSeries(
             if (moreLike) {
                 val list = similar
                 when {
-                    list == null -> item(key = "similar-wait") { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(3) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) } } }
+                    list == null -> item(key = "similar-wait") { Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad, top = 18.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) { repeat(2) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) } } }
                     list.isEmpty() -> item(key = "similar-none") { Text("Nothing to suggest for this title yet.", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(PhonePad)) }
-                    else -> items(list.chunked(3), key = { row -> "sim:" + row.joinToString("|") { it.tmdbId.toString() } }) { row ->
+                    else -> { item(key = "similar-top") { Spacer(Modifier.height(10.dp)) }; items(list.chunked(2), key = { row -> "sim:" + row.joinToString("|") { it.tmdbId.toString() } }) { row ->
                         DiscoverGridRow(row) { c ->
                             val id = c.libraryItemId
                             if (id != null) { if (c.isMovie) onOpenMovie(Item(id = id, type = "movie", title = c.title)) else onOpenSeries(Item(id = id, type = "series", title = c.title)) }
                             else onOpenDiscover(c)
                         }
-                    }
+                    } }
                 }
             } else {
                 if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty() || hasRelated) {
@@ -248,7 +248,8 @@ fun PhoneSeries(
                 }
                 val extra = extraSeasons.firstOrNull { it.number == selectedExtra }
                 if (state.showRelated && selectedExtra == null) {
-                    items(state.related.chunked(3)) { row ->
+                    item(key = "related-top") { Spacer(Modifier.height(10.dp)) }
+                    items(state.related.chunked(2)) { row ->
                         RelatedGridRow(row, app.api, onOpen = { rel ->
                             val item = rel.item ?: return@RelatedGridRow
                             if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
@@ -760,7 +761,7 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
 internal fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (RelatedEntry) -> Unit) {
     // The same card as Discover and the person page: poster (the provider's for a title
     // the library lacks), the library tick, the name, then "OVA · 2016" on one line.
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         row.forEach { rel ->
             val item = rel.item
             Column(modifier = Modifier.weight(1f)) {
@@ -770,10 +771,10 @@ internal fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (Rela
                     else Text(rel.title, fontSize = 11.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).padding(6.dp))
                     StatusBadge(rel.inLibrary, null, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
                 }
-                Text(rel.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-                Text(listOfNotNull(rel.label, rel.year?.toString()).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(rel.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+                Text(listOfNotNull(rel.label, rel.year?.toString()).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
     }
 }

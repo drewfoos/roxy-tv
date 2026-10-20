@@ -105,18 +105,19 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
             if (moreLike) {
                 val list = similar
                 when {
-                    list == null -> item(key = "similar-wait") { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(3) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) } } }
+                    list == null -> item(key = "similar-wait") { Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad, top = 18.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) { repeat(2) { Bone(Modifier.weight(1f).aspectRatio(2f / 3f)) } } }
                     list.isEmpty() -> item(key = "similar-none") { Text("Nothing to suggest for this title yet.", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(PhonePad)) }
-                    else -> items(list.chunked(3), key = { row -> "sim:" + row.joinToString("|") { it.tmdbId.toString() } }) { row ->
+                    else -> { item(key = "similar-top") { Spacer(Modifier.height(10.dp)) }; items(list.chunked(2), key = { row -> "sim:" + row.joinToString("|") { it.tmdbId.toString() } }) { row ->
                         DiscoverGridRow(row) { c ->
                             val id = c.libraryItemId
                             if (id != null) { if (c.isMovie) onOpenMovie(Item(id = id, type = "movie", title = c.title)) else onOpenSeries(Item(id = id, type = "series", title = c.title)) }
                             else onOpenDiscover(c)
                         }
-                    }
+                    } }
                 }
             } else if (tab == 1 && state.partOf.isNotEmpty()) {
-                items(state.partOf.chunked(3)) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
+                item(key = "partof-top") { Spacer(Modifier.height(10.dp)) }
+                items(state.partOf.chunked(2)) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
             } else {
                 item(key = "movie-row") {
                     Spacer(Modifier.height(6.dp))
