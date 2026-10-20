@@ -18,6 +18,10 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import tv.roxy.tv.api.RelatedEntry
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,6 +76,11 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
         markAll = false,
         onArtChanged = { vm.load() },
     ) { bottomInset ->
+        // The series page's shape (Crunchyroll's): key art with the logo, facts and synopsis
+        // centred, a tab strip, then the film as one row with its download and menu, and the
+        // franchise it belongs to under a second tab when there is one.
+        val tabs = if (state.partOf.isNotEmpty()) listOf("Movie", "Part of") else listOf("Movie")
+        var tab by rememberSaveable(movie.id) { mutableStateOf(0) }
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
             item(key = "banner") { TitleBanner(movie, app.api, listState) }
             item(key = "info") {
@@ -82,25 +91,19 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                     onMoreDetails = { onOpenDetails(movie) },
                 )
             }
-            item(key = "more") {
-                Column(modifier = Modifier.padding(horizontal = PhonePad)) {
-                    if (resumable) {
-                        GreyButton("Play from start", modifier = Modifier.fillMaxWidth().padding(top = 16.dp), icon = Icons.Filled.Replay, onClick = {
-                            scope.launch { playItem(context, movie, fromStart = true) }
-                        })
-                    }
-                    if (movie.isPlayable) {
-                        MovieDownloadButton(movie, modifier = Modifier.padding(top = if (resumable) 10.dp else 16.dp), onDownload = { startDownload(listOf(movie), movie, null) })
-                    }
-                    movie.studio?.let { Text("Studio: $it", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 14.dp)) }
-                    val episode = with(app.api) { movie.toEpisode() }
-                    val tags = buildString { if (episode.isHi10p) append("Hi10P  "); if (episode.hasAss) append("ASS  ") }
-                    Text(tags + episode.videoLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp))
-                    Text(episode.tracksLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.muted)
+            item(key = "tabs") { SectionTabs(tabs, tab.coerceIn(0, tabs.size - 1), modifier = Modifier.padding(top = 22.dp)) { tab = it } }
+            if (tab == 1 && state.partOf.isNotEmpty()) {
+                items(state.partOf.chunked(3)) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
+            } else {
+                item(key = "movie-row") {
+                    Spacer(Modifier.height(6.dp))
+                    PhoneEpisodeRow(
+                        movie, app.api,
+                        onClick = { if (movie.isPlayable) scope.launch { playItem(context, movie) } },
+                        onDownload = { startDownload(listOf(movie), movie, null) },
+                        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(movie.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+                    )
                 }
-            }
-            if (state.partOf.isNotEmpty()) {
-                item(key = "partOf") { PhoneRow("Part of", state.partOf, app.api, onClick = onOpenSeries, modifier = Modifier.padding(top = 22.dp)) }
             }
         }
     }

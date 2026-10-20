@@ -216,14 +216,15 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             when {
                 s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize())
                 error != null -> Text(error ?: "", color = RoxyColors.error, modifier = Modifier.align(Alignment.Center).background(Color.Black))
-                ep != null -> RoxyImage(app.api.imageUrl(ep, "thumb", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+                ep != null -> RoxyImage(app.api.imageUrl(ep, "thumb", widthPx(420.dp) * 2) ?: app.api.imageUrl(ep, "backdrop", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             }
         }
         if (!full) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
             if (ep != null) {
                 Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 14.dp)) {
-                    ep.seriesTitle?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    val code = (ep.indexAired ?: ep.indexAbsolute)?.let { "E$it" }
+                    // Series name over an episode; "Movie" over a film.
+                    (ep.seriesTitle?.takeIf { it.isNotBlank() } ?: if (ep.isMovie) "Movie" else null)?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    val code = if (ep.isMovie) null else (ep.indexAired ?: ep.indexAbsolute)?.let { "E$it" }
                     Text(
                         listOfNotNull(code, ep.title.takeIf { it.isNotBlank() }).joinToString(" - "),
                         fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 4.dp),
@@ -266,7 +267,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     )
                 }
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {
-                    Text("All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 16.dp, vertical = 8.dp))
+                    Text(if (ep.isMovie) "Back to the movie" else "All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 16.dp, vertical = 8.dp))
                 }
             } else if (error == null) {
                 Spacer(Modifier.height(1.dp))
@@ -335,7 +336,8 @@ private fun fileFacts(ep: Item): String {
     val src = ep.primarySource ?: return ""
     val v = src.streams.firstOrNull { it.type == "video" }
     val codec = when (v?.codec?.lowercase()) { "hevc", "h265" -> "HEVC"; "h264", "avc" -> "H.264"; "av1" -> "AV1"; "vp9" -> "VP9"; null, "" -> null; else -> v.codec.uppercase() }
-    val res = v?.height?.takeIf { it > 0 }?.let { "${it}p" }
+    // Films are often cropped a few lines short of a standard height (1038p, 1072p); say what people call it.
+    val res = v?.height?.takeIf { it > 0 }?.let { h -> listOf(2160, 1440, 1080, 720, 576, 480).firstOrNull { h >= it * 0.94 }?.let { "${it}p" } ?: "${h}p" }
     val depth = v?.bitDepth?.takeIf { it > 8 }?.let { "$it-bit" }
     val mbps = if (src.size > 0 && (src.durationMs ?: 0L) > 0) src.size * 8.0 / (src.durationMs!! / 1000.0) / 1_000_000 else 0.0
     return listOfNotNull(

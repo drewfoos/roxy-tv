@@ -50,6 +50,8 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
 /** Starts [PlayerActivity] for an item (see [playRequest]). */
 suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false): Result<Unit> {
     val app = RoxyApp.get(context)
+    // The phone has one player, the page's; the TV keeps the full-screen activity.
+    app.openPlayerPage?.let { open -> open(item); return Result.success(Unit) }
     val req = playRequest(context, item, fromStart).getOrElse { return Result.failure(it) }
     Timber.i("play %s item=%s source=%s start=%ds local=%s", req.item.displayLabel, req.item.id, req.sourceId, req.startSeconds, req.local)
     context.startActivity(PlayerActivity.intent(context, req, app.prefs.settings.value))

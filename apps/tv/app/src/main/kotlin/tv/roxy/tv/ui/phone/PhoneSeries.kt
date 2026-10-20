@@ -590,7 +590,7 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
         // the download and menu under it at the right; no synopsis in the list.
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(modifier = Modifier.width(thumbWidth).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
-                RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f), placeholderTextSize = 12)
+                RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2) ?: api.imageUrl(ep, "backdrop", widthPx(thumbWidth) * 2), ep.episodeCode.ifEmpty { ep.title }, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f), placeholderTextSize = 12)
                 if (!placeholder) {
                     if (watched) ReplayBadge(size = 34.dp, modifier = Modifier.align(Alignment.Center)) else PlayBadge(size = 34.dp, modifier = Modifier.align(Alignment.Center))
                     if (!watched) ProgressBar(ep.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
@@ -730,7 +730,7 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
 
 /** One grid row (up to three) of the franchise's related titles. */
 @Composable
-private fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (RelatedEntry) -> Unit) {
+internal fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (RelatedEntry) -> Unit) {
     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         row.forEach { rel ->
             val item = rel.item

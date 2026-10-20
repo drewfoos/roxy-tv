@@ -15,6 +15,7 @@ import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.data.Prefs
 import tv.roxy.tv.data.Updates
 import tv.roxy.tv.data.ItemCache
+import tv.roxy.tv.api.Item
 import tv.roxy.tv.data.downloads.Downloads
 import java.io.File
 
@@ -39,6 +40,13 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
 
     /** Items the lists have shown, so a detail page can draw its header before its own fetch lands. */
     val items = ItemCache()
+
+    /**
+     * The phone's in-app player page, registered by the phone shell. Every "play" on the
+     * phone opens it (the video in a box with the page under it, fullscreen by turning
+     * the phone); without it (the TV) playback goes to the full-screen activity.
+     */
+    @Volatile var openPlayerPage: ((Item) -> Unit)? = null
 
     /** Directory holding the bundled fallback fonts for libass (copied from assets). */
     lateinit var fontsDir: File

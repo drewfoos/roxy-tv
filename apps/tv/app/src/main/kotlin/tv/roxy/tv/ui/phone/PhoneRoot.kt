@@ -46,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -128,6 +129,11 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     fun openSeries(item: Item) { app.items.put(item); nav.navigate(Route.Series(item.id, item.title)) }
     fun openMovie(item: Item) { app.items.put(item); nav.navigate(Route.Movie(item.id, item.title)) }
     fun openEpisode(item: Item) { app.items.put(item); nav.navigate(Route.Episode(item.id, item.title)) }
+    // Every play on the phone (hero, Resume pill, downloads, episode rows) lands on the player page.
+    DisposableEffect(nav) {
+        app.openPlayerPage = { item -> openEpisode(item) }
+        onDispose { app.openPlayerPage = null }
+    }
 
     PhoneTheme {
         Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
