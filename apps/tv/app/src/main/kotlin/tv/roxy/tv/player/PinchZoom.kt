@@ -133,8 +133,9 @@ private class ZoomState(private val scope: CoroutineScope) {
         val size = viewW to viewH
         if (sizeSeen != null && sizeSeen != size) {
             snapJob?.cancel()
+            val wasZoomed = scale != 1f
             scale = 1f; raw = 1f; offset = Offset.Zero
-            onLevel(1f, false)
+            if (wasZoomed) onLevel(1f, false) // no "1.0x" flash when there was nothing to reset
         }
         sizeSeen = size
     }

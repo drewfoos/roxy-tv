@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ClosedCaptionOff
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.CloseFullscreen
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPictureAlt
@@ -179,8 +181,11 @@ fun PlayerControls(
 
         // Title row, with the clock and "Ends at" top-right (local time zone).
         Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = if (compact) 8.dp else if (cr) 16.dp else 24.dp, vertical = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact)
-            Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
+            // No arrow in the page's fullscreen: the system back gesture drops to the mini player.
+            if (state.fullscreen != true) {
+                IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact)
+                Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
+            }
             Column(modifier = Modifier.weight(1f)) {
                 when {
                     // The mini player carries no title: the page spells it out right under the video.
@@ -188,8 +193,8 @@ fun PlayerControls(
                     // Crunchyroll's: the series small on top, "E3 — Title" under it, both modest.
                     cr -> {
                         val (series, code) = splitSubtitle(state.subtitle)
-                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" — "), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" — "), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     else -> {
                         Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -201,8 +206,8 @@ fun PlayerControls(
                 // Next, settings (everything lives in there: subtitles, audio, speed, skip), fullscreen.
                 if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
-                if (state.fullscreen == true) IconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
-                else IconButton(Icons.Filled.Fullscreen, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
+                if (state.fullscreen == true) IconButton(Icons.Filled.CloseFullscreen, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
+                else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
             } else {
                 Spacer(Modifier.width(16.dp))
                 Column(horizontalAlignment = Alignment.End) {
@@ -216,9 +221,9 @@ fun PlayerControls(
         // Centre transport (big targets for the remote)
         if (sheet == Sheet.None) {
             Row(modifier = Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(if (compact) 36.dp else 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 26.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
-                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = if (compact) 52.dp else 76.dp, iconSize = if (compact) 36.dp else if (cr) 52.dp else 42.dp, disc = !cr, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
-                RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 26.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
+                RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = if (compact) 48.dp else 60.dp, iconSize = if (compact) 32.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
+                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = if (compact) 64.dp else 76.dp, iconSize = if (compact) 50.dp else if (cr) 56.dp else 42.dp, disc = !cr, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
+                RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = if (compact) 48.dp else 60.dp, iconSize = if (compact) 32.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
             }
         }
 
@@ -453,7 +458,7 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(if (compact) 34.dp else 44.dp)
+            .size(if (compact) 38.dp else 44.dp)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
@@ -462,7 +467,7 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
             .tapClick(onClick),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(if (compact) 20.dp else 26.dp))
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(if (compact) 24.dp else 26.dp))
             Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else 18.dp).height(2.dp).background(if (underline) YtRed else Color.Transparent))
         }
     }

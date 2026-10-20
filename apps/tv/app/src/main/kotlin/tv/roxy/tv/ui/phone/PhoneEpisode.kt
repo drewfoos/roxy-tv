@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.view.OrientationEventListener
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -40,6 +41,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,7 +52,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
@@ -96,11 +100,14 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         onDispose { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
     }
-    // After a fullscreen/exit button locks the orientation to get there, release the lock
-    // once the phone has turned, so turning it by hand works again.
-    LaunchedEffect(landscape) {
-        delay(1500)
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+    // A fullscreen/exit button locks the orientation to get there. The lock is released
+    // only once the phone is physically held that way (YouTube's rule), so the button's
+    // choice sticks until the phone is turned, and turning it then works again.
+    val physical = rememberPhysicalOrientation()
+    LaunchedEffect(landscape, physical) {
+        if (physical == null) return@LaunchedEffect
+        val locked = activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+        if (locked && physical == landscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
     }
     // System bars go with the orientation: hidden over the fullscreen video.
     LaunchedEffect(landscape) {
@@ -142,6 +149,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { session?.onStop() }
+    // The system back gesture in fullscreen drops back to the mini player, not off the page.
+    BackHandler(enabled = landscape) { setFullscreen(false) }
     // Pin the session the effect was keyed on: the lambda must not read the state delegate
     // at dispose time, or the effect for "no session yet" would destroy the one just made.
     DisposableEffect(session) { val s = session; onDispose { s?.destroy() } }
@@ -162,17 +171,16 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
         if (!landscape) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
             if (ep != null) {
                 Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 14.dp)) {
-                    ep.seriesTitle?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    ep.seriesTitle?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     val code = (ep.indexAired ?: ep.indexAbsolute)?.let { "E$it" }
                     Text(
                         listOfNotNull(code, ep.title.takeIf { it.isNotBlank() }).joinToString(" - "),
-                        fontSize = 20.sp, lineHeight = 25.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 6.dp),
+                        fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 4.dp),
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                         val age = ep.officialRating?.let { ageLabel(it) }
                         if (age != null) { AgePill(age); Spacer(Modifier.width(8.dp)) }
-                        val facts = listOfNotNull(audioBadge(ep), ep.runtimeMinutes?.let { "${it}m" }, ep.airDate?.takeIf { it.isNotBlank() }?.let { "Aired $it" }).joinToString("  ◆  ")
-                        if (facts.isNotEmpty()) Text(facts, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
+                        Text(diamondJoined(listOfNotNull(audioBadge(ep), ep.runtimeMinutes?.let { "${it}m" })), fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
                     }
                     // The file's headline facts at the left (what differs between releases), the
                     // download and menu at the right.
@@ -192,6 +200,14 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         // Only when there is more to read: a synopsis that fits gets no link.
                         if (!expanded && overflows) Text("Read more", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.align(Alignment.End).clickable { expanded = true }.padding(top = 2.dp))
                     }
+                    // Content advisory, Crunchyroll's row under the synopsis. The providers carry no
+                    // descriptors (those are Crunchyroll's own), so it is the rating's meaning.
+                    ep.officialRating?.let { r -> advisoryFor(r)?.let { text ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+                            AgePill(ageLabel(r))
+                            Text(text, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    } }
                 }
                 if (next != null) {
                     Text("Next Episode", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
@@ -213,6 +229,25 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     }
 }
 
+/** Facts joined by a small diamond, Crunchyroll's separator, drawn smaller than the text. */
+private fun diamondJoined(parts: List<String>) = buildAnnotatedString {
+    parts.forEachIndexed { i, part ->
+        if (i > 0) withStyle(SpanStyle(fontSize = 7.sp, color = Color.White.copy(alpha = 0.6f))) { append("  ◆  ") }
+        append(part)
+    }
+}
+
+/** The TV Parental Guidelines / MPAA wording for a rating; null for ratings we do not know. */
+private fun advisoryFor(rating: String): String? = when (rating.uppercase().removePrefix("US-")) {
+    "TV-Y" -> "Suitable for all children"
+    "TV-Y7" -> "Directed to older children"
+    "TV-G", "G" -> "Suitable for all ages"
+    "TV-PG", "PG" -> "Parental guidance suggested"
+    "TV-14", "PG-13" -> "May be unsuitable for children under 14"
+    "TV-MA", "R", "NC-17" -> "Mature audiences only"
+    else -> null
+}
+
 /** "1080p · HEVC 10-bit · 8.1 Mb/s · 1.2 GB": the facts that tell releases apart. */
 private fun fileFacts(ep: Item): String {
     val src = ep.primarySource ?: return ""
@@ -227,6 +262,26 @@ private fun fileFacts(ep: Item): String {
         mbps.takeIf { it > 0 }?.let { "%.1f Mb/s".format(it) },
         src.size.takeIf { it > 0 }?.let { formatBytes(it) },
     ).joinToString("  ·  ")
+}
+
+/** True when the phone is physically held landscape, false upright, null until the sensor says. */
+@Composable
+private fun rememberPhysicalOrientation(): Boolean? {
+    val context = LocalContext.current
+    var landscape by remember { mutableStateOf<Boolean?>(null) }
+    DisposableEffect(context) {
+        val listener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(degrees: Int) {
+                if (degrees == ORIENTATION_UNKNOWN) return
+                // Dead bands around the diagonals keep a tilted phone from flapping.
+                val l = when (degrees) { in 60..120, in 240..300 -> true; in 0..30, in 150..210, in 330..359 -> false; else -> return }
+                if (landscape != l) landscape = l
+            }
+        }
+        if (listener.canDetectOrientation()) listener.enable()
+        onDispose { listener.disable() }
+    }
+    return landscape
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

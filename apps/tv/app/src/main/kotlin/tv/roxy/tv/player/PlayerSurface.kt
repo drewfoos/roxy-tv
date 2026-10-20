@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -32,6 +34,10 @@ import androidx.tv.material3.Text
 @Composable
 fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
     val player = session.player
+    // The window flag belongs to the activity host; a page host needs the view's own flag,
+    // or the phone dozes off in the middle of an episode.
+    val view = LocalView.current
+    DisposableEffect(view) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
