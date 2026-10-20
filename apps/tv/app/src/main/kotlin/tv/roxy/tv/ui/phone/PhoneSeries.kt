@@ -381,9 +381,9 @@ val FactsGrey = Color.White.copy(alpha = 0.72f)
 
 /** Crunchyroll's age badge: short label on a grey block. */
 @Composable
-internal fun AgePill(text: String) {
-    Box(modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFF4A4A52)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-        Text(text, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 0.5.sp)
+internal fun AgePill(text: String, small: Boolean = false) {
+    Box(modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFF4A4A52)).padding(horizontal = if (small) 5.dp else 6.dp, vertical = if (small) 1.dp else 2.dp)) {
+        Text(text, fontSize = if (small) 10.sp else 11.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 0.5.sp)
     }
 }
 

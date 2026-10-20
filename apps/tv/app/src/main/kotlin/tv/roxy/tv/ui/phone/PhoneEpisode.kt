@@ -56,7 +56,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
-import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.player.PlayerSurface
 import tv.roxy.tv.ui.PlayRequest
@@ -187,8 +186,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                         val rating = ep.officialRating ?: seriesRating
                         val age = rating?.let { ageLabel(it) }
-                        if (age != null) { AgePill(age); Spacer(Modifier.width(8.dp)) }
-                        Text(diamondJoined(listOfNotNull(audioBadge(ep), ep.runtimeMinutes?.let { "${it}m" })), fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
+                        if (age != null) { AgePill(age, small = true); Spacer(Modifier.width(8.dp)) }
+                        Text(diamondJoined(listOfNotNull(audioBadge(ep))), fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
                     }
                     // The file's headline facts at the left (what differs between releases), the
                     // download and menu at the right.
@@ -274,7 +273,6 @@ private fun fileFacts(ep: Item): String {
         res,
         listOfNotNull(codec, depth).joinToString(" ").ifEmpty { null },
         mbps.takeIf { it > 0 }?.let { "%.1f Mb/s".format(it) },
-        src.size.takeIf { it > 0 }?.let { formatBytes(it) },
     ).joinToString("  ·  ")
 }
 
