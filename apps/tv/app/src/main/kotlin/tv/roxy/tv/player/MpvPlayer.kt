@@ -430,10 +430,17 @@ class MpvPlayer(
     }
 
     private var lastSurface: Pair<Int, Int>? = null
+    @Volatile private var noBounceUntil = 0L
+
+    /**
+     * Skip the vo bounce for the next resizes: the system's picture-in-picture shrink and
+     * expand animate the live surface, and a bounce in the middle is a black frame.
+     */
+    fun suppressResizeBounce(ms: Long = 2000) { noBounceUntil = System.currentTimeMillis() + ms }
 
     private fun applySurfaceSize(width: Int, height: Int) {
         val resized = lastSurface != null && lastSurface != width to height
-        if (resized && surfaceReady) {
+        if (resized && surfaceReady && System.currentTimeMillis() >= noBounceUntil) {
             // The surface changed size in place (the page's 16:9 box <-> the whole screen).
             // Telling a live vo the new size does not always make it re-lay the picture
             // out: it can keep drawing for the old size into the new buffer (a cropped,

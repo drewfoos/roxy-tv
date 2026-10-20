@@ -47,6 +47,60 @@ import tv.roxy.tv.ui.theme.RoxyTheme
 
 class MainActivity : ComponentActivity() {
 
+    /** True while the activity is the floating picture-in-picture window (the episode page's player). */
+    var inPip by mutableStateOf(false)
+        private set
+
+    /** The page's player tells us whether a video is playing, so swiping home shrinks it. */
+    private var pipAutoEnter: Boolean? = null
+    private var pipSource: android.graphics.Rect? = null
+
+    val pipSupported: Boolean by lazy {
+        !isTelevision(this) && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+
+    private fun pipParams(autoEnter: Boolean): android.app.PictureInPictureParams {
+        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(16, 9))
+        pipSource?.let { b.setSourceRectHint(it) }
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            // Auto-enter makes the swipe-home transition a seamless shrink of the live
+            // surface; the source rect is the video box, so the shrink starts from it.
+            b.setAutoEnterEnabled(autoEnter).setSeamlessResizeEnabled(true)
+        }
+        return b.build()
+    }
+
+    /** Called by the page's player: keep the system's PiP parameters current. */
+    fun updatePip(playing: Boolean, source: android.graphics.Rect?) {
+        if (!pipSupported || isDestroyed) return
+        val changed = pipAutoEnter != playing || pipSource != source
+        pipAutoEnter = playing; pipSource = source
+        if (changed) runCatching { setPictureInPictureParams(pipParams(autoEnter = playing)) }
+    }
+
+    /** Leave PiP support behind when the page closes, so other screens never shrink. */
+    fun clearPip() {
+        if (!pipSupported || isDestroyed) return
+        pipAutoEnter = null; pipSource = null
+        runCatching { setPictureInPictureParams(android.app.PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()) }
+    }
+
+    fun enterPip() {
+        if (!pipSupported) return
+        runCatching { enterPictureInPictureMode(pipParams(autoEnter = pipAutoEnter == true)) }.onFailure { Timber.w(it, "PiP failed") }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Android 12+ auto-enters through the params; older versions need the explicit call.
+        if (pipSupported && pipAutoEnter == true && android.os.Build.VERSION.SDK_INT < 31) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip = isInPictureInPictureMode
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Timber.i("Device report:\n%s", DeviceReport.full(this))

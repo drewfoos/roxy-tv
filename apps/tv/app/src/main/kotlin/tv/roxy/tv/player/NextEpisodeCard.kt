@@ -72,7 +72,7 @@ fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> U
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
     // In the page's 16:9 box the card is one slim row: countdown and name, Play, dismiss.
     if (compact) {
-        Box(modifier = Modifier.fillMaxSize().padding(end = 10.dp, bottom = if (controlsVisible) 44.dp else 12.dp), contentAlignment = Alignment.BottomEnd) {
+        Box(modifier = Modifier.fillMaxSize().padding(end = 10.dp, bottom = 44.dp), contentAlignment = Alignment.BottomEnd) {
             Row(
                 modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2141418)).border(BorderStroke(1.dp, Color(0x33FFFFFF)), RoundedCornerShape(8.dp)).padding(start = 10.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,

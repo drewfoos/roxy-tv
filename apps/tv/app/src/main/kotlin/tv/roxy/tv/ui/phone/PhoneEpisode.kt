@@ -60,6 +60,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import tv.roxy.tv.MainActivity
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.player.PlayerSurface
@@ -83,6 +86,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
+    val main = activity as? MainActivity
+    val inPip = main?.inPip == true
+    var videoBounds by remember { mutableStateOf<android.graphics.Rect?>(null) }
     val view = LocalView.current
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -125,12 +131,25 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             var isLandscape = false
             var back: () -> Unit = {}
             var nowPlaying: (PlayRequest) -> Unit = {}
+            var mainActivity: MainActivity? = null
+            var bounds: () -> android.graphics.Rect? = { null }
             override fun back() = back.invoke() // the arrow leaves the page; fullscreen ends by the button or by turning the phone
             override val fullscreen: Boolean get() = isLandscape
             override fun toggleFullscreen() = setFullscreen(!isLandscape)
             override fun nowPlaying(req: PlayRequest) = nowPlaying.invoke(req)
+            override val pipSupported: Boolean get() = mainActivity?.pipSupported == true
+            override val inPip: Boolean get() = mainActivity?.inPip == true
+            override fun enterPip() { mainActivity?.enterPip() }
+            override fun playingChanged(playing: Boolean) { mainActivity?.updatePip(playing, bounds()) }
         }
     }
+    host.mainActivity = main
+    host.bounds = { videoBounds }
+    // Playing state is reported on change only; the box's position changes on rotation,
+    // so push it as well when it moves.
+    LaunchedEffect(videoBounds) { val s = session ?: return@LaunchedEffect; main?.updatePip(!s.ui.paused, videoBounds) }
+    LaunchedEffect(inPip) { session?.player?.suppressResizeBounce(); if (inPip) session?.hideControls() }
+    DisposableEffect(main) { onDispose { main?.clearPip() } }
     host.isLandscape = landscape
     host.back = onBack
     host.nowPlaying = { req -> episode = req.item; expanded = false }
@@ -167,10 +186,17 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
 
     val ep = episode
     val next = siblings.dropWhile { it.id != ep?.id }.drop(1).firstOrNull { it.isPlayable }
-    Column(modifier = Modifier.fillMaxSize().background(if (landscape) Color.Black else RoxyColors.background).then(if (landscape) Modifier else Modifier.statusBarsPadding())) {
-        // The player keeps its place in the tree in both orientations, so the surface and
-        // the stream survive the turn; only its size changes.
-        Box(modifier = if (landscape) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+    val full = landscape || inPip
+    Column(modifier = Modifier.fillMaxSize().background(if (full) Color.Black else RoxyColors.background).then(if (full) Modifier else Modifier.statusBarsPadding())) {
+        // The player keeps its place in the tree in both orientations and in the PiP window,
+        // so the surface and the stream survive; only its size changes.
+        Box(
+            modifier = (if (full) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)).onGloballyPositioned { c ->
+                val b = c.boundsInWindow()
+                val r = android.graphics.Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt())
+                if (r != videoBounds) videoBounds = r
+            },
+        ) {
             val s = session
             when {
                 s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize())
@@ -178,7 +204,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                 ep != null -> RoxyImage(app.api.imageUrl(ep, "thumb", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             }
         }
-        if (!landscape) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
+        if (!full) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
             if (ep != null) {
                 Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 14.dp)) {
                     ep.seriesTitle?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
@@ -190,8 +216,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                         val rating = ep.officialRating ?: seriesRating
                         val age = rating?.let { ageLabel(it) }
-                        if (age != null) { AgePill(age, small = true); Spacer(Modifier.width(8.dp)) }
-                        Text(diamondJoined(listOfNotNull(audioBadge(ep))), fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
+                        if (age != null) { AgePill(age, small = true) }
+                        audioBadge(ep)?.let { badge -> Text(diamondJoined(listOfNotNull(if (age != null) "" else null, badge)), fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f)) }
                     }
                     // The file's headline facts at the left (what differs between releases), the
                     // download and menu at the right.

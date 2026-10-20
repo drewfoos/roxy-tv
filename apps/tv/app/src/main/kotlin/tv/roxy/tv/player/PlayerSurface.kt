@@ -90,6 +90,7 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
                 }
             }
         }
+        if (session.host.inPip) return@Box
         PlayerControls(
             state = session.ui,
             visible = session.controlsVisible,
