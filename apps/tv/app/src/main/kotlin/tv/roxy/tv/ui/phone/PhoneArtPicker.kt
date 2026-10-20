@@ -69,9 +69,9 @@ fun ArtPickerDialog(item: Item, type: String, onDismiss: () -> Unit, onChanged: 
             .onSuccess { candidates = it }
             .onFailure { t -> Timber.w(t, "candidates"); error = t.message }
     }
-    val title = when (type) { "backdrop" -> "Banner"; "poster" -> "Poster"; else -> "Logo" }
-    val aspect = when (type) { "backdrop" -> 16f / 9f; "poster" -> 2f / 3f; else -> 2.5f }
-    val columns = if (type == "poster") 3 else 2
+    val title = when (type) { "backdrop" -> "Banner"; "poster" -> "Poster"; "hero" -> "Home banner"; else -> "Logo" }
+    val aspect = when (type) { "backdrop" -> 16f / 9f; "poster", "hero" -> 2f / 3f; else -> 2.5f }
+    val columns = if (type == "poster" || type == "hero") 3 else 2
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Column(modifier = Modifier.fillMaxSize().background(RoxyColors.background).statusBarsPadding().navigationBarsPadding()) {
@@ -93,6 +93,7 @@ fun ArtPickerDialog(item: Item, type: String, onDismiss: () -> Unit, onChanged: 
             when {
                 all == null && error != null -> Text(error ?: "", color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
                 all == null -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = RoxyColors.accent, strokeWidth = 3.dp, strokeCap = StrokeCap.Round, modifier = Modifier.size(36.dp)) }
+                all.isEmpty() && type == "hero" -> Text("No textless posters for this title. The Home banner falls back to the poster.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad))
                 all.isEmpty() -> Text("No alternatives for this title. A fanart.tv key (Account → Server) adds more for most shows.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad))
                 else -> {
                     val shown = if (source == "all") all else all.filter { it.source == source }

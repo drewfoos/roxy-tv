@@ -337,35 +337,37 @@ private fun HeroCarousel(heroes: List<HeroPick>, api: RoxyApi, onPlay: (HeroPick
 private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: () -> Unit) {
     val title = hero.title
     Box(modifier = Modifier.fillMaxSize().background(RoxyColors.surfaceHigh).clickable(onClick = onOpen)) {
-        val poster = api.imageUrl(title, "poster", widthPx(480.dp)) ?: api.imageUrl(hero.play, "thumb", widthPx(480.dp))
-        RoxyImage(poster, title.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 18)
+        // Textless key art when the server has one (the logo is drawn over it, so a poster
+        // with the title on it would show the name twice), else the poster.
+        val art = api.imageUrl(title, "hero", widthPx(480.dp)) ?: api.imageUrl(title, "poster", widthPx(480.dp)) ?: api.imageUrl(hero.play, "thumb", widthPx(480.dp))
+        RoxyImage(art, title.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 18)
         // Top scrim under the header; a long bottom fade so the picture shows through behind the text.
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0f to Color(0x80000000), 0.2f to Color.Transparent)))
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(0.3f to Color.Transparent, 0.62f to Color(0xB30B0B0F), 0.9f to Color(0xF20B0B0F), 1f to RoxyColors.background)))
 
         Column(
-            // 22 dp between every block, and the same 22 dp from the button down to the timer bars (bars are 9 dp + 10 dp padding).
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 41.dp),
+            // Everything flush left: the logo, then the facts line close under it, the
+            // synopsis close under that, and a clear gap before the button; 34 dp from the
+            // button down to the timer bars (bars are 9 dp + 10 dp padding).
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = PhonePad, end = PhonePad, bottom = 34.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             val logo = api.imageUrl(title, "logo", widthPx(320.dp))
             if (logo != null) {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    AsyncImage(model = logo, contentDescription = title.title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth(0.72f).heightIn(max = 72.dp))
-                }
+                AsyncImage(model = logo, contentDescription = title.title, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart, modifier = Modifier.fillMaxWidth(0.62f).heightIn(max = 64.dp))
             } else {
-                Text(title.title, fontSize = 26.sp, lineHeight = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+                Text(title.title, fontSize = 26.sp, lineHeight = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
             }
             val badges = listOfNotNull(title.communityRating?.let { "★ %.1f".format(it) }, audioBadge(hero.play)).joinToString("  ")
             val genres = title.genres.take(3).joinToString(", ") // three at most, so the line never ellipsises
             val meta = listOf(badges, genres).filter { it.isNotEmpty() }.joinToString("  •  ")
             if (meta.isNotEmpty()) {
-                Text(meta, fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+                Text(meta, fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
             }
             title.overview?.takeIf { it.isNotBlank() }?.let {
-                Text(it, fontSize = 13.sp, lineHeight = 18.sp, color = Color.White.copy(alpha = 0.92f), maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+                Text(it, fontSize = 13.sp, lineHeight = 18.sp, color = Color.White.copy(alpha = 0.92f), maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
+            Spacer(Modifier.height(20.dp))
             val resumable = (hero.play.userData?.positionMs ?: 0) > 0
             val label = when {
                 resumable && hero.play.isEpisode -> "Resume ${hero.play.episodeCode}"

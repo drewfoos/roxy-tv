@@ -100,8 +100,9 @@ type UserData struct {
 	SubtitleIndex *int       `json:"subtitleIndex,omitempty"`
 }
 
-// ImageTypes are the image kinds an item can carry.
-var ImageTypes = []string{"poster", "backdrop", "logo", "thumb"}
+// ImageTypes are the image kinds an item can carry. "hero" is a textless poster (no
+// title baked in) for the phone's Home banner, where the logo is drawn over it.
+var ImageTypes = []string{"poster", "backdrop", "logo", "thumb", "hero"}
 
 func IsImageType(t string) bool {
 	for _, x := range ImageTypes {

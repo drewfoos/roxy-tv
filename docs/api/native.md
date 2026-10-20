@@ -87,7 +87,7 @@ revert it.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/items/{id}/images/{type}` | `type` = poster, backdrop, logo, thumb. Served from the local cache (`data/cache/images/<item>/<type>.jpg`), `Cache-Control: public, max-age=86400`, 404 if none. Optional `?w=<px>` (16-4096, never enlarges) returns a resized JPEG cached as `<type>.w<px>.jpg`. Auth: Bearer or `?api_key=`. |
+| GET | `/v1/items/{id}/images/{type}` | `type` = poster, backdrop, logo, thumb, hero (a textless poster for the phone's Home banner; TMDB's and fanart.tv's language-less renditions, set when one exists). Backdrops prefer textless renditions too, since the clients draw the logo over them. Served from the local cache (`data/cache/images/<item>/<type>.jpg`), `Cache-Control: public, max-age=86400`, 404 if none. Optional `?w=<px>` (16-4096, never enlarges) returns a resized JPEG cached as `<type>.w<px>.jpg`. Auth: Bearer or `?api_key=`. |
 | POST | `/v1/items/{id}/refresh` | re-run metadata lookup for the item (its series when given a season/episode; children are refreshed with it), 202. 404 for an unknown item. |
 | GET | `/v1/home` | `{rows: [{key, title, items: [Item]}]}` in display order: `continue` (resume list, empty for API keys), `recentEpisodes` (latest 20 episodes by date added, one per series, each with `seriesId` + `seriesTitle`; fetch the series poster via `/v1/items/{seriesId}/images/poster`), `recentMovies` (20), `series` (all, by date added, 50), `movies` (all, 50). Each item carries `images` and `userData`, so the home screen needs one request. |
 

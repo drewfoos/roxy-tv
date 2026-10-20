@@ -76,8 +76,8 @@ func (s *Server) imageCandidates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	typ := chi.URLParam(r, "type")
-	if typ != "backdrop" && typ != "poster" && typ != "logo" {
-		writeError(w, 400, "type must be backdrop, poster or logo")
+	if typ != "backdrop" && typ != "poster" && typ != "logo" && typ != "hero" {
+		writeError(w, 400, "type must be backdrop, poster, logo or hero")
 		return
 	}
 	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))

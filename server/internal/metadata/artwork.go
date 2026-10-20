@@ -76,6 +76,14 @@ func (t *TMDB) Candidates(ctx context.Context, isMovie bool, tmdbID int, typ str
 	case "poster":
 		src = list.Posters
 		preview = "w342"
+	case "hero":
+		// The Home banner: posters without a title on them.
+		for _, im := range list.Posters {
+			if im.Lang == "" {
+				src = append(src, im)
+			}
+		}
+		preview = "w342"
 	case "logo":
 		src = list.Logos
 		preview = "w500"
@@ -93,6 +101,17 @@ func (t *TMDB) Candidates(ctx context.Context, isMovie bool, tmdbID int, typ str
 		})
 	}
 	return out, nil
+}
+
+// textlessOnly keeps fanart.tv's "no language" ("00") images: the ones without a title.
+func textlessOnly(list []fanartImage) []fanartImage {
+	out := make([]fanartImage, 0, len(list))
+	for _, im := range list {
+		if im.Lang == "00" {
+			out = append(out, im)
+		}
+	}
+	return out
 }
 
 // Fanart is the fanart.tv client: a free project key, images keyed by TVDB id for
@@ -147,6 +166,8 @@ func (f *Fanart) Candidates(ctx context.Context, isMovie bool, id string, typ st
 			images = m.MovieBackground
 		case "poster":
 			images = m.MoviePoster
+		case "hero":
+			images = textlessOnly(m.MoviePoster)
 		case "logo":
 			images = append(m.HDMovieLogo, m.MovieLogo...)
 		}
@@ -160,6 +181,8 @@ func (f *Fanart) Candidates(ctx context.Context, isMovie bool, id string, typ st
 			images = tv.ShowBackground
 		case "poster":
 			images = tv.TVPoster
+		case "hero":
+			images = textlessOnly(tv.TVPoster)
 		case "logo":
 			images = append(tv.HDTVLogo, tv.ClearLogo...)
 		}

@@ -375,6 +375,7 @@ fun TitlePageScaffold(
                             DropdownMenuItem(text = { Text("Change banner", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "backdrop" })
                             DropdownMenuItem(text = { Text("Change poster", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "poster" })
                             DropdownMenuItem(text = { Text("Change logo", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "logo" })
+                            DropdownMenuItem(text = { Text("Change Home banner", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "hero" })
                         }
                     }
                 }

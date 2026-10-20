@@ -97,7 +97,9 @@ type tmdbImage struct {
 }
 
 type tmdbImages struct {
-	Logos []tmdbImage `json:"logos"`
+	Logos     []tmdbImage `json:"logos"`
+	Posters   []tmdbImage `json:"posters"`
+	Backdrops []tmdbImage `json:"backdrops"`
 }
 
 type tmdbMovie struct {
@@ -317,6 +319,15 @@ func (t *TMDB) setImages(r *Result, poster, backdrop string, imgs *tmdbImages) {
 		r.Images["backdrop"] = b
 	}
 	if imgs != nil {
+		// Textless art where the client draws the logo over the picture: the banner on
+		// title pages and the Home hero. TMDB marks textless renditions with no language
+		// and sorts each list by votes, so the first language-less one is the best.
+		if b := firstTextless(imgs.Backdrops); b != "" {
+			r.Images["backdrop"] = t.image("original", b)
+		}
+		if h := firstTextless(imgs.Posters); h != "" {
+			r.Images["hero"] = t.image("original", h)
+		}
 		// Prefer an English (or language-less) logo; TMDB sorts by votes already.
 		for _, pass := range []string{"en", "", "*"} {
 			for _, l := range imgs.Logos {
@@ -330,6 +341,16 @@ func (t *TMDB) setImages(r *Result, poster, backdrop string, imgs *tmdbImages) {
 			}
 		}
 	}
+}
+
+// firstTextless is the best-voted image with no language (TMDB's textless marker), or "".
+func firstTextless(list []tmdbImage) string {
+	for _, im := range list {
+		if im.Lang == "" && !strings.HasSuffix(strings.ToLower(im.FilePath), ".svg") {
+			return im.FilePath
+		}
+	}
+	return ""
 }
 
 func tmdbStatus(s string) string {
