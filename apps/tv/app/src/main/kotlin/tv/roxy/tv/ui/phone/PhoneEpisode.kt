@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.player.PlayerSurface
 import tv.roxy.tv.ui.PlayRequest
@@ -114,7 +115,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             var isLandscape = false
             var back: () -> Unit = {}
             var nowPlaying: (PlayRequest) -> Unit = {}
-            override fun back() { if (isLandscape) setFullscreen(false) else back.invoke() }
+            override fun back() = back.invoke() // the arrow leaves the page; fullscreen ends by the button or by turning the phone
             override val fullscreen: Boolean get() = isLandscape
             override fun toggleFullscreen() = setFullscreen(!isLandscape)
             override fun nowPlaying(req: PlayRequest) = nowPlaying.invoke(req)
@@ -173,7 +174,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         val facts = listOfNotNull(audioBadge(ep), ep.runtimeMinutes?.let { "${it}m" }, ep.airDate?.takeIf { it.isNotBlank() }?.let { "Aired $it" }).joinToString("  ◆  ")
                         if (facts.isNotEmpty()) Text(facts, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    // The file's headline facts at the left (what differs between releases), the
+                    // download and menu at the right.
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Text(fileFacts(ep), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 2, lineHeight = 16.sp, modifier = Modifier.weight(1f).padding(end = 8.dp))
                         val startDownload = rememberDownloadStarter()
                         if (ep.isPlayable) DownloadButton(ep, onDownload = { startDownload(listOf(ep), ep, null) }, size = 24.dp)
                         EpisodeMenu(ep, app.api, onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(ep.id, on) }; watchedKey++ } })
@@ -207,6 +211,22 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             }
         }
     }
+}
+
+/** "1080p · HEVC 10-bit · 8.1 Mb/s · 1.2 GB": the facts that tell releases apart. */
+private fun fileFacts(ep: Item): String {
+    val src = ep.primarySource ?: return ""
+    val v = src.streams.firstOrNull { it.type == "video" }
+    val codec = when (v?.codec?.lowercase()) { "hevc", "h265" -> "HEVC"; "h264", "avc" -> "H.264"; "av1" -> "AV1"; "vp9" -> "VP9"; null, "" -> null; else -> v.codec.uppercase() }
+    val res = v?.height?.takeIf { it > 0 }?.let { "${it}p" }
+    val depth = v?.bitDepth?.takeIf { it > 8 }?.let { "$it-bit" }
+    val mbps = if (src.size > 0 && (src.durationMs ?: 0L) > 0) src.size * 8.0 / (src.durationMs!! / 1000.0) / 1_000_000 else 0.0
+    return listOfNotNull(
+        res,
+        listOfNotNull(codec, depth).joinToString(" ").ifEmpty { null },
+        mbps.takeIf { it > 0 }?.let { "%.1f Mb/s".format(it) },
+        src.size.takeIf { it > 0 }?.let { formatBytes(it) },
+    ).joinToString("  ·  ")
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

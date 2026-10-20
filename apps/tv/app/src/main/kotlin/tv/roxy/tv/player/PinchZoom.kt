@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToDown
@@ -51,7 +52,7 @@ fun Modifier.pinchZoom(
     state.videoAspect = videoAspect
     state.maxZoom = maxZoom
 
-    return this.pointerInput(state) {
+    return this.onSizeChanged { state.resetIfResized(it.width, it.height) }.pointerInput(state) {
         awaitEachGesture {
             val first = awaitFirstDown(requireUnconsumed = false)
             val slop = viewConfiguration.touchSlop
@@ -125,6 +126,18 @@ private class ZoomState(private val scope: CoroutineScope) {
     private var w = 1; private var h = 1 // view size
     private var fw = 1f; private var fh = 1f // fitted picture size at 1×
     private var snapJob: Job? = null
+    private var sizeSeen: Pair<Int, Int>? = null
+
+    /** The view was resized (16:9 box <-> full screen): back to 1x, matching the player's own reset. */
+    fun resetIfResized(viewW: Int, viewH: Int) {
+        val size = viewW to viewH
+        if (sizeSeen != null && sizeSeen != size) {
+            snapJob?.cancel()
+            scale = 1f; raw = 1f; offset = Offset.Zero
+            onLevel(1f, false)
+        }
+        sizeSeen = size
+    }
     private var pushJob: Job? = null
     private val anim = Animatable(0f)
 

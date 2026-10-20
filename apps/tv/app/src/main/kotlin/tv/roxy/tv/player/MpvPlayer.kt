@@ -422,7 +422,12 @@ class MpvPlayer(
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Timber.d("surfaceChanged %dx%d", width, height)
         mpv.setPropertyString("android-surface-size", "${width}x$height")
+        // A new size (the page's 16:9 box <-> the whole screen) starts from a plain fit:
+        // a pinch zoom or pan from the old size would scale the picture wrongly in the new one.
+        if (lastSurface != null && lastSurface != width to height) setZoom(1.0, 0.0, 0.0)
+        lastSurface = width to height
     }
+    private var lastSurface: Pair<Int, Int>? = null
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         Timber.d("surfaceDestroyed")

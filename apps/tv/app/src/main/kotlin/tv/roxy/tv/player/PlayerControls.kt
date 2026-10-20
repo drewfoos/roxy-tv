@@ -43,6 +43,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -150,10 +154,13 @@ fun PlayerControls(
     actions: PlayerActions,
     trickplay: TrickplayPreview? = null,
 ) {
+    // In the page's 16:9 box everything is scaled down: smaller discs and icons, no clock,
+    // tighter popups that stay inside the box.
+    val compact = state.fullscreen == false
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
     state.activeSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
-            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, modifier = Modifier.fillMaxSize().padding(end = 32.dp, bottom = if (visible) 118.dp else 40.dp))
+            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, modifier = Modifier.fillMaxSize().padding(end = if (compact) 12.dp else 32.dp, bottom = if (visible) (if (compact) 60.dp else 118.dp) else (if (compact) 16.dp else 40.dp)))
         }
     }
     if (!visible) return
@@ -161,51 +168,54 @@ fun PlayerControls(
     LaunchedEffect(visible, sheet) { if (sheet == Sheet.None) runCatching { playFocus.requestFocus() } }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxWidth().height(140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
-        Box(modifier = Modifier.fillMaxWidth().height(200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
+        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
+        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 100.dp else 200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
 
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction)
-            Spacer(Modifier.width(12.dp))
+        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = if (compact) 8.dp else 24.dp, vertical = if (compact) 4.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact)
+            Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (state.subtitle.isNotEmpty()) Text(state.subtitle, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // The mini player carries no title: the page spells it out right under the video.
+                if (!compact) Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (state.subtitle.isNotEmpty() && !compact) Text(state.subtitle, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.width(16.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text(clockNow(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                val remaining = (state.durationSec - state.positionSec) / state.speed.coerceAtLeast(0.25)
-                if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = 13.sp)
+            if (!compact) {
+                Spacer(Modifier.width(16.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(clockNow(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    val remaining = (state.durationSec - state.positionSec) / state.speed.coerceAtLeast(0.25)
+                    if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = 13.sp)
+                }
             }
         }
 
         // Centre transport (big targets for the remote)
         if (sheet == Sheet.None) {
-            Row(modifier = Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(48.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = 60.dp, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
-                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = 76.dp, iconSize = 42.dp, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
-                RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = 60.dp, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
+            Row(modifier = Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(if (compact) 36.dp else 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 22.dp else 30.dp, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
+                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = if (compact) 52.dp else 76.dp, iconSize = if (compact) 30.dp else 42.dp, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
+                RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 22.dp else 30.dp, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
             }
         }
 
         // Bottom: seek bar, then the YouTube button row. Both share the same horizontal inset.
-        Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
+        Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = if (compact) 8.dp else 24.dp, vertical = if (compact) 2.dp else 10.dp)) {
             SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction)
-                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction)
-                IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction)
+                if (!compact) IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction)
+                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
+                if (!compact) IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction)
                 Spacer(Modifier.width(6.dp))
-                Text("${fmtTime(state.positionSec)} / ${fmtTime(state.durationSec)}", color = Color.White, fontSize = 13.sp)
+                Text("${fmtTime(state.positionSec)} / ${fmtTime(state.durationSec)}", color = Color.White, fontSize = if (compact) 11.sp else 13.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { actions.toggleCaptions(); onInteraction() }, onFocus = onInteraction)
-                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction)
-                if (state.pipSupported) IconButton(Icons.Filled.PictureInPictureAlt, "Picture in picture", onClick = { actions.enterPip() }, onFocus = onInteraction)
+                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { actions.toggleCaptions(); onInteraction() }, onFocus = onInteraction, compact = compact)
+                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
+                if (state.pipSupported) IconButton(Icons.Filled.PictureInPictureAlt, "Picture in picture", onClick = { actions.enterPip() }, onFocus = onInteraction, compact = compact)
                 when (state.fullscreen) {
                     // On a page the button turns the phone; the crop-to-fill toggle stays for the full-screen host (pinch zooms either way).
                     null -> IconButton(if (state.fillScreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen, if (state.fillScreen) "Fit to screen" else "Fill screen", onClick = { actions.toggleFill(); onInteraction() }, onFocus = onInteraction)
-                    false -> IconButton(Icons.Filled.Fullscreen, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction)
+                    false -> IconButton(Icons.Filled.Fullscreen, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = true)
                     true -> IconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction)
                 }
             }
@@ -215,8 +225,8 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 64.dp)) {
-                when (sheet) {
+            Box(modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (compact) 8.dp else 24.dp, bottom = if (compact) 40.dp else 64.dp, top = if (compact) 8.dp else 0.dp)) {
+                CompositionLocalProvider(LocalCompactMenu provides compact) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
                         rows = listOf(
@@ -259,11 +269,14 @@ fun PlayerControls(
                         onPick = { actions.setSpeed(it.toDouble()); onSheet(Sheet.None) }, onBack = { onSheet(Sheet.Settings) }, onInteraction = onInteraction,
                     )
                     Sheet.None -> {}
-                }
+                } }
             }
         }
     }
 }
+
+/** True inside the page's 16:9 box: the popups shrink to fit it. */
+private val LocalCompactMenu = compositionLocalOf { false }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
@@ -397,12 +410,12 @@ private fun TrickplayTile(trickplay: TrickplayPreview, positionSec: Double, modi
 
 /** Flat icon button for the bottom row: white icon, white focus ring, optional red underline. */
 @Composable
-private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false) {
+private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(44.dp)
+            .size(if (compact) 34.dp else 44.dp)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
@@ -411,8 +424,8 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
             .tapClick(onClick),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(26.dp))
-            Box(modifier = Modifier.padding(top = 2.dp).width(18.dp).height(2.dp).background(if (underline) YtRed else Color.Transparent))
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(if (compact) 20.dp else 26.dp))
+            Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else 18.dp).height(2.dp).background(if (underline) YtRed else Color.Transparent))
         }
     }
 }
@@ -452,13 +465,15 @@ private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> U
     val first = remember { FocusRequester() }
     LaunchedEffect(title, rows.size) { runCatching { first.requestFocus() } }
     val focusKey = rows.firstOrNull { it.checked }?.key ?: rows.firstOrNull()?.key
+    val compact = LocalCompactMenu.current
     Column(
         modifier = Modifier
-            .widthIn(min = 260.dp, max = 360.dp)
+            .widthIn(min = if (compact) 180.dp else 260.dp, max = if (compact) 250.dp else 360.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(Panel)
             .pointerInput(Unit) { detectTapGestures { } } // swallow taps so the scrim does not close it
-            .padding(vertical = 8.dp),
+            .padding(vertical = if (compact) 4.dp else 8.dp)
+            .verticalScroll(rememberScrollState()),
     ) {
         if (title != null) {
             MenuRowView(MenuRow("back", title), isBack = true, focusRequester = null, onClick = { onBack?.invoke() }, onInteraction = onInteraction)
@@ -467,13 +482,14 @@ private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> U
         rows.forEach { row ->
             MenuRowView(row, isBack = false, focusRequester = if (row.key == focusKey) first else null, onClick = { onPick(row.key) }, onInteraction = onInteraction)
         }
-        if (footer != null) Text(footer, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 320.dp))
+        if (footer != null && !compact) Text(footer, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 320.dp))
     }
 }
 
 @Composable
 private fun MenuRowView(row: MenuRow, isBack: Boolean, focusRequester: FocusRequester?, onClick: () -> Unit, onInteraction: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val compact = LocalCompactMenu.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -484,18 +500,19 @@ private fun MenuRowView(row: MenuRow, isBack: Boolean, focusRequester: FocusRequ
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
             .background(if (focused) Color(0x33FFFFFF) else Color.Transparent)
             .tapClick(onClick)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
+            .padding(horizontal = if (compact) 10.dp else 16.dp, vertical = if (compact) 6.dp else 11.dp),
     ) {
+        val glyph = if (compact) 16.dp else 20.dp
         when {
-            isBack -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(20.dp))
-            row.submenu -> Spacer(Modifier.width(20.dp))
-            else -> Icon(Icons.Filled.Check, contentDescription = null, tint = if (row.checked) Color.White else Color.Transparent, modifier = Modifier.size(20.dp))
+            isBack -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(glyph))
+            row.submenu -> Spacer(Modifier.width(glyph))
+            else -> Icon(Icons.Filled.Check, contentDescription = null, tint = if (row.checked) Color.White else Color.Transparent, modifier = Modifier.size(glyph))
         }
-        Spacer(Modifier.width(14.dp))
-        Text(row.label, color = Color.White, fontSize = 14.sp, fontWeight = if (isBack) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.width(if (compact) 8.dp else 14.dp))
+        Text(row.label, color = Color.White, fontSize = if (compact) 12.sp else 14.sp, fontWeight = if (isBack) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         if (row.value != null) {
-            Spacer(Modifier.width(18.dp))
-            Text(row.value, color = Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.width(if (compact) 10.dp else 18.dp))
+            Text(row.value, color = Muted, fontSize = if (compact) 11.sp else 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (row.submenu) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Muted, modifier = Modifier.padding(start = 4.dp).size(20.dp))
     }
