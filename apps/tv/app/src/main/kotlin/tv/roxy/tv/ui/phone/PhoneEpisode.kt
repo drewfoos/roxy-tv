@@ -200,7 +200,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     }
                     ep.overview?.takeIf { it.isNotBlank() }?.let {
                         Text(
-                            it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
+                            it, fontSize = 15.sp, lineHeight = 22.sp, color = RoxyColors.onBackground.copy(alpha = 0.92f),
                             maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
                             onTextLayout = { r -> if (!expanded) overflows = r.hasVisualOverflow },
                             modifier = Modifier.padding(top = 6.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded },
@@ -213,9 +213,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     (ep.officialRating ?: seriesRating)?.let { r ->
                         val descriptors = ep.advisories.ifEmpty { series?.advisories.orEmpty() }
                         val text = descriptors.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: advisoryFor(r)
-                        if (text != null) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
-                            AgePill(ageLabel(r))
-                            Text(text, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
+                        if (text != null) {
+                            Text("Content Advisory", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 22.dp))
+                            Text(ageLabel(r), fontSize = 15.sp, lineHeight = 22.sp, color = AdvisoryGrey, modifier = Modifier.padding(top = 8.dp))
+                            Text(text, fontSize = 15.sp, lineHeight = 22.sp, color = AdvisoryGrey)
                         }
                     }
                 }
@@ -238,6 +239,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
         }
     }
 }
+
+/** Crunchyroll's advisory grey: readable, clearly secondary. */
+private val AdvisoryGrey = Color(0xFFA0A0A8)
 
 /** Facts joined by a small diamond, Crunchyroll's separator, drawn smaller than the text. */
 private fun diamondJoined(parts: List<String>) = buildAnnotatedString {
