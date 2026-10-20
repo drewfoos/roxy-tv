@@ -758,22 +758,20 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
 /** One grid row (up to three) of the franchise's related titles. */
 @Composable
 internal fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (RelatedEntry) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // The same card as Discover and the person page: poster (the provider's for a title
+    // the library lacks), the library tick, the name, then "OVA · 2016" on one line.
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         row.forEach { rel ->
             val item = rel.item
             Column(modifier = Modifier.weight(1f)) {
-                if (rel.inLibrary && item != null) {
-                    PosterTile(item, api, modifier = Modifier.fillMaxWidth(), onClick = { onOpen(rel) })
-                    Text(rel.label + (rel.year?.let { " · $it" } ?: ""), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surface).alpha(0.7f).padding(8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(rel.title, fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, maxLines = 5, overflow = TextOverflow.Ellipsis)
-                    }
-                    Text(rel.label + (rel.year?.let { " · $it" } ?: "") + " · Not in library", fontSize = 11.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable { onOpen(rel) }) {
+                    val url = if (rel.inLibrary && item != null) api.imageUrl(item, "poster", widthPx(PosterW) * 2) else rel.posterUrl
+                    if (url != null) AsyncImage(model = url, contentDescription = rel.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    else Text(rel.title, fontSize = 11.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).padding(6.dp))
+                    StatusBadge(rel.inLibrary, null, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
                 }
+                Text(rel.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                Text(listOfNotNull(rel.label, rel.year?.toString()).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }

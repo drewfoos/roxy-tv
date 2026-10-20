@@ -551,6 +551,8 @@ data class RelatedEntry(
     val episodes: Int? = null,
     val inLibrary: Boolean = false,
     val item: Item? = null,
+    /** The provider's poster, for titles the library does not hold. */
+    val posterUrl: String? = null,
 ) {
     val key: String get() = "$provider:$providerId"
     val label: String get() = when (relation) {
