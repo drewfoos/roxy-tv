@@ -101,6 +101,8 @@ data class PlayerUiState(
     val nextCardShown: Boolean = false,
     val segments: List<MediaSegment> = emptyList(),
     val autoSkip: Boolean = false,
+    /** Hosted on a page: false = in its 16:9 box, true = filling the screen; null = the player owns the screen. */
+    val fullscreen: Boolean? = null,
 ) {
     /** The skippable segment the playhead is inside, if any. */
     val activeSegment: MediaSegment? get() = segments.firstOrNull { positionSec >= it.startSec && positionSec < it.endSec - 1.0 }
@@ -119,6 +121,7 @@ interface PlayerActions {
     fun toggleAutoSkip()
     fun toggleFill()
     fun enterPip()
+    fun toggleFullscreen()
     fun next()
     fun back()
 }
@@ -199,7 +202,12 @@ fun PlayerControls(
                 IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { actions.toggleCaptions(); onInteraction() }, onFocus = onInteraction)
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction)
                 if (state.pipSupported) IconButton(Icons.Filled.PictureInPictureAlt, "Picture in picture", onClick = { actions.enterPip() }, onFocus = onInteraction)
-                IconButton(if (state.fillScreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen, if (state.fillScreen) "Fit to screen" else "Fill screen", onClick = { actions.toggleFill(); onInteraction() }, onFocus = onInteraction)
+                when (state.fullscreen) {
+                    // On a page the button turns the phone; the crop-to-fill toggle stays for the full-screen host (pinch zooms either way).
+                    null -> IconButton(if (state.fillScreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen, if (state.fillScreen) "Fit to screen" else "Fill screen", onClick = { actions.toggleFill(); onInteraction() }, onFocus = onInteraction)
+                    false -> IconButton(Icons.Filled.Fullscreen, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction)
+                    true -> IconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction)
+                }
             }
         }
 
