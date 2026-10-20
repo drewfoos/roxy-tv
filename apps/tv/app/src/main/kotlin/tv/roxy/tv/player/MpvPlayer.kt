@@ -426,7 +426,27 @@ class MpvPlayer(
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Timber.d("surfaceChanged %dx%d", width, height)
+        if (System.currentTimeMillis() < noBounceUntil) {
+            // A picture-in-picture shrink or expand is animating. The system scales the
+            // whole window during it, so the frames keep looking right at the old size;
+            // telling mpv the new size now makes it draw a small picture into the corner
+            // of the still-large buffer, over and over, until the buffer catches up. The
+            // size goes in once the animation has settled.
+            pendingSize = width to height
+            main.removeCallbacks(applyPending)
+            main.postDelayed(applyPending, 450)
+            return
+        }
+        main.removeCallbacks(applyPending); pendingSize = null
         applySurfaceSize(width, height)
+    }
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingSize: Pair<Int, Int>? = null
+    private val applyPending = Runnable {
+        val (w, h) = pendingSize ?: return@Runnable
+        pendingSize = null
+        if (surfaceReady && !destroyed) applySurfaceSize(w, h)
     }
 
     private var lastSurface: Pair<Int, Int>? = null
@@ -519,6 +539,7 @@ class MpvPlayer(
         private set
 
     fun destroy() {
+        main.removeCallbacks(applyPending)
         destroyed = true
         listener = null
         runCatching { mpv.removeLogObserver(this) }
