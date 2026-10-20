@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import tv.roxy.tv.api.MediaSegment
 import tv.roxy.tv.ui.components.tapClick
+import tv.roxy.tv.ui.theme.RoxyColors
 
 /** Snapshot of what the controls show; refreshed by the activity a few times a second. */
 data class PlayerUiState(
@@ -157,6 +158,11 @@ fun PlayerControls(
     // In the page's 16:9 box everything is scaled down: smaller discs and icons, no clock,
     // tighter popups that stay inside the box.
     val compact = state.fullscreen == false
+    // Hosted on a page (the phone): Crunchyroll's layout. Back at the top-left; next,
+    // settings and fullscreen at the top-right; bare -10 / pause / +10 in the middle;
+    // the times over an edge-to-edge seek bar at the bottom and nothing else. The
+    // full-screen host (TV, movies) keeps the YouTube layout with its button row.
+    val cr = state.fullscreen != null
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
     state.activeSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
@@ -172,15 +178,32 @@ fun PlayerControls(
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 100.dp else 200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
 
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = if (compact) 8.dp else 24.dp, vertical = if (compact) 4.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = if (compact) 8.dp else if (cr) 16.dp else 24.dp, vertical = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact)
             Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                // The mini player carries no title: the page spells it out right under the video.
-                if (!compact) Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (state.subtitle.isNotEmpty() && !compact) Text(state.subtitle, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                when {
+                    // The mini player carries no title: the page spells it out right under the video.
+                    compact -> {}
+                    // Crunchyroll's: the series small on top, "E3 — Title" under it, both modest.
+                    cr -> {
+                        val (series, code) = splitSubtitle(state.subtitle)
+                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" — "), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    else -> {
+                        Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (state.subtitle.isNotEmpty()) Text(state.subtitle, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
-            if (!compact) {
+            if (cr) {
+                // Next, settings (everything lives in there: subtitles, audio, speed, skip), fullscreen.
+                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
+                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
+                if (state.fullscreen == true) IconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
+                else IconButton(Icons.Filled.Fullscreen, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
+            } else {
                 Spacer(Modifier.width(16.dp))
                 Column(horizontalAlignment = Alignment.End) {
                     Text(clockNow(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -193,14 +216,23 @@ fun PlayerControls(
         // Centre transport (big targets for the remote)
         if (sheet == Sheet.None) {
             Row(modifier = Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(if (compact) 36.dp else 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 22.dp else 30.dp, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
-                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = if (compact) 52.dp else 76.dp, iconSize = if (compact) 30.dp else 42.dp, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
-                RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 22.dp else 30.dp, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
+                RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 26.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
+                RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = if (compact) 52.dp else 76.dp, iconSize = if (compact) 36.dp else if (cr) 52.dp else 42.dp, disc = !cr, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
+                RoundButton(Icons.Filled.Forward10, "Forward 10 seconds", size = if (compact) 40.dp else 60.dp, iconSize = if (compact) 26.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
             }
         }
 
-        // Bottom: seek bar, then the YouTube button row. Both share the same horizontal inset.
-        Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = if (compact) 8.dp else 24.dp, vertical = if (compact) 2.dp else 10.dp)) {
+        // Bottom. On the page: the elapsed and total times, then the seek bar flush with the
+        // edges (Crunchyroll). Elsewhere: seek bar, then the YouTube button row, sharing an inset.
+        if (cr) Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = if (compact) 10.dp else 16.dp)) {
+                Text(fmtTime(state.positionSec), color = Color.White, fontSize = if (compact) 11.sp else 13.sp)
+                Spacer(Modifier.weight(1f))
+                Text(fmtTime(state.durationSec), color = Color.White, fontSize = if (compact) 11.sp else 13.sp)
+            }
+            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction, color = RoxyColors.accent, flush = true)
+        }
+        else Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
             SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 if (!compact) IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction)
@@ -225,7 +257,7 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (compact) 8.dp else 24.dp, bottom = if (compact) 40.dp else 64.dp, top = if (compact) 8.dp else 0.dp)) {
+            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 64.dp)) {
                 CompositionLocalProvider(LocalCompactMenu provides compact) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
@@ -275,6 +307,12 @@ fun PlayerControls(
     }
 }
 
+/** "KONOSUBA ...  S01E01" -> ("KONOSUBA ...", "E1"); a movie's year stays as the series line. */
+private fun splitSubtitle(sub: String): Pair<String, String?> {
+    val m = Regex("""\s*S(\d+)E(\d+)\s*$""").find(sub) ?: return sub to null
+    return sub.substring(0, m.range.first).trim() to "E${m.groupValues[2].toInt()}"
+}
+
 /** True inside the page's 16:9 box: the popups shrink to fit it. */
 private val LocalCompactMenu = compositionLocalOf { false }
 
@@ -308,7 +346,7 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier) {
  * the trickplay tile for the hovered time and seeks on release; Left/Right steps 10 s.
  */
 @Composable
-private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier: Modifier, onSeek: (Double) -> Unit, onStep: (Int) -> Unit, onFocus: () -> Unit) {
+private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier: Modifier, onSeek: (Double) -> Unit, onStep: (Int) -> Unit, onFocus: () -> Unit, color: Color = YtRed, flush: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     val dur = state.durationSec.takeIf { it > 0 } ?: 1.0
     var dragFraction by remember { mutableStateOf<Float?>(null) }
@@ -323,7 +361,7 @@ private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier
     val bufferedFraction = (state.bufferedSec / dur).toFloat().coerceIn(0f, 1f)
     val big = focused || dragging
 
-    BoxWithConstraints(modifier = modifier.height(32.dp)) {
+    BoxWithConstraints(modifier = modifier.height(if (flush) 20.dp else 32.dp)) {
         val barWidth = maxWidth
         // Preview bubble: measured unconstrained and reported as 0x0 so it floats above the bar.
         if (previewSec != null) {
@@ -377,14 +415,14 @@ private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier
             val r = CornerRadius(trackH / 2)
             drawRoundRect(Color(0x66FFFFFF), topLeft = Offset(0f, y - trackH / 2), size = Size(size.width, trackH), cornerRadius = r)
             drawRoundRect(Color(0x99FFFFFF), topLeft = Offset(0f, y - trackH / 2), size = Size(size.width * bufferedFraction, trackH), cornerRadius = r)
-            drawRoundRect(YtRed, topLeft = Offset(0f, y - trackH / 2), size = Size(size.width * shownFraction, trackH), cornerRadius = r)
+            drawRoundRect(color, topLeft = Offset(0f, y - trackH / 2), size = Size(size.width * shownFraction, trackH), cornerRadius = r)
             // Segment markers (intro/outro) as slightly brighter ticks on the track.
             for (seg in state.segments) {
                 val sx = (seg.startSec / dur).toFloat().coerceIn(0f, 1f) * size.width
                 val ex = (seg.endSec / dur).toFloat().coerceIn(0f, 1f) * size.width
                 drawRoundRect(Color(0x55FFFFFF), topLeft = Offset(sx, y - trackH / 2), size = Size((ex - sx).coerceAtLeast(2f), trackH), cornerRadius = r)
             }
-            drawCircle(YtRed, radius = (if (big) 9.dp else 6.dp).toPx(), center = Offset(size.width * shownFraction, y))
+            drawCircle(color, radius = (if (big) 9.dp else 6.dp).toPx(), center = Offset(size.width * shownFraction, y))
         }
     }
 }
@@ -432,7 +470,7 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
 
 /** Big round centre button. */
 @Composable
-private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp = 30.dp, onClick: () -> Unit, onFocus: () -> Unit, focusRequester: FocusRequester? = null) {
+private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp = 30.dp, disc: Boolean = true, onClick: () -> Unit, onFocus: () -> Unit, focusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     // Only a remote/keyboard shows focus; on a phone the three discs look identical.
     val showFocus = focused && LocalInputModeManager.current.inputMode == InputMode.Keyboard
@@ -446,7 +484,7 @@ private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
             .clip(CircleShape)
             // Plain translucent dark discs like YouTube's, no outline; a remote's focus adds a white ring.
-            .background(if (showFocus) Color(0x55FFFFFF) else Color(0x59000000))
+            .background(if (showFocus) Color(0x55FFFFFF) else if (disc) Color(0x59000000) else Color.Transparent)
             .then(if (showFocus) Modifier.border(BorderStroke(2.dp, Color.White), CircleShape) else Modifier)
             .tapClick(onClick),
     ) {
