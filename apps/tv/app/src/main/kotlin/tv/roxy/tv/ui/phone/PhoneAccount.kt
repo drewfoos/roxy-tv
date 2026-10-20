@@ -45,6 +45,8 @@ import androidx.compose.material.icons.outlined.SwitchAccount
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.Download
@@ -153,8 +155,18 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
             }
             Divider()
             SwitchRow(Icons.Outlined.FastForward, "Auto-skip intro & outro", settings.autoSkip) { save(settings.copy(autoSkip = it)) }
+            if (!settings.autoSkip) {
+                Divider()
+                SettingRow(Icons.Outlined.Timer, "Skip button stays for", PlayerSettings.skipWindowLabel(settings.skipWindowSec)) {
+                    pick = Pick("Skip button stays for", PlayerSettings.skipWindowChoices.map { PlayerSettings.skipWindowLabel(it) }, PlayerSettings.skipWindowLabel(settings.skipWindowSec)) { picked ->
+                        PlayerSettings.skipWindowChoices.firstOrNull { PlayerSettings.skipWindowLabel(it) == picked }?.let { save(settings.copy(skipWindowSec = it)) }
+                    }
+                }
+            }
             Divider()
             SwitchRow(Icons.Outlined.PlaylistPlay, "Autoplay next episode", settings.autoplay) { save(settings.copy(autoplay = it)) }
+            Divider()
+            SwitchRow(Icons.Outlined.SkipNext, "Next-episode countdown card", settings.nextCard) { save(settings.copy(nextCard = it)) }
             Divider()
             SettingRow(Icons.Outlined.Tune, "Advanced", if (advanced) "Hide decoder and debug options" else "Decoder, video output, stats overlay", trailing = if (advanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore) { advanced = !advanced }
             if (advanced) {

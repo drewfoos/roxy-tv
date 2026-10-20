@@ -44,6 +44,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -87,7 +92,6 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     var error by remember { mutableStateOf<String?>(null) }
     var watchedKey by remember { mutableIntStateOf(0) }
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var overflows by remember { mutableStateOf(false) }
 
     fun setFullscreen(on: Boolean) {
         activity?.requestedOrientation = if (on) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
@@ -197,16 +201,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         if (ep.isPlayable) DownloadButton(ep, onDownload = { startDownload(listOf(ep), ep, null) }, size = 24.dp)
                         EpisodeMenu(ep, app.api, onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(ep.id, on) }; watchedKey++ } })
                     }
-                    ep.overview?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            it, fontSize = 15.sp, lineHeight = 22.sp, color = RoxyColors.onBackground.copy(alpha = 0.92f),
-                            maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
-                            onTextLayout = { r -> if (!expanded) overflows = r.hasVisualOverflow },
-                            modifier = Modifier.padding(top = 6.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded },
-                        )
-                        // Only when there is more to read: a synopsis that fits gets no link.
-                        if (!expanded && overflows) Text("Read more", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.align(Alignment.End).clickable { expanded = true }.padding(top = 2.dp))
-                    }
+                    ep.overview?.takeIf { it.isNotBlank() }?.let { ExpandableSynopsis(it, expanded, onToggle = { expanded = !expanded }) }
                     // Content advisory, Crunchyroll's row under the synopsis: the descriptors the
                     // server derived (TMDB's, or AniList's tags), else the rating's meaning.
                     (ep.officialRating ?: seriesRating)?.let { r ->
@@ -236,6 +231,39 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                 Spacer(Modifier.height(1.dp))
             }
         }
+    }
+}
+
+/**
+ * Three lines of synopsis with "...Read more" inline at the end of the third, the way
+ * Crunchyroll does it; tapping anywhere expands, and a synopsis that fits gets no link.
+ */
+@Composable
+private fun ExpandableSynopsis(text: String, expanded: Boolean, onToggle: () -> Unit) {
+    val style = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = RoxyColors.onBackground.copy(alpha = 0.92f))
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onToggle)) {
+        val widthPx = constraints.maxWidth
+        val link = "Read more"
+        val shown: AnnotatedString = remember(text, expanded, widthPx) {
+            if (expanded) return@remember AnnotatedString(text)
+            val full = measurer.measure(AnnotatedString(text), style = style, constraints = Constraints(maxWidth = widthPx))
+            if (full.lineCount <= 3) return@remember AnnotatedString(text)
+            // Cut the text so that "... Read more" fits on the third line.
+            val suffix = "\u2026 "
+            var end = full.getLineEnd(2, visibleEnd = true)
+            while (end > 0) {
+                val candidate = buildAnnotatedString {
+                    append(text.substring(0, end).trimEnd()); append(suffix)
+                    withStyle(SpanStyle(color = RoxyColors.accent, fontWeight = FontWeight.SemiBold)) { append(link) }
+                }
+                val m = measurer.measure(candidate, style = style, constraints = Constraints(maxWidth = widthPx))
+                if (m.lineCount <= 3) return@remember candidate
+                end = text.lastIndexOf(' ', end - 2).takeIf { it > 0 } ?: (end - 1)
+            }
+            AnnotatedString(text)
+        }
+        Text(shown, style = style)
     }
 }
 

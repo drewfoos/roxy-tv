@@ -60,6 +60,13 @@ data class PlayerSettings(
     val autoplay: Boolean = true,
     /** Jump over intro/outro segments automatically instead of showing a Skip button. */
     val autoSkip: Boolean = false,
+    /** How long the Skip intro/outro button stays up once a segment starts, in seconds. 0 = the whole segment. */
+    val skipWindowSec: Int = 15,
+    /**
+     * Netflix's next-episode countdown card over the last seconds. Off by default: anime
+     * often puts a scene or the preview there, and Next sits in the player's top bar.
+     */
+    val nextCard: Boolean = false,
 ) {
     /** mpv `alang` list: every spelling of each preferred language, since tags vary. */
     val mpvAudioLangs: List<String>
@@ -74,6 +81,9 @@ data class PlayerSettings(
         val voChoices = listOf("gpu", "gpu-next")
         /** One explicit behaviour per choice; "smart" is an older stored name for "signs". */
         val subModeChoices = listOf("signs", "foreign", "full", "none")
+        /** Seconds the Skip button stays; 0 = for the whole intro/outro. */
+        val skipWindowChoices = listOf(5, 10, 15, 20, 30, 0)
+        fun skipWindowLabel(sec: Int) = if (sec == 0) "Whole intro/outro" else "$sec seconds"
 
         fun subModeLabel(mode: String): String = when (mode) {
             "signs", "smart" -> "Signs & songs with a dub"
@@ -222,6 +232,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_STATS] = s.showStats
             it[KEY_AUTOPLAY] = s.autoplay
             it[KEY_AUTOSKIP] = s.autoSkip
+            it[KEY_SKIP_WINDOW] = s.skipWindowSec
+            it[KEY_NEXT_CARD] = s.nextCard
         }
     }
 
@@ -250,6 +262,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             showStats = this[KEY_STATS] ?: d.showStats,
             autoplay = this[KEY_AUTOPLAY] ?: d.autoplay,
             autoSkip = this[KEY_AUTOSKIP] ?: d.autoSkip,
+            skipWindowSec = this[KEY_SKIP_WINDOW] ?: d.skipWindowSec,
+            nextCard = this[KEY_NEXT_CARD] ?: d.nextCard,
         )
     }
 
@@ -273,6 +287,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_STATS = booleanPreferencesKey("show_stats")
         val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
         val KEY_AUTOSKIP = booleanPreferencesKey("auto_skip")
+        val KEY_SKIP_WINDOW = intPreferencesKey("skip_window_sec")
+        val KEY_NEXT_CARD = booleanPreferencesKey("next_card")
         val KEY_DL_WIFI = booleanPreferencesKey("downloads_wifi_only")
         val KEY_PROFILES_CACHE = stringPreferencesKey("profiles_cache")
         val KEY_DISMISSED_UPDATE = intPreferencesKey("dismissed_update")

@@ -122,6 +122,8 @@ class PlayerSession(
     // Next-episode queue (Netflix): resolved in the background once an episode starts;
     // the card appears at the outro (or the last 15 s) and counts down when autoplay is on.
     private var autoplay = true
+    private var skipWindowSec = 15
+    private var nextCardEnabled = false
     private var next: PlayRequest? = null
     var nextCard by mutableStateOf<NextCard?>(null); private set
     private var nextCardDismissed = false
@@ -135,6 +137,8 @@ class PlayerSession(
         val settings = app.prefs.settings.value
         autoSkip = settings.autoSkip
         autoplay = settings.autoplay
+        skipWindowSec = settings.skipWindowSec
+        nextCardEnabled = settings.nextCard
         player = MpvPlayer(
             context = context,
             options = MpvPlayer.Options(
@@ -382,6 +386,7 @@ class PlayerSession(
             nextCardShown = nextCard != null,
             segments = segments,
             autoSkip = autoSkip,
+            skipWindowSec = skipWindowSec,
             subtitleTracks = tracks.filter { it.type == "sub" },
             audioTracks = tracks.filter { it.type == "audio" },
             currentSid = player.currentTrackId("sub"),
@@ -407,8 +412,9 @@ class PlayerSession(
         //    `preview` segment, or the last 15 s when there is none;
         //  - no markers at all: the last 15 s.
         // An auto-skipped outro that ends the file simply reaches EOF and onEofReached moves on.
+        // The card is opt-in (settings): without it, autoplay still moves on at the end of the file.
         val n = next
-        if (n != null && nextCard == null && !nextCardDismissed && !switching && !ui.paused && ui.durationSec > 0 && !host.inPip) {
+        if (nextCardEnabled && n != null && nextCard == null && !nextCardDismissed && !switching && !ui.paused && ui.durationSec > 0 && !host.inPip) {
             val outro = segments.firstOrNull { it.type == "outro" }
             val preview = segments.firstOrNull { it.type == "preview" }
             val outroEndsFile = outro != null && outro.endSec >= ui.durationSec - 5.0

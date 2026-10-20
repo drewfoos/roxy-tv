@@ -413,6 +413,11 @@ class MpvPlayer(
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         Timber.d("surfaceCreated")
+        // The size goes in before the vo comes up: the vo lays the picture out for the size
+        // it sees at creation, and after a page/app switch that was the previous surface's
+        // (a picture drawn at a quarter of the box, or spilling out of it).
+        val frame = holder.surfaceFrame
+        if (frame.width() > 0 && frame.height() > 0) applySurfaceSize(frame.width(), frame.height())
         mpv.attachSurface(holder.surface)
         mpv.setPropertyString("force-window", "yes")
         surfaceReady = true
@@ -421,13 +426,29 @@ class MpvPlayer(
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Timber.d("surfaceChanged %dx%d", width, height)
-        mpv.setPropertyString("android-surface-size", "${width}x$height")
-        // A new size (the page's 16:9 box <-> the whole screen) starts from a plain fit:
-        // a pinch zoom or pan from the old size would scale the picture wrongly in the new one.
-        if (lastSurface != null && lastSurface != width to height) setZoom(1.0, 0.0, 0.0)
+        applySurfaceSize(width, height)
+    }
+
+    private var lastSurface: Pair<Int, Int>? = null
+
+    private fun applySurfaceSize(width: Int, height: Int) {
+        val resized = lastSurface != null && lastSurface != width to height
+        if (resized && surfaceReady) {
+            // The surface changed size in place (the page's 16:9 box <-> the whole screen).
+            // Telling a live vo the new size does not always make it re-lay the picture
+            // out: it can keep drawing for the old size into the new buffer (a cropped,
+            // zoomed picture). Bringing the vo down and up around the size is the path the
+            // surface recreate takes, and that one always comes up right.
+            mpv.setPropertyString("vo", "null")
+            mpv.setPropertyString("android-surface-size", "${width}x$height")
+            setZoom(1.0, 0.0, 0.0)
+            mpv.setPropertyString("vo", options.vo)
+        } else {
+            mpv.setPropertyString("android-surface-size", "${width}x$height")
+            if (resized) setZoom(1.0, 0.0, 0.0)
+        }
         lastSurface = width to height
     }
-    private var lastSurface: Pair<Int, Int>? = null
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         Timber.d("surfaceDestroyed")

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -108,11 +109,16 @@ data class PlayerUiState(
     val nextCardShown: Boolean = false,
     val segments: List<MediaSegment> = emptyList(),
     val autoSkip: Boolean = false,
+    /** Seconds the Skip button stays after a segment starts (0 = until it ends). */
+    val skipWindowSec: Int = 15,
     /** Hosted on a page: false = in its 16:9 box, true = filling the screen; null = the player owns the screen. */
     val fullscreen: Boolean? = null,
 ) {
     /** The skippable segment the playhead is inside, if any. */
     val activeSegment: MediaSegment? get() = segments.firstOrNull { positionSec >= it.startSec && positionSec < it.endSec - 1.0 }
+
+    /** [activeSegment] while the Skip button is still meant to show (Crunchyroll's: a short while after it starts). */
+    val skippableSegment: MediaSegment? get() = activeSegment?.takeIf { skipWindowSec <= 0 || positionSec < it.startSec + skipWindowSec }
 }
 
 /** What the controls ask the activity to do. */
@@ -166,7 +172,7 @@ fun PlayerControls(
     // full-screen host (TV, movies) keeps the YouTube layout with its button row.
     val cr = state.fullscreen != null
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
-    state.activeSegment?.let { seg ->
+    state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
             SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (visible) (if (compact) 44.dp else 118.dp) else (if (compact) 12.dp else 40.dp)))
         }
@@ -203,8 +209,10 @@ fun PlayerControls(
                 }
             }
             if (cr) {
-                // Next, settings (everything lives in there: subtitles, audio, speed, skip), fullscreen.
+                // Next, Cast (a placeholder until casting exists), settings (everything lives in
+                // there: subtitles, audio, speed, skip), fullscreen.
                 if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
+                IconButton(Icons.Filled.Cast, "Cast (coming soon)", onClick = { onInteraction() }, onFocus = onInteraction, compact = compact, tint = Color.White.copy(alpha = 0.6f))
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
                 if (state.fullscreen == true) IconButton(Icons.Filled.CloseFullscreen, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
                 else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
@@ -453,12 +461,12 @@ private fun TrickplayTile(trickplay: TrickplayPreview, positionSec: Double, modi
 
 /** Flat icon button for the bottom row: white icon, white focus ring, optional red underline. */
 @Composable
-private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false) {
+private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false, tint: Color = Color.White) {
     var focused by remember { mutableStateOf(false) }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(if (compact) 38.dp else 44.dp)
+            .size(if (compact) 42.dp else 44.dp)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
@@ -467,7 +475,7 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
             .tapClick(onClick),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(if (compact) 24.dp else 26.dp))
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 28.dp else 26.dp))
             Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else 18.dp).height(2.dp).background(if (underline) YtRed else Color.Transparent))
         }
     }
