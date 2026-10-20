@@ -174,7 +174,7 @@ fun PlayerControls(
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
     state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
-            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (visible) 118.dp else 40.dp))
+            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (cr) 56.dp else if (visible) 118.dp else 40.dp))
         }
     }
     if (!visible) return

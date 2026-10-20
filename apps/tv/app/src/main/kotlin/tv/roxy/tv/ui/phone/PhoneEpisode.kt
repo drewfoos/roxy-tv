@@ -155,11 +155,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     DisposableEffect(main, session) {
         main?.onPipChanged = pip@{ entering ->
             val s = session ?: return@pip
-            if (entering) s.pinSurface(true)
-            // The exit lays the view out at its full size before the animation, so the
-            // pinned buffer already matches it; unpin once the animation is over so a later
-            // fullscreen turn can resize the surface again.
-            else view.postDelayed({ s.pinSurface(false) }, 800)
+            // The exit callback comes after the animation with the view laid out at its full
+            // size; the box is the same shape as the window, so unpinning then is a no-op
+            // when the size matches and a single resize when it does not.
+            s.pinSurface(entering)
         }
         onDispose { main?.onPipChanged = null; main?.clearPip() }
     }
@@ -204,7 +203,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     val full = landscape || inPip
     Column(modifier = Modifier.fillMaxSize().background(if (full) Color.Black else RoxyColors.background).then(if (full) Modifier else Modifier.statusBarsPadding())) {
         // The player keeps its place in the tree in both orientations and in the PiP window,
-        // so the surface and the stream survive; only its size changes.
+        // so the surface and the stream survive; only its size changes. Fullscreen is the
+        // whole screen; mpv fits the picture inside it (pillars on this phone's 21.7:9).
         Box(
             modifier = (if (full) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)).onGloballyPositioned { c ->
                 val b = c.boundsInWindow()

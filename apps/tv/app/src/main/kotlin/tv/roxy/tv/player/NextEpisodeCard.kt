@@ -67,7 +67,7 @@ data class NextCard(
  * D-pad: Play now has focus on arrival; Right moves to Watch credits.
  */
 @Composable
-fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> Unit, onDismiss: () -> Unit, compact: Boolean = false) {
+fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> Unit, onDismiss: () -> Unit, compact: Boolean = false, pageHost: Boolean = false) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
     // In the page's 16:9 box the card is one slim row: countdown and name, Play, dismiss.
@@ -92,7 +92,7 @@ fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> U
         }
         return
     }
-    Box(modifier = Modifier.fillMaxSize().padding(end = 32.dp, bottom = if (controlsVisible) 118.dp else 40.dp), contentAlignment = Alignment.BottomEnd) {
+    Box(modifier = Modifier.fillMaxSize().padding(end = 32.dp, bottom = if (pageHost) 56.dp else if (controlsVisible) 118.dp else 40.dp), contentAlignment = Alignment.BottomEnd) {
         Column(
             modifier = Modifier.width(340.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2141418)).border(BorderStroke(1.dp, Color(0x33FFFFFF)), RoundedCornerShape(8.dp)).padding(12.dp),
         ) {
