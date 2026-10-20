@@ -23,11 +23,21 @@ Radarr can treat Roxy as a Jellyfin server. Roxy clients never use it (ADR-0007)
   everywhere a device token is.
 - Unauthenticated calls to anything but `system/info` and `auth/login` get `401 {"error": ...}`.
 
+## Finding the server
+
+Clients list servers on the login screen two ways at once: a UDP broadcast of the text
+`who is roxy?` to port 8096, which the server answers with
+`{id, name, product: "roxy", version, port, address, advertised}` (the client builds the
+URL from the reply's source address and `port` unless `advertised` is true, when
+`address` is `ROXY_ADVERTISE_URL`), and an HTTP sweep of the phone's subnet reading
+`GET /v1/system/info` on 8096 and keeping replies whose `product` is `roxy`. The sweep
+is the fallback for networks that drop broadcasts (Docker bridge, Wi-Fi client isolation).
+
 ## Library
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/system/info` | `{name, version, ffmpeg}` |
+| GET | `/v1/system/info` | `{product: "roxy", id, name, version, ffmpeg}`; public, and what the login screen's network sweep reads |
 | GET | `/v1/libraries` | `{libraries: [{id, name, kind, root, animeMode}]}` |
 | POST | `/v1/libraries/scan` | async full rescan, 202 |
 | GET | `/v1/items` | `{items: [Item], total}`; query below |

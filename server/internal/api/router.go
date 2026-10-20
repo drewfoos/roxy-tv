@@ -143,9 +143,14 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
+	// Public: the login screen's network sweep reads this to tell a Roxy server from
+	// whatever else answers on the port (Jellyfin shares 8096).
+	id, _ := s.store.ServerID(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":    "Roxy Server",
-		"version": "0.1.0-dev",
+		"product": "roxy",
+		"id":      id,
+		"name":    s.store.ServerName(r.Context()),
+		"version": config.Version,
 		"ffmpeg":  s.ff.Version,
 	})
 }

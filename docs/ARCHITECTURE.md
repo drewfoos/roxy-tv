@@ -439,7 +439,10 @@ Image design:
   `/config` keep the owner's UID; adds the `render`/`video` groups for `/dev/dri`.
 - Volumes: `/config` (db, cache, extracted attachments and subtitles, logs), `/data` (media,
   read-only), optional `/fonts` (extra fonts), optional `/transcode` (tmpfs recommended).
-- Ports: `8096` (keep Jellyfin's port so request app/arr configs only change host and token).
+- Ports: `8096` (keep Jellyfin's port so request app/arr configs only change host and token)
+  and `8096/udp` for LAN discovery (the beacon answers "who is roxy?"; `ROXY_DISCOVERY_PORT`,
+  0 to turn off). On a bridge network the reply carries the container's address, so set
+  `ROXY_ADVERTISE_URL` to the host's URL, or the clients' HTTP sweep finds it anyway.
 - Healthcheck: `GET /healthz`.
 - Published as `ghcr.io/roxy-media/roxy-server:<semver>` and `:latest`, multi-arch
   (`linux/amd64`, `linux/arm64`), from CI on every tag.

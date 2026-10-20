@@ -188,6 +188,11 @@ APK can be sideloaded on the owner's Android phone meanwhile.
 - Next on the server: playback decision endpoint,
   Quick Connect / device-code login, generic Sonarr/Radarr webhooks with IDs,
   metadata/images, websocket, Docker image build test.
+- TV sign-in by QR code (planned, on top of LAN discovery): the TV finds the server the
+  same way the phone does, asks it for a short pairing code, and shows a QR of
+  `roxy://pair?server=<id>&code=<code>`; the phone app, already signed in, scans it and
+  approves, and the server hands the TV a device token. The server id in `system/info`
+  and the beacon reply is there for this.
 - Next on the client: run the same matrix on the Costco TV when it arrives (the
   performance decision needs it), then start Phase 1b on the native API.
 

@@ -78,6 +78,13 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import tv.roxy.tv.data.FoundServer
+import tv.roxy.tv.data.ServerFinder
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.update
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.Check
 import timber.log.Timber
 import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
@@ -86,17 +93,38 @@ import tv.roxy.tv.ui.components.PrimaryButton
 import tv.roxy.tv.ui.components.RoxyTextField
 import tv.roxy.tv.ui.theme.RoxyColors
 
-data class LoginUiState(val busy: Boolean = false, val error: String? = null)
+data class LoginUiState(
+    val busy: Boolean = false,
+    val error: String? = null,
+    /** Servers found on the network so far, in the order they answered. */
+    val servers: List<FoundServer> = emptyList(),
+    val scanning: Boolean = false,
+)
 
 class LoginViewModel(private val app: RoxyApp) : ViewModel() {
     private val _state = MutableStateFlow(LoginUiState())
     val state: StateFlow<LoginUiState> = _state
+    private var scanJob: Job? = null
+
+    init { scan() }
+
+    /** Look for servers on the local network (the beacon's broadcast plus an HTTP sweep); rows appear as they answer. */
+    fun scan() {
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch {
+            _state.update { it.copy(scanning = true, servers = emptyList()) }
+            ServerFinder.find(app)
+                .catch { Timber.w(it, "server scan") }
+                .collect { found -> _state.update { it.copy(servers = it.servers + found) } }
+            _state.update { it.copy(scanning = false) }
+        }
+    }
 
     fun login(serverUrl: String, username: String, password: String) {
         val url = normalise(serverUrl)
-        if (url == null) { _state.value = LoginUiState(error = "Enter the server URL, e.g. http://192.168.1.10:8096"); return }
-        if (username.isBlank()) { _state.value = LoginUiState(error = "Enter a user name"); return }
-        _state.value = LoginUiState(busy = true)
+        if (url == null) { _state.update { it.copy(error = "Enter the server URL, e.g. http://192.168.1.10:8096") }; return }
+        if (username.isBlank()) { _state.update { it.copy(error = "Enter a user name") }; return }
+        _state.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             val deviceId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
             runCatching {
@@ -106,10 +134,10 @@ class LoginViewModel(private val app: RoxyApp) : ViewModel() {
                 // "I agree" was ticked to sign in: record it against the current terms version.
                 val version = runCatching { app.api.legalAt(url, "terms").version }.getOrDefault("")
                 app.prefs.saveSession(Session(serverUrl = url, token = resp.token, userName = resp.user.name, isAdmin = resp.user.isAdmin, acceptedTerms = version))
-                _state.value = LoginUiState()
+                _state.update { it.copy(busy = false) }
             }.onFailure { t ->
                 Timber.w(t, "login failed")
-                _state.value = LoginUiState(error = friendly(t))
+                _state.update { it.copy(busy = false, error = friendly(t)) }
             }
         }
     }
@@ -163,6 +191,7 @@ fun LoginScreen() {
             Text("Sign in to your server", fontSize = 14.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp, bottom = 32.dp))
 
             LoginField(serverUrl, { serverUrl = it }, placeholder = "Server address", icon = Icons.Outlined.Dns, keyboardType = KeyboardType.Uri)
+            FoundServers(state, selectedUrl = serverUrl, onPick = { serverUrl = it.url }, onRescan = vm::scan)
             Spacer(Modifier.height(12.dp))
             LoginField(username, { username = it }, placeholder = "User name", icon = Icons.Outlined.Person)
             Spacer(Modifier.height(12.dp))
@@ -207,6 +236,49 @@ fun LoginScreen() {
             )
             if (showTerms) {
                 LoginTermsDialog(serverUrl = serverUrl, onDismiss = { showTerms = false }, onAgree = { agreed = true; showTerms = false })
+            }
+        }
+    }
+}
+
+/**
+ * "On your network": the servers the scan found, one row each, tap to put its address
+ * in the field (Jellyfin's and Plex's login screens do the same). While scanning with
+ * nothing found yet it says so with a small spinner; after a scan with nothing found,
+ * a line and "Scan again".
+ */
+@Composable
+private fun FoundServers(state: LoginUiState, selectedUrl: String, onPick: (FoundServer) -> Unit, onRescan: () -> Unit) {
+    val picked = selectedUrl.trim().trimEnd('/').removePrefix("http://")
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            Text(
+                when {
+                    state.servers.isNotEmpty() -> "On your network"
+                    state.scanning -> "Looking for servers on your network…"
+                    else -> "No servers found on this network"
+                },
+                fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.weight(1f),
+            )
+            if (state.scanning) CircularProgressIndicator(color = RoxyColors.accent, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+            else Text("Scan again", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onRescan).padding(4.dp))
+        }
+        state.servers.forEach { s ->
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+            val selected = s.url.removePrefix("http://") == picked
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(54.dp).clip(RoundedCornerShape(14.dp)).background(RoxyColors.surfaceHigh)
+                    .border(1.5.dp, if (focused) RoxyColors.accent else Color.Transparent, RoundedCornerShape(14.dp))
+                    .clickable(interactionSource = interaction, indication = null) { onPick(s) }.padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Outlined.Dns, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
+                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(s.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1)
+                    Text(s.url.removePrefix("http://"), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1)
+                }
+                if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = RoxyColors.accent, modifier = Modifier.size(20.dp))
             }
         }
     }

@@ -19,15 +19,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/api"
 	"github.com/roxy-media/roxy/server/internal/auth"
+	"github.com/roxy-media/roxy/server/internal/beacon"
 	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
-	"github.com/roxy-media/roxy/server/internal/segments"
-	"github.com/roxy-media/roxy/server/internal/trickplay"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/probe"
+	"github.com/roxy-media/roxy/server/internal/segments"
 	"github.com/roxy-media/roxy/server/internal/store"
+	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
 
 func main() {
@@ -155,6 +156,15 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
 		}()
+	}
+
+	// LAN discovery: answer the clients' "who is roxy?" broadcast with our name and port.
+	if cfg.DiscoveryPort > 0 {
+		httpPort := beacon.HTTPPort(cfg.Listen)
+		go beacon.Run(ctx, cfg.DiscoveryPort, func(ctx context.Context) beacon.Info {
+			id, _ := db.ServerID(ctx)
+			return beacon.Info{ID: id, Name: db.ServerName(ctx), Version: config.Version, Port: httpPort, Address: cfg.AdvertiseURL, Advertised: cfg.AdvertiseURL != ""}
+		})
 	}
 
 	srv := &http.Server{

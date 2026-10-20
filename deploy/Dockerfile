@@ -44,7 +44,7 @@ ENV ROXY_CONFIG_DIR=/config \
     PUID=1000 PGID=1000
 
 VOLUME ["/config", "/data", "/fonts", "/transcode"]
-EXPOSE 8096
+EXPOSE 8096 8096/udp
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://127.0.0.1:8096/healthz || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

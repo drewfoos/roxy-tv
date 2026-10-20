@@ -19,6 +19,7 @@ services:
     container_name: roxy
     ports:
       - "8096:8096"
+      - "8096:8096/udp"            # LAN discovery: the apps' login screen finds the server by broadcast
     volumes:
       - ./config/roxy:/config
       - /data:/data:ro
