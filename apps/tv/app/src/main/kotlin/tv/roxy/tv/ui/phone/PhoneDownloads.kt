@@ -95,13 +95,31 @@ fun rememberDownloadStarter(): (items: List<Item>, title: Item, seasonName: Stri
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var short by remember { mutableStateOf<Pair<Long, Long>?>(null) } // (needed, free) when there is not enough room
+    short?.let { (needed, free) ->
+        AlertDialog(
+            onDismissRequest = { short = null },
+            containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+            title = { Text("Not enough space") },
+            text = { Text("This needs ${formatBytes(needed)} but only ${formatBytes(free)} is free on this phone. Delete some downloads or free up storage, then try again.") },
+            confirmButton = { TextButton(onClick = { short = null }) { Text("OK", color = Color.White) } },
+        )
+    }
     return remember {
         { items, title, seasonName ->
-            if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                ask.launch(Manifest.permission.POST_NOTIFICATIONS)
+            // Room for the whole batch plus a margin, before anything is queued; a season
+            // that would stop two-thirds through is worse than one that never starts.
+            val needed = items.sumOf { it.primarySource?.size ?: 0L }
+            val free = app.downloads.freeBytes()
+            if (needed > 0 && free < needed + (200L shl 20)) {
+                short = needed to free
+            } else {
+                if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    ask.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                app.downloads.enqueue(items, title, seasonName)
+                Timber.i("queued %d download(s) for %s (%s, %s free)", items.size, title.title, formatBytes(needed), formatBytes(free))
             }
-            app.downloads.enqueue(items, title, seasonName)
-            Timber.i("queued %d download(s) for %s", items.size, title.title)
         }
     }
 }
@@ -219,9 +237,23 @@ fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: 
     }
     Box {
         if (compact) {
-            // Icon only, for the end of the season row; the colour carries the state and the label is the description.
-            // Same 36 dp box and 24 dp glyph as DownloadButton, so it lines up with the episode rows below.
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(36.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = onTap).padding(6.dp))
+            // The end of the season row, Crunchyroll's way: the icon with a short white
+            // word beside it ("Download all" to start, the state otherwise). The 36 dp box
+            // and 24 dp glyph match DownloadButton, so the icons line up with the rows below.
+            val short = when {
+                active.isNotEmpty() -> "Downloading"
+                paused.isNotEmpty() && remaining.isEmpty() -> "Paused"
+                remaining.isEmpty() -> "Downloaded"
+                done > 0 || paused.isNotEmpty() -> "Download ${remaining.size} more"
+                else -> "Download all"
+            }
+            Row(
+                modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onTap).padding(start = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(short, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (tint == RoxyColors.onBackground) Color.White else tint)
+                Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(36.dp).padding(6.dp))
+            }
         } else Row(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onTap).padding(horizontal = PhonePad, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

@@ -259,7 +259,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                     Text("Next Episode", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
                     val startDownload = rememberDownloadStarter()
                     PhoneEpisodeRow(
-                        next, app.api, showOverview = false,
+                        next, app.api,
                         onClick = { onOpenEpisode(next) },
                         onDownload = { startDownload(listOf(next), next, null) },
                         onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(next.id, on) }; watchedKey++ } },

@@ -551,7 +551,7 @@ private fun EpisodeRowSkeleton() {
 
 /** Netflix's episode row: thumb with a play badge, "N. Title", runtime and a watched tick, the download control, then the synopsis. */
 @Composable
-internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit, onMarkWatched: (Boolean) -> Unit, showOverview: Boolean = true) {
+internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit, onMarkWatched: (Boolean) -> Unit) {
     val thumbWidth = 150.dp
     val placeholder = !ep.isPlayable
     val watched = ep.userData?.played == true
@@ -571,7 +571,9 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
     Column(
         modifier = Modifier.fillMaxWidth().clickable(enabled = !placeholder, onClick = onClick).padding(horizontal = PhonePad, vertical = 10.dp).alpha(if (placeholder) 0.45f else 1f),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Crunchyroll's row: the name sits a little below the thumbnail's top edge, with
+        // the download and menu under it at the right; no synopsis in the list.
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(modifier = Modifier.width(thumbWidth).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
                 RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f), placeholderTextSize = 12)
                 if (!placeholder) {
@@ -580,22 +582,22 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
                     if (tag != null) ThumbTag(tag, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
                 }
             }
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f).heightIn(min = thumbWidth * 9f / 16f)) {
                 val n = (ep.indexAired ?: ep.indexAbsolute)?.let { "$it. " } ?: ""
-                Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                 val sub = listOfNotNull(
                     badge,
                     if (placeholder && ep.availability == "missing" && !ep.airDate.isNullOrBlank()) "Aired ${ep.airDate}" else null,
                 ).joinToString("  ·  ")
                 if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 3.dp))
+                if (!placeholder) {
+                    Spacer(Modifier.weight(1f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                        DownloadButton(ep, onDownload = onDownload, size = 24.dp)
+                        EpisodeMenu(ep, api, onMarkWatched = onMarkWatched)
+                    }
+                }
             }
-            if (!placeholder) {
-                DownloadButton(ep, onDownload = onDownload, size = 24.dp)
-                EpisodeMenu(ep, api, onMarkWatched = onMarkWatched)
-            }
-        }
-        if (showOverview) ep.overview?.takeIf { it.isNotBlank() }?.let {
-            Text(it, fontSize = 13.sp, lineHeight = 17.sp, color = RoxyColors.muted, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
