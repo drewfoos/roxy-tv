@@ -530,6 +530,8 @@ data class Item(
     val overview: String? = null,
     val tagline: String? = null,
     val genres: List<String> = emptyList(),
+    /** Content descriptors ("Sexual Content", "Violence"); on series and movies only. */
+    val advisories: List<String> = emptyList(),
     val communityRating: Double? = null,
     val officialRating: String? = null,
     val premiered: String? = null,

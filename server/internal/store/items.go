@@ -17,7 +17,7 @@ import (
 var itemColNames = []string{"id", "guid", "library_id", "type", "parent_id", "title", "sort_title", "year", "overview",
 	"index_aired", "season_aired", "index_absolute", "runtime_ms", "date_created", "date_modified",
 	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual",
-	"season_count", "related_count"}
+	"season_count", "related_count", "advisories"}
 
 var itemCols = strings.Join(itemColNames, ", ")
 
@@ -32,14 +32,14 @@ func itemColsFor(alias string) string {
 // scanItem reads one item row; extra receives any columns selected after itemCols.
 func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, error) {
 	var it model.Item
-	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed sql.NullString
+	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed, advisories sql.NullString
 	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount sql.NullInt64
 	var rating sql.NullFloat64
 	var created, modified string
 	var virtual int
 	dest := []any{&it.ID, &it.GUID, &it.LibraryID, &it.Type, &parent, &it.Title, &sortTitle, &year, &overview,
 		&idxAired, &seasonAired, &idxAbs, &runtime, &created, &modified,
-		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount}
+		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories}
 	dest = append(dest, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return nil, err
@@ -57,6 +57,9 @@ func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, er
 	it.Tagline = tagline.String
 	if genres.Valid && genres.String != "" {
 		_ = json.Unmarshal([]byte(genres.String), &it.Genres)
+	}
+	if advisories.Valid && advisories.String != "" {
+		_ = json.Unmarshal([]byte(advisories.String), &it.Advisories)
 	}
 	if rating.Valid {
 		r := rating.Float64

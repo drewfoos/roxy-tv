@@ -31,7 +31,8 @@ type Result struct {
 	Overview        string
 	Tagline         string
 	Genres          []string
-	CommunityRating float64 // 0..10, 0 = unknown
+	Advisories      []string // content descriptors in Crunchyroll's vocabulary ("Sexual Content", "Violence")
+	CommunityRating float64  // 0..10, 0 = unknown
 	OfficialRating  string
 	Premiered       string // YYYY-MM-DD
 	Status          string // series: Continuing | Ended | Upcoming

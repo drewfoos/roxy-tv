@@ -149,8 +149,9 @@ type tmdbTV struct {
 	Images         *tmdbImages      `json:"images"`
 	ContentRatings *struct {
 		Results []struct {
-			Country string `json:"iso_3166_1"`
-			Rating  string `json:"rating"`
+			Country     string   `json:"iso_3166_1"`
+			Rating      string   `json:"rating"`
+			Descriptors []string `json:"descriptors"`
 		} `json:"results"`
 	} `json:"content_ratings"`
 }
@@ -274,6 +275,7 @@ func (t *TMDB) tvResult(s *tmdbTV) *Result {
 		for _, cr := range s.ContentRatings.Results {
 			if cr.Country == "US" && cr.Rating != "" {
 				r.OfficialRating = cr.Rating
+				r.Advisories = tmdbAdvisories(cr.Descriptors)
 				break
 			}
 		}
@@ -467,4 +469,39 @@ func (t *TMDB) Episodes(ctx context.Context, series *Result, season int) (*Seaso
 		return nil, err
 	}
 	return t.seasonResult(&s), nil
+}
+
+// tmdbAdvisories maps TMDB's content-rating descriptors (the TV Parental Guidelines'
+// D / L / S / V letters, or words) onto the same vocabulary AniList's tags use.
+func tmdbAdvisories(descriptors []string) []string {
+	seen := map[string]bool{}
+	for _, d := range descriptors {
+		switch strings.ToLower(strings.TrimSpace(d)) {
+		case "s", "sexual content", "sex", "sexual situations":
+			seen["Sexual Content"] = true
+		case "nudity":
+			seen["Nudity"] = true
+		case "l", "language", "profanity", "coarse language", "strong language":
+			seen["Profanity"] = true
+		case "v", "violence", "fv":
+			seen["Violence"] = true
+		case "graphic violence", "gore":
+			seen["Graphic Violence"] = true
+		case "drugs", "drug use", "alcohol", "substance abuse", "drug/alcohol use":
+			seen["Drug/Alcohol Use"] = true
+		case "suicide", "self-harm":
+			seen["Suicide/Self-Harm"] = true
+		case "horror", "frightening scenes":
+			seen["Horror"] = true
+		case "d", "suggestive dialogue":
+			seen["Sexual Content"] = true
+		}
+	}
+	var out []string
+	for _, k := range AdvisoryOrder {
+		if seen[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }

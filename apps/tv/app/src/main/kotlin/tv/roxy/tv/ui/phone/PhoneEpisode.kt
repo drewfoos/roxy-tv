@@ -141,12 +141,13 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             }
             .onFailure { t -> Timber.w(t, "episode"); error = t.message }
     }
-    // Episodes carry no rating of their own; the series' stands for them.
-    var seriesRating by remember { mutableStateOf<String?>(null) }
+    // Episodes carry no rating or advisories of their own; the series' stand for them.
+    var series by remember { mutableStateOf<Item?>(null) }
     LaunchedEffect(episode?.seriesId) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
-        seriesRating = app.items[seriesId]?.officialRating ?: runCatching { app.api.item(seriesId).officialRating }.getOrNull()
+        series = app.items[seriesId] ?: runCatching { app.api.item(seriesId) }.getOrNull()
     }
+    val seriesRating = series?.officialRating
     LaunchedEffect(episode?.seriesId, watchedKey) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
         runCatching { app.api.items(type = "episode", parent = seriesId, recursive = true, includeSources = true, sort = "index").items }
@@ -207,14 +208,16 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         // Only when there is more to read: a synopsis that fits gets no link.
                         if (!expanded && overflows) Text("Read more", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.align(Alignment.End).clickable { expanded = true }.padding(top = 2.dp))
                     }
-                    // Content advisory, Crunchyroll's row under the synopsis. The providers carry no
-                    // descriptors (those are Crunchyroll's own), so it is the rating's meaning.
-                    (ep.officialRating ?: seriesRating)?.let { r -> advisoryFor(r)?.let { text ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+                    // Content advisory, Crunchyroll's row under the synopsis: the descriptors the
+                    // server derived (TMDB's, or AniList's tags), else the rating's meaning.
+                    (ep.officialRating ?: seriesRating)?.let { r ->
+                        val descriptors = ep.advisories.ifEmpty { series?.advisories.orEmpty() }
+                        val text = descriptors.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: advisoryFor(r)
+                        if (text != null) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
                             AgePill(ageLabel(r))
-                            Text(text, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
+                            Text(text, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
                         }
-                    } }
+                    }
                 }
                 if (next != null) {
                     Text("Next Episode", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))

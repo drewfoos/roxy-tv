@@ -44,6 +44,7 @@ const anilistMediaFields = `
 	coverImage { extraLarge large }
 	bannerImage
 	genres
+	tags { name category rank isMediaSpoiler }
 	averageScore
 	startDate { year month day }
 	status
@@ -101,8 +102,14 @@ type anilistMedia struct {
 		ExtraLarge string `json:"extraLarge"`
 		Large      string `json:"large"`
 	} `json:"coverImage"`
-	BannerImage  string      `json:"bannerImage"`
-	Genres       []string    `json:"genres"`
+	BannerImage string   `json:"bannerImage"`
+	Genres      []string `json:"genres"`
+	Tags        []struct {
+		Name     string `json:"name"`
+		Category string `json:"category"`
+		Rank     int    `json:"rank"`
+		Spoiler  bool   `json:"isMediaSpoiler"`
+	} `json:"tags"`
 	AverageScore *int        `json:"averageScore"`
 	StartDate    anilistDate `json:"startDate"`
 	Status       string      `json:"status"`
@@ -206,6 +213,7 @@ func (a *AniList) mediaResult(m *anilistMedia) *Result {
 		Year:          m.StartDate.Year,
 		Overview:      StripHTML(m.Description),
 		Genres:        m.Genres,
+		Advisories:    anilistAdvisories(m),
 		Premiered:     m.StartDate.String(),
 		Status:        anilistStatus(m.Status),
 		ProviderIDs:   map[string]string{"anilist": strconv.Itoa(m.ID)},
@@ -511,4 +519,50 @@ func (a *AniList) Episodes(ctx context.Context, series *Result, season int) (*Se
 		return nil, nil
 	}
 	return a.seasonResult(resp.Data.Media, season), nil
+}
+
+// AdvisoryOrder is the display order of content descriptors (Crunchyroll's vocabulary).
+var AdvisoryOrder = []string{"Sexual Content", "Nudity", "Profanity", "Violence", "Graphic Violence", "Drug/Alcohol Use", "Suicide/Self-Harm", "Horror"}
+
+// anilistAdvisories turns the community's tags into content descriptors. A tag counts
+// when at least a third of voters agree (rank >= 35) and it is not a spoiler tag.
+func anilistAdvisories(m *anilistMedia) []string {
+	seen := map[string]bool{}
+	for _, g := range m.Genres {
+		if g == "Ecchi" {
+			seen["Sexual Content"] = true
+		}
+		if g == "Horror" {
+			seen["Horror"] = true
+		}
+	}
+	for _, t := range m.Tags {
+		if t.Rank < 35 || t.Spoiler {
+			continue
+		}
+		switch {
+		case t.Category == "Sexual Content":
+			seen["Sexual Content"] = true
+		case t.Name == "Nudity":
+			seen["Nudity"] = true
+		case t.Name == "Gore" || t.Name == "Body Horror" || t.Name == "Cannibalism" || t.Name == "Torture" || t.Name == "Dismemberment":
+			seen["Graphic Violence"] = true
+		case t.Name == "Suicide" || t.Name == "Self-Harm":
+			seen["Suicide/Self-Harm"] = true
+		case t.Name == "Drugs" || t.Name == "Alcohol" || t.Name == "Smoking":
+			seen["Drug/Alcohol Use"] = true
+		case t.Category == "Theme-Action" && (t.Name == "Swordplay" || t.Name == "Guns" || t.Name == "Martial Arts" || t.Name == "Military" || t.Name == "Battle Royale" || t.Name == "War" || t.Name == "Terrorism" || t.Name == "Assassins"):
+			seen["Violence"] = true
+		}
+	}
+	if seen["Graphic Violence"] {
+		delete(seen, "Violence")
+	}
+	var out []string
+	for _, k := range AdvisoryOrder {
+		if seen[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }

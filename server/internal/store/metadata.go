@@ -18,6 +18,7 @@ type ItemMetadata struct {
 	Overview        string
 	Tagline         string
 	Genres          []string
+	Advisories      []string
 	CommunityRating float64 // 0 = unknown
 	OfficialRating  string
 	Premiered       string // YYYY-MM-DD
@@ -29,19 +30,23 @@ type ItemMetadata struct {
 
 // UpdateItemMetadata applies provider metadata and stamps metadata_refreshed_at.
 func (s *Store) UpdateItemMetadata(ctx context.Context, id string, m ItemMetadata) error {
-	var genres sql.NullString
+	var genres, advisories sql.NullString
 	if len(m.Genres) > 0 {
 		b, _ := json.Marshal(m.Genres)
 		genres = nullStr(string(b))
+	}
+	if len(m.Advisories) > 0 {
+		b, _ := json.Marshal(m.Advisories)
+		advisories = nullStr(string(b))
 	}
 	now := Now()
 	_, err := s.db.ExecContext(ctx, `UPDATE items SET
 		title = COALESCE(?, title), year = COALESCE(?, year), overview = COALESCE(?, overview), tagline = COALESCE(?, tagline),
 		genres = COALESCE(?, genres), community_rating = COALESCE(?, community_rating), official_rating = COALESCE(?, official_rating),
 		premiere_date = COALESCE(?, premiere_date), status = COALESCE(?, status), studio = COALESCE(?, studio),
-		season_count = COALESCE(?, season_count), metadata_refreshed_at = ?, date_modified = ? WHERE id = ?`,
+		season_count = COALESCE(?, season_count), advisories = COALESCE(?, advisories), metadata_refreshed_at = ?, date_modified = ? WHERE id = ?`,
 		nullStr(m.Title), intPtrNull(m.Year), nullStr(m.Overview), nullStr(m.Tagline), genres, nullFloat(m.CommunityRating),
-		nullStr(m.OfficialRating), nullStr(m.Premiered), nullStr(m.Status), nullStr(m.Studio), nullInt(m.SeasonCount), now, now, id)
+		nullStr(m.OfficialRating), nullStr(m.Premiered), nullStr(m.Status), nullStr(m.Studio), nullInt(m.SeasonCount), advisories, now, now, id)
 	if err != nil {
 		return err
 	}

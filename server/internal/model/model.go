@@ -50,6 +50,7 @@ type Item struct {
 	// metadata service matched the item.
 	Tagline             string     `json:"tagline,omitempty"`
 	Genres              []string   `json:"genres,omitempty"`
+	Advisories          []string   `json:"advisories,omitempty"`      // "Sexual Content", "Violence", ... (series / movies)
 	CommunityRating     *float64   `json:"communityRating,omitempty"` // 0..10
 	OfficialRating      string     `json:"officialRating,omitempty"`
 	Premiered           string     `json:"premiered,omitempty"` // YYYY-MM-DD

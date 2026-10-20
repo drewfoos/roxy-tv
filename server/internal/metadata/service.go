@@ -298,6 +298,8 @@ func merge(a, b *Result) *Result {
 	if len(out.Genres) == 0 {
 		out.Genres = b.Genres
 	}
+	// Advisories add up: TMDB's descriptors and AniList's tags see different things.
+	out.Advisories = mergeAdvisories(a.Advisories, b.Advisories)
 	if out.CommunityRating == 0 {
 		out.CommunityRating = b.CommunityRating
 	}
@@ -327,12 +329,28 @@ func merge(a, b *Result) *Result {
 	return &out
 }
 
+// mergeAdvisories unions two descriptor lists in a fixed, readable order.
+func mergeAdvisories(a, b []string) []string {
+	seen := map[string]bool{}
+	for _, x := range append(append([]string{}, a...), b...) {
+		seen[x] = true
+	}
+	var out []string
+	for _, k := range AdvisoryOrder {
+		if seen[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 func itemMetadata(r *Result, t model.ItemType) store.ItemMetadata {
 	m := store.ItemMetadata{
 		Title:           r.Title,
 		Overview:        r.Overview,
 		Tagline:         r.Tagline,
 		Genres:          r.Genres,
+		Advisories:      r.Advisories,
 		CommunityRating: r.CommunityRating,
 		OfficialRating:  r.OfficialRating,
 		Premiered:       r.Premiered,
