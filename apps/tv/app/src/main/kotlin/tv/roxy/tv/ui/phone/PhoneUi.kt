@@ -111,14 +111,13 @@ fun PhoneTheme(content: @Composable () -> Unit) {
     )
 }
 
-/** 2:3 poster with the watch-progress bar; no caption (grids). */
+/** 2:3 poster, no caption (grids). Progress belongs to episodes and Continue Watching, not to a title's poster. */
 @Composable
 fun PosterTile(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
         modifier = modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
     ) {
         RoxyImage(api.imageUrl(item, "poster", widthPx(PosterW) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
-        ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
@@ -134,7 +133,6 @@ fun TitleCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
         ) {
             RoxyImage(api.imageUrl(item, "poster", widthPx(width) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
-            ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
         }
         // One line, so every card in a row is the same height (the full name is on the title page).
         Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))

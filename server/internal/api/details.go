@@ -162,7 +162,22 @@ func (s *Server) tmdbExtras(ctx context.Context, movie bool, tmdbID int) *tmdbEx
 		} `json:"keywords"`
 	}
 	t := s.meta.TMDB()
-	if err := t.Get(ctx, fmt.Sprintf("/%s/%d", kind, tmdbID), url.Values{"append_to_response": {"credits,keywords"}}, &d); err != nil {
+	// TMDB's CDN resets a fair share of connections from some networks; a page that
+	// shows no cast because of one reset is worse than a short wait.
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Duration(attempt) * 300 * time.Millisecond):
+			}
+		}
+		if err = t.Get(ctx, fmt.Sprintf("/%s/%d", kind, tmdbID), url.Values{"append_to_response": {"credits,keywords"}}, &d); err == nil {
+			break
+		}
+	}
+	if err != nil {
 		slog.Warn("details: tmdb", "id", tmdbID, "err", err)
 		return nil
 	}

@@ -22,7 +22,7 @@ object RoxyColors {
     val onBackground = Color(0xFFF2F2F5)
     val muted = Color(0xFF9AA0A6)
     val focusBorder = Color.White
-    val progress = Color(0xFFE5484D)
+    val progress = accent // watch-progress bars are the brand blue, not Netflix red
     val error = Color(0xFFFF6B6B)
 }
 

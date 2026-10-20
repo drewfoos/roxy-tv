@@ -64,6 +64,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import tv.roxy.tv.MainActivity
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.api.CastMember
 import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.player.PlayerSurface
 import tv.roxy.tv.ui.PlayRequest
@@ -180,6 +181,11 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             }
             .onFailure { t -> Timber.w(t, "episode"); error = t.message }
     }
+    var cast by remember { mutableStateOf<List<CastMember>>(emptyList()) }
+    LaunchedEffect(episode?.id, episode?.isMovie) {
+        val m = episode?.takeIf { it.isMovie } ?: return@LaunchedEffect
+        cast = runCatching { app.api.itemDetails(m.id).tmdb?.cast.orEmpty() }.getOrDefault(emptyList())
+    }
     // Episodes carry no rating or advisories of their own; the series' stand for them.
     var series by remember { mutableStateOf<Item?>(null) }
     LaunchedEffect(episode?.seriesId) {
@@ -270,6 +276,12 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         onDownload = { startDownload(listOf(next), next, null) },
                         onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(next.id, on) }; watchedKey++ } },
                     )
+                }
+                // A film's cast (the series page keeps it under More details): the player
+                // page is where someone wonders who that voice is.
+                if (ep.isMovie && cast.isNotEmpty()) {
+                    Text("Cast", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
+                    CastRow(cast, modifier = Modifier.padding(top = 4.dp))
                 }
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {
                     Text(if (ep.isMovie) "Back to the movie" else "All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 16.dp, vertical = 8.dp))

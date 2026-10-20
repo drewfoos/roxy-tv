@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.api.CastMember
 import tv.roxy.tv.api.ItemDetails
 import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.ui.components.RoxyImage
@@ -109,20 +110,7 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
                     DetailSection("Cast")
                 }
             }
-            if (!x?.cast.isNullOrEmpty()) {
-                LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(top = 4.dp)) {
-                    items(x!!.cast, key = { it.name + it.character }) { c ->
-                        Column(modifier = Modifier.width(84.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(modifier = Modifier.size(72.dp).clip(CircleShape).background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
-                                if (c.photo != null) AsyncImage(model = c.photo, contentDescription = c.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                else Text(c.name.take(1), color = RoxyColors.muted, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Text(c.name, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-                            if (c.character.isNotBlank()) Text(c.character, fontSize = 11.sp, lineHeight = 14.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
+            if (!x?.cast.isNullOrEmpty()) CastRow(x!!.cast, modifier = Modifier.padding(top = 4.dp))
             Column(modifier = Modifier.padding(horizontal = PhonePad)) {
                 DetailSection("Details")
                 DetailRow("Original title", x?.originalTitle)
@@ -186,6 +174,23 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit) {
         ) {
             HeaderIcon(Icons.Filled.Close, "Close", onClick = onBack)
             Text(item.title.ifEmpty { fallbackTitle }, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 6.dp))
+        }
+    }
+}
+
+/** The cast as round photos with name and role, scrolling sideways (More details, and a movie's player page). */
+@Composable
+internal fun CastRow(cast: List<CastMember>, modifier: Modifier = Modifier) {
+    LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = modifier) {
+        items(cast, key = { it.name + it.character }) { c ->
+            Column(modifier = Modifier.width(84.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(modifier = Modifier.size(72.dp).clip(CircleShape).background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
+                    if (c.photo != null) AsyncImage(model = c.photo, contentDescription = c.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    else Text(c.name.take(1), color = RoxyColors.muted, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(c.name, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                if (c.character.isNotBlank()) Text(c.character, fontSize = 11.sp, lineHeight = 14.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

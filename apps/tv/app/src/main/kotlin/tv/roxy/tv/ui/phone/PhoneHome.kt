@@ -386,11 +386,11 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
  */
 @Composable
 private fun TimerBars(count: Int, current: Int, progress: Float, width: Dp, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.padding(start = PhonePad, bottom = 13.dp).width(width), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(modifier = modifier.padding(start = PhonePad, bottom = 8.dp).width(width), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(count) { i ->
             val fill = when { i < current -> 1f; i == current -> progress; else -> 0f }
-            Box(modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.55f))) {
-                Box(modifier = Modifier.fillMaxWidth(fill).height(6.dp).clip(RoundedCornerShape(3.dp)).background(RoxyColors.accent))
+            Box(modifier = Modifier.weight(1f).height(7.dp).clip(RoundedCornerShape(3.5.dp)).background(Color.White.copy(alpha = 0.55f))) {
+                Box(modifier = Modifier.fillMaxWidth(fill).height(7.dp).clip(RoundedCornerShape(3.5.dp)).background(RoxyColors.accent))
             }
         }
     }
