@@ -41,7 +41,7 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(player) } },
+            factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(player); session.surfaceView = this } },
         )
         // Tap: toggle the controls. Double-tap: seek -10 s on the left half, +10 s on
         // the right (YouTube), with a flash saying how far.

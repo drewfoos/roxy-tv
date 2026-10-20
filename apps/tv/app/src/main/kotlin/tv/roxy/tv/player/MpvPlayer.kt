@@ -410,12 +410,17 @@ class MpvPlayer(
     private fun bool(p: String) = mpv.getPropertyBoolean(p)
 
     // ---- surface ----
+    //
+    // The same three calls mpv-android makes. mpv 0.41 syncs the window's buffer
+    // geometry on every resize itself (vo/context_android, "fix surface tearing on
+    // resize"); the one frame it still draws into the previous buffer is why a host
+    // should pin the surface's size across animated transitions (see PlayerSession.pinSurface)
+    // rather than resize it mid-flight.
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         Timber.d("surfaceCreated")
         // The size goes in before the vo comes up: the vo lays the picture out for the size
-        // it sees at creation, and after a page/app switch that was the previous surface's
-        // (a picture drawn at a quarter of the box, or spilling out of it).
+        // it sees at creation, and after a page/app switch that was the previous surface's.
         val frame = holder.surfaceFrame
         if (frame.width() > 0 && frame.height() > 0) applySurfaceSize(frame.width(), frame.height())
         mpv.attachSurface(holder.surface)
@@ -426,55 +431,7 @@ class MpvPlayer(
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Timber.d("surfaceChanged %dx%d", width, height)
-        if (System.currentTimeMillis() < noBounceUntil) {
-            // A picture-in-picture shrink or expand is animating. The system scales the
-            // whole window during it, so the frames keep looking right at the old size;
-            // telling mpv the new size now makes it draw a small picture into the corner
-            // of the still-large buffer, over and over, until the buffer catches up. The
-            // size goes in once the animation has settled.
-            pendingSize = width to height
-            main.removeCallbacks(applyPending)
-            main.postDelayed(applyPending, 450)
-            return
-        }
-        main.removeCallbacks(applyPending); pendingSize = null
         applySurfaceSize(width, height)
-    }
-
-    private val main = android.os.Handler(android.os.Looper.getMainLooper())
-    private var pendingSize: Pair<Int, Int>? = null
-    private val applyPending = Runnable {
-        val (w, h) = pendingSize ?: return@Runnable
-        pendingSize = null
-        if (surfaceReady && !destroyed) applySurfaceSize(w, h)
-    }
-
-    private var lastSurface: Pair<Int, Int>? = null
-    @Volatile private var noBounceUntil = 0L
-
-    /**
-     * Skip the vo bounce for the next resizes: the system's picture-in-picture shrink and
-     * expand animate the live surface, and a bounce in the middle is a black frame.
-     */
-    fun suppressResizeBounce(ms: Long = 2000) { noBounceUntil = System.currentTimeMillis() + ms }
-
-    private fun applySurfaceSize(width: Int, height: Int) {
-        val resized = lastSurface != null && lastSurface != width to height
-        if (resized && surfaceReady && System.currentTimeMillis() >= noBounceUntil) {
-            // The surface changed size in place (the page's 16:9 box <-> the whole screen).
-            // Telling a live vo the new size does not always make it re-lay the picture
-            // out: it can keep drawing for the old size into the new buffer (a cropped,
-            // zoomed picture). Bringing the vo down and up around the size is the path the
-            // surface recreate takes, and that one always comes up right.
-            mpv.setPropertyString("vo", "null")
-            mpv.setPropertyString("android-surface-size", "${width}x$height")
-            setZoom(1.0, 0.0, 0.0)
-            mpv.setPropertyString("vo", options.vo)
-        } else {
-            mpv.setPropertyString("android-surface-size", "${width}x$height")
-            if (resized) setZoom(1.0, 0.0, 0.0)
-        }
-        lastSurface = width to height
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -483,6 +440,16 @@ class MpvPlayer(
         mpv.setPropertyString("vo", "null")
         mpv.setPropertyString("force-window", "no")
         mpv.detachSurface()
+    }
+
+    private var lastSurface: Pair<Int, Int>? = null
+
+    private fun applySurfaceSize(width: Int, height: Int) {
+        mpv.setPropertyString("android-surface-size", "${width}x$height")
+        // A new size (the page's 16:9 box <-> the whole screen) starts from a plain fit: a
+        // pinch zoom or pan from the old size would scale the picture wrongly in the new one.
+        if (lastSurface != null && lastSurface != width to height) setZoom(1.0, 0.0, 0.0)
+        lastSurface = width to height
     }
 
     // ---- events ----
@@ -539,7 +506,6 @@ class MpvPlayer(
         private set
 
     fun destroy() {
-        main.removeCallbacks(applyPending)
         destroyed = true
         listener = null
         runCatching { mpv.removeLogObserver(this) }

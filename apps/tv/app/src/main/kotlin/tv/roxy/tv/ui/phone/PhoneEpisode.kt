@@ -87,7 +87,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     val scope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
     val main = activity as? MainActivity
-    val inPip = main?.inPip == true
+    val inPip = main?.inPip == true || main?.pipTransitioning == true
     var videoBounds by remember { mutableStateOf<android.graphics.Rect?>(null) }
     val view = LocalView.current
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -153,7 +153,14 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     // and an audio re-seek) must be off before the surface changes, so it is armed on the
     // activity's callback rather than from a Compose effect.
     DisposableEffect(main, session) {
-        main?.onPipChanged = { session?.player?.suppressResizeBounce(3000) }
+        main?.onPipChanged = pip@{ entering ->
+            val s = session ?: return@pip
+            if (entering) s.pinSurface(true)
+            // The exit lays the view out at its full size before the animation, so the
+            // pinned buffer already matches it; unpin once the animation is over so a later
+            // fullscreen turn can resize the surface again.
+            else view.postDelayed({ s.pinSurface(false) }, 800)
+        }
         onDispose { main?.onPipChanged = null; main?.clearPip() }
     }
     host.isLandscape = landscape

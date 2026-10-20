@@ -102,6 +102,21 @@ class PlayerSession(
     var doubleTapFlash by mutableStateOf(0); private set // -10 / +10 while the ripple shows
     var zoomLevel by mutableStateOf(1f); private set
     var zoomHud by mutableStateOf(false); private set // "1.5×" readout shown (fingers down, or just after)
+    /** The SurfaceView the video draws into (set by [PlayerSurface]); null for a host without one yet. */
+    @Volatile var surfaceView: android.view.SurfaceView? = null
+
+    /**
+     * Pin the surface's buffer at its current size while the window animates (the
+     * picture-in-picture shrink and expand). The view may change size freely; the
+     * compositor scales the fixed buffer into it, the way a decoder-fed surface is
+     * scaled, and mpv never hears about a new size, so it never draws the one frame it
+     * otherwise draws into the previous buffer. Unpinning returns the surface to the
+     * view's size; when the two already agree nothing happens.
+     */
+    fun pinSurface(on: Boolean) {
+        val sv = surfaceView ?: return
+        if (on) { if (sv.width > 0 && sv.height > 0) sv.holder.setFixedSize(sv.width, sv.height) } else sv.holder.setSizeFromLayout()
+    }
     private var zoomHudJob: Job? = null
     private var flashJob: Job? = null
     private var lastSid = 0

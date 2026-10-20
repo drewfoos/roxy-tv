@@ -54,6 +54,18 @@ class MainActivity : ComponentActivity() {
     /** Runs on the PiP callback itself, before the surface resizes (a Compose effect would be a frame late). */
     var onPipChanged: ((Boolean) -> Unit)? = null
 
+    /** Android 15+: the enter animation is about to start. Pages hide their chrome and pin the video here. */
+    var pipTransitioning by mutableStateOf(false)
+        private set
+
+    override fun onPictureInPictureUiStateChanged(pipState: android.app.PictureInPictureUiState) {
+        super.onPictureInPictureUiStateChanged(pipState)
+        if (android.os.Build.VERSION.SDK_INT >= 35 && pipState.isTransitioningToPip) {
+            pipTransitioning = true
+            onPipChanged?.invoke(true)
+        }
+    }
+
     /** The page's player tells us whether a video is playing, so swiping home shrinks it. */
     private var pipAutoEnter: Boolean? = null
     private var pipSource: android.graphics.Rect? = null
@@ -101,7 +113,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        onPipChanged?.invoke(isInPictureInPictureMode)
+        // Entering: already announced by the transition-start callback on Android 15+;
+        // older versions hear it here. Leaving: always here.
+        if (!isInPictureInPictureMode || !pipTransitioning) onPipChanged?.invoke(isInPictureInPictureMode)
+        pipTransitioning = false
         inPip = isInPictureInPictureMode
     }
 
