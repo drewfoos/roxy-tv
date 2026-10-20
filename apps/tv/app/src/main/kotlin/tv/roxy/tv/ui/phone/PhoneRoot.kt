@@ -276,6 +276,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 val update by app.updates.state.collectAsStateWithLifecycle()
                 Column(modifier = Modifier.align(Alignment.BottomCenter)) {
                     UpdateBar(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() })
+                    RemoteBar()
                     BottomBar(
                         current = currentTab,
                         profileName = session.profileName.ifEmpty { session.userName },

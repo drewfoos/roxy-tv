@@ -361,7 +361,7 @@ fun TitlePageScaffold(
                 item.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 6.dp).alpha(titleAlpha),
             )
-            HeaderIcon(Icons.Filled.Cast, "Cast (coming soon)", tint = Color.White.copy(alpha = 0.6f))
+            Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) { CastIcon() }
             if (onMarkWatched != null) {
                 Box {
                     var open by remember { mutableStateOf(false) }

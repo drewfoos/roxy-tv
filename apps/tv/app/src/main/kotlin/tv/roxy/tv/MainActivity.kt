@@ -120,6 +120,9 @@ class MainActivity : ComponentActivity() {
         inPip = isInPictureInPictureMode
     }
 
+    override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true) }
+    override fun onStop() { RoxyApp.get(this).remote.setForeground(false); super.onStop() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Timber.i("Device report:\n%s", DeviceReport.full(this))

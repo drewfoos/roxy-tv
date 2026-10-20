@@ -133,7 +133,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             var nowPlaying: (PlayRequest) -> Unit = {}
             var mainActivity: MainActivity? = null
             var bounds: () -> android.graphics.Rect? = { null }
+            var cast: () -> Unit = {}
             override fun back() = back.invoke() // the arrow leaves the page; fullscreen ends by the button or by turning the phone
+            override fun cast() = cast.invoke()
             override val fullscreen: Boolean get() = isLandscape
             override fun toggleFullscreen() = setFullscreen(!isLandscape)
             override fun nowPlaying(req: PlayRequest) = nowPlaying.invoke(req)
@@ -145,6 +147,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     }
     host.mainActivity = main
     host.bounds = { videoBounds }
+    var castSheet by remember { mutableStateOf(false) }
+    host.cast = { castSheet = true }
+    if (castSheet) CastSheet(onDismiss = { castSheet = false })
     // Playing state is reported on change only; the box's position changes on rotation,
     // so push it as well when it moves.
     LaunchedEffect(videoBounds) { val s = session ?: return@LaunchedEffect; main?.updatePip(!s.ui.paused, videoBounds) }

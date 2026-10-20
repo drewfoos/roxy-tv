@@ -261,6 +261,29 @@ class RoxyApi(private val prefs: Prefs) {
         execute<LegalDoc>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/legal/$doc").get().build())
     }
 
+    // ---- "Play on" (docs/api/native.md "Sessions") ----
+
+    /** Long-poll for the next command aimed at this device; null after the server's wait with nothing to do. */
+    suspend fun sessionCommands(name: String, client: String, waitSec: Int = 25): RemoteCommand? = withContext(Dispatchers.IO) {
+        val req = request("/v1/sessions/commands?name=${name.urlEncoded()}&client=${client.urlEncoded()}&wait=$waitSec").get().build()
+        http.newCall(req).execute().use { resp ->
+            if (resp.code == 204) return@use null
+            val text = resp.body.string()
+            if (!resp.isSuccessful) throw ApiException(resp.code, serverMessage(text) ?: "HTTP ${resp.code} sessions/commands")
+            json.decodeFromString(RemoteCommandBody.serializer(), text).command
+        }
+    }
+
+    suspend fun sessionState(itemId: String?, title: String, positionMs: Long, paused: Boolean) =
+        postNoBody("/v1/sessions/state", json.encodeToString(RemoteNow.serializer(), RemoteNow(itemId.orEmpty(), title, positionMs, paused)))
+
+    suspend fun sessionPlayers(): List<RemotePlayer> = get<RemotePlayers>("/v1/sessions/players").players
+
+    suspend fun sendSessionCommand(deviceId: String, cmd: RemoteCommand) =
+        postNoBody("/v1/sessions/players/$deviceId/command", json.encodeToString(RemoteCommand.serializer(), cmd))
+
+    private fun String.urlEncoded() = java.net.URLEncoder.encode(this, "UTF-8")
+
     suspend fun legalStatus(): LegalStatus = get("/v1/legal/status")
 
     suspend fun acceptLegal(version: String) = postNoBody("/v1/legal/accept", json.encodeToString(VersionBody.serializer(), VersionBody(version)))
@@ -825,6 +848,21 @@ data class ArrConfig(
     val searchOnAdd: Boolean? = null,
     val externalUrl: String = "",
 )
+
+@Serializable
+data class RemoteCommand(val type: String, val itemId: String = "", val positionMs: Long = 0, val seconds: Int = 0, val from: String = "")
+
+@Serializable
+private data class RemoteCommandBody(val command: RemoteCommand)
+
+@Serializable
+data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false)
+
+@Serializable
+data class RemotePlayer(val deviceId: String, val name: String = "", val client: String = "", val nowPlaying: RemoteNow? = null)
+
+@Serializable
+private data class RemotePlayers(val players: List<RemotePlayer> = emptyList())
 
 @Serializable
 data class ArtCandidate(val source: String = "", val url: String = "", val preview: String = "", val lang: String = "", val width: Int = 0, val height: Int = 0, val score: Double = 0.0, val selected: Boolean = false)

@@ -16,6 +16,7 @@ import tv.roxy.tv.data.Prefs
 import tv.roxy.tv.data.Updates
 import tv.roxy.tv.data.ItemCache
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.data.RemotePlay
 import tv.roxy.tv.data.downloads.Downloads
 import java.io.File
 
@@ -41,6 +42,10 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     /** Items the lists have shown, so a detail page can draw its header before its own fetch lands. */
     val items = ItemCache()
 
+    /** "Play on": this device as a player others drive, and as a remote for them. */
+    lateinit var remote: RemotePlay
+        private set
+
     /**
      * The phone's in-app player page, registered by the phone shell. Every "play" on the
      * phone opens it (the video in a box with the page under it, fullscreen by turning
@@ -60,6 +65,7 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
         api = RoxyApi(prefs)
         downloads = Downloads(this, prefs, scope)
         updates = Updates(this, api, prefs, scope)
+        remote = RemotePlay(this, api, prefs, scope)
         Timber.i("Roxy TV started. server=%s user=%s fontsDir=%s", prefs.session.value.serverUrl, prefs.session.value.userName, fontsDir)
     }
 

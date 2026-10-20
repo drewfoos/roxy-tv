@@ -137,6 +137,7 @@ interface PlayerActions {
     fun toggleFullscreen()
     fun next()
     fun back()
+    fun cast() {}
 }
 
 enum class Sheet { None, Settings, Subtitles, Audio, Quality, Speed }
@@ -212,7 +213,7 @@ fun PlayerControls(
                 // Next, Cast (a placeholder until casting exists), settings (everything lives in
                 // there: subtitles, audio, speed, skip), fullscreen.
                 if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
-                IconButton(Icons.Filled.Cast, "Cast (coming soon)", onClick = { onInteraction() }, onFocus = onInteraction, compact = compact, tint = Color.White.copy(alpha = 0.6f))
+                IconButton(Icons.Filled.Cast, "Play on another device", onClick = { onInteraction(); actions.cast() }, onFocus = onInteraction, compact = compact)
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
                 if (state.fullscreen == true) IconButton(Icons.Filled.CloseFullscreen, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
                 else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)

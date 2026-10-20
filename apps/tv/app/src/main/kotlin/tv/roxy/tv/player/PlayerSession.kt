@@ -66,6 +66,8 @@ class PlayerSession(
     interface Host {
         /** The back arrow / Back key with nothing of the player's own to close. */
         fun back()
+        /** The Cast button: the phone opens its "Play on" picker; the TV has none. */
+        fun cast() {}
         val pipSupported: Boolean get() = false
         val inPip: Boolean get() = false
         fun enterPip() {}
@@ -164,7 +166,7 @@ class PlayerSession(
             displayRefreshRate = DeviceReport.refreshRate(context),
         )
         player.listener = object : MpvPlayer.Listener {
-            override fun onFileLoaded() { switching = false }
+            override fun onFileLoaded() { switching = false; itemId?.let { app.remote.reportState(it, title, 0, false) } } // the remote bar shows it at once
 
             override fun onEndFile() {
                 if (switching) return // the old file giving way to the next episode
@@ -186,6 +188,7 @@ class PlayerSession(
             }
         }
         prepareAndPlay(params.url, params.sourceId, params.local, params.startSeconds)
+        app.remote.activePlayer = this
 
         actions = object : PlayerActions {
             override fun togglePause() = player.togglePause()
@@ -218,6 +221,7 @@ class PlayerSession(
             override fun toggleFullscreen() { host.toggleFullscreen() }
             override fun next() { playNext() }
             override fun back() { host.back() }
+            override fun cast() { host.cast() }
         }
         scheduleHide()
 
@@ -474,6 +478,7 @@ class PlayerSession(
         lastReportedMs = positionMs
         val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
         val subIndex = runCatching { player.currentStreamIndex("sub") }.getOrNull()
+        app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
         app.scope.launch {
             // While the server is unreachable (playing a download away from home) skip the
             // network for a minute at a time instead of timing out on every tick.
@@ -505,9 +510,19 @@ class PlayerSession(
         if (!host.inPip) player.setPaused(true)
     }
 
+    // ---- driven from another device ("Play on") ----
+    fun remotePause(paused: Boolean) { main.post { if (!destroyed) { player.setPaused(paused); refreshUi() } } }
+    fun remoteToggle() { main.post { if (!destroyed) { player.togglePause(); refreshUi() } } }
+    fun remoteSeekTo(seconds: Int) { main.post { if (!destroyed) actions.seekTo(seconds.toDouble()) } }
+    fun remoteSeekBy(seconds: Int) { main.post { if (!destroyed) actions.seekBy(seconds) } }
+    fun remoteNext() { main.post { if (!destroyed) playNext() } }
+    fun remoteStop() { main.post { if (!destroyed) { reportProgress("stop"); host.back() } } }
+    fun positionMs(): Long = ((runCatching { player.timePosSeconds() }.getOrNull() ?: 0.0) * 1000).toLong()
+
     fun destroy() {
         if (destroyed) return
         destroyed = true
+        if (app.remote.activePlayer === this) { app.remote.activePlayer = null; app.remote.reportState(null, "", 0, false) }
         countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); zoomHudJob?.cancel()
         player.listener = null
         player.destroy()

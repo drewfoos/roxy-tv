@@ -20,6 +20,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
 	"github.com/roxy-media/roxy/server/internal/segments"
+	"github.com/roxy-media/roxy/server/internal/sessions"
 	"github.com/roxy-media/roxy/server/internal/store"
 	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
@@ -35,12 +36,14 @@ type Server struct {
 	segs     *segments.Service // may be nil (scan-only runs)
 	discover *discover.Service // nil without TMDB
 	hooks    *arrhook.Service
+	hub      *sessions.Hub // "Play on": connected players and their command queues
 	start    time.Time
 }
 
 func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service, segs *segments.Service) http.Handler {
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 	s.hooks = arrhook.New(st, lib)
+	s.hub = sessions.New()
 	if meta != nil && meta.TMDB() != nil {
 		s.discover = discover.New(st, cfg, meta.TMDB())
 		s.discover.Start(context.Background())
@@ -104,6 +107,10 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/items/{id}/details", s.itemDetails)
 			r.Get("/home", s.home)
 			r.Get("/me/resume", s.resume)
+			r.Get("/sessions/commands", s.sessionCommands)
+			r.Post("/sessions/state", s.sessionState)
+			r.Get("/sessions/players", s.sessionPlayers)
+			r.Post("/sessions/players/{device}/command", s.sessionCommand)
 			r.Post("/me/progress", s.progress)
 			r.Post("/me/played/{itemId}", s.played)
 			r.Delete("/me/played/{itemId}", s.played)

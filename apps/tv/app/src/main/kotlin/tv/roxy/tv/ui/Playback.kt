@@ -1,6 +1,9 @@
 package tv.roxy.tv.ui
 
 import android.content.Context
+import tv.roxy.tv.api.RemoteCommand
+import android.content.Intent
+import android.app.Activity
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
@@ -50,11 +53,19 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
 /** Starts [PlayerActivity] for an item (see [playRequest]). */
 suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false): Result<Unit> {
     val app = RoxyApp.get(context)
+    // A target device is set ("Play on"): the play happens there, this device stays a remote.
+    app.remote.target.value?.let { t ->
+        if (fromStart) runCatching { app.api.progress(item.id, 0) }
+        val ok = app.remote.send(RemoteCommand(type = "play", itemId = item.id))
+        return if (ok) Result.success(Unit) else Result.failure(IllegalStateException("${t.name} is not connected any more"))
+    }
     // The phone has one player, the page's; the TV keeps the full-screen activity.
     app.openPlayerPage?.let { open -> open(item); return Result.success(Unit) }
     val req = playRequest(context, item, fromStart).getOrElse { return Result.failure(it) }
     Timber.i("play %s item=%s source=%s start=%ds local=%s", req.item.displayLabel, req.item.id, req.sourceId, req.startSeconds, req.local)
-    context.startActivity(PlayerActivity.intent(context, req, app.prefs.settings.value))
+    val intent = PlayerActivity.intent(context, req, app.prefs.settings.value)
+    if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // started from the command poll, not a screen
+    context.startActivity(intent)
     return Result.success(Unit)
 }
 

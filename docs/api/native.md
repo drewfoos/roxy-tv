@@ -33,6 +33,21 @@ URL from the reply's source address and `port` unless `advertised` is true, when
 `GET /v1/system/info` on 8096 and keeping replies whose `product` is `roxy`. The sweep
 is the fallback for networks that drop broadcasts (Docker bridge, Wi-Fi client isolation).
 
+## Sessions ("Play on")
+
+The phone picks a player signed in to the same login and the server relays commands to
+it; the player plays with its own engine (the TV app: libmpv + libass). In memory only.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/sessions/commands?name=&client=&wait=` | A player's long poll: `{command}` or 204 after `wait` s (25 max). Polling keeps it listed; 60 s without a poll drops it. |
+| POST | `/v1/sessions/state` | `{itemId, title?, positionMs, paused}`; empty `itemId` = stopped |
+| GET | `/v1/sessions/players` | `{players: [{deviceId, name, client, lastSeen, nowPlaying?}]}`, the login's other players |
+| POST | `/v1/sessions/players/{device}/command` | `{type, itemId?, positionMs?, seconds?, from?}`; `type` = play, pause, resume, toggle, seek, seekBy, next, stop. 202, or 404 when not connected |
+
+`play` resumes from the saved position; a sender handing over mid-episode sets
+`positionMs`, which the player saves first. Commands need a device login (not an API key).
+
 ## Library
 
 | Method | Path | Notes |

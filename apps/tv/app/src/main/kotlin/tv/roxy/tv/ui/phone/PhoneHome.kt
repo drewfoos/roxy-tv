@@ -197,7 +197,7 @@ private fun HomeHeader(alpha: Float, onSearch: () -> Unit, modifier: Modifier = 
     ) {
         WitchHat(size = 32.dp)
         Spacer(Modifier.weight(1f))
-        Icon(Icons.Filled.Cast, contentDescription = "Cast (coming soon)", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(24.dp))
+        CastIcon()
         Spacer(Modifier.size(18.dp))
         Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(26.dp).clickable(onClick = onSearch))
     }

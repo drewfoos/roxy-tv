@@ -204,8 +204,11 @@ class PlayerActivity : ComponentActivity() {
         return super.onKeyDown(keyCode, event) // Compose focus handles the rest
     }
 
+    override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true) }
+
     override fun onStop() {
         if (::session.isInitialized) session.onStop()
+        RoxyApp.get(this).remote.setForeground(false)
         super.onStop()
     }
 
