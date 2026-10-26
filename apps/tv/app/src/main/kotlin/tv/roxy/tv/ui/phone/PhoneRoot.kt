@@ -74,8 +74,8 @@ import tv.roxy.tv.ui.theme.RoxyColors
 private enum class Tab(val label: String, val route: Route) {
     Home("Home", Route.Home),
     Discover("Discover", Route.Discover),
-    Watchlist("Watchlist", Route.Watchlist),
     Browse("Browse", Route.Browse),
+    Watchlist("Watchlist", Route.Watchlist),
     Account("Account", Route.Account),
 }
 
