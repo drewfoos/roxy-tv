@@ -141,6 +141,8 @@ fun PhoneSeries(
     // The season count in TVDB's numbering (what Sonarr uses): TMDB merges some shows'
     // seasons into one (The Apothecary Diaries reads "1 Season" there).
     var tvdbSeasons by remember(series.id) { mutableStateOf<Int?>(null) }
+    // Episodes per season (TVDB numbering) for the Seasons page's counts.
+    var seasonEpisodes by remember(series.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(series.id, state.seasons.size) {
         if (tmdbId == null) return@LaunchedEffect
@@ -149,6 +151,7 @@ fun PhoneSeries(
             .onSuccess { d ->
                 extraSeasons = d.seasons.filter { it.number !in have && it.number != 0 }
                 tvdbSeasons = d.seasonCount.takeIf { it > 0 }
+                seasonEpisodes = d.seasons.associate { it.number to it.episodes }
             }
     }
     val seasonLabel = when {
@@ -220,34 +223,33 @@ fun PhoneSeries(
             } else {
                 if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty() || hasRelated) {
                     item(key = "seasons") {
-                        SeasonRow(
-                            label = seasonLabel,
-                            menu = { close ->
+                        var seasonsOpen by remember { mutableStateOf(false) }
+                        if (seasonsOpen) {
+                            // Crunchyroll's: a full page of seasons, each with its episode count.
+                            val entries = buildList {
                                 state.seasons.forEachIndexed { i, season ->
-                                    val name = season.title.ifEmpty { "Season ${season.indexAired ?: i + 1}" }
-                                    DropdownMenuItem(
-                                        text = { Text(name, color = Color.White, fontWeight = if (selectedExtra == null && i == state.selectedSeason) FontWeight.Bold else FontWeight.Normal) },
-                                        onClick = { close(); selectedExtra = null; vm.selectSeason(i) },
-                                    )
+                                    val n = season.indexAired
+                                    val count = (n?.let { seasonEpisodes[it] } ?: 0).takeIf { it > 0 }
+                                        ?: if (selectedExtra == null && i == state.selectedSeason && !state.showRelated) state.episodes.size else 0
+                                    add(SeasonEntry("s$i", season.title.ifEmpty { "Season ${n ?: i + 1}" }, episodesLabel(count), selected = selectedExtra == null && !state.showRelated && i == state.selectedSeason))
                                 }
                                 extraSeasons.forEach { sn ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(sn.name.ifEmpty { "Season ${sn.number}" }, color = Color.White, fontWeight = if (selectedExtra == sn.number) FontWeight.Bold else FontWeight.Normal)
-                                                Text(if (sn.requested) "  ·  requested" else "  ·  not in library", color = RoxyColors.muted, fontSize = 12.sp)
-                                            }
-                                        },
-                                        onClick = { close(); selectedExtra = sn.number },
-                                    )
+                                    add(SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, episodesLabel(sn.episodes), selected = selectedExtra == sn.number, note = if (sn.requested) "Requested" else "Not in your library"))
                                 }
-                                if (hasRelated) {
-                                    DropdownMenuItem(
-                                        text = { Text("Movies & OVAs", color = Color.White, fontWeight = if (state.showRelated) FontWeight.Bold else FontWeight.Normal) },
-                                        onClick = { close(); selectedExtra = null; vm.selectRelated() },
-                                    )
+                                if (hasRelated) add(SeasonEntry("related", "Movies & OVAs", (state.related.size.takeIf { it > 0 } ?: series.relatedCount).takeIf { it > 0 }?.let { "$it ${if (it == 1) "Title" else "Titles"}" }, selected = state.showRelated && selectedExtra == null))
+                            }
+                            SeasonsPage(entries, onDismiss = { seasonsOpen = false }, onPick = { e ->
+                                seasonsOpen = false
+                                when {
+                                    e.key == "related" -> { selectedExtra = null; vm.selectRelated() }
+                                    e.key.startsWith("x") -> selectedExtra = e.key.drop(1).toInt()
+                                    else -> { selectedExtra = null; vm.selectSeason(e.key.drop(1).toInt()) }
                                 }
-                            },
+                            })
+                        }
+                        SeasonRow(
+                            label = seasonLabel,
+                            onOpen = { seasonsOpen = true },
                             trailing = {
                                 // Season download lives at the end of the season row as an icon, not a row of its own.
                                 if (selectedExtra == null && !state.showRelated && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
@@ -316,20 +318,18 @@ fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier
 
 /** Full-width season selector under the tabs: the name with a caret opens [menu]; [trailing] sits at the right end. */
 @Composable
-private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () -> Unit) -> Unit, trailing: @Composable () -> Unit) {
-    var open by remember { mutableStateOf(false) }
+private fun SeasonRow(label: String, onOpen: () -> Unit, trailing: @Composable () -> Unit) {
     // Solid, like the tab strip: the pinned banner must not show through it.
     Column(modifier = Modifier.background(RoxyColors.background)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalAlignment = Alignment.CenterVertically) {
             Box {
                 Row(
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(vertical = 12.dp),
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpen).padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(label, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
                     Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose season", tint = RoxyColors.onBackground)
                 }
-                DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) { menu { open = false } }
             }
             Spacer(Modifier.weight(1f))
             trailing()
