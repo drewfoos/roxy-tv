@@ -112,7 +112,7 @@ func mediaPathFor(path, sourceID string) bool {
 	if !ok {
 		return false
 	}
-	for _, p := range []string{"transcode", "subtitles/", "attachments/", "trickplay"} {
+	for _, p := range []string{"transcode", "remux", "subtitles/", "attachments/", "trickplay"} {
 		if rest == p || strings.HasPrefix(rest, p) {
 			return true
 		}

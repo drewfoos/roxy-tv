@@ -47,6 +47,20 @@ type Request struct {
 	VAAPIDevice string
 	// Audio lists the file's embedded audio tracks in order (what `-map 0:a` picks up).
 	Audio []AudioTrack
+	// Web: for a browser, which cannot switch audio tracks or decode AC3 / E-AC3 / DTS /
+	// TrueHD: carry one audio track (WebAudio, by its stream index) as AAC unless it is
+	// already a codec browsers decode, leave subtitles and fonts out (the page draws
+	// them from the API), and restart timestamps at zero at StartSec (the player adds
+	// the offset back) instead of keeping the file's clock.
+	Web      bool
+	WebAudio *WebAudioTrack
+}
+
+// WebAudioTrack names the one audio track a web stream carries.
+type WebAudioTrack struct {
+	Index    int // ffprobe stream index
+	Codec    string
+	Channels int
 }
 
 // AudioTrack is what the per-track audio choice needs to know.
@@ -283,11 +297,20 @@ func (d *Detector) Args(r Request) []string {
 		// Input seek (fast, keyframe-accurate) keeping the file's own clock.
 		args = append(args, "-ss", strconv.FormatFloat(r.StartSec, 'f', 3, 64))
 	}
-	args = append(args, "-copyts", "-i", r.Path)
-	args = append(args,
-		"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?",
-		"-map_metadata", "0", "-map_chapters", "0",
-	)
+	if r.Web {
+		args = append(args, "-i", r.Path, "-map", "0:v:0")
+		if r.WebAudio != nil {
+			args = append(args, "-map", "0:"+strconv.Itoa(r.WebAudio.Index))
+		} else {
+			args = append(args, "-map", "0:a:0?")
+		}
+	} else {
+		args = append(args, "-copyts", "-i", r.Path)
+		args = append(args,
+			"-map", "0:v:0", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?",
+			"-map_metadata", "0", "-map_chapters", "0",
+		)
+	}
 	height := r.MaxHeight
 	if height <= 0 || (r.SrcHeight > 0 && height > r.SrcHeight) {
 		height = r.SrcHeight
@@ -298,6 +321,25 @@ func (d *Detector) Args(r Request) []string {
 		bitrate = 8000
 	}
 	args = append(args, videoCodec(e, bitrate)...)
+	if r.Web {
+		// One track, in a codec the browser decodes; small stereo AAC / Opus is copied.
+		codec, channels := "", 2
+		if r.WebAudio != nil {
+			codec, channels = strings.ToLower(r.WebAudio.Codec), r.WebAudio.Channels
+		}
+		switch {
+		case browserAudio[codec] && !r.lowQuality():
+			args = append(args, "-c:a", "copy")
+		case channels > 2 && !r.lowQuality():
+			args = append(args, "-c:a", "aac", "-ac", "6", "-b:a", "384k")
+		default:
+			args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "160k")
+		}
+		args = append(args, "-sn", "-dn", "-map_chapters", "-1",
+			"-avoid_negative_ts", "make_zero", "-max_muxing_queue_size", "4096",
+			"-f", "matroska", "pipe:1")
+		return args
+	}
 	// Audio: every track (dub and sub stay switchable), each copied or converted on its own.
 	args = append(args, audioArgs(r)...)
 	// Subtitles and fonts pass through untouched; MP4's mov_text has no Matroska form.

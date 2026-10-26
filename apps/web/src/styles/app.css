@@ -195,12 +195,51 @@ img { display: block; }
 
 /* ---------- watch page (Crunchyroll's: a full-width dark band with the 16:9 player in it, the text column under it, Next episode at the right) ---------- */
 .watch__band { background: #000; display: grid; place-items: center; }
-.player { position: relative; width: min(100%, calc((100vh - var(--topbar-h) - 180px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; }
+.player { position: relative; width: min(100%, calc((100vh - var(--topbar-h) - 180px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; user-select: none; }
+.player:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; }
+.player--hidden { cursor: none; }
+.player--empty { display: grid; place-items: center; color: var(--muted); }
 .player video { width: 100%; height: 100%; display: block; background: #000; }
 .player canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
-.player__note { position: absolute; left: 12px; top: 12px; padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.6); font-size: 12px; color: #fff; }
+.player__wait { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .player__error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--error); background: rgba(0, 0, 0, 0.7); }
-.player__skip { position: absolute; right: 16px; bottom: 80px; }
+.player__skip { position: absolute; right: 24px; bottom: 96px; z-index: 3; }
+/* Crunchyroll's opening card: the age block and the advisories, top-left, for the first seconds. */
+.player__advisory { position: absolute; left: 20px; top: 20px; display: flex; align-items: center; gap: 14px; font-weight: 700; font-size: 15px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); animation: advisory-in 400ms ease; z-index: 2; pointer-events: none; }
+.player__age { padding: 8px 12px; background: rgba(60, 60, 68, 0.85); font-size: 20px; font-style: italic; font-weight: 800; letter-spacing: 0.5px; }
+@keyframes advisory-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+/* ---------- controls (Crunchyroll's bar) ---------- */
+.player__controls { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; padding: 0 16px 6px; background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.5) 60%, rgba(0, 0, 0, 0)); transition: opacity 200ms ease; }
+.player--hidden .player__controls { opacity: 0; pointer-events: none; }
+.seek { position: relative; height: 22px; display: flex; align-items: center; cursor: pointer; }
+.seek__track { position: relative; width: 100%; height: 4px; background: rgba(255, 255, 255, 0.3); border-radius: 2px; overflow: hidden; transition: height 120ms; }
+.seek:hover .seek__track { height: 6px; }
+.seek__buffered { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255, 255, 255, 0.45); }
+.seek__played { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+.seek__thumb { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--accent); transform: scale(0.8); transition: transform 120ms; pointer-events: none; }
+.seek:hover .seek__thumb { transform: scale(1.15); }
+.seek__segment { position: absolute; top: 9px; height: 4px; background: rgba(255, 255, 255, 0.25); pointer-events: none; }
+.seek__hover { position: absolute; bottom: 28px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+.seek__thumbnail { border-radius: 4px; border: 2px solid rgba(255, 255, 255, 0.9); background-repeat: no-repeat; background-color: #000; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6); }
+.seek__time { padding: 2px 8px; border-radius: 3px; background: rgba(0, 0, 0, 0.8); font-size: 12px; font-weight: 600; color: #fff; }
+.controls { display: flex; align-items: center; gap: 4px; height: 52px; }
+.controls__btn { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; opacity: 0.9; }
+.controls__btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+.controls__btn--on { color: var(--accent); }
+.controls__rate { width: auto; min-width: 44px; padding: 0 8px; font-weight: 700; font-size: 15px; border-radius: 22px; }
+.controls__volume { display: flex; align-items: center; }
+.controls__volume input { width: 0; opacity: 0; transition: width 160ms, opacity 160ms; accent-color: #fff; cursor: pointer; }
+.controls__volume:hover input, .controls__volume input:focus { width: 90px; opacity: 1; margin-right: 8px; }
+.controls__time { margin-left: 10px; font-size: 15px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+.controls__spacer { flex: 1; }
+.controls__menu-anchor { position: relative; }
+.pmenu { position: absolute; right: 0; bottom: 52px; min-width: 200px; max-height: 60vh; overflow-y: auto; background: rgba(23, 23, 30, 0.96); border-radius: 8px; padding: 8px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); z-index: 5; }
+.pmenu--wide { min-width: 280px; }
+.pmenu__title { padding: 8px 16px 4px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.pmenu__item { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 9px 16px; text-align: left; color: #fff; font-size: 14px; }
+.pmenu__item:hover { background: rgba(255, 255, 255, 0.08); }
+.pmenu__item--on { color: var(--accent); font-weight: 600; }
 .watch { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; width: min(1180px, 100%); margin: 36px auto 0; padding: 0 var(--gutter); }
 @media (min-width: 1100px) { .watch { grid-template-columns: minmax(0, 1fr) 320px; } }
 .watch__series { color: var(--accent); font-weight: 700; font-size: 14px; }

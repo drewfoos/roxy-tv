@@ -42,7 +42,7 @@ export function Watch() {
     <div className="page">
       <TopBar />
       <div className="watch__band">
-        <Player item={item} onEnded={() => next && nav(`/watch/${next.id}`, { replace: true })} />
+        <Player item={item} series={series} next={next} onNext={() => next && nav(`/watch/${next.id}`)} onEnded={() => next && nav(`/watch/${next.id}`, { replace: true })} />
       </div>
       <div className="watch">
         <div>

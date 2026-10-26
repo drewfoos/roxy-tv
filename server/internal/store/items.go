@@ -405,13 +405,42 @@ func (s *Store) DeleteVirtualChildren(ctx context.Context, seriesID string, keep
 	return len(drop), nil
 }
 
+// shadowedPlaceholders matches placeholder episodes that a real episode in the same
+// season already covers: same episode number, counting an absolute number as the
+// episode number when the file has no season numbering (a season-folder show named
+// "Show - 03.mkv" gets the GUID abs0003, the placeholder s01e0003, so the GUIDs never
+// meet and both rows would show).
+const shadowedPlaceholders = `is_virtual = 1 AND type = 'episode' AND EXISTS (
+	SELECT 1 FROM items r WHERE r.is_virtual = 0 AND r.type = 'episode' AND r.parent_id = items.parent_id
+	AND COALESCE(r.index_aired, r.index_absolute) = items.index_aired)`
+
+// DeleteShadowedPlaceholders drops placeholder episodes that a real file in the same
+// season already stands for (see shadowedPlaceholders); seriesID limits it to one show,
+// "" means the whole library.
+func (s *Store) DeleteShadowedPlaceholders(ctx context.Context, seriesID string) (int, error) {
+	q := `DELETE FROM items WHERE ` + shadowedPlaceholders
+	var args []any
+	if seriesID != "" {
+		q += ` AND parent_id IN (SELECT id FROM items WHERE parent_id = ?)`
+		args = append(args, seriesID)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // PruneOrphans removes real (non-virtual) episodes and movies whose media vanished, then
-// seasons and series left with no children. Placeholders are kept: a season of only
-// missing episodes is still worth showing.
+// seasons and series left with no children, then placeholder episodes a real file now
+// covers. Other placeholders are kept: a season of only missing episodes is still worth
+// showing.
 func (s *Store) PruneOrphans(ctx context.Context) (int, error) {
 	total := 0
 	for _, q := range []string{
 		`DELETE FROM items WHERE type IN ('episode','movie') AND is_virtual = 0 AND NOT EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = items.id)`,
+		`DELETE FROM items WHERE ` + shadowedPlaceholders,
 		`DELETE FROM items WHERE type = 'season' AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
 		`DELETE FROM items WHERE type = 'series' AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
 	} {

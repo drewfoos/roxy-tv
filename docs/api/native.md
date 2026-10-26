@@ -105,7 +105,8 @@ It is absent for bitmap subtitles and for tracks too short to classify.
 | GET/HEAD | `/v1/stream/{sourceId}` | the file, HTTP ranges honoured (`206`) |
 | GET | `/v1/sources/{id}/attachments/{index}` | attachment bytes (fonts), extracted eagerly at scan |
 | GET | `/v1/sources/{id}/subtitles/{index}` | text subtitle track, byte for byte |
-| GET | `/v1/sources/{id}/transcode?height=&bitrate=&start=` | the source re-encoded, as a Matroska stream (see Transcoding) |
+| GET | `/v1/sources/{id}/transcode?height=&bitrate=&start=` | the source re-encoded, as a Matroska stream (see Transcoding). `web=1` (Roxy Web) carries one audio track (`audio=<stream index>`, else the first) in a browser codec, no subtitles, and restarts timestamps at zero at `start`. |
+| GET | `/v1/sources/{id}/remux?audio=&start=` | the video copied untouched with one audio track (`audio` = the track's stream index; AC3, E-AC3, DTS, TrueHD and PCM become AAC, the rest are copied), as Matroska with timestamps restarting at zero at `start`. For browsers, which cannot switch MKV audio tracks or decode those codecs. Eight at a time, then 503. |
 
 ## Transcoding
 

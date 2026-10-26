@@ -41,6 +41,27 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := transcode.Request{Path: src.Parts[0].Path, StartSec: start, MaxHeight: height, BitrateK: bitrate, Container: src.Container}
+	// web=1: one browser-safe audio track (audio=<stream index>, else the first), no
+	// subtitles, timestamps from zero at start. See transcode.Request.Web.
+	if q.Get("web") == "1" {
+		req.Web = true
+		want, hasWant := strconv.Atoi(q.Get("audio"))
+		for i := range src.Streams {
+			st := &src.Streams[i]
+			if st.Type != model.StreamAudio || st.IsExternal {
+				continue
+			}
+			if hasWant == nil && st.Index != want {
+				continue
+			}
+			req.WebAudio = &transcode.WebAudioTrack{Index: st.Index, Codec: st.Codec, Channels: st.Channels}
+			break
+		}
+		if hasWant == nil && req.WebAudio == nil {
+			writeError(w, 404, "no such audio track")
+			return
+		}
+	}
 	videoSeen := false
 	for _, st := range src.Streams {
 		switch {

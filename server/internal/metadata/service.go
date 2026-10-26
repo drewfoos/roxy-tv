@@ -584,11 +584,16 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 			season = stored
 			bySeason[si.Number] = season
 		}
+		// What the season already holds, by episode number; a file with only an absolute
+		// number ("Show - 03.mkv") counts as that episode, as the shadow cleanup does.
 		existing := map[int]bool{}
 		if eps, err := s.store.Children(ctx, season.ID, model.TypeEpisode); err == nil {
 			for _, e := range eps {
-				if e.IndexAired != nil {
+				switch {
+				case e.IndexAired != nil:
 					existing[*e.IndexAired] = true
+				case e.IndexAbsolute != nil && !e.IsVirtual:
+					existing[*e.IndexAbsolute] = true
 				}
 			}
 		}
@@ -631,6 +636,11 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 	}
 	if dropped, err := s.store.DeleteVirtualChildren(ctx, series.ID, keep); err == nil && dropped > 0 {
 		slog.Info("metadata: stale placeholders removed", "series", series.Title, "count", dropped)
+	}
+	// A file that arrived under a different GUID (absolute numbering) now covers its
+	// placeholder: drop the placeholder rather than list the episode twice.
+	if dropped, err := s.store.DeleteShadowedPlaceholders(ctx, series.ID); err == nil && dropped > 0 {
+		slog.Info("metadata: shadowed placeholders removed", "series", series.Title, "count", dropped)
 	}
 	if created > 0 {
 		slog.Info("metadata: placeholders created", "series", series.Title, "count", created)
