@@ -320,6 +320,17 @@ TMDB client has its own token bucket, so the app cannot hammer TMDB.
 - `GET /v1/discover/requests` → `{items}` (everyone's, newest first).
 - `POST /v1/discover/requests/retry` (admin) → resend pending requests now.
 
+### Season layout
+
+TMDB keeps many anime as one long season (The Apothecary Diaries: "Season 1, 60
+episodes", every cours together), while TVDB, and so Sonarr, numbers them 1, 2, 3. When
+TMDB has a "Seasons" episode group (production or air-date order) that splits the show
+into more seasons and covers about the same episodes, the detail uses it:
+`seasonLayout: "episodeGroup"` (else `"tmdb"`), `seasons` and
+`GET /v1/discover/tv/{id}/season/{n}` follow the group, and season requests use those
+numbers, which match Sonarr's. Specials (season 0) can be requested whole
+(`seasons: [0]`) or one episode at a time.
+
 ### Download status
 
 Once Sonarr / Radarr have a request, `GET /v1/discover/{type}/{tmdbId}` and every item of

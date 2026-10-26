@@ -200,7 +200,10 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   posters. Tested end to end against real Sonarr v4 / Radarr in Docker with
   `server/cmd/arrsim` (fake indexer + SABnzbd, `deploy/dev/arrsim`). Also: quality menu
   by resolution with 4K/1440p, per-network default quality, requests refused until
-  Sonarr / Radarr are connected (the app prompts to set them up).
+  Sonarr / Radarr are connected (the app prompts to set them up). Discover uses TMDB's
+  "Seasons" episode group when TMDB merges an anime's cours into one season, so seasons
+  match Sonarr's (Apothecary Diaries: 24 / 24 / 12, not 60); specials can be requested
+  all at once.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

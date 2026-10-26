@@ -72,6 +72,11 @@ type Detail struct {
 	IMDBID      string         `json:"imdbId,omitempty"`
 	Request     *store.Request `json:"request,omitempty"`
 	Requests    bool           `json:"requestsEnabled"` // Sonarr / Radarr configured for this type
+	// SeasonLayout says where Seasons came from: "tmdb", or "episodeGroup" when TMDB's
+	// "Seasons" grouping (TVDB's numbering, what Sonarr uses) replaced its merged season.
+	SeasonLayout string `json:"seasonLayout,omitempty"`
+	// groupEpisodes holds each season's episodes when the layout is an episode group.
+	groupEpisodes map[int][]Episode
 }
 
 type Row struct {
@@ -760,6 +765,25 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 		if specials != nil {
 			base.Seasons = append(base.Seasons, *specials) // last, like Jellyfin
 		}
+		if kind == "tv" {
+			base.SeasonLayout = "tmdb"
+			regular, regularEps := 0, 0
+			for _, sn := range base.Seasons {
+				if !sn.Special {
+					regular++
+					regularEps += sn.Episodes
+				}
+			}
+			if seasons, eps, ok := s.groupedSeasons(ctx, tmdbID, regular, regularEps); ok {
+				base.Seasons, base.groupEpisodes, base.SeasonLayout = seasons, eps, "episodeGroup"
+				base.SeasonCount = 0
+				for _, sn := range seasons {
+					if !sn.Special {
+						base.SeasonCount++
+					}
+				}
+			}
+		}
 		if d.ExternalIDs != nil {
 			base.TVDBID, base.IMDBID = d.ExternalIDs.TvdbID, d.ExternalIDs.ImdbID
 		}
@@ -790,7 +814,8 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 	if det.Request != nil && det.Request.Status != "failed" {
 		for i := range det.Seasons {
 			if det.Seasons[i].Special {
-				det.Seasons[i].Requested = false // per episode; see Episodes()
+				// All specials only when asked for as a season; single ones show per episode.
+				det.Seasons[i].Requested = contains(det.Request.Seasons, 0)
 				continue
 			}
 			det.Seasons[i].Requested = len(det.Request.Seasons) == 0 || contains(det.Request.Seasons, det.Seasons[i].Number)
@@ -837,9 +862,14 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 				seasons = missing // only ask for what is not there
 			}
 		} else {
+			hasSpecials := false
+			for _, sn := range det.Seasons {
+				hasSpecials = hasSpecials || sn.Special
+			}
 			var keep []int
 			for _, n := range seasons {
-				if contains(missing, n) || len(det.Seasons) == 0 {
+				// Specials (season 0) can be asked for as a whole, besides one by one.
+				if contains(missing, n) || len(det.Seasons) == 0 || (n == 0 && hasSpecials) {
 					keep = append(keep, n)
 				}
 			}
@@ -1062,6 +1092,15 @@ type Episode struct {
 func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, error) {
 	key := fmt.Sprintf("eps:%d:%d", tmdbID, season)
 	base, ok := s.episodes.get(key)
+	// A show laid out by an episode group lists that group's episodes, numbered within
+	// each season the way Sonarr counts them.
+	if !ok {
+		if det, err := s.Detail(ctx, "tv", tmdbID); err == nil && det.groupEpisodes != nil {
+			if eps, found := det.groupEpisodes[season]; found {
+				base, ok = eps, true
+			}
+		}
+	}
 	if !ok {
 		var resp struct {
 			Episodes []struct {

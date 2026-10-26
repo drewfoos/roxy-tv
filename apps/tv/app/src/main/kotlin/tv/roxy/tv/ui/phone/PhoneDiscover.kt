@@ -65,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -475,8 +476,13 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
         return
     }
 
+    val listState = rememberLazyListState()
+    // Past the banner the header turns solid with the title, so the plain back arrow never
+    // sits on top of the text scrolling under it (Crunchyroll's pinned header).
+    val pinned by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 520 } }
+    val headerBg by animateColorAsState(if (pinned) RoxyColors.background else Color.Transparent, label = "header")
     Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
+        LazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 120.dp)) {
             item(key = "banner") {
                 Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
                     AsyncImage(model = d.backdrop ?: d.poster, contentDescription = d.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().background(RoxyColors.surfaceHigh))
@@ -546,7 +552,10 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                 }
             }
         }
-        Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp)) { BackCircle(onBack) }
+        Row(modifier = Modifier.fillMaxWidth().background(headerBg).statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            BackCircle(onBack)
+            if (pinned) Text(d.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp))
+        }
         if (setupPrompt) RequestsSetupDialog(if (d.isMovie) "movie" else "tv", onDismiss = { setupPrompt = false })
         Box(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -578,7 +587,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                     when {
                         busy -> "Requesting…"
                         d.request?.status == "failed" -> "Request again"
-                        missing.isNotEmpty() && missing.size < d.seasons.size -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
+                        missing.isNotEmpty() && missing.size < d.seasons.count { !it.special } -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
                         else -> "Request"
                     },
                     modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.AddCircleOutline, height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand,
@@ -622,7 +631,7 @@ private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, on
                 Text(listOfNotNull(count, sn.airDate?.take(4)).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted)
             }
             when {
-                sn.special -> Text(if (sn.have > 0) "${sn.have} in library" else "Pick episodes", fontSize = 13.sp, color = RoxyColors.muted)
+                sn.special && !sn.requested -> Chip(if (sn.have > 0) "Request the rest" else "Request all", selected = false, onClick = onRequest)
                 sn.complete -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Check, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
                     Text("In library", fontSize = 13.sp, color = RoxyColors.accent, modifier = Modifier.padding(start = 4.dp))
