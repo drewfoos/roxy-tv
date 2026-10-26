@@ -370,7 +370,7 @@ private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -
 
 private val NavBarGrey = Color(0xFF23252B)
 
-/** Compact bottom bar: 22 dp icons, 10 sp labels, the Account tab as the profile avatar. */
+/** Compact bottom bar: 26 dp icons, 11 sp labels, white tabs with the selected one in Roxy blue, the Account tab as the profile avatar. */
 @Composable
 private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
     Row(
@@ -380,15 +380,15 @@ private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, mod
     ) {
         Tab.entries.forEach { tab ->
             val selected = tab == current
-            val tint = if (selected) Color.White else RoxyColors.muted
+            val tint = if (selected) RoxyColors.accent else Color.White
             Column(
                 modifier = Modifier.weight(1f).fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(tab) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
             ) {
                 if (tab == Tab.Account) {
-                    Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(if (selected) Color.White else Color.Transparent), contentAlignment = Alignment.Center) {
-                        AvatarCircle(name = profileName, imageUrl = avatarUrl, size = if (selected) 20.dp else 22.dp)
+                    Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(if (selected) RoxyColors.accent else Color.Transparent), contentAlignment = Alignment.Center) {
+                        AvatarCircle(name = profileName, imageUrl = avatarUrl, size = if (selected) 24.dp else 26.dp)
                     }
                 } else {
                     val icon: ImageVector = when (tab) {
@@ -397,9 +397,9 @@ private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, mod
                         Tab.Watchlist -> Icons.Outlined.Bookmark
                         else -> Icons.Outlined.GridView
                     }
-                    Icon(icon, contentDescription = tab.label, tint = tint, modifier = Modifier.size(22.dp))
+                    Icon(icon, contentDescription = tab.label, tint = tint, modifier = Modifier.size(26.dp))
                 }
-                Text(tab.label, fontSize = 10.sp, color = tint, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                Text(tab.label, fontSize = 11.sp, color = tint, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             }
         }
     }

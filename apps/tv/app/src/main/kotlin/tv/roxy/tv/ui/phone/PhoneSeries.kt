@@ -135,12 +135,18 @@ fun PhoneSeries(
     // the whole show and a missing season can be requested from here.
     val tmdbId = series.providerIds["tmdb"]?.toIntOrNull()
     var extraSeasons by remember(series.id) { mutableStateOf<List<DiscoverSeason>>(emptyList()) }
+    // The season count in TVDB's numbering (what Sonarr uses): TMDB merges some shows'
+    // seasons into one (The Apothecary Diaries reads "1 Season" there).
+    var tvdbSeasons by remember(series.id) { mutableStateOf<Int?>(null) }
     var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(series.id, state.seasons.size) {
         if (tmdbId == null) return@LaunchedEffect
         val have = state.seasons.mapNotNull { it.indexAired }.toSet()
         runCatching { app.api.discoverDetail("tv", tmdbId) }
-            .onSuccess { d -> extraSeasons = d.seasons.filter { it.number !in have && it.number != 0 } }
+            .onSuccess { d ->
+                extraSeasons = d.seasons.filter { it.number !in have && it.number != 0 }
+                tvdbSeasons = d.seasonCount.takeIf { it > 0 }
+            }
     }
     val seasonLabel = when {
         selectedExtra != null -> "Season $selectedExtra"
@@ -187,7 +193,7 @@ fun PhoneSeries(
                     item = series, api = app.api,
                     badge = audioBadge(series) ?: audioBadge(playable.firstOrNull()),
                     // The provider's count (3 for KonoSuba) even when the library holds fewer; known from the list item, so it never pops in.
-                    seasons = series.seasonCount ?: state.seasons.size,
+                    seasons = tvdbSeasons ?: series.seasonCount ?: state.seasons.size,
                     onMoreDetails = { onOpenDetails(series) },
                 )
             }
@@ -328,7 +334,7 @@ private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () ->
 }
 
 /** Height of the banner at the top of a title page. */
-private val BannerHeight = 520.dp
+internal val BannerHeight = 520.dp
 
 /**
  * Crunchyroll's title page frame: the scrolling content, a pinned back button over the
@@ -426,7 +432,8 @@ val FactsGrey = Color.White.copy(alpha = 0.72f)
 @Composable
 internal fun AgePill(text: String, small: Boolean = false) {
     Box(modifier = Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFF4A4A52)).padding(horizontal = if (small) 5.dp else 6.dp, vertical = if (small) 1.dp else 2.dp)) {
-        Text(text, fontSize = if (small) 10.sp else 11.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 0.5.sp)
+        // Tight line height: the theme's tall default made the block taller than the text beside it.
+        Text(text, fontSize = if (small) 10.sp else 11.sp, lineHeight = if (small) 12.sp else 13.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 0.5.sp)
     }
 }
 
@@ -460,6 +467,17 @@ internal val HeaderRow = 52.dp
  */
 @Composable
 fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
+    val backdrop = api.imageUrl(item, "backdrop", widthPx(420.dp) * 2)
+    val poster = api.imageUrl(item, "poster", widthPx(420.dp) * 2)
+    // Start from whichever rendition of this art a list already loaded (the card's
+    // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
+    val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
+    TitleBannerArt(backdrop ?: poster, item.title, listState, warm)
+}
+
+/** [TitleBanner]'s picture from any URL: Discover's title pages pass TMDB's art (nothing is saved). */
+@Composable
+fun TitleBannerArt(url: String?, title: String, listState: LazyListState, warm: String? = null) {
     val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
     val top = (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() - 6.dp).coerceAtLeast(0.dp)
     Box(
@@ -469,12 +487,7 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
             alpha = (1f - off / (heightPx * 0.55f)).coerceIn(0f, 1f)
         },
     ) {
-        val backdrop = api.imageUrl(item, "backdrop", widthPx(420.dp) * 2)
-        val poster = api.imageUrl(item, "poster", widthPx(420.dp) * 2)
-        // Start from whichever rendition of this art a list already loaded (the card's
-        // poster, the hero's backdrop), so the banner is never a grey box mid-slide.
-        val warm = ImageMemo.lastFor(backdrop) ?: ImageMemo.lastFor(poster)
-        RoxyImage(backdrop ?: poster, item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
+        RoxyImage(url, title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
         // A short fade from the black status bar into the art, which the X and icons sit on.
         val fadePx = with(LocalDensity.current) { (HeaderRow + 40.dp).toPx() }
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, 0.35f to Color(0x99000000), 1f to Color.Transparent), startY = 0f, endY = fadePx)))
@@ -482,7 +495,7 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
 }
 
 /** How far the logo block (and its fade) reaches up over the banner. */
-private val LogoOverlap = 230.dp
+internal val LogoOverlap = 230.dp
 
 /**
  * Reports a shorter height than the content and places it that much higher, so a list
@@ -502,6 +515,41 @@ private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints
  */
 @Composable
 fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
+    TitleLogoColumn(logo = api.imageUrl(item, "logo", widthPx(320.dp)), title = item.title, badge = badge) {
+        FactsLine(
+            rating = item.communityRating,
+            age = item.officialRating?.let { ageLabel(it) },
+            facts = listOfNotNull(
+                (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
+                seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
+                extra,
+            ),
+        )
+        val genres = item.genres.take(3).joinToString(", ")
+        if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = FactsGrey, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        item.overview?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
+                maxLines = 3, overflow = TextOverflow.Ellipsis, // the whole text is on "More details"
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            )
+        }
+        // Crunchyroll's "More details": a centred link in the brand colour, not a button.
+        if (onMoreDetails != null) {
+            Text(
+                "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
+                modifier = Modifier.padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp, horizontal = 8.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The logo (or name) on the banner's faded foot with the audio badge under it, then
+ * [content] on solid black. Shared by the library and Discover title pages.
+ */
+@Composable
+fun TitleLogoColumn(logo: String?, title: String, badge: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().pullUp(LogoOverlap), horizontalAlignment = Alignment.CenterHorizontally) {
         // The fade belongs to the content, not the picture: transparent at the top, black
         // by the logo's foot, so it rides up with the logo and the "14+" line below it is
@@ -512,49 +560,16 @@ fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra:
                 .padding(horizontal = PhonePad).padding(top = 120.dp, bottom = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val logo = api.imageUrl(item, "logo", widthPx(320.dp))
             if (logo != null) {
-                AsyncImage(model = logo, contentDescription = item.title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth(0.7f).heightIn(max = 84.dp))
+                AsyncImage(model = logo, contentDescription = title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth(0.7f).heightIn(max = 84.dp))
             } else {
-                Text(item.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
+                Text(title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
             }
-            val age = item.officialRating?.let { ageLabel(it) }
-            if (age != null || badge != null) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 14.dp)) {
-                    if (age != null) AgePill(age)
-                    if (age != null && badge != null) Spacer(Modifier.width(10.dp))
-                    if (badge != null) Text(badge, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f))
-                }
-            }
+            if (badge != null) Text(badge, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.9f), modifier = Modifier.padding(top = 14.dp))
         }
         // Solid from here down: the pinned picture is still fading behind the page, and
         // only the gradient above the logo is meant to show it.
-        Column(modifier = Modifier.fillMaxWidth().background(RoxyColors.background).padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
-            FactsLine(
-                rating = item.communityRating,
-                facts = listOfNotNull(
-                    (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
-                    seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-                    extra,
-                ),
-            )
-            val genres = item.genres.take(3).joinToString(", ")
-            if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = FactsGrey, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
-            item.overview?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
-                    maxLines = 3, overflow = TextOverflow.Ellipsis, // the whole text is on "More details"
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                )
-            }
-            // Crunchyroll's "More details": a centred link in the brand colour, not a button.
-            if (onMoreDetails != null) {
-                Text(
-                    "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
-                    modifier = Modifier.padding(top = 10.dp).clickable(onClick = onMoreDetails).padding(vertical = 4.dp, horizontal = 8.dp),
-                )
-            }
-        }
+        Column(modifier = Modifier.fillMaxWidth().background(RoxyColors.background).padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally, content = content)
     }
 }
 

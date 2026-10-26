@@ -874,6 +874,10 @@ data class DiscoverDetail(
     val requestsEnabled: Boolean = false,
     val seasons: List<DiscoverSeason> = emptyList(),
     val download: DownloadStatus? = null,
+    /** TMDB logo art (English or language-less), drawn over the banner. */
+    val logo: String? = null,
+    /** US age rating (TV-14, PG-13). */
+    val officialRating: String? = null,
 ) {
     val isMovie: Boolean get() = type == "movie"
     val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()

@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -503,38 +504,31 @@ fun PhoneDiscoverDetail(
     }
 
     val listState = rememberLazyListState()
-    // Past the banner the header turns solid with the title, so the plain back arrow never
-    // sits on top of the text scrolling under it (Crunchyroll's pinned header).
-    val pinned by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 520 } }
-    val headerBg by animateColorAsState(if (pinned) RoxyColors.background else Color.Transparent, label = "header")
+    // The library title page's look: tall key art under a black status bar, the logo on
+    // its faded foot. The header strip goes solid as the art fades, and the name takes it
+    // over once the logo has scrolled under it.
+    val density = LocalDensity.current
+    val stripPx = with(density) { (BannerHeight * 0.55f).toPx() }
+    val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
+    val headerAlpha by remember { derivedStateOf { if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / stripPx).coerceIn(0f, 1f) } }
+    val pinned by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleFromPx } }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 120.dp)) {
-            item(key = "banner") {
-                Box(modifier = Modifier.fillMaxWidth().height(300.dp)) {
-                    AsyncImage(model = d.backdrop ?: d.poster, contentDescription = d.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().background(RoxyColors.surfaceHigh))
-                    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.3f to Color.Transparent)))
-                    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to RoxyColors.background)))
-                }
-            }
+            // TMDB's art straight from TMDB: nothing is saved, and there is no art picker here.
+            item(key = "banner") { TitleBannerArt(d.backdrop ?: d.poster, d.title, listState) }
             item(key = "info") {
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(d.title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center)
-                    d.tagline?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
-                    val tags = listOf(if (d.isAnime) "Anime" else if (d.isMovie) "Movie" else "Series", d.genres.take(3).joinToString(", ")).filter { it.isNotEmpty() }.joinToString("  •  ")
-                    Text(tags, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
-                    // One facts line with the rating leading it, so the block tapers from the
-                    // title down instead of narrowing and widening again around a lone "8.5".
+                TitleLogoColumn(logo = d.logo, title = d.title) {
                     FactsLine(
                         rating = d.rating?.takeIf { it > 0 },
+                        age = d.officialRating?.takeIf { it.isNotBlank() }?.let { ageLabel(it) },
                         facts = listOfNotNull(
                             d.year?.toString(),
                             d.seasonCount.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
-                            d.episodes.takeIf { it > 0 && !d.isMovie }?.let { "$it Episodes" },
-                            d.runtimeMinutes.takeIf { it > 0 }?.let { if (d.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "${it}m" },
-                            d.status?.let { statusWord(it) },
+                            d.runtimeMinutes.takeIf { it > 0 && d.isMovie }?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
                         ),
                     )
-                    d.networks.firstOrNull()?.let { Text(it, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
+                    val genres = d.genres.take(3).joinToString(", ")
+                    if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = FactsGrey, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
                     if (!d.isMovie) {
                         d.overview?.takeIf { it.isNotBlank() }?.let {
                             Text(
@@ -610,7 +604,7 @@ fun PhoneDiscoverDetail(
                 }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth().background(headerBg).statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             BackCircle(onBack)
             if (pinned) Text(d.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp))
         }

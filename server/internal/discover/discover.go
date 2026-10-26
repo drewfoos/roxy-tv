@@ -64,6 +64,11 @@ type Detail struct {
 	Seasons     []Season       `json:"seasons,omitempty"`
 	Tagline     string         `json:"tagline,omitempty"`
 	Status      string         `json:"status,omitempty"`
+	// Logo is the title's logo art (English or language-less), drawn over the banner
+	// like the library's title pages; empty when TMDB has none.
+	Logo string `json:"logo,omitempty"`
+	// OfficialRating is the US age rating (TV-14, PG-13), shown as the age badge.
+	OfficialRating string `json:"officialRating,omitempty"`
 	SeasonCount int            `json:"seasonCount,omitempty"`
 	Episodes    int            `json:"episodes,omitempty"`
 	RuntimeM    int            `json:"runtimeMinutes,omitempty"`
@@ -729,6 +734,62 @@ type tmdbDetail struct {
 		TvdbID int    `json:"tvdb_id"`
 		ImdbID string `json:"imdb_id"`
 	} `json:"external_ids"`
+	Images *struct {
+		Backdrops []tmdbArt `json:"backdrops"`
+		Logos     []tmdbArt `json:"logos"`
+	} `json:"images"`
+	ContentRatings *struct { // tv
+		Results []struct {
+			Country string `json:"iso_3166_1"`
+			Rating  string `json:"rating"`
+		} `json:"results"`
+	} `json:"content_ratings"`
+	ReleaseDates *struct { // movie
+		Results []struct {
+			Country string `json:"iso_3166_1"`
+			Dates   []struct {
+				Certification string `json:"certification"`
+			} `json:"release_dates"`
+		} `json:"results"`
+	} `json:"release_dates"`
+}
+
+type tmdbArt struct {
+	FilePath string `json:"file_path"`
+	Lang     string `json:"iso_639_1"`
+}
+
+// pickArt returns the first (most voted) image in lang, skipping SVGs the app can't draw.
+func pickArt(list []tmdbArt, lang string) string {
+	for _, a := range list {
+		if a.Lang == lang && !strings.HasSuffix(strings.ToLower(a.FilePath), ".svg") {
+			return a.FilePath
+		}
+	}
+	return ""
+}
+
+// usRating is the title's US age rating from TMDB's content ratings / release dates.
+func (d *tmdbDetail) usRating() string {
+	if d.ContentRatings != nil {
+		for _, r := range d.ContentRatings.Results {
+			if r.Country == "US" && r.Rating != "" {
+				return r.Rating
+			}
+		}
+	}
+	if d.ReleaseDates != nil {
+		for _, r := range d.ReleaseDates.Results {
+			if r.Country == "US" {
+				for _, x := range r.Dates {
+					if x.Certification != "" {
+						return x.Certification
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail, error) {
@@ -739,7 +800,12 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 	base, ok := s.details.get(key)
 	if !ok {
 		var d tmdbDetail
-		if err := s.tmdb.Get(ctx, fmt.Sprintf("/%s/%d", kind, tmdbID), url.Values{"append_to_response": {"external_ids"}}, &d); err != nil {
+		extra := "external_ids,images,content_ratings"
+		if kind == "movie" {
+			extra = "external_ids,images,release_dates"
+		}
+		q := url.Values{"append_to_response": {extra}, "include_image_language": {"en,null"}}
+		if err := s.tmdb.Get(ctx, fmt.Sprintf("/%s/%d", kind, tmdbID), q, &d); err != nil {
 			return nil, err
 		}
 		for _, g := range d.Genres {
@@ -748,7 +814,18 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 		item := s.toItem(ctx, d.tmdbListEntry, kind)
 		item.Backdrop = s.tmdb.ImageURL("w1280", d.BackdropPath)
 		item.Poster = s.tmdb.ImageURL("w500", d.PosterPath)
-		base = &Detail{Item: item, Tagline: d.Tagline, Status: d.Status, SeasonCount: d.NumSeasons, Episodes: d.NumEpisodes, RuntimeM: d.Runtime}
+		base = &Detail{Item: item, Tagline: d.Tagline, Status: d.Status, SeasonCount: d.NumSeasons, Episodes: d.NumEpisodes, RuntimeM: d.Runtime, OfficialRating: d.usRating()}
+		if d.Images != nil {
+			// Text-free art under the logo, like the library's banners.
+			if b := pickArt(d.Images.Backdrops, ""); b != "" {
+				base.Backdrop = s.tmdb.ImageURL("w1280", b)
+			}
+			if l := pickArt(d.Images.Logos, "en"); l != "" {
+				base.Logo = s.tmdb.ImageURL("w500", l)
+			} else if l := pickArt(d.Images.Logos, ""); l != "" {
+				base.Logo = s.tmdb.ImageURL("w500", l)
+			}
+		}
 		if base.RuntimeM == 0 && len(d.EpisodeRunTime) > 0 {
 			base.RuntimeM = d.EpisodeRunTime[0]
 		}

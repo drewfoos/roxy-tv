@@ -326,9 +326,15 @@ fun languageName(code: String): String {
  * as a single taper: title, tagline, genres, facts.
  */
 @Composable
-fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifier) {
+fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifier, age: String? = null) {
     val rest = facts.filter { it.isNotBlank() }
-    if (rating == null && rest.isEmpty()) return
+    if (rating == null && rest.isEmpty() && age == null) return
+    // The age badge leads the line, left of the stars ("14+ · ★ 8.7 · 2023").
+    Row(modifier = modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    if (age != null) {
+        AgePill(age, small = true)
+        if (rating != null || rest.isNotEmpty()) Text("  ·  ", fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f))
+    }
     Text(
         buildAnnotatedString {
             if (rating != null) {
@@ -337,8 +343,9 @@ fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifie
             }
             append(rest.joinToString("  ·  "))
         },
-        fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center, modifier = modifier.padding(top = 8.dp),
+        fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center,
     )
+    }
 }
 
 /** Small translucent pill over a card ("Dub | Sub"). */
