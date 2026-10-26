@@ -135,6 +135,60 @@ func (s *Server) discoverDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, d)
 }
 
+// GET /v1/discover/{type}/{tmdbId}/details -> the "More details" page for a title that
+// may not be in the library: the same shape as /v1/items/{id}/details (cast, keywords,
+// companies, dates, links) with the TMDB facts standing in for the library item.
+func (s *Server) discoverMoreDetails(w http.ResponseWriter, r *http.Request) {
+	if !s.discoverGuard(w) {
+		return
+	}
+	id, err := strconv.Atoi(chi.URLParam(r, "tmdbId"))
+	kind := chi.URLParam(r, "type")
+	if err != nil || (kind != "tv" && kind != "movie") {
+		writeError(w, 400, "bad type or tmdb id")
+		return
+	}
+	d, err := s.discover.Detail(r.Context(), kind, id)
+	if err != nil {
+		upstreamError(w, "discover details", err)
+		return
+	}
+	it := model.Item{Type: model.TypeSeries, Title: d.Title, Overview: d.Overview, Genres: d.Genres, IsAnime: d.IsAnime, ProviderIDs: map[string]string{"tmdb": strconv.Itoa(id)}}
+	if kind == "movie" {
+		it.Type = model.TypeMovie
+	}
+	if d.Year > 0 {
+		y := d.Year
+		it.Year = &y
+	}
+	if d.Rating > 0 {
+		rt := d.Rating
+		it.CommunityRating = &rt
+	}
+	if d.SeasonCount > 0 {
+		n := d.SeasonCount
+		it.SeasonCount = &n
+	}
+	resp := detailsResponse{Item: it, Backdrop: d.Backdrop, Links: map[string]string{"tmdb": "https://www.themoviedb.org/" + kind + "/" + strconv.Itoa(id)}}
+	if d.IMDBID != "" {
+		resp.Links["imdb"] = "https://www.imdb.com/title/" + d.IMDBID + "/"
+	}
+	if d.TVDBID > 0 {
+		resp.Links["tvdb"] = "https://thetvdb.com/dereferrer/series/" + strconv.Itoa(d.TVDBID)
+	}
+	if s.meta != nil && s.meta.TMDB() != nil {
+		resp.TMDB = s.tmdbExtras(r.Context(), kind == "movie", id)
+		// The page's season count follows Discover's layout (an episode group may split a
+		// TMDB "season" the way Sonarr counts them).
+		if resp.TMDB != nil && d.SeasonCount > 0 {
+			c := *resp.TMDB
+			c.Seasons = d.SeasonCount
+			resp.TMDB = &c
+		}
+	}
+	writeJSON(w, 200, resp)
+}
+
 // POST /v1/discover/request {type, tmdbId} -> the request row
 func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) {
@@ -182,7 +236,7 @@ func (s *Server) discoverSearchAgain(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) || userFrom(w, r) == nil {
 		return
 	}
-	if err := s.discover.SearchAgain(r.Context(), chi.URLParam(r, "id")); err != nil {
+	if err := s.discover.SearchAgain(r.Context(), chi.URLParam(r, "id"), episodeCodes(r)...); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
@@ -195,11 +249,23 @@ func (s *Server) discoverReplaceRelease(w http.ResponseWriter, r *http.Request) 
 	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
 		return
 	}
-	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id")); err != nil {
+	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id"), episodeCodes(r)...); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// episodeCodes reads an optional {episodes: ["S1E3", ...]} body: act on those episodes only.
+func episodeCodes(r *http.Request) []string {
+	var body struct {
+		Episodes []string `json:"episodes"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8<<10)).Decode(&body)
+	if len(body.Episodes) > 200 {
+		body.Episodes = body.Episodes[:200]
+	}
+	return body.Episodes
 }
 
 // upstreamError logs the real cause and tells the client only that TMDB did not answer:

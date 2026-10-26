@@ -3,6 +3,8 @@ package tv.roxy.tv.ui.phone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -392,20 +394,30 @@ private fun DiscoverRowView(title: String, items: List<DiscoverItem>, onOpen: (D
 
 /** Poster with a corner badge (check = in your library, clock = requested), name and year beneath. */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DiscoverCard(item: DiscoverItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val dl = item.download
+    // A download in progress wins over the library tick: a show half in the library can
+    // be fetching its next episodes.
+    val moving = dl != null && dl.isMoving
+    var showDownloads by remember { mutableStateOf(false) }
     Column(modifier = modifier) {
-        Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh)
+                // Long-press (the phone's hover) lists what is downloading, episode by episode.
+                .combinedClickable(onClick = onClick, onLongClick = if (moving) ({ showDownloads = true }) else null),
+        ) {
             if (item.poster != null) AsyncImage(model = item.poster, contentDescription = item.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Text(item.title, color = RoxyColors.muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).padding(6.dp))
-            StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp), download = item.download)
-            val dl = item.download
-            if (dl != null && !item.inLibrary && (dl.state == "downloading" || dl.state == "stalled" || dl.state == "importing")) {
-                DownloadBar(dl.progress, dl.state, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+            if (moving) ProgressBadge(dl!!, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
+            else StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp), download = dl)
+            if (moving) DownloadBar(dl!!.progress, dl.state, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+            androidx.compose.material3.DropdownMenu(expanded = showDownloads, onDismissRequest = { showDownloads = false }, containerColor = RoxyColors.surface) {
+                if (dl != null) ActiveDownloadsList(dl, item.title, item.isMovie)
             }
         }
         Text(item.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-        val dl = item.download
-        if (dl != null && !item.inLibrary) {
+        if (dl != null && (!item.inLibrary || moving)) {
             Text(dl.shortLine(item.isMovie), fontSize = 11.sp, color = stateColor(dl.state), maxLines = 1, overflow = TextOverflow.Ellipsis)
         } else {
             Text(listOfNotNull(item.year?.toString(), if (item.isAnime) "Anime" else if (item.isMovie) "Movie" else null).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1)
@@ -434,7 +446,7 @@ internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: M
  * Radarr are connected, then sent, or failed with the reason) and can be withdrawn.
  */
 @Composable
-fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSeries: (String, String) -> Unit, onOpenMovie: (String, String) -> Unit) {
+fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSeries: (String, String) -> Unit, onOpenMovie: (String, String) -> Unit, onMoreDetails: (String) -> Unit = {}) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<DiscoverDetail?>(null) }
@@ -442,6 +454,9 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
     var busy by remember { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var setupPrompt by remember { mutableStateOf(false) }
+    // An action the server refused ("already on it", "searched a moment ago"): shown for a few seconds.
+    var notice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(notice) { if (notice != null) { delay(6_000); notice = null } }
 
     suspend fun reload() {
         runCatching { app.api.discoverDetail(type, tmdbId) }
@@ -516,14 +531,36 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                             modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
                         )
                     }
+                    // Crunchyroll's "More details": cast, studio, dates, keywords, links.
+                    Text(
+                        "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
+                        modifier = Modifier.padding(top = 10.dp).clickable { onMoreDetails(d.title) }.padding(vertical = 4.dp, horizontal = 8.dp),
+                    )
                     if (d.seasons.isNotEmpty()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(top = 22.dp)) {
                             Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
                             d.seasons.forEach { sn ->
-                                SeasonRow(sn, tmdbId = d.tmdbId, onRequest = { requestSeasons(listOf(sn.number)) }, onRequestEpisode = { code ->
-                                    if (!d.requestsEnabled) setupPrompt = true
-                                    else if (!busy) { busy = true; scope.launch { runCatching { app.api.discoverRequest(d.type, d.tmdbId, episodes = listOf(code)) }.onFailure { t -> error = t.message }; reload(); busy = false } }
-                                })
+                                val reqId = d.request?.takeIf { it.status == "sent" }?.id
+                                SeasonRow(
+                                    sn, tmdbId = d.tmdbId, refreshKey = d.download?.updatedAt,
+                                    canSearchAgain = d.download?.canSearch == true,
+                                    onRequest = { requestSeasons(listOf(sn.number)) },
+                                    onRequestEpisode = { code ->
+                                        if (!d.requestsEnabled) setupPrompt = true
+                                        else if (!busy) { busy = true; scope.launch { runCatching { app.api.discoverRequest(d.type, d.tmdbId, episodes = listOf(code)) }.onFailure { t -> error = t.message }; reload(); busy = false } }
+                                    },
+                                    // One episode: search for it again, or (admin) replace its failed / stalled download.
+                                    episodeAction = if (reqId == null) null else { code, retry ->
+                                        if (!busy) {
+                                            busy = true
+                                            scope.launch {
+                                                runCatching { if (retry) app.api.tryAnotherRelease(reqId, listOf(code)) else app.api.searchAgain(reqId, listOf(code)) }.onFailure { t -> notice = t.message }
+                                                reload(); busy = false
+                                            }
+                                        }
+                                    },
+                                    admin = app.prefs.session.value.isAdmin,
+                                )
                             }
                         }
                     }
@@ -531,10 +568,11 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                     if (dl != null && d.request?.status == "sent" && !(d.inLibrary && dl.state == "complete")) {
                         DownloadStatusCard(
                             dl, isMovie = d.isMovie, admin = app.prefs.session.value.isAdmin, busy = busy,
-                            onSearchAgain = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.searchAgain(id) }.onFailure { t -> error = t.message }; reload(); busy = false } },
-                            onTryAnother = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.tryAnotherRelease(id) }.onFailure { t -> error = t.message }; reload(); busy = false } },
+                            onSearchAgain = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.searchAgain(id) }.onFailure { t -> notice = t.message }; reload(); busy = false } },
+                            onTryAnother = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.tryAnotherRelease(id) }.onFailure { t -> notice = t.message }; reload(); busy = false } },
                             modifier = Modifier.padding(top = 18.dp),
                         )
+                        notice?.let { Text(it.replaceFirstChar { c -> c.uppercase() }, fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp)) }
                     } else d.request?.let { r ->
                         val line = when (r.status) {
                             "sent" -> "Requested by ${r.userName.ifEmpty { "someone" }}  ·  sent to ${if (d.isMovie) "Radarr" else "Sonarr"}"
@@ -611,12 +649,17 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
  * on each one the library holds, so a half-complete season shows which half.
  */
 @Composable
-private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, onRequestEpisode: (String) -> Unit = {}) {
+private fun SeasonRow(
+    sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, onRequestEpisode: (String) -> Unit = {},
+    refreshKey: Any? = null, episodeAction: ((code: String, retry: Boolean) -> Unit)? = null, admin: Boolean = false,
+    canSearchAgain: Boolean = false,
+) {
     val app = RoxyApp.get(LocalContext.current)
     var open by rememberSaveable(tmdbId, sn.number) { mutableStateOf(false) }
     var episodes by remember(tmdbId, sn.number) { mutableStateOf<List<DiscoverEpisode>?>(null) }
-    LaunchedEffect(open) {
-        if (open && episodes == null) episodes = runCatching { app.api.discoverEpisodes(tmdbId, sn.number) }.getOrDefault(emptyList())
+    // Open: load, and reload as the request's download status moves (per-episode progress).
+    LaunchedEffect(open, refreshKey) {
+        if (open) runCatching { app.api.discoverEpisodes(tmdbId, sn.number) }.onSuccess { episodes = it }.onFailure { if (episodes == null) episodes = emptyList() }
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -636,6 +679,8 @@ private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, on
                     Icon(Icons.Filled.Check, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
                     Text("In library", fontSize = 13.sp, color = RoxyColors.accent, modifier = Modifier.padding(start = 4.dp))
                 }
+                // Requested but not all there yet: asking again searches for what is missing.
+                sn.requested && episodeAction != null && !sn.special && canSearchAgain -> Chip("Search again", selected = false, onClick = onRequest)
                 sn.requested -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Schedule, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(18.dp))
                     Text("Requested", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
@@ -648,7 +693,12 @@ private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, on
             when {
                 eps == null -> Column(modifier = Modifier.padding(start = 28.dp, bottom = 8.dp)) { repeat(3) { BoneLine(width = 240.dp, height = 12.dp, modifier = Modifier.padding(vertical = 6.dp)) } }
                 eps.isEmpty() -> Text("No episode list on TMDB yet.", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
-                else -> eps.forEach { e -> EpisodeRow(e, special = sn.special, onRequest = { onRequestEpisode("S0E${e.number}") }) }
+                else -> eps.forEach { e ->
+                    EpisodeRow(
+                        e, special = sn.special, onRequest = { onRequestEpisode("S0E${e.number}") }, admin = admin,
+                        onAction = episodeAction?.let { act -> { retry: Boolean -> act("S${sn.number}E${e.number}", retry) } },
+                    )
+                }
             }
         }
     }
@@ -660,7 +710,7 @@ private fun SeasonRow(sn: DiscoverSeason, tmdbId: Int, onRequest: () -> Unit, on
  * and synopsis, so a cut-off title or an unfamiliar special can be identified.
  */
 @Composable
-private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Unit) {
+private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Unit, admin: Boolean = false, onAction: ((retry: Boolean) -> Unit)? = null) {
     var open by rememberSaveable(e.number) { mutableStateOf(false) }
     val hasMore = !e.overview.isNullOrBlank() || !e.still.isNullOrBlank()
     Column(modifier = Modifier.fillMaxWidth().clickable(enabled = hasMore) { open = !open }.padding(start = 28.dp, top = 6.dp, bottom = 6.dp)) {
@@ -671,10 +721,20 @@ private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Un
             )
             Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
                 Text("${e.number}.  ${e.title.ifEmpty { "Episode ${e.number}" }}", fontSize = 13.sp, lineHeight = 17.sp, color = if (e.have) RoxyColors.onBackground else RoxyColors.muted)
-                val sub = listOfNotNull(e.airDate?.takeIf { it.isNotBlank() }, if (hasMore && !open) "tap for details" else null).joinToString("  ·  ")
-                if (sub.isNotEmpty()) Text(sub, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), modifier = Modifier.padding(top = 1.dp))
+                val dl = e.download?.takeIf { !e.have }
+                if (dl != null) {
+                    // This episode's own download: state in its colour, a bar while it moves.
+                    Text(episodeLine(dl), fontSize = 11.sp, color = stateColor(dl.state), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.dp))
+                    if (dl.state == "downloading" || dl.state == "stalled") DownloadBar(dl.progress, dl.state, modifier = Modifier.padding(top = 4.dp, end = 8.dp).fillMaxWidth().clip(RoundedCornerShape(2.dp)))
+                } else {
+                    val sub = listOfNotNull(e.airDate?.takeIf { it.isNotBlank() }, if (hasMore && !open) "tap for details" else null).joinToString("  ·  ")
+                    if (sub.isNotEmpty()) Text(sub, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), modifier = Modifier.padding(top = 1.dp))
+                }
             }
+            val dl = e.download?.takeIf { !e.have }
             when {
+                onAction != null && dl != null && dl.canRetry && admin -> SmallAction("Retry") { onAction(true) }
+                onAction != null && dl != null && dl.canSearch -> SmallAction("Search") { onAction(false) }
                 special && !e.have && e.requested -> Text("Requested", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp, top = 2.dp))
                 special && !e.have -> Text("Request", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onRequest).padding(horizontal = 8.dp, vertical = 4.dp))
             }
@@ -690,6 +750,12 @@ private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Un
             }
         }
     }
+}
+
+/** A small text button at the end of an episode row. */
+@Composable
+private fun SmallAction(label: String, onClick: () -> Unit) {
+    Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp))
 }
 
 /** TMDB's status phrases, shortened so the facts line stays on one line. */

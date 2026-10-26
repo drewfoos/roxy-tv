@@ -94,6 +94,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/discover/requests/{id}/replace", s.discoverReplaceRelease)
 			r.Get("/discover/tv/{tmdbId}/season/{n}", s.discoverEpisodes)
 			r.Get("/discover/{type}/{tmdbId}", s.discoverDetail)
+			r.Get("/discover/{type}/{tmdbId}/details", s.discoverMoreDetails)
 			r.Post("/webhooks/{source}", s.webhook)
 			r.Post("/ingest/{source}", s.webhook)
 			r.Get("/webhooks/events", s.webhookEvents)

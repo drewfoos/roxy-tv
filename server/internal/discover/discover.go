@@ -173,7 +173,7 @@ func (c *ttlCache[T]) put(k string, v T) {
 
 func New(st *store.Store, cfg *config.Config, tmdb *metadata.TMDB) *Service {
 	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), people: newTTLCache[*Person](time.Hour, 300), similar: newTTLCache[[]Item](time.Hour, 500), episodes: newTTLCache[[]Episode](10*time.Minute, 500)}
-	s.dl = tracker{status: map[string]*Download{}, progress: map[string]progressMark{}, kick: make(chan struct{}, 1), refresh: map[string]time.Time{}}
+	s.dl = tracker{status: map[string]*Download{}, progress: map[string]progressMark{}, kick: make(chan struct{}, 1), refresh: map[string]time.Time{}, stalled: map[string]time.Time{}}
 	s.loadArr(context.Background())
 	return s
 }
@@ -912,11 +912,13 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 				r.Seasons = kept
 			}
 			if !added && r.Status == "sent" {
+				s.searchSeasonsAgain(ctx, r, seasons)
 				return r, nil
 			}
 		} else if len(r.Seasons) > 0 && len(seasons) == 0 {
 			r.Seasons = nil
 		} else if r.Status == "sent" {
+			s.searchSeasonsAgain(ctx, r, seasons)
 			return r, nil
 		}
 		r.Status, r.Error = "pending", ""
@@ -953,6 +955,12 @@ func (s *Service) requestEpisodes(ctx context.Context, det *Detail, user *model.
 		added = true
 	}
 	if !added && r.Status == "sent" {
+		if sonarr, _ := s.clients(); sonarr != nil && r.ArrID != 0 {
+			want := codeSet(episodes)
+			if err := s.searchMissing(ctx, sonarr, r, func(ep arr.Episode) bool { return want[epCode(ep.SeasonNumber, ep.EpisodeNumber)] }); err == nil {
+				s.KickDownloads()
+			}
+		}
 		return r, nil
 	}
 	r.Status, r.Error = "pending", ""
@@ -1084,6 +1092,8 @@ type Episode struct {
 	Have     bool   `json:"have"`
 	// Specials only: covered by a request (season requests never cover season 0).
 	Requested bool `json:"requested,omitempty"`
+	// Download: this episode's state while it is requested and has no file yet.
+	Download *EpisodeDL `json:"download,omitempty"`
 }
 
 // Episodes lists a season's episodes from TMDB (cached 10 min) marked with what the
@@ -1121,10 +1131,20 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 		s.episodes.put(key, base)
 	}
 	out := append([]Episode(nil), base...)
-	if season == 0 {
-		if r, err := s.store.GetRequest(ctx, "tv", tmdbID); err == nil && r != nil && r.Status != "failed" {
+	if r, err := s.store.GetRequest(ctx, "tv", tmdbID); err == nil && r != nil && r.Status != "failed" {
+		if season == 0 {
 			for i := range out {
-				out[i].Requested = containsStr(r.Episodes, fmt.Sprintf("S0E%d", out[i].Number))
+				out[i].Requested = containsStr(r.Episodes, fmt.Sprintf("S0E%d", out[i].Number)) || contains(r.Seasons, 0)
+			}
+		}
+		if d := s.Download(r.ID); d != nil {
+			for i := range out {
+				for j := range d.Episodes {
+					if e := d.Episodes[j]; e.Season == season && e.Episode == out[i].Number {
+						out[i].Download = &e
+						break
+					}
+				}
 			}
 		}
 	}

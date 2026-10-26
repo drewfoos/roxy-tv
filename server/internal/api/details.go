@@ -46,10 +46,12 @@ type tmdbExtras struct {
 }
 
 type detailsResponse struct {
-	Item  model.Item        `json:"item"`
-	Facts *store.MediaFacts `json:"facts,omitempty"`
-	TMDB  *tmdbExtras       `json:"tmdb,omitempty"`
-	Links map[string]string `json:"links,omitempty"` // tmdb, imdb, anilist, mal, tvdb -> URL
+	Item model.Item `json:"item"`
+	// Backdrop: an absolute image URL for titles not in the library (Discover).
+	Backdrop string            `json:"backdrop,omitempty"`
+	Facts    *store.MediaFacts `json:"facts,omitempty"`
+	TMDB     *tmdbExtras       `json:"tmdb,omitempty"`
+	Links    map[string]string `json:"links,omitempty"` // tmdb, imdb, anilist, mal, tvdb -> URL
 }
 
 var (

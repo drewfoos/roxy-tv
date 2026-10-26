@@ -358,10 +358,38 @@ only the first 10 queue records), episodes (`hasFile`, `airDateUtc`, `lastSearch
 and history (`downloadFailed`), every 10 s while something moves and every 2 min
 otherwise, and at once when a Sonarr / Radarr webhook arrives.
 
-- `POST /v1/discover/requests/{id}/search` → `{ok}`: search again for what is missing (anyone).
-- `POST /v1/discover/requests/{id}/replace` (admin) → `{ok}`: remove the failed / stalled /
-  unimportable downloads from the client, blocklist those releases and let the arr app
-  pick another.
+`episodes` lists every requested episode still missing with its own `state`, `progress`,
+`timeLeftSec`, `message`, `airDate` (waiting) and `canSearch` / `canRetry`; the same
+object is on each episode of `GET /v1/discover/tv/{id}/season/{n}` as `download`.
+
+- `POST /v1/discover/requests/{id}/search` `{episodes?: ["S1E3"]}` → `{ok}`: search again
+  for what is missing, or just those episodes (anyone).
+- `POST /v1/discover/requests/{id}/replace` `{episodes?}` (admin) → `{ok}`: remove the
+  failed / stalled / unimportable downloads (all, or those episodes') from the client,
+  blocklist those releases and let the arr app pick another.
+
+Guards, so a button never piles onto work already under way (the server enforces them
+and returns `409` with the reason; `canSearch` / `canRetry` tell the apps when to show
+the buttons):
+
+- No search for an episode (or movie) that is in the download client, even one that
+  only just stalled; one the arr app is searching for right now (its running
+  `EpisodeSearch` / `SeasonSearch` / `SeriesSearch` / `MissingEpisodeSearch` /
+  `MoviesSearch` commands); or one searched in the last 10 minutes.
+- No replacing a stalled download until it has been stalled for 10 minutes (it often
+  recovers); failed and unimportable downloads can be replaced at once.
+- Asking again for a season that is already requested searches its missing episodes
+  under the same rules.
+- `searching` is shown only while a search runs or right after the request; searched
+  without a result is `notFound`.
+
+`GET /v1/discover/{type}/{tmdbId}/details` → the "More details" page for a Discover title,
+in the shape of `/v1/items/{id}/details` (TMDB cast, keywords, companies, dates, links;
+`backdrop` is an absolute image URL).
+
+Sonarr: a whole-series request sets `monitorNewItems: all` (seasons that air later are
+fetched too); a request for some seasons sets `none`. Test connection reports the arr
+version and whether it is one Roxy is tested with (Sonarr v4; Radarr v5, v6).
 
 A test bench with real Sonarr / Radarr and a fake indexer and download client is in
 `deploy/dev/arrsim/`.

@@ -125,8 +125,11 @@ type NamedID struct {
 
 // Probe is what Test connection returns: proof the key works and the choices to offer.
 type Probe struct {
-	Version         string    `json:"version"`
-	AppName         string    `json:"appName"`
+	Version string `json:"version"`
+	AppName string `json:"appName"`
+	// Supported: a version Roxy is tested with; Note explains otherwise.
+	Supported       bool      `json:"supported"`
+	Note            string    `json:"note,omitempty"`
 	RootFolders     []NamedID `json:"rootFolders"`
 	QualityProfiles []NamedID `json:"qualityProfiles"`
 	Tags            []NamedID `json:"tags"`
@@ -146,6 +149,7 @@ func (c *Client) Test(ctx context.Context) (*Probe, error) {
 		return nil, err
 	}
 	p := &Probe{Version: st.Version, AppName: st.AppName}
+	p.Supported, p.Note = CheckVersion(c.Name, st.Version)
 	if err := c.do(ctx, http.MethodGet, "/rootfolder", nil, nil, &p.RootFolders); err != nil {
 		return nil, err
 	}
@@ -268,6 +272,11 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 				}
 			}
 			s["monitored"] = true
+			// Asked for the whole series: follow its new seasons too.
+			if len(want) == 0 && s["monitorNewItems"] != "all" {
+				s["monitorNewItems"] = "all"
+				changed = true
+			}
 			if changed {
 				if err := c.do(ctx, http.MethodPut, "/series/"+strconv.Itoa(int(id)), nil, s, nil); err != nil {
 					return 0, err
@@ -311,6 +320,15 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 				sm["monitored"] = (len(want) == 0 && n != 0) || want[int(n)]
 			}
 		}
+	}
+	// New seasons that start airing later are grabbed only for a whole-series request;
+	// asking for Season 1 of an ongoing show must not pull in Season 4 next year. (The
+	// lookup carries Sonarr's default, "all".) New episodes of a monitored season are
+	// grabbed as they air either way.
+	if len(want) == 0 {
+		series["monitorNewItems"] = "all"
+	} else {
+		series["monitorNewItems"] = "none"
 	}
 	// No "monitor" option: Sonarr keeps the per-season flags set above.
 	series["addOptions"] = map[string]any{"searchForMissingEpisodes": c.cfg.searchOnAdd(), "ignoreEpisodesWithFiles": true}
@@ -364,4 +382,28 @@ func (c *Client) AddMovie(ctx context.Context, tmdbID int) (int, error) {
 		return 0, err
 	}
 	return added.ID, nil
+}
+
+// Supported versions: what Roxy is built and tested against (API v3 in all of them).
+const (
+	SupportedSonarr = "Sonarr v4"
+	SupportedRadarr = "Radarr v5 and v6"
+)
+
+// CheckVersion says whether an arr version is one Roxy is tested with, and why not.
+func CheckVersion(name, version string) (bool, string) {
+	major, _ := strconv.Atoi(strings.SplitN(version, ".", 2)[0])
+	switch name {
+	case "sonarr":
+		if major >= 4 {
+			return true, ""
+		}
+		return false, "Sonarr v" + version + " is older than Roxy is tested with (Sonarr v4). Requests may work, but download status needs v4."
+	case "radarr":
+		if major >= 5 {
+			return true, ""
+		}
+		return false, "Radarr v" + version + " is older than Roxy is tested with (Radarr v5 or v6). Requests may work, but download status needs v5 or newer."
+	}
+	return true, ""
 }

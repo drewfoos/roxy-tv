@@ -124,6 +124,11 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
             else "Movie requests are added to Radarr, monitored, with a search.",
             fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted,
         )
+        Text(
+            if (isSonarr) "Works with Sonarr v4 (tested with 4.0). A whole-series request also follows seasons that air later; a single-season request does not."
+            else "Works with Radarr v5 and v6 (tested with 6.4).",
+            fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted,
+        )
         RoxyTextField(cfg.url, { onChange(cfg.copy(url = it)) }, label = "$name URL (http://host:port, with any URL base)", keyboardType = KeyboardType.Uri)
         RoxyTextField(cfg.apiKey, { onChange(cfg.copy(apiKey = it)) }, label = "API key (Settings → General → Security)", password = true, imeAction = ImeAction.Done)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -137,8 +142,9 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
                     testing = false
                 }
             })
-            probe?.let { Text("${it.appName.ifEmpty { name }} ${it.version}", fontSize = 13.sp, color = RoxyColors.accent) }
+            probe?.let { Text("${it.appName.ifEmpty { name }} ${it.version}", fontSize = 13.sp, color = if (it.supported) RoxyColors.accent else RoxyColors.error) }
         }
+        probe?.note?.let { Text(it, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.error) }
         testError?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
         val p = probe
         if (p != null) {

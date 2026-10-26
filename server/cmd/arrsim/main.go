@@ -90,6 +90,9 @@ var (
 	jobs    []*job
 	nextID  = 1
 	nzbMeta = map[string]release{} // nzb id -> release, so the grab knows what it is
+	// runID keeps download ids unique across restarts: an id the arr app has already seen
+	// (and imported) makes it treat a new download as the old one and drop it.
+	runID = strconv.FormatInt(time.Now().Unix()%1_000_000, 36)
 )
 
 type release struct {
@@ -314,6 +317,22 @@ func tvReleases(q url.Values) []release {
 	// Anime: Sonarr searches by absolute episode number, as "q=08" beside the tvdbid or
 	// as "q=<title> 08" on a plain search.
 	abs := ""
+	// "Title S2 03": a season-relative episode; turn it into the absolute number.
+	if m := regexp.MustCompile(`^(.*?)\s*S(\d+)\s+(\d{1,4})$`).FindStringSubmatch(strings.TrimSpace(q.Get("q"))); m != nil {
+		if s == nil && m[1] != "" {
+			s, _ = seriesByTitle(m[1])
+		}
+		if s != nil {
+			season, _ := strconv.Atoi(m[2])
+			n, _ := strconv.Atoi(m[3])
+			for sn, count := range s.Seasons {
+				if sn > 0 && sn < season {
+					n += count
+				}
+			}
+			q.Set("q", strconv.Itoa(n))
+		}
+	}
 	if m := regexp.MustCompile(`^(.*?)\s*(\d{1,4})$`).FindStringSubmatch(strings.TrimSpace(q.Get("q"))); m != nil {
 		abs = m[2]
 		if s == nil && m[1] != "" {
@@ -453,7 +472,7 @@ func addJob(w http.ResponseWriter, r *http.Request, q url.Values) {
 	if n := q.Get("nzbname"); n != "" {
 		rel.Title = strings.TrimSuffix(n, ".nzb")
 	}
-	j := &job{ID: fmt.Sprintf("SABnzbd_nzo_arrsim%04d", nextID), Name: rel.Title, Category: q.Get("cat"), Mode: m, Size: rel.Size, Started: time.Now(), Files: rel.Files}
+	j := &job{ID: fmt.Sprintf("SABnzbd_nzo_arrsim%s%04d", runID, nextID), Name: rel.Title, Category: q.Get("cat"), Mode: m, Size: rel.Size, Started: time.Now(), Files: rel.Files}
 	if m == "none" || m == "" {
 		j.Mode = "ok"
 	}

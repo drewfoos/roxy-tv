@@ -10,7 +10,7 @@ import (
 )
 
 func newTestService() *Service {
-	return &Service{dl: tracker{status: map[string]*Download{}, progress: map[string]progressMark{}, kick: make(chan struct{}, 1), refresh: map[string]time.Time{}}}
+	return &Service{dl: tracker{status: map[string]*Download{}, progress: map[string]progressMark{}, kick: make(chan struct{}, 1), refresh: map[string]time.Time{}, stalled: map[string]time.Time{}}}
 }
 
 func tp(t time.Time) *time.Time { return &t }
@@ -158,5 +158,97 @@ func TestTimeLeft(t *testing.T) {
 		if got := (arr.QueueItem{TimeLeft: in}).TimeLeftSeconds(); got != want {
 			t.Errorf("%q: %d want %d", in, got, want)
 		}
+	}
+}
+
+func TestEpisodeStates(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	past, future := tp(now.Add(-30*24*time.Hour)), tp(now.Add(7*24*time.Hour))
+	r := &store.Request{Seasons: []int{1}}
+	s := newTestService()
+	eps := []arr.Episode{
+		ep(1, 1, 1, true, past, nil),    // has a file: not listed
+		ep(2, 1, 2, false, past, nil),   // downloading
+		ep(3, 1, 3, false, past, nil),   // failed earlier
+		ep(4, 1, 4, false, past, nil),   // nothing yet: searching
+		ep(5, 1, 5, false, future, nil), // airs next week
+	}
+	q := []arr.QueueItem{{ID: 7, DownloadID: "x", EpisodeID: 2, Status: "downloading", Size: 100, SizeLeft: 40, TimeLeft: "00:02:00"}}
+	h := []arr.HistoryRecord{{EpisodeID: 3, EventType: "downloadFailed", Date: now.Add(-time.Minute), Data: map[string]string{"message": "bad"}}}
+	d := s.seriesStatus(r, eps, q, h, now)
+	got := map[int]EpisodeDL{}
+	for _, e := range d.Episodes {
+		got[e.Episode] = e
+	}
+	if len(d.Episodes) != 4 {
+		t.Fatalf("want 4 missing episodes, got %+v", d.Episodes)
+	}
+	if e := got[2]; e.State != DLDownloading || e.Progress != 0.6 || e.TimeLeftSec != 120 {
+		t.Errorf("E2: %+v", e)
+	}
+	if e := got[3]; e.State != DLFailed || e.Message != "bad" {
+		t.Errorf("E3: %+v", e)
+	}
+	if e := got[4]; e.State != DLSearching {
+		t.Errorf("E4: %+v", e)
+	}
+	if e := got[5]; e.State != DLWaiting || e.AirDate == "" {
+		t.Errorf("E5: %+v", e)
+	}
+	if !codeSet([]string{" s1e3 "})["S1E3"] || epCode(1, 3) != "S1E3" {
+		t.Error("codes")
+	}
+}
+
+func TestSearchAndRetryGuards(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	past := tp(now.Add(-30 * 24 * time.Hour))
+	r := &store.Request{Seasons: []int{1}, ArrID: 7}
+	two := 2 // a running SeasonSearch for season 2 covers none of these
+
+	s := newTestService()
+	eps := []arr.Episode{
+		ep(1, 1, 1, false, past, tp(now.Add(-2*time.Minute))), // searched 2 min ago
+		ep(2, 1, 2, false, past, nil),                         // stalled in the client
+		ep(3, 1, 3, false, past, tp(now.Add(-time.Hour))),     // searched an hour ago
+		ep(4, 1, 4, false, past, nil),                         // covered by a running SeasonSearch? no: season 2 below
+	}
+	q := []arr.QueueItem{{ID: 9, DownloadID: "st", EpisodeID: 2, Status: "paused", Size: 10, SizeLeft: 5}}
+	cmds := []arr.Command{{Name: "EpisodeSearch", Status: "started"}}
+	cmds[0].Body.EpisodeIDs = []int{4}
+	other := arr.Command{Name: "SeasonSearch", Status: "queued"}
+	other.Body.SeriesID, other.Body.SeasonNumber = 7, &two
+	cmds = append(cmds, other)
+
+	d := s.seriesStatusWith(r, eps, q, nil, cmds, now)
+	got := map[int]EpisodeDL{}
+	for _, e := range d.Episodes {
+		got[e.Episode] = e
+	}
+	if got[1].CanSearch {
+		t.Error("E1 was searched 2 min ago: no search yet")
+	}
+	if got[2].CanSearch || got[2].CanRetry {
+		t.Errorf("E2 just stalled: neither search nor retry yet: %+v", got[2])
+	}
+	if !got[3].CanSearch {
+		t.Error("E3 searched an hour ago: searchable")
+	}
+	if got[4].CanSearch || got[4].State != DLSearching || got[4].Message == "" {
+		t.Errorf("E4 is being searched: %+v", got[4])
+	}
+	if !d.CanSearch || d.CanRetry {
+		t.Errorf("request: canSearch=%v canRetry=%v", d.CanSearch, d.CanRetry)
+	}
+
+	// Eleven minutes later the same stall may be replaced.
+	d = s.seriesStatusWith(r, eps, q, nil, nil, now.Add(11*time.Minute))
+	for _, e := range d.Episodes {
+		if e.Episode == 2 && !e.CanRetry {
+			t.Errorf("E2 stalled 11 min: retry allowed: %+v", e)
+		}
+	}
+	if !d.CanRetry {
+		t.Error("request canRetry after a long stall")
 	}
 }

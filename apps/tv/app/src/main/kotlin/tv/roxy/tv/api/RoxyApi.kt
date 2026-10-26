@@ -178,6 +178,9 @@ class RoxyApi(private val prefs: Prefs) {
     /** The "More details" page: item, library facts, TMDB extras, provider links. */
     suspend fun itemDetails(id: String): ItemDetails = get("/v1/items/$id/details")
 
+    /** "More details" for a Discover title (it may not be in the library). */
+    suspend fun discoverMoreDetails(type: String, tmdbId: Int): ItemDetails = get("/v1/discover/$type/$tmdbId/details")
+
     // ---- discover (TMDB through the server; "our own request app") ----
 
     suspend fun discover(): DiscoverResponse = get("/v1/discover")
@@ -198,10 +201,14 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
 
     /** Ask Sonarr / Radarr to look for what the request still lacks. */
-    suspend fun searchAgain(requestId: String) { postNoBody("/v1/discover/requests/$requestId/search", "{}") }
+    suspend fun searchAgain(requestId: String, episodes: List<String> = emptyList()) {
+        postNoBody("/v1/discover/requests/$requestId/search", json.encodeToString(EpisodeCodes.serializer(), EpisodeCodes(episodes)))
+    }
 
-    /** Admin: drop the failed / stalled download, blocklist it, and let the arr app pick another. */
-    suspend fun tryAnotherRelease(requestId: String) { postNoBody("/v1/discover/requests/$requestId/replace", "{}") }
+    /** Admin: drop the failed / stalled download, blocklist it, and let the arr app pick another (all, or these "S1E3" episodes). */
+    suspend fun tryAnotherRelease(requestId: String, episodes: List<String> = emptyList()) {
+        postNoBody("/v1/discover/requests/$requestId/replace", json.encodeToString(EpisodeCodes.serializer(), EpisodeCodes(episodes)))
+    }
 
     suspend fun deleteRequest(id: String) = delete("/v1/discover/requests/$id")
 
@@ -503,7 +510,7 @@ data class TmdbExtras(
 )
 
 @Serializable
-data class ItemDetails(val item: Item, val facts: MediaFacts? = null, val tmdb: TmdbExtras? = null, val links: Map<String, String> = emptyMap())
+data class ItemDetails(val item: Item, val facts: MediaFacts? = null, val tmdb: TmdbExtras? = null, val links: Map<String, String> = emptyMap(), val backdrop: String? = null)
 
 @Serializable
 data class ProfilesResponse(val profiles: List<Profile> = emptyList(), val current: String? = null)
@@ -775,7 +782,17 @@ data class DownloadStatus(
     val nextAir: String? = null,
     val lastSearch: String? = null,
     val groups: List<DownloadGroup> = emptyList(),
+    val canSearch: Boolean = false,
+    val canRetry: Boolean = false,
+    /** When the server last looked; open episode lists reload when it changes. */
+    val updatedAt: String? = null,
+    /** Every requested episode still missing, each with its own state. */
+    val episodes: List<EpisodeDownload> = emptyList(),
 ) {
+    /** Episodes in the download client right now (downloading, stalled, importing, queued). */
+    val activeEpisodes: List<EpisodeDownload> get() = episodes.filter { it.state in setOf("downloading", "stalled", "importing", "queued") }
+    /** Something is moving in the download client (a ring on the poster). */
+    val isMoving: Boolean get() = state in setOf("downloading", "stalled", "importing")
     /** Worth refreshing every few seconds. */
     val isActive: Boolean get() = state in setOf("downloading", "importing", "queued", "searching", "stalled")
     /** Something an admin can fix by trying another release. */
@@ -786,7 +803,21 @@ data class DownloadStatus(
 data class DownloadGroup(val state: String, val label: String = "", val count: Int = 0, val progress: Double = 0.0, val timeLeftSec: Int = 0, val message: String? = null)
 
 @Serializable
-data class DiscoverEpisode(val number: Int, val title: String = "", val overview: String? = null, val airDate: String? = null, val still: String? = null, val have: Boolean = false, val requested: Boolean = false)
+data class DiscoverEpisode(val number: Int, val title: String = "", val overview: String? = null, val airDate: String? = null, val still: String? = null, val have: Boolean = false, val requested: Boolean = false, val download: EpisodeDownload? = null)
+
+/** One requested episode's own download state (see [DownloadStatus.state] for the values). */
+@Serializable
+data class EpisodeDownload(
+    val season: Int = 0, val episode: Int = 0, val state: String = "", val progress: Double = 0.0, val timeLeftSec: Int = 0,
+    val message: String? = null, val airDate: String? = null,
+    /** The server's rules: not downloading, not being searched, not searched a moment ago. */
+    val canSearch: Boolean = false,
+    /** Failed, unimportable, or stalled long enough to be worth replacing. */
+    val canRetry: Boolean = false,
+)
+
+@Serializable
+private data class EpisodeCodes(val episodes: List<String> = emptyList())
 
 @Serializable
 data class DiscoverEpisodesResponse(val episodes: List<DiscoverEpisode> = emptyList())
@@ -962,7 +993,7 @@ data class ArrSettingsResponse(val sonarr: ArrConfig = ArrConfig(), val radarr: 
 data class ArrNamed(val id: Int = 0, val name: String = "", val label: String = "", val path: String = "", val freeSpace: Long = 0)
 
 @Serializable
-data class ArrProbe(val version: String = "", val appName: String = "", val rootFolders: List<ArrNamed> = emptyList(), val qualityProfiles: List<ArrNamed> = emptyList(), val tags: List<ArrNamed> = emptyList())
+data class ArrProbe(val version: String = "", val appName: String = "", val supported: Boolean = true, val note: String? = null, val rootFolders: List<ArrNamed> = emptyList(), val qualityProfiles: List<ArrNamed> = emptyList(), val tags: List<ArrNamed> = emptyList())
 
 @Serializable
 private data class ArrTestBody(val kind: String, val url: String, val apiKey: String)

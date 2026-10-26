@@ -198,7 +198,15 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onBack = { nav.popBackStack() },
                             onOpenSeries = { id, title -> nav.navigate(Route.Series(id, title)) }, // Discover has no library item to seed from
                             onOpenMovie = { id, title -> nav.navigate(Route.Movie(id, title)) },
+                            onMoreDetails = { title -> nav.navigate(Route.DiscoverMoreDetails(r.type, r.tmdbId, title)) },
                         )
+                    }
+                }
+                composable<Route.DiscoverMoreDetails> { e ->
+                    Page {
+                        val r = e.toRoute<Route.DiscoverMoreDetails>()
+                        PhoneDetails(itemId = "", fallbackTitle = r.title, onBack = { nav.popBackStack() }, discover = r.type to r.tmdbId,
+                            onOpenPerson = { c -> nav.navigate(Route.Person(c.tmdbId, c.name)) })
                     }
                 }
                 composable<Route.Watchlist> {

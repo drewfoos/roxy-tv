@@ -69,13 +69,15 @@ import tv.roxy.tv.ui.theme.RoxyColors
  * links to the provider pages.
  */
 @Composable
-fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit, onOpenPerson: (CastMember) -> Unit = {}) {
+fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit, onOpenPerson: (CastMember) -> Unit = {}, discover: Pair<String, Int>? = null) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     var details by remember { mutableStateOf<ItemDetails?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(itemId) {
-        runCatching { app.api.itemDetails(itemId) }
+    LaunchedEffect(itemId, discover) {
+        // A Discover title (type, TMDB id) may not be in the library; the server fills the
+        // same page from TMDB.
+        runCatching { if (discover != null) app.api.discoverMoreDetails(discover.first, discover.second) else app.api.itemDetails(itemId) }
             .onSuccess { details = it }
             .onFailure { t -> Timber.w(t, "details"); error = t.message }
     }
@@ -95,7 +97,7 @@ fun PhoneDetails(itemId: String, fallbackTitle: String, onBack: () -> Unit, onOp
         val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + HeaderRow
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = top).navigationBarsPadding().padding(bottom = 24.dp)) {
             Box(modifier = Modifier.fillMaxWidth().height(220.dp)) {
-                RoxyImage(app.api.imageUrl(item, "backdrop", widthPx(420.dp) * 2) ?: app.api.imageUrl(item, "poster", widthPx(420.dp) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+                RoxyImage(d.backdrop ?: app.api.imageUrl(item, "backdrop", widthPx(420.dp) * 2) ?: app.api.imageUrl(item, "poster", widthPx(420.dp) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
                 Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to RoxyColors.background)))
             }
             Column(modifier = Modifier.padding(horizontal = PhonePad)) {

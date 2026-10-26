@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -67,10 +68,67 @@ private fun stateWord(state: String): String = when (state) {
 
 private fun pct(p: Double) = "${(p * 100).toInt()}%"
 
-/** "Downloading 45%" for a poster. */
+/** "Downloading S1 E5 · 45%", "Downloading 3 episodes · 45%", "Downloading 45%" for a poster. */
 internal fun DownloadStatus.shortLine(isMovie: Boolean): String = when (state) {
-    "downloading", "stalled" -> "${stateWord(state)} ${pct(progress)}"
+    "downloading", "stalled", "importing" -> {
+        val active = activeEpisodes
+        val what = when {
+            isMovie || active.isEmpty() -> null
+            active.size == 1 -> "S${active[0].season} E${active[0].episode}"
+            else -> "${active.size} eps"
+        }
+        // Short: the poster's ring already says "downloading". "S1 E5 · 45%", "3 eps · 40%",
+        // "Stalled · 37%", "Adding to library".
+        when {
+            state == "importing" -> stateWord(state)
+            state == "stalled" -> "Stalled · ${pct(progress)}"
+            what != null -> "$what · ${pct(progress)}"
+            else -> "Downloading · ${pct(progress)}"
+        }
+    }
     else -> stateWord(state)
+}
+
+/** The badge while something downloads: a ring filling with the progress around a small arrow. */
+@Composable
+internal fun ProgressBadge(d: DownloadStatus, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.size(26.dp).clip(CircleShape).background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
+        androidx.compose.material3.CircularProgressIndicator(
+            progress = { if (d.state == "importing") 1f else d.progress.toFloat().coerceIn(0f, 1f) },
+            modifier = Modifier.size(22.dp), color = stateColor(d.state), trackColor = Color(0x44FFFFFF), strokeWidth = 2.5.dp,
+        )
+        Icon(Icons.Filled.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+    }
+}
+
+/** What a long-press on a request poster shows: each episode in the download client with its bar. */
+@Composable
+internal fun ActiveDownloadsList(d: DownloadStatus, title: String, isMovie: Boolean, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.width(260.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val rows = if (isMovie || d.activeEpisodes.isEmpty()) listOf(Triple("Movie", d.progress, d.state) to d.timeLeftSec)
+        else d.activeEpisodes.take(12).map { Triple("S${it.season} E${it.episode}", it.progress, it.state) to it.timeLeftSec }
+        rows.forEach { (r, left) ->
+            val (label, progress, state) = r
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
+                    Text(listOfNotNull(if (state == "importing") "Adding" else pct(progress), timeLeft(left)?.removeSuffix(" left")).joinToString(" · "), fontSize = 12.sp, color = stateColor(state))
+                }
+                DownloadBar(if (state == "importing") 1.0 else progress, state, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(2.dp)))
+            }
+        }
+        if (!isMovie && d.activeEpisodes.size > 12) Text("and ${d.activeEpisodes.size - 12} more", fontSize = 12.sp, color = RoxyColors.muted)
+        if (!isMovie && d.wanted > 1) Text("${d.have} of ${d.wanted} episodes downloaded", fontSize = 12.sp, color = RoxyColors.muted)
+    }
+}
+
+/** One episode's line under its title: "Downloading 45% · 2 min left", "Failed · reason", "Airs Nov 3". */
+internal fun episodeLine(e: tv.roxy.tv.api.EpisodeDownload): String = when (e.state) {
+    "downloading", "stalled" -> listOfNotNull("${stateWord(e.state)} ${pct(e.progress)}", timeLeft(e.timeLeftSec), e.message?.takeIf { e.state == "stalled" }).joinToString("  ·  ")
+    "waiting" -> day(e.airDate)?.let { "Airs $it" } ?: "Not aired yet"
+    "failed", "attention" -> listOfNotNull(stateWord(e.state), e.message).joinToString("  ·  ")
+    else -> stateWord(e.state)
 }
 
 /** "12 min left", "1 h 5 min left". */
@@ -166,8 +224,11 @@ internal fun DownloadStatusCard(
                 d.groups.forEach { GroupRow(it) }
             }
         }
-        val canSearch = d.state == "notFound" || d.state == "failed"
-        val canReplace = admin && d.isProblem
+        // The server decides: no search over a running search or download, none right after
+        // the last one, no replacing a download that only just stalled.
+        // Never "Search again" while it is searching (or downloading): that is what it is doing.
+        val canSearch = d.canSearch && d.state !in setOf("searching", "downloading", "queued", "importing")
+        val canReplace = admin && d.canRetry
         if (canSearch || canReplace) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 4.dp)) {
                 if (canReplace) PlayButton(if (busy) "…" else "Try another release", icon = Icons.Filled.Refresh, pill = true, height = 38.dp, container = RoxyColors.accent, content = OnBrand, onClick = { if (!busy) onTryAnother() })

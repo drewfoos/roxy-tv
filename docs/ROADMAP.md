@@ -203,7 +203,12 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   Sonarr / Radarr are connected (the app prompts to set them up). Discover uses TMDB's
   "Seasons" episode group when TMDB merges an anime's cours into one season, so seasons
   match Sonarr's (Apothecary Diaries: 24 / 24 / 12, not 60); specials can be requested
-  all at once.
+  all at once. Per-episode download state and Search / Retry on each episode; guards so
+  nothing is searched while it downloads, is being searched, or was searched minutes ago,
+  and a stall gets 10 minutes before it can be replaced. Request posters: a progress
+  ring and "S1 E5 · 45%", long-press lists each downloading episode. Discover "More
+  details" page (cast etc.). Supported arr versions shown; single-season requests no
+  longer pull in later seasons.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

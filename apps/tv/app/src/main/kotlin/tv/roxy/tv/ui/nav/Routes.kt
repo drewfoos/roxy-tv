@@ -17,6 +17,7 @@ sealed interface Route {
     @Serializable data object ArrSettings : Route
     @Serializable data object FanartSettings : Route
     @Serializable data object TranscodingSettings : Route
+    @Serializable data class DiscoverMoreDetails(val type: String, val tmdbId: Int, val title: String) : Route
     @Serializable data object Webhooks : Route
     @Serializable data class Legal(val doc: String) : Route
     @Serializable data object Watchlist : Route
