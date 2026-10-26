@@ -3,7 +3,9 @@ package tv.roxy.tv.ui.phone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.outlined.Checklist
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material3.AlertDialog
@@ -93,35 +95,29 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * Admin: Library. Jellyfin's "Scan media library" split into what it does (new files,
- * missing metadata, replace everything), then every title with what it matched, the ones
- * that matched nothing first. A title opens Identify (pick the right TMDB / AniList entry)
- * or Edit details (type them in: custom shows like One Pace, which no provider lists).
+ * Admin: Library. Scan for new files, look up what is missing, refresh every title or
+ * only some (a separate picker), then just the titles that need a hand: unmatched ones,
+ * each opening Identify, Edit details (custom shows like One Pace) or a refresh.
+ * Matched titles are fixed from their own page (the admin ⋮ menu).
  */
 @Composable
-fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit) {
+fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit, onPickTitles: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<LibraryManage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    // Refresh dialog: null = closed; a title = just that one; else the whole-library dialog.
-    var refreshDialog by remember { mutableStateOf(false) }
+    // Refresh dialog: for every title, or (refreshOne) just one.
+    var refreshAll by remember { mutableStateOf(false) }
     var refreshOne by remember { mutableStateOf<LibraryTitle?>(null) }
     var parts by remember { mutableStateOf(RefreshParts()) }
-    var filter by remember { mutableStateOf("") }
-    var tick by remember { mutableStateOf(0) }
-    // Choosing titles: tick some and refresh just those (from the Refresh dialog, or a long press).
-    var selecting by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf(setOf<String>()) }
-    var refreshing by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         runCatching { app.api.libraryManage() }
             .onSuccess { state = it; error = null }
             .onFailure { t -> Timber.w(t, "library manage"); error = t.message }
     }
-    LaunchedEffect(tick) { reload() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { reload() } }
     // While something runs, follow it.
     val busy = state?.let { it.scanning || it.queue > 0 } == true
     LaunchedEffect(busy) {
@@ -129,12 +125,7 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
     }
     fun refresh(ids: List<String>, all: Boolean, p: RefreshParts, label: String) = scope.launch {
         runCatching { app.api.libraryRefresh(ids, all, p) }
-            .onSuccess {
-                notice = "Refreshing $label: " + listOfNotNull(
-                    "metadata".takeIf { p.metadata }, "images".takeIf { p.images }, "trickplay".takeIf { p.trickplay }, "intro & outro".takeIf { p.segments },
-                ).joinToString(", ") + "…"
-                delay(1500); reload(); app.items.userDataChanged()
-            }
+            .onSuccess { notice = "Refreshing $label: ${p.describe()}…"; delay(1500); reload(); app.items.userDataChanged() }
             .onFailure { t -> notice = t.message }
     }
     fun run(mode: String, message: String) = scope.launch {
@@ -146,17 +137,10 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             BackCircle(onBack)
-            Text(if (selecting) "Choose titles" else "Library", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp).weight(1f))
-            if (selecting) Text(
-                "Cancel", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { selecting = false; selected = emptySet() }.padding(horizontal = 10.dp, vertical = 6.dp),
-            )
+            Text("Library", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp))
         }
         val s = state
-        val rowRefresh: (LibraryTitle) -> Unit = { t -> refreshOne = t }
-        val toggle: (LibraryTitle) -> Unit = { t -> selected = if (t.id in selected) selected - t.id else selected + t.id }
-        val startChoosing: (LibraryTitle) -> Unit = { t -> if (!selecting) { selecting = true; selected = setOf(t.id) } else toggle(t) }
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item(key = "status") {
                 val line = when {
                     s == null -> "…"
@@ -172,87 +156,175 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
             }
             item(key = "actions") {
                 Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(RoxyColors.surface)) {
-                    ActionRow(Icons.Outlined.FolderOpen, "Scan for new files", "Adds new episodes and movies, removes ones deleted from disk") { run("files", "Scanning…") }
+                    ActionRow(Icons.Outlined.FolderOpen, "Scan for new files", "Adds new episodes and movies, removes ones deleted from disk, reads new .nfo files and artwork") { run("files", "Scanning…") }
                     Divider()
                     ActionRow(Icons.Outlined.ManageSearch, "Find missing metadata", "Looks up titles that matched nothing yet") { run("missing", "Looking up unmatched titles…") }
+                }
+            }
+            item(key = "refresh") {
+                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(RoxyColors.surface)) {
+                    ActionRow(Icons.Filled.Refresh, "Refresh all titles", "Metadata, images, trickplay or intro detection for the whole library") { refreshAll = true }
                     Divider()
-                    ActionRow(Icons.Filled.Refresh, "Refresh…", "Metadata, images, trickplay or intro detection, for every title or the ones you choose") { refreshDialog = true }
+                    ActionRow(Icons.Outlined.Checklist, "Refresh certain titles", "Pick the shows and movies to refresh") { onPickTitles() }
                 }
             }
             notice?.let { n -> item(key = "notice") { Text(n, fontSize = 13.sp, color = RoxyColors.muted) } }
             error?.let { e -> item(key = "error") { Text(e, fontSize = 13.sp, color = RoxyColors.error) } }
-            item(key = "custom") {
-                Text(
-                    "Custom shows (One Pace, fan edits, home video): put a Kodi tvshow.nfo with poster.jpg in the show's folder, and an .nfo per episode, and Roxy reads them on the next scan. Or pick the title below and choose Edit details.",
-                    fontSize = 12.sp, lineHeight = 17.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp),
-                )
-            }
             if (s == null) {
-                if (error == null) items(6) { BoneLine(width = 320.dp, height = 44.dp) }
+                if (error == null) items(4) { BoneLine(width = 320.dp, height = 44.dp) }
             } else {
-                item(key = "filter") {
-                    Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(42.dp).clip(RoundedCornerShape(21.dp)).background(RoxyColors.surfaceHigh).padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
+                val unmatched = s.titles.filter { !it.matched && !it.locked }
+                item(key = "h-unmatched") { SectionLabel(if (unmatched.isEmpty()) "Needs attention" else "Needs attention  ·  ${unmatched.size}") }
+                if (unmatched.isEmpty()) {
+                    item(key = "all-good") {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Search, null, tint = RoxyColors.muted, modifier = Modifier.size(20.dp))
-                            Box(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                                if (filter.isEmpty()) Text("Filter ${s.titles.size} titles", color = RoxyColors.muted, fontSize = 14.sp)
-                                BasicTextField(filter, { filter = it }, singleLine = true, textStyle = TextStyle(color = RoxyColors.onBackground, fontSize = 14.sp), cursorBrush = SolidColor(RoxyColors.accent), modifier = Modifier.fillMaxWidth())
-                            }
+                            Icon(Icons.Filled.Check, null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
+                            Text("Every title matched. Fix one from its page: ⋮ › Identify or Edit details.", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
+                } else {
+                    item(key = "why") {
+                        Text("These matched nothing on TMDB or AniList. Identify picks the right entry; Edit details types them in (custom shows like One Pace, or add a tvshow.nfo next to the files).", fontSize = 12.sp, lineHeight = 17.sp, color = RoxyColors.muted)
+                    }
+                    items(unmatched, key = { it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = { t -> refreshOne = t }) }
                 }
-                val shown = s.titles.filter { filter.isBlank() || it.title.contains(filter.trim(), ignoreCase = true) }
-                val unmatched = shown.filter { !it.matched && !it.locked }
-                if (unmatched.isNotEmpty()) {
-                    item(key = "h-unmatched") { SectionLabel("Needs attention  ·  ${unmatched.size}") }
-                    items(unmatched, key = { "u" + it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = rowRefresh, selecting = selecting, checked = it.id in selected, onToggle = toggle, onLongPress = startChoosing) }
-                }
-                val rest = shown.filter { it.matched || it.locked }
-                item(key = "h-all") { SectionLabel("All titles  ·  ${rest.size}") }
-                items(rest, key = { it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = rowRefresh, selecting = selecting, checked = it.id in selected, onToggle = toggle, onLongPress = startChoosing) }
-            }
-        }
-        if (selecting) {
-            Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.background).navigationBarsPadding().padding(horizontal = PhonePad, vertical = 10.dp)) {
-                val n = selected.size
-                PlayButton(
-                    when { refreshing -> "Refreshing…"; n == 0 -> "Tick the titles to refresh"; n == 1 -> "Refresh 1 title"; else -> "Refresh $n titles" },
-                    icon = Icons.Filled.Refresh, pill = true,
-                    container = if (n > 0) RoxyColors.accent else RoxyColors.surface, content = if (n > 0) OnBrand else RoxyColors.muted,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        if (n == 0 || refreshing) return@PlayButton
-                        // What to redo for them: the parts picked in the dialog.
-                        refreshOne = null
-                        refreshDialog = true
-                    },
-                )
             }
         }
     }
     val one = refreshOne
-    if (refreshDialog || one != null) {
-        val chosen = selected.size
+    if (refreshAll || one != null) {
         RefreshDialog(
-            heading = when {
-                one != null -> "Refresh ${one.title}"
-                selecting && chosen > 0 -> "Refresh $chosen title${if (chosen == 1) "" else "s"}"
-                else -> "Refresh"
-            },
+            heading = if (one != null) "Refresh ${one.title}" else "Refresh all titles",
             parts = parts, onParts = { parts = it },
-            primary = when { one != null || (selecting && chosen > 0) -> "Refresh"; else -> "All titles" },
+            primary = "Refresh",
             onPrimary = {
-                val p = parts
-                when {
-                    one != null -> refresh(listOf(one.id), false, p, one.title)
-                    selecting && chosen > 0 -> { refresh(selected.toList(), false, p, "$chosen title${if (chosen == 1) "" else "s"}"); selecting = false; selected = emptySet() }
-                    else -> refresh(emptyList(), true, p, "every title")
-                }
-                refreshDialog = false; refreshOne = null
+                if (one != null) refresh(listOf(one.id), false, parts, one.title) else refresh(emptyList(), true, parts, "every title")
+                refreshAll = false; refreshOne = null
             },
-            secondary = if (one == null && !(selecting && chosen > 0)) "Choose titles" else null,
-            onSecondary = { refreshDialog = false; selecting = true; selected = emptySet() },
-            onDismiss = { refreshDialog = false; refreshOne = null },
+            secondary = null, onSecondary = {},
+            onDismiss = { refreshAll = false; refreshOne = null },
+        )
+    }
+}
+
+private fun RefreshParts.describe() = listOfNotNull(
+    "metadata".takeIf { metadata }, "images".takeIf { images }, "trickplay".takeIf { trickplay }, "intro & outro".takeIf { segments },
+).joinToString(", ")
+
+/**
+ * Refresh certain titles: every show and movie with its poster, searchable, ticked one by
+ * one; the bar at the bottom asks what to redo for them and runs it.
+ */
+@Composable
+fun PhoneRefreshPicker(onBack: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    var titles by remember { mutableStateOf<List<LibraryTitle>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf("all") } // all | series | movie
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var dialog by remember { mutableStateOf(false) }
+    var parts by remember { mutableStateOf(RefreshParts()) }
+    var sending by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        runCatching { app.api.libraryManage().titles.sortedBy { it.title.lowercase() } }
+            .onSuccess { titles = it }
+            .onFailure { t -> error = t.message }
+    }
+    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            BackCircle(onBack)
+            Text("Refresh certain titles", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp).weight(1f))
+        }
+        Column(modifier = Modifier.padding(horizontal = PhonePad), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(21.dp)).background(RoxyColors.surfaceHigh).padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Search, null, tint = RoxyColors.muted, modifier = Modifier.size(20.dp))
+                Box(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                    if (query.isEmpty()) Text("Search your library", color = RoxyColors.muted, fontSize = 14.sp)
+                    BasicTextField(query, { query = it }, singleLine = true, textStyle = TextStyle(color = RoxyColors.onBackground, fontSize = 14.sp), cursorBrush = SolidColor(RoxyColors.accent), modifier = Modifier.fillMaxWidth())
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Chip("All", selected = kind == "all", onClick = { kind = "all" })
+                Chip("Series", selected = kind == "series", onClick = { kind = "series" })
+                Chip("Movies", selected = kind == "movie", onClick = { kind = "movie" })
+                Spacer(Modifier.weight(1f))
+                if (selected.isNotEmpty()) Text("Clear", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.clickable { selected = emptySet() }.padding(6.dp))
+            }
+            error?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
+        }
+        val list = titles?.filter { (kind == "all" || it.type == kind) && (query.isBlank() || it.title.contains(query.trim(), ignoreCase = true)) }
+        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                list == null -> if (error == null) items(6) { Bone(Modifier.fillMaxWidth().height(72.dp)) }
+                list.isEmpty() -> item { Text("Nothing matches.", fontSize = 13.sp, color = RoxyColors.muted) }
+                else -> items(list, key = { it.id }) { t ->
+                    val on = t.id in selected
+                    PickRow(t, on, poster = app.api.absoluteImage(t.poster, 120)) { selected = if (on) selected - t.id else selected + t.id }
+                }
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.background).navigationBarsPadding().padding(horizontal = PhonePad, vertical = 10.dp)) {
+            val n = selected.size
+            PlayButton(
+                when { sending -> "Starting…"; n == 0 -> "Pick titles to refresh"; n == 1 -> "Refresh 1 title"; else -> "Refresh $n titles" },
+                icon = Icons.Filled.Refresh, pill = true,
+                container = if (n > 0) RoxyColors.accent else RoxyColors.surface, content = if (n > 0) OnBrand else RoxyColors.muted,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { if (n > 0 && !sending) dialog = true },
+            )
+        }
+    }
+    if (dialog) {
+        val n = selected.size
+        RefreshDialog(
+            heading = "Refresh $n title${if (n == 1) "" else "s"}",
+            parts = parts, onParts = { parts = it },
+            primary = "Refresh",
+            onPrimary = {
+                dialog = false; sending = true
+                val ids = selected.toList()
+                scope.launch {
+                    runCatching { app.api.libraryRefresh(ids, false, parts) }
+                        .onSuccess { app.items.userDataChanged(); onBack() }
+                        .onFailure { t -> error = t.message }
+                    sending = false
+                }
+            },
+            secondary = null, onSecondary = {},
+            onDismiss = { dialog = false },
+        )
+    }
+}
+
+@Composable
+private fun PickRow(t: LibraryTitle, checked: Boolean, poster: String?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface)
+            .then(if (checked) Modifier.border(1.5.dp, RoxyColors.accent, RoundedCornerShape(12.dp)) else Modifier)
+            .clickable(onClick = onClick).padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.width(40.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
+            if (poster != null) AsyncImage(model = poster, contentDescription = t.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
+        Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(t.title + (t.year?.let { " ($it)" } ?: ""), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val status = when {
+                t.locked -> "Edited by hand"
+                !t.matched -> "No match"
+                t.providerIds["tmdb"] == null && t.providerIds["anilist"] == null -> "From .nfo"
+                else -> "Matched"
+            }
+            Text("${if (t.type == "movie") "Movie" else "Series"}  ·  $status", fontSize = 12.sp, color = if (!t.matched && !t.locked) RoxyColors.error else RoxyColors.muted)
+        }
+        Icon(
+            if (checked) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = if (checked) "Selected" else "Not selected",
+            tint = if (checked) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.size(24.dp),
         )
     }
 }
@@ -330,24 +402,16 @@ private fun ActionRow(icon: ImageVector, title: String, sub: String, onClick: ()
     }
 }
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun TitleRow(
     t: LibraryTitle, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit, onRefresh: (LibraryTitle) -> Unit,
-    selecting: Boolean = false, checked: Boolean = false, onToggle: (LibraryTitle) -> Unit = {}, onLongPress: (LibraryTitle) -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
         Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface)
-                .then(if (checked) Modifier.border(1.5.dp, RoxyColors.accent, RoundedCornerShape(12.dp)) else Modifier)
-                .combinedClickable(onLongClick = { onLongPress(t) }) { if (selecting) onToggle(t) else open = true }.padding(horizontal = 14.dp, vertical = 11.dp),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface).clickable { open = true }.padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (selecting) Icon(
-                if (checked) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = if (checked) "Selected" else "Not selected",
-                tint = if (checked) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.padding(end = 12.dp).size(22.dp),
-            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(t.title + (t.year?.let { " ($it)" } ?: ""), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val kind = if (t.type == "movie") "Movie" else "Series"

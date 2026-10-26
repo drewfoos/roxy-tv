@@ -256,6 +256,8 @@ class RoxyApi(private val prefs: Prefs) {
     // ---- library management (admin) ----
 
     suspend fun libraryManage(): LibraryManage = get("/v1/library/manage")
+    /** Absolute URL for a relative image path from the server, sized for [widthPx]. */
+    fun absoluteImage(rel: String?, widthPx: Int): String? = rel?.let { (if (it.startsWith("http")) it else baseUrl + it) + (if ('?' in it) "&w=" else "?w=") + widthPx }
     /** mode: files (new / removed files) | missing (titles without a match) | replace (look everything up again). */
     suspend fun libraryScan(mode: String) = postNoBody("/v1/library/scan", json.encodeToString(ScanMode.serializer(), ScanMode(mode)))
     suspend fun identifySearch(itemId: String, provider: String, query: String): IdentifyResults =
@@ -1012,6 +1014,8 @@ data class LibraryTitle(
     val matched: Boolean = false,
     val locked: Boolean = false,
     val providerIds: Map<String, String> = emptyMap(),
+    /** Relative poster URL (/v1/items/{id}/images/poster?v=...), when the title has one. */
+    val poster: String? = null,
 )
 
 @Serializable

@@ -251,8 +251,12 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onIdentify = { t -> nav.navigate(Route.Identify(t.id, t.title, t.type)) },
                             onEdit = { t -> nav.navigate(Route.EditMetadata(t.id, t.title)) },
                             onOpen = { t -> if (t.type == "movie") nav.navigate(Route.Movie(t.id, t.title)) else nav.navigate(Route.Series(t.id, t.title)) },
+                            onPickTitles = { nav.navigate(Route.LibraryRefreshPick) },
                         )
                     }
+                }
+                composable<Route.LibraryRefreshPick> {
+                    Page { PhoneRefreshPicker(onBack = { nav.popBackStack() }) }
                 }
                 composable<Route.Identify> { e ->
                     Page {

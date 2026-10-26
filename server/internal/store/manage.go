@@ -16,11 +16,13 @@ type TitleStatus struct {
 	Matched     bool              `json:"matched"` // carries a TMDB or AniList id
 	Locked      bool              `json:"locked"`  // details edited by hand; refreshes skip it
 	ProviderIDs map[string]string `json:"providerIds,omitempty"`
+	Poster      string            `json:"poster,omitempty"` // relative image URL
 }
 
 // LibraryTitles lists every series and movie that has files, unmatched ones first.
 func (s *Store) LibraryTitles(ctx context.Context) ([]TitleStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, type, title, year, metadata_locked FROM items
+	rows, err := s.db.QueryContext(ctx, `SELECT id, type, title, year, metadata_locked,
+		(SELECT fetched_at FROM item_images im WHERE im.item_id = items.id AND im.type = 'poster') FROM items
 		WHERE type IN ('series', 'movie') AND is_virtual = 0 ORDER BY title COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
@@ -31,7 +33,8 @@ func (s *Store) LibraryTitles(ctx context.Context) ([]TitleStatus, error) {
 		var t TitleStatus
 		var year sql.NullInt64
 		var locked int
-		if err := rows.Scan(&t.ID, &t.Type, &t.Title, &year, &locked); err != nil {
+		var poster sql.NullString
+		if err := rows.Scan(&t.ID, &t.Type, &t.Title, &year, &locked, &poster); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -40,6 +43,9 @@ func (s *Store) LibraryTitles(ctx context.Context) ([]TitleStatus, error) {
 			t.Year = &y
 		}
 		t.Locked = locked == 1
+		if poster.Valid {
+			t.Poster = ImageURLAt(t.ID, "poster", poster.String)
+		}
 		t.ProviderIDs = map[string]string{}
 		idx[t.ID] = len(out)
 		out = append(out, t)
