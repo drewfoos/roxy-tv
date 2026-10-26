@@ -4,6 +4,7 @@
   --surface: #17171e;
   --surface-high: #23232c;
   --nav: #23252b;
+  --nav-hover: #151515;
   --button-grey: #2b2b2b;
   --chip-grey: #333333;
   --accent: #3ea6ff;
@@ -25,14 +26,31 @@
   --radius-button: 4px;
   --radius-chip: 17px;
 
-  --gutter: 64px;
   --topbar-h: 60px;
-  --card-gap: 30px;
 
-  /* Posters per row (Crunchyroll: five across with a sixth peeking in). */
+  /*
+   * Breakpoints, so one layout scales from a phone to an ultrawide (Crunchyroll's site
+   * does the same with its own steps):
+   *   phone      <= 600     tablet     601 - 1023
+   *   desktop S  1024-1279  desktop M  1280-1599
+   *   desktop L  1600-2199  ultra      >= 2200
+   * --row-cols is how many posters a row shows, with a fraction so the next one peeks.
+   */
+  --gutter: 64px;
+  --card-gap: 30px;
   --row-cols: 5.35;
+  --grid-min: 190px;
+  --thumb-min: 300px;
+  --content-max: 1220px;
 }
 
-@media (max-width: 1280px) { :root { --row-cols: 4.35; --card-gap: 20px; } }
-@media (max-width: 1024px) { :root { --row-cols: 3.35; --gutter: 32px; } }
-@media (max-width: 760px)  { :root { --row-cols: 2.5; --gutter: 16px; --card-gap: 12px; } }
+/* desktop L */
+@media (min-width: 1600px) { :root { --row-cols: 6.35; --grid-min: 210px; --thumb-min: 320px; --content-max: 1480px; } }
+/* ultra */
+@media (min-width: 2200px) { :root { --gutter: 96px; --card-gap: 36px; --row-cols: 7.35; --grid-min: 240px; --thumb-min: 360px; --content-max: 1800px; } }
+/* desktop S */
+@media (max-width: 1279px) { :root { --gutter: 48px; --card-gap: 20px; --row-cols: 4.35; --grid-min: 170px; --thumb-min: 260px; } }
+/* tablet */
+@media (max-width: 1023px) { :root { --gutter: 32px; --card-gap: 16px; --row-cols: 3.4; --grid-min: 150px; --thumb-min: 240px; } }
+/* phone */
+@media (max-width: 600px) { :root { --gutter: 16px; --card-gap: 10px; --row-cols: 2.4; --grid-min: 110px; --thumb-min: 100%; } }

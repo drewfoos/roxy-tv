@@ -5,7 +5,7 @@ import { audioBadge, episodeCode, isPlayable, nextToPlay, runtimeLabel, sortEpis
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard } from '../components/Cards'
-import { IconExpand, IconPlay, IconReplay } from '../components/Icons'
+import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
@@ -109,6 +109,16 @@ export function Series() {
               {shown.map((ep) => (
                 <EpisodeCard key={ep.id} ep={ep} seriesTitle={series.title} />
               ))}
+            </div>
+          )}
+          {seasons.length > 1 && (
+            <div className="seasonnav">
+              <button className="seasonnav__btn" disabled={seasonIndex <= 0} onClick={() => setSeasonIndex((i) => i - 1)}>
+                <IconChevronLeft size={20} /> Previous season
+              </button>
+              <button className="seasonnav__btn" disabled={seasonIndex >= seasons.length - 1} onClick={() => setSeasonIndex((i) => i + 1)}>
+                Next season <IconChevronRight size={20} />
+              </button>
             </div>
           )}
           {relatedItems.length > 0 && (

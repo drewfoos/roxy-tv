@@ -71,8 +71,8 @@ export function Home() {
   const movies = rows.find((r) => r.key === 'movies')
 
   return (
-    <div className={'page' + (empty ? '' : ' page--hero')}>
-      <TopBar clearOverHero={!empty} />
+    <div className="page">
+      <TopBar />
       {loading && !data ? (
         <Spinner />
       ) : error && !data ? (

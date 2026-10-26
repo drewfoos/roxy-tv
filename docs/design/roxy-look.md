@@ -154,10 +154,20 @@ readout.
 Crunchyroll's site is the same system at a wider size. Roxy Web (apps/web) follows it as
 built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
 
-- **Top bar**: the hat and name (Home), Discover, Browse | Movies; at the right a search
-  that opens on click, the bookmark (My Lists) and the avatar with a caret that opens
-  the account drawer: avatar + name + edit; Switch Profile, Settings; Watchlist, History;
-  Log Out, each group separated by a hairline, over a dimmed page.
+- **Top bar** (measured on crunchyroll.com): a solid grey bar, 60 tall, the full width
+  with no gutters; every control is a tile the bar's full height that turns near-black
+  (`#151515`) with white text on hover; links are 16 px regular in light grey (`#bbb`),
+  16 px side padding; icon tiles about 52 wide. Left: the hat and name (Home), Discover,
+  Browse | Movies. Right, flush with the edge: a search that opens on click, the bookmark
+  (My Lists), the avatar with a caret that opens the account drawer (avatar + name +
+  edit; Switch Profile, Settings; Watchlist, History; Log Out, groups split by hairlines,
+  over a dimmed page). Under 1024 px the links move into a left drawer behind a
+  hamburger and the name drops from the mark.
+- **Breakpoints** (`tokens.css`): phone ≤ 600, tablet 601–1023, desktop S 1024–1279,
+  desktop M 1280–1599, desktop L 1600–2199, ultra ≥ 2200. They set the gutter, the card
+  gap, how many posters a row shows (2.4 / 3.4 / 4.35 / 5.35 / 6.35 / 7.35), grid
+  minimums and the content width. On phones the hero and the title banner stack: art on
+  top, text under it; arrows go away below 1024.
 - **Footer** on every page: the mark, "SERVER NAME | Roxy TV", a line about the service;
   Explore / Resources / Account columns; a thin strip with Terms of Use, Privacy Policy
   and the versions.
