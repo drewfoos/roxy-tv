@@ -56,7 +56,7 @@ internal fun stateColor(state: String): Color = when (state) {
     else -> RoxyColors.muted
 }
 
-private fun stateWord(state: String): String = when (state) {
+internal fun stateWord(state: String): String = when (state) {
     "downloading" -> "Downloading"
     "importing" -> "Adding to library"
     "queued" -> "Queued"

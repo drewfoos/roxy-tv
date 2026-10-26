@@ -54,6 +54,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Description
@@ -68,6 +69,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -105,7 +107,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}, onOpenRequests: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -230,6 +232,10 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
 
         if (session.isAdmin) {
             GroupCard("Server") {
+                var waiting by remember { mutableStateOf(0) }
+                LaunchedEffect(Unit) { waiting = runCatching { app.api.waitingRequests() }.getOrDefault(0) }
+                SettingRow(Icons.Outlined.Inbox, "Requests", if (waiting > 0) "$waiting waiting for your approval" else "Every request, approvals, downloads and problems", onClick = onOpenRequests)
+                Divider()
                 SettingRow(Icons.Outlined.Group, "Users", "Accounts for other people: admin, requester or basic", onClick = onOpenUsers)
                 Divider()
                 SettingRow(Icons.Outlined.VideoLibrary, "Library", "Scan, refresh metadata, fix matches and custom shows", onClick = onOpenLibrary)

@@ -245,7 +245,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Account> {
                     Page {
-                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) }, onOpenUsers = { nav.navigate(Route.Users) })
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) }, onOpenUsers = { nav.navigate(Route.Users) }, onOpenRequests = { nav.navigate(Route.AdminRequests) })
                     }
                 }
                 composable<Route.ArrSettings> {
@@ -264,6 +264,9 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onAddFolder = { nav.navigate(Route.AddMediaFolder) },
                         )
                     }
+                }
+                composable<Route.AdminRequests> {
+                    Page { PhoneRequests(onBack = { nav.popBackStack() }, onOpen = { type, id -> nav.navigate(Route.DiscoverDetail(type, id)) }) }
                 }
                 composable<Route.Users> {
                     Page { PhoneUsers(onBack = { nav.popBackStack() }) }

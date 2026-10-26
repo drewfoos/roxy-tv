@@ -279,9 +279,15 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 	if q.Desc {
 		dir = " DESC"
 	}
+	// Bounded so one request can't make the server load and send the whole database.
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 100
+	} else if limit > 2000 {
+		limit = 2000
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
 	}
 	query := fmt.Sprintf(`SELECT %s FROM items%s ORDER BY %s%s LIMIT %d OFFSET %d`, itemCols, sqlWhere, order, dir, limit, q.Offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)

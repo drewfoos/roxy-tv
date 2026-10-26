@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -35,7 +36,7 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 	height, _ := strconv.Atoi(q.Get("height"))
 	bitrate, _ := strconv.Atoi(q.Get("bitrate"))
 	start, _ := strconv.ParseFloat(q.Get("start"), 64)
-	if bitrate < 0 || bitrate > 80000 || height < 0 || height > 4320 || start < 0 {
+	if bitrate < 0 || bitrate > 80000 || height < 0 || height > 4320 || start < 0 || math.IsNaN(start) || math.IsInf(start, 0) || start > 7*24*3600 {
 		writeError(w, 400, "bad height, bitrate or start")
 		return
 	}

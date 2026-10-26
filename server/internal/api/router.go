@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -83,6 +84,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/users", s.createUser)
 			r.Patch("/users/{id}", s.updateUser)
 			r.Delete("/users/{id}", s.deleteUser)
+			r.Get("/requests", s.adminRequests)
 			r.Post("/discover/requests/{id}/approve", s.discoverApprove)
 			r.Post("/discover/requests/{id}/decline", s.discoverDecline)
 			r.Get("/libraries", s.listLibraries)
@@ -198,7 +200,23 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": msg})
+	writeJSON(w, status, map[string]any{"error": cleanError(msg)})
+}
+
+// cleanError keeps an error readable and short: an upstream service (TMDB, AniList,
+// Sonarr) can answer with a whole HTML page, which is noise to the app and shows more
+// of the other side than it should.
+func cleanError(msg string) string {
+	if i := strings.Index(msg, "<"); i >= 0 && strings.Contains(strings.ToLower(msg[i:]), "html") {
+		msg = strings.TrimSpace(strings.TrimRight(msg[:i], ": "))
+		if msg == "" {
+			msg = "the other service refused the request"
+		}
+	}
+	if len(msg) > 300 {
+		msg = msg[:300] + "…"
+	}
+	return msg
 }
 
 func cors(next http.Handler) http.Handler {

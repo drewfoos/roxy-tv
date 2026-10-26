@@ -79,6 +79,8 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun updateUser(id: String, role: String? = null, password: String? = null, disabled: Boolean? = null): ServerUser =
         patchJson("/v1/users/$id", json.encodeToString(UserEdit.serializer(), UserEdit(role = role, password = password, disabled = disabled)))
     suspend fun deleteUser(id: String) = delete("/v1/users/$id")
+    suspend fun adminRequests(): List<AdminRequest> = get<AdminRequestsResponse>("/v1/requests").requests
+    suspend fun waitingRequests(): Int = get<AdminRequestsResponse>("/v1/requests").waiting
     suspend fun approveRequest(id: String) = postNoBody("/v1/discover/requests/$id/approve", "")
     suspend fun declineRequest(id: String, reason: String = "") =
         postNoBody("/v1/discover/requests/$id/decline", json.encodeToString(DeclineBody.serializer(), DeclineBody(reason)))
@@ -1083,6 +1085,26 @@ private data class UserEdit(val name: String? = null, val password: String? = nu
 
 @Serializable
 private data class DeclineBody(val reason: String)
+
+@Serializable
+data class AdminRequest(
+    val id: String,
+    val type: String = "",
+    val tmdbId: Int = 0,
+    val title: String = "",
+    val year: Int? = null,
+    val userName: String = "",
+    val status: String = "pending",
+    val seasons: List<Int> = emptyList(),
+    val episodes: List<String> = emptyList(),
+    val error: String? = null,
+    val createdAt: String = "",
+    val poster: String? = null,
+    val download: DownloadStatus? = null,
+)
+
+@Serializable
+private data class AdminRequestsResponse(val requests: List<AdminRequest> = emptyList(), val waiting: Int = 0)
 
 @Serializable
 data class MediaFolder(
