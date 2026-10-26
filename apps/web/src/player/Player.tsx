@@ -82,7 +82,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [visible, setVisible] = useState(true)
   const [menu, setMenu] = useState<'none' | 'tracks' | 'quality' | 'speed'>('none')
   const [quality, setQuality] = useState<Quality>('original')
+  const [autoplay, setAutoplay] = useState(() => localStorage.getItem('roxy.autoplay') !== 'off')
+  useEffect(() => {
+    autoplayRef.current = autoplay
+    localStorage.setItem('roxy.autoplay', autoplay ? 'on' : 'off')
+  }, [autoplay])
   const qualityRef = useRef<Quality>('original')
+  const autoplayRef = useRef(true)
   const [skip, setSkip] = useState<MediaSegment | null>(null)
   const [advisory, setAdvisory] = useState(true)
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null)
@@ -241,7 +247,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     }
     const onEnd = () => {
       report(true)
-      onEnded?.()
+      if (autoplayRef.current) onEnded?.()
     }
     v.addEventListener('timeupdate', onTime)
     v.addEventListener('play', onPlay)
@@ -479,66 +485,84 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
           )}
           {(subTracks.length > 0 || audioTracks.length > 1) && (
             <div className="controls__menu-anchor">
-              <button className={'controls__btn' + (subsOn && subTracks.length > 0 ? ' controls__btn--on' : '')} onClick={() => setMenu((m) => (m === 'tracks' ? 'none' : 'tracks'))} aria-label="Audio and subtitles">
+              <button className={'controls__btn' + (menu === 'tracks' ? ' controls__btn--open' : '')} onClick={() => setMenu((m) => (m === 'tracks' ? 'none' : 'tracks'))} aria-label="Audio and subtitles">
                 <IconSubtitles size={26} />
               </button>
               {menu === 'tracks' && (
-                <div className="pmenu pmenu--wide">
-                  {audioTracks.length > 0 && (
-                    <>
-                      <div className="pmenu__title">Audio</div>
+                <div className="panel panel--tracks">
+                  <div className="panel__col">
+                    <div className="panel__head">Audio</div>
+                    <div className="panel__list">
                       {audioTracks.map((t) => (
-                        <button key={t.index} className={'pmenu__item' + (t.index === audioIndex ? ' pmenu__item--on' : '')} onClick={() => changeAudio(t.index)}>
-                          {trackLabel(t)}
-                          {t.index === audioIndex && <IconCheckCircle size={18} />}
+                        <button key={t.index} className={'panel__row' + (t.index === audioIndex ? ' panel__row--on' : '')} onClick={() => changeAudio(t.index)}>
+                          <span>{trackLabel(t)}</span>
+                          {t.index === audioIndex && <IconCheckCircle size={22} />}
                         </button>
                       ))}
-                    </>
-                  )}
-                  <div className="pmenu__title">Subtitles</div>
-                  <button className={'pmenu__item' + (!subsOn ? ' pmenu__item--on' : '')} onClick={() => changeSub(null)}>
-                    Off
-                    {!subsOn && <IconCheckCircle size={18} />}
-                  </button>
-                  {subTracks.map((t) => (
-                    <button key={t.index} className={'pmenu__item' + (subsOn && t.index === subIndex ? ' pmenu__item--on' : '')} onClick={() => changeSub(t.index)}>
-                      {trackLabel(t)}
-                      {subsOn && t.index === subIndex && <IconCheckCircle size={18} />}
-                    </button>
-                  ))}
+                    </div>
+                  </div>
+                  <div className="panel__col">
+                    <div className="panel__head">Subtitles/CC</div>
+                    <div className="panel__list">
+                      {subTracks.map((t) => (
+                        <button key={t.index} className={'panel__row' + (subsOn && t.index === subIndex ? ' panel__row--on' : '')} onClick={() => changeSub(t.index)}>
+                          <span>{trackLabel(t)}</span>
+                          {subsOn && t.index === subIndex && <IconCheckCircle size={22} />}
+                        </button>
+                      ))}
+                      <button className={'panel__row' + (!subsOn ? ' panel__row--on' : '')} onClick={() => changeSub(null)}>
+                        <span>None</span>
+                        {!subsOn && <IconCheckCircle size={22} />}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
           )}
           <div className="controls__menu-anchor">
-            <button className="controls__btn controls__rate" onClick={() => setMenu((m) => (m === 'speed' ? 'none' : 'speed'))} aria-label="Speed">
+            <button className={'controls__btn controls__rate' + (menu === 'speed' ? ' controls__btn--open' : '')} onClick={() => setMenu((m) => (m === 'speed' ? 'none' : 'speed'))} aria-label="Playback speed">
               {rate}x
             </button>
             {menu === 'speed' && (
-              <div className="pmenu">
-                <div className="pmenu__title">Speed</div>
-                {SPEEDS.map((s) => (
-                  <button key={s} className={'pmenu__item' + (s === rate ? ' pmenu__item--on' : '')} onClick={() => { setRate(s); setMenu('none') }}>
-                    {s === 1 ? 'Normal' : `${s}x`}
-                    {s === rate && <IconCheckCircle size={18} />}
-                  </button>
-                ))}
+              <div className="panel">
+                <div className="panel__head">Playback Speed</div>
+                <div className="panel__list">
+                  {SPEEDS.map((s) => (
+                    <button key={s} className={'panel__row' + (s === rate ? ' panel__row--on' : '')} onClick={() => { setRate(s); setMenu('none') }}>
+                      <span>{s}x</span>
+                      {s === rate && <IconCheckCircle size={22} />}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
           <div className="controls__menu-anchor">
-            <button className="controls__btn" onClick={() => setMenu((m) => (m === 'quality' ? 'none' : 'quality'))} aria-label="Quality">
+            <button className={'controls__btn' + (menu === 'quality' ? ' controls__btn--open' : '')} onClick={() => setMenu((m) => (m === 'quality' ? 'none' : 'quality'))} aria-label="Settings">
               <IconSettings size={26} />
             </button>
             {menu === 'quality' && (
-              <div className="pmenu">
-                <div className="pmenu__title">Quality</div>
-                {qualities.map((q) => (
-                  <button key={q} className={'pmenu__item' + (q === quality ? ' pmenu__item--on' : '')} onClick={() => changeQuality(q)}>
-                    {q === 'original' ? (srcHeight ? `${srcHeight}p (Original)` : 'Original') : `${q}p`}
-                    {q === quality && <IconCheckCircle size={18} />}
-                  </button>
-                ))}
+              <div className="panel panel--settings">
+                <div className="panel__head">Settings</div>
+                <button className="panel__row panel__row--toggle" onClick={() => setAutoplay((a) => !a)}>
+                  <span>Autoplay Next</span>
+                  <span className={'toggle' + (autoplay ? ' toggle--on' : '')} aria-hidden="true">
+                    <i />
+                  </span>
+                </button>
+                <div className="panel__head">Quality</div>
+                <div className="panel__list">
+                  {qualities.map((q) => (
+                    <button key={q} className={'panel__row panel__row--tall' + (q === quality ? ' panel__row--on' : '')} onClick={() => changeQuality(q)}>
+                      <span>
+                        <b>{q === 'original' ? (srcHeight ? `${srcHeight}p (Original)` : 'Original') : `${q}p`}</b>
+                        <small>{q === 'original' ? 'The file as it is, nothing re-encoded.' : q === 480 ? 'Uses the least data. Good for slower connections.' : 'Uses less data at a standard quality.'}</small>
+                      </span>
+                      {q === quality && <IconCheckCircle size={22} />}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>

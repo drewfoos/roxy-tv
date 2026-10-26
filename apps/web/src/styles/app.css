@@ -195,7 +195,7 @@ img { display: block; }
 
 /* ---------- watch page (Crunchyroll's: a full-width dark band with the 16:9 player in it, the text column under it, Next episode at the right) ---------- */
 .watch__band { background: #000; display: grid; place-items: center; }
-.player { position: relative; width: min(100%, calc((100vh - var(--topbar-h) - 180px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; user-select: none; }
+.player { position: relative; width: min(100%, calc((100vh - var(--topbar-h) - 180px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; user-select: none; container-type: size; }
 .player:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; }
 .player--hidden { cursor: none; }
 .player--empty { display: grid; place-items: center; color: var(--muted); }
@@ -234,12 +234,30 @@ img { display: block; }
 .controls__time { margin-left: 10px; font-size: 15px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
 .controls__spacer { flex: 1; }
 .controls__menu-anchor { position: relative; }
-.pmenu { position: absolute; right: 0; bottom: 52px; min-width: 200px; max-height: 60vh; overflow-y: auto; background: rgba(23, 23, 30, 0.96); border-radius: 8px; padding: 8px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); z-index: 5; }
-.pmenu--wide { min-width: 280px; }
-.pmenu__title { padding: 8px 16px 4px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
-.pmenu__item { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 9px 16px; text-align: left; color: #fff; font-size: 14px; }
-.pmenu__item:hover { background: rgba(255, 255, 255, 0.08); }
-.pmenu__item--on { color: var(--accent); font-weight: 600; }
+.controls__btn--open { background: rgba(255, 255, 255, 0.16); }
+/* Crunchyroll's player panels: a dark sheet above the bar, bold headings, tall rows,
+   the chosen row lifted with a check circle. The tracks panel is two columns. */
+.panel { position: absolute; right: 0; bottom: 56px; min-width: 220px; max-height: min(440px, calc(100cqh - 80px)); display: flex; flex-direction: column; background: #23252b; border-radius: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); z-index: 5; overflow: hidden; }
+.panel--settings .panel__list { flex: 1; min-height: 0; }
+.panel--tracks { flex-direction: row; min-width: 400px; }
+.panel--settings { min-width: 240px; }
+.panel__col { display: flex; flex-direction: column; min-width: 200px; max-width: 260px; flex: 1; }
+.panel__col + .panel__col { border-left: 1px solid rgba(255, 255, 255, 0.08); }
+.panel__head { padding: 18px 20px 10px; font-size: 18px; font-weight: 700; color: #fff; }
+.panel__list { overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent; }
+.panel__row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 50px; padding: 12px 20px; text-align: left; color: #fff; font-size: 15px; line-height: 20px; }
+.panel__row:hover { background: rgba(255, 255, 255, 0.06); }
+.panel__row--on { background: rgba(255, 255, 255, 0.12); }
+.panel__row--on:hover { background: rgba(255, 255, 255, 0.16); }
+.panel__row--tall { min-height: 72px; }
+.panel__row--tall span { display: flex; flex-direction: column; gap: 4px; }
+.panel__row--tall b { font-weight: 700; }
+.panel__row--tall small { font-size: 12px; line-height: 16px; color: var(--muted); }
+.panel__row--toggle { min-height: 56px; }
+.toggle { width: 40px; height: 22px; border-radius: 11px; background: rgba(255, 255, 255, 0.25); position: relative; flex: none; transition: background-color 160ms; }
+.toggle i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left 160ms; }
+.toggle--on { background: var(--accent); }
+.toggle--on i { left: 21px; background: var(--on-brand); }
 .watch { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; width: min(1180px, 100%); margin: 36px auto 0; padding: 0 var(--gutter); }
 @media (min-width: 1100px) { .watch { grid-template-columns: minmax(0, 1fr) 320px; } }
 .watch__series { color: var(--accent); font-weight: 700; font-size: 14px; }
