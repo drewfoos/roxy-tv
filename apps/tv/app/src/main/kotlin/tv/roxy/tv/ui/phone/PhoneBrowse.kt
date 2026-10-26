@@ -104,11 +104,7 @@ fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSea
     val all = state.items
     val shown = all?.filter { if (movies) it.isMovie else it.isSeries }
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Browse", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-            Spacer(Modifier.weight(1f))
-            Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(26.dp).clickable(onClick = onSearch))
-        }
+        TabHeader("Browse", onSearch = onSearch)
         Row(modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("Series", selected = !movies, onClick = { movies = false })
             Chip("Movies", selected = movies, onClick = { movies = true })
@@ -119,13 +115,13 @@ fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSea
 
 /** Watchlist tab: the user's favourites. */
 @Composable
-fun PhoneWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bottomInset: Dp) {
+fun PhoneWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bottomInset: Dp, onSearch: (() -> Unit)? = null) {
     val app = RoxyApp.get(LocalContext.current)
     val vm: LibraryViewModel = viewModel(key = "watchlist") { LibraryViewModel(app.api, favoritesOnly = true) }
     val state by vm.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(force = true) } // a + on a title page changes it
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Text("Watchlist", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 10.dp))
+        TabHeader("Watchlist", onSearch = onSearch)
         PosterGrid(
             items = state.items, error = state.error,
             emptyText = "Titles you add with \"My List\" on their page show up here.",

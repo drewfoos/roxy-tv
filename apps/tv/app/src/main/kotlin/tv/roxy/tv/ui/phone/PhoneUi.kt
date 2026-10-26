@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import android.content.Intent
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
@@ -345,6 +346,20 @@ fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifie
         },
         fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center,
     )
+    }
+}
+
+/** A tab's header: its name at the left, Cast and Search at the right (Home's icons). */
+@Composable
+fun TabHeader(title: String, onSearch: (() -> Unit)? = null, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+        Spacer(Modifier.weight(1f))
+        CastIcon()
+        if (onSearch != null) {
+            Spacer(Modifier.size(18.dp))
+            Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(26.dp).clickable(onClick = onSearch))
+        }
     }
 }
 

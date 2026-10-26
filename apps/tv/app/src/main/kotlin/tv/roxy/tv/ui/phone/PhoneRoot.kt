@@ -212,7 +212,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Watchlist> {
                     Page {
-                        PhoneWatchlist(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset)
+                        PhoneWatchlist(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset, onSearch = { nav.navigate(Route.Search) })
                     }
                 }
                 composable<Route.Browse> {

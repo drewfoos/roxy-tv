@@ -221,9 +221,7 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Discover", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
-        }
+        TabHeader("Discover")
         SearchBox(query = state.query, onChange = vm::search, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
         var sheet by rememberSaveable { mutableStateOf(false) }
         if (state.results == null && !state.searching && state.searchError == null) {
