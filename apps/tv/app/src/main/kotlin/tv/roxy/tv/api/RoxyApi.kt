@@ -260,6 +260,15 @@ class RoxyApi(private val prefs: Prefs) {
     // ---- library management (admin) ----
 
     suspend fun libraryManage(): LibraryManage = get("/v1/library/manage")
+
+    // ---- media folders (admin) ----
+    suspend fun mediaFolders(): List<MediaFolder> = get<MediaFoldersResponse>("/v1/library/folders").libraries
+    suspend fun browseFolders(path: String): FolderListing = get("/v1/library/browse?path=" + path.urlEncoded())
+    suspend fun addMediaFolder(path: String, name: String, kind: String, anime: Boolean): MediaFolder =
+        postJson("/v1/library/folders", json.encodeToString(FolderEdit.serializer(), FolderEdit(path, name, kind, anime)))
+    suspend fun updateMediaFolder(id: Long, name: String, kind: String, anime: Boolean): MediaFolder =
+        patchJson("/v1/library/folders/$id", json.encodeToString(FolderEdit.serializer(), FolderEdit("", name, kind, anime)))
+    suspend fun removeMediaFolder(id: Long) = delete("/v1/library/folders/$id")
     /** Absolute URL for a relative image path from the server, sized for [widthPx]. */
     fun absoluteImage(rel: String?, widthPx: Int): String? = rel?.let { (if (it.startsWith("http")) it else baseUrl + it) + (if ('?' in it) "&w=" else "?w=") + widthPx }
     /** mode: files (new / removed files) | missing (titles without a match) | replace (look everything up again). */
@@ -1050,6 +1059,31 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 
 @Serializable
 private data class ScanMode(val mode: String)
+
+@Serializable
+data class MediaFolder(
+    val id: Long = 0,
+    val name: String = "",
+    val kind: String = "series",
+    val root: String = "",
+    val animeMode: Boolean = false,
+    val series: Int = 0,
+    val movies: Int = 0,
+    val files: Int = 0,
+    val reachable: Boolean = true,
+)
+
+@Serializable
+private data class MediaFoldersResponse(val libraries: List<MediaFolder> = emptyList())
+
+@Serializable
+data class FolderEntry(val name: String = "", val path: String = "", val videos: Int = 0)
+
+@Serializable
+data class FolderListing(val path: String = "", val parent: String? = null, val dirs: List<FolderEntry> = emptyList(), val videos: Int = 0)
+
+@Serializable
+private data class FolderEdit(val path: String, val name: String, val kind: String, val anime: Boolean)
 
 @Serializable
 private data class PasswordChange(val current: String, val new: String)

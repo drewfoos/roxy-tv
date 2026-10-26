@@ -260,11 +260,15 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onEdit = { t -> nav.navigate(Route.EditMetadata(t.id, t.title)) },
                             onOpen = { t -> if (t.type == "movie") nav.navigate(Route.Movie(t.id, t.title)) else nav.navigate(Route.Series(t.id, t.title)) },
                             onPickTitles = { nav.navigate(Route.LibraryRefreshPick) },
+                            onAddFolder = { nav.navigate(Route.AddMediaFolder) },
                         )
                     }
                 }
                 composable<Route.ChangePassword> {
                     Page { PhoneChangePassword(onBack = { nav.popBackStack() }) }
+                }
+                composable<Route.AddMediaFolder> {
+                    Page { PhoneAddFolder(onBack = { nav.popBackStack() }) }
                 }
                 composable<Route.LibraryRefreshPick> {
                     Page { PhoneRefreshPicker(onBack = { nav.popBackStack() }) }

@@ -70,7 +70,14 @@ func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
 // EnsureLibraries creates a library row for every configured media root that lacks one.
 // The kind is guessed from the folder name ("movie" => movies, else series).
 func (l *Library) EnsureLibraries(ctx context.Context, roots []string) error {
+	removed, err := l.store.RemovedRoots(ctx)
+	if err != nil {
+		return err
+	}
 	for _, root := range roots {
+		if removed[root] {
+			continue // the admin removed it in the app; ROXY_MEDIA_ROOTS doesn't bring it back
+		}
 		existing, err := l.store.GetLibraryByRoot(ctx, root)
 		if err != nil {
 			return err

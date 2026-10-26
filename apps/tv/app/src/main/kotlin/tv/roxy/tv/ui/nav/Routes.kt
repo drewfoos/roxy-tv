@@ -21,6 +21,7 @@ sealed interface Route {
     @Serializable data object LibrarySettings : Route
     @Serializable data object ChangePassword : Route
     @Serializable data object LibraryRefreshPick : Route
+    @Serializable data object AddMediaFolder : Route
     @Serializable data class Identify(val id: String, val title: String, val type: String) : Route
     @Serializable data class EditMetadata(val id: String, val title: String) : Route
     @Serializable data class DiscoverMoreDetails(val type: String, val tmdbId: Int, val title: String) : Route

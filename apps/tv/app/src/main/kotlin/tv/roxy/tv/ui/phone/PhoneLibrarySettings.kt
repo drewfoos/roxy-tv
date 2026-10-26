@@ -101,7 +101,7 @@ import java.time.format.DateTimeFormatter
  * Matched titles are fixed from their own page (the admin ⋮ menu).
  */
 @Composable
-fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit, onPickTitles: () -> Unit) {
+fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit, onPickTitles: () -> Unit, onAddFolder: () -> Unit = {}) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<LibraryManage?>(null) }
@@ -154,6 +154,7 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
                     Text(line, fontSize = 13.sp, color = if (busy) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.padding(start = if (busy) 6.dp else 0.dp))
                 }
             }
+            item(key = "folders") { MediaFoldersCard(reloadKey = s, onAdd = onAddFolder, onChanged = { scope.launch { delay(800); reload() } }) }
             item(key = "actions") {
                 Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(RoxyColors.surface)) {
                     ActionRow(Icons.Outlined.FolderOpen, "Scan for new files", "Adds new episodes and movies, removes ones deleted from disk, reads new .nfo files and artwork") { run("files", "Scanning…") }
