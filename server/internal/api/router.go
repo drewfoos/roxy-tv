@@ -84,6 +84,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/legal/status", s.legalStatus)
 			r.Post("/legal/accept", s.legalAccept)
 			r.Post("/auth/logout", s.logout)
+			r.Post("/auth/cookie", s.sessionCookie)
 			r.Post("/me/password", s.changePassword)
 			r.Get("/users", s.listUsers)
 			r.Post("/users", s.createUser)

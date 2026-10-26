@@ -1,0 +1,38 @@
+/* The Roxy palette and type scale, from docs/design/roxy-look.md (the phone app's Theme.kt). */
+:root {
+  --bg: #0b0b0f;
+  --surface: #17171e;
+  --surface-high: #23232c;
+  --nav: #23252b;
+  --button-grey: #2b2b2b;
+  --chip-grey: #333333;
+  --accent: #3ea6ff;
+  --accent-light: #8fd0ff;
+  --accent-dark: #1b5fa8;
+  --on-brand: #07182b;
+  --fg: #f2f2f5;
+  --muted: #9aa0a6;
+  --facts: rgba(255, 255, 255, 0.72);
+  --age-pill: #4a4a52;
+  --error: #ff6b6b;
+  --skeleton-a: #1c1c24;
+  --skeleton-b: #2a2a34;
+
+  --font: Inter, "Segoe UI", Roboto, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+
+  --radius-poster: 8px;
+  --radius-thumb: 6px;
+  --radius-button: 4px;
+  --radius-chip: 17px;
+
+  --gutter: 64px;
+  --topbar-h: 60px;
+  --card-gap: 30px;
+
+  /* Posters per row (Crunchyroll: five across with a sixth peeking in). */
+  --row-cols: 5.35;
+}
+
+@media (max-width: 1280px) { :root { --row-cols: 4.35; --card-gap: 20px; } }
+@media (max-width: 1024px) { :root { --row-cols: 3.35; --gutter: 32px; } }
+@media (max-width: 760px)  { :root { --row-cols: 2.5; --gutter: 16px; --card-gap: 12px; } }

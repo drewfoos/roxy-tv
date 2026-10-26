@@ -173,6 +173,22 @@ func RemoteIP(r *http.Request) string {
 }
 
 // TokenFromRequest extracts the credential from any of the places Jellyfin clients put it.
+// SessionCookie carries a device token for browser-fetched resources (Roxy Web). Set
+// by POST /v1/auth/cookie, cleared by logout, honoured for GET and HEAD only.
+const SessionCookie = "roxy_token"
+
+// SetSessionCookie writes the cookie for token: HttpOnly, same-site strict, a year long,
+// Secure when the request came over TLS (directly or through a proxy).
+func SetSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: 365 * 24 * 3600})
+}
+
+// ClearSessionCookie removes it (logout).
+func ClearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+}
+
 func TokenFromRequest(r *http.Request) (string, ClientInfo) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
@@ -195,6 +211,14 @@ func TokenFromRequest(r *http.Request) (string, ClientInfo) {
 	for _, q := range []string{"api_key", "ApiKey", "apiKey"} {
 		if t := r.URL.Query().Get(q); t != "" {
 			return t, ci
+		}
+	}
+	// Roxy Web: the browser loads posters and video on its own and cannot add a header,
+	// so a same-site cookie carries the device token. Reads only: a change still needs
+	// the Bearer header, which keeps a cross-site page from acting through the cookie.
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if c, err := r.Cookie(SessionCookie); err == nil && c.Value != "" {
+			return c.Value, ci
 		}
 	}
 	return "", ci

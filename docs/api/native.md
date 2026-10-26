@@ -13,7 +13,12 @@ the Sonarr / Radarr webhooks all use this API.
 |---|---|---|
 | POST | `/v1/auth/login` | `{username, password, client, device, deviceId, version}` -> `{token, user: {id, name, isAdmin}, deviceId}` |
 | GET | `/v1/auth/me` | `{id, name, isAdmin}` or `{apiKey: true, isAdmin: true}` |
-| POST | `/v1/auth/logout` | revokes the calling device token, 204 |
+| POST | `/v1/auth/logout` | revokes the calling device token, clears the session cookie, 204 |
+| POST | `/v1/auth/cookie` | sets `roxy_token` (HttpOnly, SameSite=Strict, a year) carrying the caller's device token, 204; for Roxy Web, whose `<img>` and `<video>` cannot send a header |
+
+- The cookie is honoured for **GET and HEAD only** (posters, video, subtitles, fonts). Anything
+  that changes state still needs the Bearer header, so a page on another site cannot act
+  through the cookie. API keys and media tokens are never put in it.
 
 - The token is an opaque 64-hex device token, stored hashed (SHA-256).
 - Send it as `Authorization: Bearer <token>`. Media URLs a player fetches on its own carry

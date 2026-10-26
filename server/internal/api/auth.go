@@ -116,6 +116,25 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if p != nil && p.DeviceID != "" {
 		_ = s.store.DeleteDevice(r.Context(), p.DeviceID)
 	}
+	auth.ClearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /v1/auth/cookie: sets the same-site cookie carrying the caller's device token,
+// so a browser can load posters and video without a header (Roxy Web). Only a device
+// token qualifies: API keys and media tokens stay out of cookies.
+func (s *Server) sessionCookie(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFrom(r.Context())
+	if p == nil || p.IsAPIKey || p.MediaSource != "" || p.DeviceID == "" {
+		writeError(w, 403, "a device login is needed for a session cookie")
+		return
+	}
+	token, _ := auth.TokenFromRequest(r)
+	if token == "" {
+		writeError(w, 400, "no token on the request")
+		return
+	}
+	auth.SetSessionCookie(w, r, token)
 	w.WriteHeader(http.StatusNoContent)
 }
 

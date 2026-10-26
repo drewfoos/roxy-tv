@@ -1,0 +1,253 @@
+/* Roxy Web: every component's styles, laid out like Crunchyroll's site (compared side by
+   side on 2026-10-26) in Roxy's colours. Class names follow the component they belong to. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+input, select { font: inherit; }
+img { display: block; }
+::selection { background: var(--accent); color: var(--on-brand); }
+
+.page { min-height: 100vh; padding-bottom: 80px; padding-top: var(--topbar-h); }
+.page--hero { padding-top: 0; }
+.gutter { padding-left: var(--gutter); padding-right: var(--gutter); }
+.muted { color: var(--muted); }
+.error { color: var(--error); }
+.link { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: 0.3px; text-transform: uppercase; }
+.link:hover { text-decoration: underline; }
+.link--plain { text-transform: none; letter-spacing: 0; font-size: inherit; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: fixed; inset: 0 0 auto 0; height: var(--topbar-h); z-index: 50;
+  display: flex; align-items: center; gap: 32px;
+  padding: 0 var(--gutter) 0 16px;
+  background: var(--nav);
+  transition: background-color 160ms ease;
+}
+.topbar--clear { background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0)); }
+.topbar__brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: 0.3px; color: var(--accent); }
+.topbar__nav { display: flex; align-items: center; gap: 28px; }
+.topbar__link { font-weight: 500; font-size: 15px; color: rgba(255, 255, 255, 0.85); padding: 8px 0; position: relative; }
+.topbar__link:hover { color: #fff; }
+.topbar__link--active { color: #fff; }
+.topbar__link--active::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--accent); border-radius: 1px; }
+.topbar__spacer { flex: 1; }
+.topbar__icon { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+.topbar__icon:hover { background: rgba(255, 255, 255, 0.1); }
+.topbar__search { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 19px; background: rgba(255, 255, 255, 0.08); min-width: 240px; }
+.topbar__search input { flex: 1; background: none; border: 0; outline: 0; color: #fff; font-size: 14px; }
+.topbar__search input::placeholder { color: var(--muted); }
+.avatar { border-radius: 50%; background: var(--accent-dark); color: #fff; display: grid; place-items: center; font-weight: 700; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar--selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- hero (Crunchyroll's: art on the right, a dark fade from the left, the text column over it) ---------- */
+.hero { position: relative; height: min(78vh, 680px); min-height: 460px; overflow: hidden; background: var(--surface-high); }
+.hero__slide { position: absolute; inset: 0; opacity: 0; transition: opacity 500ms ease; pointer-events: none; }
+.hero__slide--on { opacity: 1; pointer-events: auto; }
+.hero__art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 70% 20%; }
+.hero__scrim-top { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 20%); }
+.hero__scrim-left { position: absolute; inset: 0; background: linear-gradient(to right, rgba(11, 11, 15, 0.96) 0%, rgba(11, 11, 15, 0.9) 22%, rgba(11, 11, 15, 0.55) 42%, rgba(11, 11, 15, 0) 64%); }
+.hero__scrim-bottom { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(11, 11, 15, 0) 70%, rgba(11, 11, 15, 0.7) 92%, var(--bg) 100%); }
+.hero__body { position: absolute; left: var(--gutter); top: 50%; transform: translateY(-50%); width: min(460px, calc(100% - 2 * var(--gutter))); display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+.hero__body > a { display: block; max-width: 100%; }
+.hero__logo { max-width: 340px; max-height: 150px; width: auto; height: auto; object-fit: contain; object-position: left; }
+.hero__title { font-size: 38px; line-height: 1.05; font-weight: 800; color: #fff; margin: 0; }
+.hero__meta { font-size: 13px; color: rgba(255, 255, 255, 0.85); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hero__synopsis { font-size: 15px; line-height: 22px; color: rgba(255, 255, 255, 0.92); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
+.hero__actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.hero__bars { position: absolute; left: var(--gutter); bottom: 44px; display: flex; gap: 6px; width: 230px; }
+.hero__bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.35); overflow: hidden; cursor: pointer; }
+.hero__bar i { display: block; height: 100%; background: var(--accent); width: 0; }
+.hero__bar--done i { width: 100%; }
+.hero__bar--on i { animation: hero-fill var(--dwell, 8s) linear forwards; }
+@keyframes hero-fill { from { width: 0; } to { width: 100%; } }
+.hero__arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 64px; display: grid; place-items: center; color: #fff; opacity: 0.8; z-index: 3; }
+.hero__arrow:hover { opacity: 1; }
+.hero__arrow--left { left: 8px; }
+.hero__arrow--right { right: 8px; }
+
+/* ---------- buttons (Crunchyroll's: rectangular, uppercase, bold) ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: var(--radius-button); font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; white-space: nowrap; }
+.btn--brand { background: var(--accent); color: var(--on-brand); }
+.btn--brand:hover { background: var(--accent-light); }
+.btn--white { background: #fff; color: #000; }
+.btn--grey { background: var(--button-grey); color: #fff; }
+.btn--grey:hover { background: #3a3a3a; }
+.btn--outline { border: 2px solid rgba(255, 255, 255, 0.85); color: #fff; }
+.btn--outline:hover { background: rgba(255, 255, 255, 0.08); }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+.save-btn { width: 40px; height: 40px; border-radius: var(--radius-button); border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; flex: none; }
+.save-btn:hover { background: rgba(62, 166, 255, 0.12); }
+.chip { height: 34px; padding: 0 16px; border-radius: var(--radius-chip); background: var(--chip-grey); color: #fff; font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.chip--on { background: #fff; color: #000; }
+.icon-btn { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+.icon-btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+
+/* ---------- rows and cards ---------- */
+.row { margin-top: 56px; }
+.row__head { display: flex; align-items: baseline; gap: 18px; padding: 0 var(--gutter); margin-bottom: 18px; }
+.row__title { font-size: 26px; font-weight: 700; margin: 0; }
+.row__scroller { position: relative; }
+.row__track {
+  display: grid; grid-auto-flow: column; gap: var(--card-gap);
+  grid-auto-columns: calc((100% - 2 * var(--gutter) - (var(--row-cols) - 1) * var(--card-gap)) / var(--row-cols));
+  overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 0 var(--gutter);
+  padding: 4px var(--gutter) 10px;
+  scrollbar-width: none;
+}
+.row__track::-webkit-scrollbar { display: none; }
+.row__track > * { scroll-snap-align: start; }
+.row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 2.35 * var(--card-gap)) / 3.35); }
+@media (max-width: 1024px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 1.3 * var(--card-gap)) / 2.3); } }
+@media (max-width: 760px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 0.4 * var(--card-gap)) / 1.4); } }
+.row__arrow { position: absolute; top: 0; bottom: 10px; width: var(--gutter); display: grid; place-items: center; color: #fff; opacity: 0; transition: opacity 160ms; z-index: 2; }
+.row__arrow--right { right: 0; background: linear-gradient(to left, rgba(11, 11, 15, 0.9), rgba(11, 11, 15, 0)); }
+.row__arrow--left { left: 0; background: linear-gradient(to right, rgba(11, 11, 15, 0.9), rgba(11, 11, 15, 0)); }
+.row__scroller:hover .row__arrow { opacity: 1; }
+
+.card { display: block; position: relative; min-width: 0; }
+.card__art { display: block; position: relative; border-radius: 0; overflow: hidden; background: var(--surface-high); aspect-ratio: 2 / 3; transition: transform 160ms ease, box-shadow 160ms ease; }
+.card__art--thumb { aspect-ratio: 16 / 9; }
+.card:hover .card__art { transform: scale(1.03); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); z-index: 1; }
+.card__img { width: 100%; height: 100%; object-fit: cover; }
+.card__name { margin-top: 10px; font-size: 14px; font-weight: 700; line-height: 19px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card__sub { margin-top: 4px; font-size: 13px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
+.card__sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card__menu { opacity: 0; transition: opacity 120ms; }
+.card:hover .card__menu { opacity: 1; }
+.card__saved { position: absolute; top: 0; right: 0; width: 34px; height: 34px; background: linear-gradient(225deg, var(--accent) 50%, transparent 50%); color: var(--on-brand); display: flex; justify-content: flex-end; padding: 3px 3px 0 0; }
+.progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0, 0, 0, 0.55); }
+.progress i { display: block; height: 100%; background: var(--accent); }
+.badge { position: absolute; padding: 3px 8px; border-radius: 2px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 12px; font-weight: 600; }
+.badge--tl { top: 8px; left: 8px; }
+.badge--br { bottom: 10px; right: 8px; }
+.play-ring { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); display: grid; place-items: center; color: #fff; }
+.play-ring--big { width: 60px; height: 60px; margin: -30px 0 0 -30px; }
+.watched-ring { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); display: grid; place-items: center; color: #fff; }
+.art-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 10px; text-align: center; color: rgba(255, 255, 255, 0.92); font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
+.art-fallback svg { opacity: 0.3; margin: 0 auto 8px; }
+
+/* ---------- grids ---------- */
+.grid { display: grid; gap: 28px var(--card-gap); padding: 0 var(--gutter); grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.grid--thumbs { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.grid--episodes { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 36px var(--card-gap); }
+@media (max-width: 760px) { .grid { grid-template-columns: repeat(3, 1fr); gap: 8px; } .grid--episodes { grid-template-columns: 1fr; } }
+
+/* ---------- tab pages ---------- */
+.tabhead { display: flex; align-items: center; gap: 16px; padding: 36px var(--gutter) 18px; }
+.tabhead h1 { font-size: 30px; font-weight: 700; margin: 0; }
+.tabhead__spacer { flex: 1; }
+.chips { display: flex; gap: 8px; padding: 0 var(--gutter) 24px; flex-wrap: wrap; }
+.sectiontabs { display: flex; gap: 28px; padding: 0 var(--gutter); border-bottom: 1px solid var(--surface-high); margin-top: 22px; }
+.sectiontabs button { padding: 12px 0; font-size: 15px; font-weight: 700; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.sectiontabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+.empty { padding: 48px var(--gutter); color: var(--muted); text-align: center; line-height: 20px; }
+
+/* ---------- title page (Crunchyroll's: the info column sits over the art's left side) ---------- */
+.title__banner { position: relative; height: min(72vh, 620px); min-height: 440px; overflow: hidden; background: var(--surface-high); }
+.title__banner img { width: 100%; height: 100%; object-fit: cover; object-position: 70% 20%; }
+.title__banner::before { content: ""; position: absolute; inset: 0; background: linear-gradient(to right, rgba(11, 11, 15, 0.95) 0%, rgba(11, 11, 15, 0.85) 25%, rgba(11, 11, 15, 0.45) 45%, rgba(11, 11, 15, 0) 65%); }
+.title__banner::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(11, 11, 15, 0) 75%, var(--bg) 100%); }
+.title__over { position: absolute; left: var(--gutter); top: 50%; transform: translateY(-50%); width: min(520px, calc(100% - 2 * var(--gutter))); display: flex; flex-direction: column; align-items: flex-start; gap: 14px; z-index: 2; }
+.title__logo { max-width: 360px; max-height: 170px; object-fit: contain; object-position: left; }
+.title__name { font-size: 40px; font-weight: 800; margin: 0; line-height: 1.05; }
+.title__facts { font-size: 13px; color: var(--facts); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.title__facts b { color: #fff; font-weight: 600; }
+.title__facts a { text-decoration: underline; text-underline-offset: 2px; }
+.title__actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.title__more { position: absolute; right: var(--gutter); top: calc(var(--topbar-h) + 12px); z-index: 3; display: flex; align-items: center; gap: 4px; color: #fff; font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; }
+.title__below { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 48px; padding: 8px var(--gutter) 0; }
+@media (max-width: 900px) { .title__below { grid-template-columns: 1fr; gap: 20px; } }
+.title__synopsis { margin: 0; font-size: 15px; line-height: 22px; color: rgba(242, 242, 245, 0.92); }
+.title__synopsis--clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.title__kv { font-size: 14px; color: var(--muted); line-height: 22px; }
+.title__kv b { color: #fff; font-weight: 700; }
+.age { display: inline-block; padding: 1px 6px; border-radius: 3px; background: var(--age-pill); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; line-height: 15px; }
+.seasonrow { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin: 40px 0 18px; }
+.seasonrow select { background: transparent; color: var(--fg); border: 0; font-size: 17px; font-weight: 700; padding: 10px 0; outline: 0; cursor: pointer; max-width: 70vw; }
+.seasonrow select option { background: var(--surface); }
+.seasonrow__spacer { flex: 1; }
+.seasonrow__tool { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; }
+.seasonrow__tool:hover { color: #fff; }
+
+.ep { display: block; position: relative; min-width: 0; }
+.ep > a { display: block; }
+.ep__art { display: block; position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--surface-high); }
+.ep__art img { width: 100%; height: 100%; object-fit: cover; }
+.ep:hover .ep__art img { transform: scale(1.03); transition: transform 160ms; }
+.ep__series { margin-top: 10px; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep__name { margin-top: 4px; font-size: 15px; font-weight: 700; line-height: 20px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ep__sub { font-size: 13px; color: var(--muted); margin-top: 4px; display: flex; align-items: center; justify-content: space-between; min-height: 24px; }
+.ep--unavailable { opacity: 0.5; }
+
+/* ---------- watch page (Crunchyroll's: a full-width dark band with the 16:9 player in it, the text column under it, Next episode at the right) ---------- */
+.watch__band { background: #000; display: grid; place-items: center; }
+.player { position: relative; width: min(100%, calc((100vh - var(--topbar-h) - 180px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; }
+.player video { width: 100%; height: 100%; display: block; background: #000; }
+.player canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.player__note { position: absolute; left: 12px; top: 12px; padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.6); font-size: 12px; color: #fff; }
+.player__error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--error); background: rgba(0, 0, 0, 0.7); }
+.player__skip { position: absolute; right: 16px; bottom: 80px; }
+.watch { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; width: min(1180px, 100%); margin: 36px auto 0; padding: 0 var(--gutter); }
+@media (min-width: 1100px) { .watch { grid-template-columns: minmax(0, 1fr) 320px; } }
+.watch__series { color: var(--accent); font-weight: 700; font-size: 14px; }
+.watch__title { font-size: 24px; font-weight: 700; margin: 8px 0 0; line-height: 30px; }
+.watch__facts { margin-top: 10px; font-size: 13px; color: var(--facts); display: flex; align-items: center; gap: 8px; }
+.watch__date { margin-top: 10px; font-size: 13px; color: var(--fg); }
+.watch__synopsis { margin: 18px 0 0; font-size: 15px; line-height: 22px; color: rgba(242, 242, 245, 0.92); }
+.watch__side h3 { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin: 0 0 12px; }
+.upnext { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 20px; }
+.upnext .ep__name { margin-top: 0; font-size: 14px; }
+
+/* ---------- login and profiles ---------- */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.login__box { width: min(420px, 100%); background: var(--surface); border-radius: 12px; padding: 32px; display: flex; flex-direction: column; gap: 16px; }
+.login__brand { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 800; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 12px; color: var(--muted); }
+.field input { height: 44px; padding: 0 14px; border-radius: 6px; border: 2px solid transparent; background: var(--surface-high); color: var(--fg); outline: 0; }
+.field input:focus { border-color: #fff; }
+.profiles { min-height: 100vh; display: grid; place-content: center; text-align: center; gap: 36px; padding: 24px; }
+.profiles h1 { font-size: 32px; font-weight: 700; margin: 0; }
+.profiles__list { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
+.profiles__one { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--muted); font-size: 16px; }
+.profiles__one:hover { color: #fff; }
+.profiles__one .avatar { width: 120px; height: 120px; font-size: 44px; border: 3px solid transparent; }
+.profiles__one:hover .avatar { border-color: #fff; }
+
+/* ---------- account ---------- */
+.account { max-width: 760px; padding: 0 var(--gutter); display: flex; flex-direction: column; gap: 16px; }
+.card-list { background: var(--surface); border-radius: 12px; overflow: hidden; }
+.card-list__row { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--surface-high); width: 100%; text-align: left; }
+.card-list__row:last-child { border-bottom: 0; }
+.card-list__row:hover { background: var(--surface-high); }
+.card-list__text { flex: 1; }
+.card-list__text b { display: block; font-size: 16px; font-weight: 600; }
+.card-list__text span { color: var(--muted); font-size: 13px; }
+.section-label { font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--muted); padding: 8px 4px 0; }
+
+/* ---------- skeletons ---------- */
+@keyframes shimmer { from { background-position: -600px 0; } to { background-position: 600px 0; } }
+.bone { background: linear-gradient(90deg, var(--skeleton-a) 0%, var(--skeleton-b) 50%, var(--skeleton-a) 100%); background-size: 1200px 100%; animation: shimmer 1.3s linear infinite; border-radius: 2px; }
+.bone--line { height: 14px; }
+.spinner { width: 40px; height: 40px; border: 3px solid rgba(62, 166, 255, 0.25); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.center { display: grid; place-items: center; min-height: 60vh; }
+
+/* ---------- menus ---------- */
+.menu { position: absolute; right: 0; top: 100%; z-index: 20; min-width: 220px; background: var(--surface-high); border-radius: 8px; padding: 6px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.menu button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; text-align: left; color: #fff; font-size: 14px; }
+.menu button:hover { background: rgba(255, 255, 255, 0.08); }

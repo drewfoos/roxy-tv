@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Roxy's witch hat: blue cone, gold band, a sparkle at the tip. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8FD0FF"/>
+      <stop offset="1" stop-color="#1B5FA8"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="32" cy="50" rx="26" ry="7" fill="#1B5FA8"/>
+  <path d="M20 46 C24 30, 30 20, 40 8 C38 24, 42 36, 46 46 Z" fill="url(#g)"/>
+  <path d="M21 42 C28 44, 38 44, 45 42 L46 46 C40 48, 26 48, 20 46 Z" fill="#E7B23A"/>
+  <path d="M44 4 l1.5 3 3 1.5 -3 1.5 -1.5 3 -1.5 -3 -3 -1.5 3 -1.5 Z" fill="#FFFFFF"/>
+</svg>
