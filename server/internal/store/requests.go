@@ -48,7 +48,7 @@ type Request struct {
 	PosterPath string `json:"-"`
 	UserID     string `json:"userId"`
 	UserName   string `json:"userName,omitempty"`
-	Status     string `json:"status"` // pending | sent | failed (available is derived from the library)
+	Status     string `json:"status"` // pending | sent | failed | approval (basic user, waiting for an admin) | declined
 	// Seasons asked for (series only); empty = the whole series.
 	Seasons []int `json:"seasons,omitempty"`
 	// Individual episodes asked for (specials), as "S0E5" codes.
@@ -78,6 +78,15 @@ func scanRequest(row interface{ Scan(...any) error }) (*Request, error) {
 
 func (s *Store) GetRequest(ctx context.Context, mediaType string, tmdbID int) (*Request, error) {
 	r, err := scanRequest(s.db.QueryRowContext(ctx, `SELECT `+requestCols+` FROM requests r LEFT JOIN users u ON u.id = r.user_id WHERE r.media_type = ? AND r.tmdb_id = ?`, mediaType, tmdbID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return r, err
+}
+
+// GetRequestByID returns one request, or nil.
+func (s *Store) GetRequestByID(ctx context.Context, id string) (*Request, error) {
+	r, err := scanRequest(s.db.QueryRowContext(ctx, `SELECT `+requestCols+` FROM requests r LEFT JOIN users u ON u.id = r.user_id WHERE r.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Description
@@ -104,7 +105,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -229,6 +230,8 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
 
         if (session.isAdmin) {
             GroupCard("Server") {
+                SettingRow(Icons.Outlined.Group, "Users", "Accounts for other people: admin, requester or basic", onClick = onOpenUsers)
+                Divider()
                 SettingRow(Icons.Outlined.VideoLibrary, "Library", "Scan, refresh metadata, fix matches and custom shows", onClick = onOpenLibrary)
                 Divider()
                 SettingRow(Icons.Outlined.Dns, "Sonarr & Radarr", "Where Discover requests go", onClick = onOpenArrSettings)

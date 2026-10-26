@@ -303,3 +303,33 @@ func (s *Server) discoverDeleteRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 }
+
+// POST /v1/discover/requests/{id}/approve (admin) -> request: a basic user's request goes on to Sonarr / Radarr.
+func (s *Server) discoverApprove(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
+		return
+	}
+	req, err := s.discover.Approve(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, req)
+}
+
+// POST /v1/discover/requests/{id}/decline {reason?} (admin) -> request
+func (s *Server) discoverDecline(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&body)
+	req, err := s.discover.Decline(r.Context(), chi.URLParam(r, "id"), body.Reason)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, req)
+}

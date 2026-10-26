@@ -2,11 +2,23 @@ package model
 
 import "time"
 
+// User levels. Admin: everything. Requester: requests go straight to Sonarr / Radarr.
+// Basic: watches; requests wait for an admin to approve them.
+const (
+	RoleAdmin     = "admin"
+	RoleRequester = "requester"
+	RoleBasic     = "basic"
+)
+
+// ValidRole reports whether r is one of the three levels.
+func ValidRole(r string) bool { return r == RoleAdmin || r == RoleRequester || r == RoleBasic }
+
 type User struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	PasswordHash string    `json:"-"`
-	IsAdmin      bool      `json:"isAdmin"`
+	IsAdmin      bool      `json:"isAdmin"` // kept equal to Role == admin
+	Role         string    `json:"role"`
 	IsDisabled   bool      `json:"isDisabled"`
 	CreatedAt    time.Time `json:"createdAt"`
 	LastLoginAt  time.Time `json:"lastLoginAt,omitempty"`

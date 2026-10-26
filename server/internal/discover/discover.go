@@ -61,22 +61,22 @@ type Season struct {
 // Detail is the title page's data.
 type Detail struct {
 	Item
-	Seasons     []Season       `json:"seasons,omitempty"`
-	Tagline     string         `json:"tagline,omitempty"`
-	Status      string         `json:"status,omitempty"`
+	Seasons []Season `json:"seasons,omitempty"`
+	Tagline string   `json:"tagline,omitempty"`
+	Status  string   `json:"status,omitempty"`
 	// Logo is the title's logo art (English or language-less), drawn over the banner
 	// like the library's title pages; empty when TMDB has none.
 	Logo string `json:"logo,omitempty"`
 	// OfficialRating is the US age rating (TV-14, PG-13), shown as the age badge.
-	OfficialRating string `json:"officialRating,omitempty"`
-	SeasonCount int            `json:"seasonCount,omitempty"`
-	Episodes    int            `json:"episodes,omitempty"`
-	RuntimeM    int            `json:"runtimeMinutes,omitempty"`
-	Networks    []string       `json:"networks,omitempty"`
-	TVDBID      int            `json:"tvdbId,omitempty"`
-	IMDBID      string         `json:"imdbId,omitempty"`
-	Request     *store.Request `json:"request,omitempty"`
-	Requests    bool           `json:"requestsEnabled"` // Sonarr / Radarr configured for this type
+	OfficialRating string         `json:"officialRating,omitempty"`
+	SeasonCount    int            `json:"seasonCount,omitempty"`
+	Episodes       int            `json:"episodes,omitempty"`
+	RuntimeM       int            `json:"runtimeMinutes,omitempty"`
+	Networks       []string       `json:"networks,omitempty"`
+	TVDBID         int            `json:"tvdbId,omitempty"`
+	IMDBID         string         `json:"imdbId,omitempty"`
+	Request        *store.Request `json:"request,omitempty"`
+	Requests       bool           `json:"requestsEnabled"` // Sonarr / Radarr configured for this type
 	// SeasonLayout says where Seasons came from: "tmdb", or "episodeGroup" when TMDB's
 	// "Seasons" grouping (TVDB's numbering, what Sonarr uses) replaced its merged season.
 	SeasonLayout string `json:"seasonLayout,omitempty"`
@@ -258,7 +258,8 @@ func (s *Service) RetryPending(ctx context.Context) {
 	}
 	for i := range all {
 		r := &all[i]
-		if r.Status == "sent" || !s.RequestsEnabled(r.MediaType) {
+		// Sent ones are done; ones waiting for (or refused) approval wait for an admin.
+		if r.Status == "sent" || r.Status == "approval" || r.Status == "declined" || !s.RequestsEnabled(r.MediaType) {
 			continue
 		}
 		det, err := s.Detail(ctx, r.MediaType, r.TMDBID)
@@ -892,7 +893,7 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 			}
 		}
 	}
-	if det.Request != nil && det.Request.Status != "failed" {
+	if det.Request != nil && det.Request.Status != "failed" && det.Request.Status != "declined" {
 		for i := range det.Seasons {
 			if det.Seasons[i].Special {
 				// All specials only when asked for as a season; single ones show per episode.
@@ -1002,13 +1003,57 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 			s.searchSeasonsAgain(ctx, r, seasons)
 			return r, nil
 		}
-		r.Status, r.Error = "pending", ""
+		if r.Status != "approval" {
+			r.Status, r.Error = "pending", ""
+		}
 	}
-	s.send(ctx, r, det)
+	s.sendOrHold(ctx, r, det, user)
 	if err := s.store.UpsertRequest(ctx, r); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// sendOrHold sends a request to Sonarr / Radarr, unless it comes from a basic user and
+// the title hasn't been approved yet: then it waits as "approval" for an admin.
+func (s *Service) sendOrHold(ctx context.Context, r *store.Request, det *Detail, user *model.Principal) {
+	basic := user != nil && user.User != nil && user.User.Role == model.RoleBasic
+	if basic && r.ArrID == 0 && (r.Status == "pending" || r.Status == "approval" || r.Status == "declined" || r.Status == "failed") {
+		r.Status, r.Error = "approval", ""
+		return
+	}
+	s.send(ctx, r, det)
+}
+
+// Approve sends a waiting request on (admin).
+func (s *Service) Approve(ctx context.Context, id string) (*store.Request, error) {
+	r, err := s.store.GetRequestByID(ctx, id)
+	if err != nil || r == nil {
+		return nil, errors.New("request not found")
+	}
+	if r.Status != "approval" && r.Status != "declined" {
+		return r, nil
+	}
+	det, err := s.Detail(ctx, r.MediaType, r.TMDBID)
+	if err != nil {
+		return nil, err
+	}
+	r.Status, r.Error = "pending", ""
+	s.send(ctx, r, det)
+	return r, s.store.UpsertRequest(ctx, r)
+}
+
+// Decline turns a waiting request down (admin); reason is shown to the household.
+func (s *Service) Decline(ctx context.Context, id, reason string) (*store.Request, error) {
+	r, err := s.store.GetRequestByID(ctx, id)
+	if err != nil || r == nil {
+		return nil, errors.New("request not found")
+	}
+	if r.Status != "approval" {
+		return nil, errors.New("only requests waiting for approval can be declined")
+	}
+	r.Status, r.Error = "declined", strings.TrimSpace(reason)
+	return r, s.store.UpsertRequest(ctx, r)
 }
 
 // requestEpisodes adds individual episodes (specials) to the series' request. The
@@ -1044,8 +1089,10 @@ func (s *Service) requestEpisodes(ctx context.Context, det *Detail, user *model.
 		}
 		return r, nil
 	}
-	r.Status, r.Error = "pending", ""
-	s.send(ctx, r, det)
+	if r.Status != "approval" {
+		r.Status, r.Error = "pending", ""
+	}
+	s.sendOrHold(ctx, r, det, user)
 	if err := s.store.UpsertRequest(ctx, r); err != nil {
 		return nil, err
 	}
@@ -1217,7 +1264,7 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 		s.episodes.put(key, base)
 	}
 	out := append([]Episode(nil), base...)
-	if r, err := s.store.GetRequest(ctx, "tv", tmdbID); err == nil && r != nil && r.Status != "failed" {
+	if r, err := s.store.GetRequest(ctx, "tv", tmdbID); err == nil && r != nil && r.Status != "failed" && r.Status != "declined" {
 		if season == 0 {
 			for i := range out {
 				out[i].Requested = containsStr(r.Episodes, fmt.Sprintf("S0E%d", out[i].Number)) || contains(r.Seasons, 0)

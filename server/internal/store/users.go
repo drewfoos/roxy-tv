@@ -16,22 +16,29 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 
 func (s *Store) CreateUser(ctx context.Context, u *model.User) error {
 	now := Now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO users (id, name, password_hash, is_admin, is_disabled, created_at) VALUES (?,?,?,?,?,?)`,
-		u.ID, u.Name, nullStr(u.PasswordHash), boolInt(u.IsAdmin), boolInt(u.IsDisabled), now)
+	if u.Role == "" {
+		u.Role = model.RoleRequester
+		if u.IsAdmin {
+			u.Role = model.RoleAdmin
+		}
+	}
+	u.IsAdmin = u.Role == model.RoleAdmin
+	_, err := s.db.ExecContext(ctx, `INSERT INTO users (id, name, password_hash, is_admin, is_disabled, created_at, role) VALUES (?,?,?,?,?,?,?)`,
+		u.ID, u.Name, nullStr(u.PasswordHash), boolInt(u.IsAdmin), boolInt(u.IsDisabled), now, u.Role)
 	if err == nil {
 		u.CreatedAt = ParseTime(now)
 	}
 	return err
 }
 
-const userCols = `id, name, password_hash, is_admin, is_disabled, created_at`
+const userCols = `id, name, password_hash, is_admin, is_disabled, created_at, role`
 
 func scanUser(sc interface{ Scan(...any) error }) (*model.User, error) {
 	var u model.User
 	var hash sql.NullString
 	var admin, disabled int
 	var created string
-	if err := sc.Scan(&u.ID, &u.Name, &hash, &admin, &disabled, &created); err != nil {
+	if err := sc.Scan(&u.ID, &u.Name, &hash, &admin, &disabled, &created, &u.Role); err != nil {
 		return nil, err
 	}
 	u.PasswordHash = hash.String
@@ -182,4 +189,37 @@ func (s *Store) SetAcceptedTerms(ctx context.Context, userID, version string) er
 func (s *Store) SetPasswordHash(ctx context.Context, userID, hash string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID)
 	return err
+}
+
+// UpdateUser saves a user's name, level and disabled flag (is_admin follows the level).
+func (s *Store) UpdateUser(ctx context.Context, u *model.User) error {
+	u.IsAdmin = u.Role == model.RoleAdmin
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET name = ?, role = ?, is_admin = ?, is_disabled = ? WHERE id = ?`,
+		u.Name, u.Role, boolInt(u.IsAdmin), boolInt(u.IsDisabled), u.ID)
+	return err
+}
+
+// DeleteUser removes an account; its devices, profiles and watch history go with it
+// (cascade). Its requests would too, so they move to heir (the admin deleting it) first,
+// still showing the name of whoever asked.
+func (s *Store) DeleteUser(ctx context.Context, id, heir string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE requests SET requested_by = COALESCE(NULLIF(requested_by, ''), (SELECT name FROM users WHERE id = ?)), user_id = ? WHERE user_id = ?`, id, heir, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CountActiveAdmins counts admins who can sign in (the server must always keep one).
+func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_disabled = 0`).Scan(&n)
+	return n, err
 }

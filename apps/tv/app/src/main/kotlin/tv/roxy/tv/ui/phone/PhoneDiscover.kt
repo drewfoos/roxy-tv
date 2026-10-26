@@ -446,7 +446,7 @@ private fun DiscoverCard(item: DiscoverItem, modifier: Modifier = Modifier, onCl
 internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: Modifier = Modifier, download: tv.roxy.tv.api.DownloadStatus? = null) {
     val (icon, bg) = when {
         inLibrary -> Icons.Filled.Check to RoxyColors.accent
-        requestStatus == "failed" || download?.state == "failed" || download?.state == "attention" -> Icons.Filled.Close to RoxyColors.error
+        requestStatus == "failed" || requestStatus == "declined" || download?.state == "failed" || download?.state == "attention" -> Icons.Filled.Close to RoxyColors.error
         download?.state == "downloading" || download?.state == "importing" -> Icons.Filled.Download to RoxyColors.accent
         requestStatus != null -> Icons.Outlined.Schedule to Color(0xFF4B4B57)
         else -> return
@@ -597,9 +597,22 @@ fun PhoneDiscoverDetail(
                         val line = when (r.status) {
                             "sent" -> "Requested by ${r.userName.ifEmpty { "someone" }}  ·  sent to ${if (d.isMovie) "Radarr" else "Sonarr"}"
                             "failed" -> "Request failed  ·  ${r.error ?: "unknown error"}"
+                            "approval" -> "Requested by ${r.userName.ifEmpty { "someone" }}  ·  waiting for an admin to approve"
+                            "declined" -> "Request declined" + (r.error?.takeIf { it.isNotBlank() }?.let { "  ·  $it" } ?: "")
                             else -> "Requested by ${r.userName.ifEmpty { "someone" }}  ·  waiting for ${if (d.isMovie) "Radarr" else "Sonarr"}"
                         }
-                        Text(line, fontSize = 12.sp, color = if (r.status == "failed") RoxyColors.error else RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp))
+                        Text(line, fontSize = 12.sp, color = if (r.status == "failed" || r.status == "declined") RoxyColors.error else RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp))
+                        // Admin: approve or decline a basic user's request right here.
+                        if (r.status == "approval" && app.prefs.session.value.isAdmin) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 10.dp)) {
+                                GreyButton("Decline", modifier = Modifier.height(40.dp), onClick = {
+                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.declineRequest(r.id) }.onFailure { t -> notice = t.message }; reload(); busy = false } }
+                                })
+                                PlayButton("Approve", icon = Icons.Filled.Check, height = 40.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = {
+                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.approveRequest(r.id) }.onFailure { t -> notice = t.message }; reload(); busy = false } }
+                                })
+                            }
+                        }
                     }
                     if (!d.requestsEnabled && (!d.inLibrary || d.missingSeasons.isNotEmpty())) {
                         Text(
@@ -637,8 +650,8 @@ fun PhoneDiscoverDetail(
                     PlayButton("Watch", modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
                     GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }) })
                 }
-                d.request != null && d.request.status != "failed" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PlayButton("Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
+                d.request != null && d.request.status != "failed" && d.request.status != "declined" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PlayButton(if (d.request.status == "approval") "Waiting for approval" else "Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
                     GreyButton("Withdraw", modifier = Modifier.height(44.dp), onClick = {
                         if (busy) return@GreyButton
                         busy = true
@@ -653,7 +666,7 @@ fun PhoneDiscoverDetail(
                 else -> PlayButton(
                     when {
                         busy -> "Requesting…"
-                        d.request?.status == "failed" -> "Request again"
+                        d.request?.status == "failed" || d.request?.status == "declined" -> "Request again"
                         missing.isNotEmpty() && missing.size < d.seasons.count { !it.special } -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
                         else -> "Request"
                     },

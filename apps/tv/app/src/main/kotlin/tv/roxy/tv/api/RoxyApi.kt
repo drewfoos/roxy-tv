@@ -72,6 +72,17 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun logout() { postNoBody("/v1/auth/logout", "") }
 
+    // ---- users (admin) ----
+    suspend fun users(): List<ServerUser> = get<UsersResponse>("/v1/users").users
+    suspend fun createUser(name: String, password: String, role: String): ServerUser =
+        postJson("/v1/users", json.encodeToString(UserEdit.serializer(), UserEdit(name = name, password = password, role = role)))
+    suspend fun updateUser(id: String, role: String? = null, password: String? = null, disabled: Boolean? = null): ServerUser =
+        patchJson("/v1/users/$id", json.encodeToString(UserEdit.serializer(), UserEdit(role = role, password = password, disabled = disabled)))
+    suspend fun deleteUser(id: String) = delete("/v1/users/$id")
+    suspend fun approveRequest(id: String) = postNoBody("/v1/discover/requests/$id/approve", "")
+    suspend fun declineRequest(id: String, reason: String = "") =
+        postNoBody("/v1/discover/requests/$id/decline", json.encodeToString(DeclineBody.serializer(), DeclineBody(reason)))
+
     /** Change this account's password; other devices are signed out. 403 = wrong current password. */
     suspend fun changePassword(current: String, new: String) =
         postNoBody("/v1/me/password", json.encodeToString(PasswordChange.serializer(), PasswordChange(current, new)))
@@ -1059,6 +1070,19 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 
 @Serializable
 private data class ScanMode(val mode: String)
+
+@Serializable
+data class ServerUser(val id: String, val name: String = "", val role: String = "requester", val isDisabled: Boolean = false, val isYou: Boolean = false, val createdAt: String = "")
+
+@Serializable
+private data class UsersResponse(val users: List<ServerUser> = emptyList())
+
+/** Only the non-null fields are sent (explicitNulls = false). */
+@Serializable
+private data class UserEdit(val name: String? = null, val password: String? = null, val role: String? = null, val disabled: Boolean? = null)
+
+@Serializable
+private data class DeclineBody(val reason: String)
 
 @Serializable
 data class MediaFolder(

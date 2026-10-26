@@ -124,5 +124,6 @@ func userJSON(u *model.User) map[string]any {
 		"id":      u.ID,
 		"name":    u.Name,
 		"isAdmin": u.IsAdmin,
+		"role":    u.Role,
 	}
 }
