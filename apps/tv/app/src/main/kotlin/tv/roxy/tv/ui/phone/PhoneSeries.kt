@@ -234,7 +234,11 @@ fun PhoneSeries(
                                     add(SeasonEntry("s$i", season.title.ifEmpty { "Season ${n ?: i + 1}" }, episodesLabel(count), selected = selectedExtra == null && !state.showRelated && i == state.selectedSeason))
                                 }
                                 extraSeasons.forEach { sn ->
-                                    add(SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, episodesLabel(sn.episodes), selected = selectedExtra == sn.number, note = seasonNote(sn.airDate, sn.requested)))
+                                    val coming = seasonComing(sn.airDate)
+                                    add(
+                                        if (coming != null) SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, coming, selected = false, enabled = false)
+                                        else SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, episodesLabel(sn.episodes), selected = selectedExtra == sn.number, note = if (sn.requested) "Requested" else "Not in your library"),
+                                    )
                                 }
                                 if (hasRelated) add(SeasonEntry("related", "Movies & OVAs", (state.related.size.takeIf { it > 0 } ?: series.relatedCount).takeIf { it > 0 }?.let { "$it ${if (it == 1) "Title" else "Titles"}" }, selected = state.showRelated && selectedExtra == null))
                             }

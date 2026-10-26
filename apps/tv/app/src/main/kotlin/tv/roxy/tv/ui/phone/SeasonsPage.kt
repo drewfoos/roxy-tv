@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,7 +30,7 @@ import androidx.compose.ui.window.DialogProperties
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /** One row of the Seasons page: its name, the count on the right, a note under the name. */
-data class SeasonEntry(val key: String, val label: String, val count: String?, val selected: Boolean, val note: String? = null)
+data class SeasonEntry(val key: String, val label: String, val count: String?, val selected: Boolean, val note: String? = null, val enabled: Boolean = true)
 
 /**
  * Crunchyroll's season picker: a full page with an X and "Seasons", then one row per
@@ -47,7 +48,8 @@ fun SeasonsPage(entries: List<SeasonEntry>, onPick: (SeasonEntry) -> Unit, onDis
             LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
                 items(entries, key = { it.key }) { e ->
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable { onPick(e) }.padding(horizontal = PhonePad, vertical = 16.dp),
+                        // A season not out yet reads "Coming Apr 2027" and can't be opened.
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = e.enabled) { onPick(e) }.alpha(if (e.enabled) 1f else 0.5f).padding(horizontal = PhonePad, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
@@ -66,17 +68,13 @@ fun SeasonsPage(entries: List<SeasonEntry>, onPick: (SeasonEntry) -> Unit, onDis
     }
 }
 
-/**
- * Under a season the library lacks: not out yet ("Coming Apr 2027", or no date known),
- * else whether it was requested. A season already airing counts as out.
- */
-internal fun seasonNote(airDate: String?, requested: Boolean): String {
+/** "Coming Apr 2027" (or "Coming soon" with no date) for a season not out yet; null once it is. */
+internal fun seasonComing(airDate: String?): String? {
     val date = airDate?.takeIf { it.length >= 10 }?.let { runCatching { java.time.LocalDate.parse(it.take(10)) }.getOrNull() }
     return when {
-        date == null -> if (requested) "Requested  ·  not released yet" else "Not released yet"
-        date.isAfter(java.time.LocalDate.now()) -> "Coming " + date.format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy")) + if (requested) "  ·  requested" else ""
-        requested -> "Requested"
-        else -> "Not in your library"
+        date == null -> "Coming soon"
+        date.isAfter(java.time.LocalDate.now()) -> "Coming " + date.format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy"))
+        else -> null
     }
 }
 
