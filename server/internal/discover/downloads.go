@@ -88,9 +88,13 @@ type Download struct {
 	// CanSearch: something is missing, not downloading, not being searched for right now
 	// and not searched in the last few minutes. CanRetry: a download failed, cannot be
 	// imported, or has been stalled long enough that replacing it is worth it.
-	CanSearch bool      `json:"canSearch"`
-	CanRetry  bool      `json:"canRetry"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	CanSearch bool `json:"canSearch"`
+	CanRetry  bool `json:"canRetry"`
+	// WaitingFor says what a "waiting" request waits for: "airing" (episodes not aired),
+	// "release" (a movie not out at all) or "digital" (a movie in cinemas; Radarr waits
+	// for the digital / physical release).
+	WaitingFor string    `json:"waitingFor,omitempty"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // The rules behind CanSearch / CanRetry (and what the actions enforce).
@@ -529,6 +533,10 @@ func (s *Service) movieStatusBase(r *store.Request, m *arr.Movie, queue []arr.Qu
 			}
 		}
 		d.Upcoming = 1
+		d.WaitingFor = "release"
+		if m.InCinemas != nil && !m.InCinemas.After(now) {
+			d.WaitingFor = "digital" // TMDB says "Released": it is, in cinemas
+		}
 	} else {
 		d.Wanted = 1
 	}
@@ -729,6 +737,9 @@ func (s *Service) summarise(d *Download, missing, notFound int) {
 		d.State = DLComplete
 	case d.Wanted == 0 && d.Upcoming > 0:
 		d.State = DLWaiting
+		if d.WaitingFor == "" {
+			d.WaitingFor = "airing"
+		}
 	case d.Wanted == 0 && d.Have == 0:
 		d.State = DLComplete // nothing aired is requested (e.g. a future season with no dates)
 	case notFound > 0 && notFound >= missing:

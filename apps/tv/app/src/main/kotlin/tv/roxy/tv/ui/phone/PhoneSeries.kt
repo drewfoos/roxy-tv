@@ -502,7 +502,6 @@ private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints
  */
 @Composable
 fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().pullUp(LogoOverlap), horizontalAlignment = Alignment.CenterHorizontally) {
         // The fade belongs to the content, not the picture: transparent at the top, black
         // by the logo's foot, so it rides up with the logo and the "14+" line below it is
@@ -544,8 +543,8 @@ fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra:
             item.overview?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f), textAlign = TextAlign.Center,
-                    maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
+                    maxLines = 3, overflow = TextOverflow.Ellipsis, // the whole text is on "More details"
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 )
             }
             // Crunchyroll's "More details": a centred link in the brand colour, not a button.

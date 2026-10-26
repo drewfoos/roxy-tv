@@ -788,6 +788,8 @@ data class DownloadStatus(
     val updatedAt: String? = null,
     /** Every requested episode still missing, each with its own state. */
     val episodes: List<EpisodeDownload> = emptyList(),
+    /** waiting: "airing", "release" (not out at all) or "digital" (in cinemas, waiting for the digital release). */
+    val waitingFor: String? = null,
 ) {
     /** Episodes in the download client right now (downloading, stalled, importing, queued). */
     val activeEpisodes: List<EpisodeDownload> get() = episodes.filter { it.state in setOf("downloading", "stalled", "importing", "queued") }

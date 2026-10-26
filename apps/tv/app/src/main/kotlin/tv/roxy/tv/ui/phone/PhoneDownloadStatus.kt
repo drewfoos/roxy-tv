@@ -115,7 +115,7 @@ internal fun ProgressBadge(d: DownloadStatus, isMovie: Boolean, modifier: Modifi
 @Composable
 internal fun StateBox(d: DownloadStatus, modifier: Modifier = Modifier) {
     Box(modifier = modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xE6000000)).padding(horizontal = 6.dp, vertical = 3.dp)) {
-        Text(stateWord(d.state), fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = if (d.state in setOf("searching", "notFound", "waiting", "queued")) Color.White else stateColor(d.state), maxLines = 1)
+        Text(if (d.state == "waiting" && d.waitingFor == "digital") "In cinemas" else stateWord(d.state), fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = if (d.state in setOf("searching", "notFound", "waiting", "queued")) Color.White else stateColor(d.state), maxLines = 1)
     }
 }
 
@@ -239,7 +239,7 @@ internal fun DownloadStatusCard(
     val headline = when (d.state) {
         "searching" -> "Looking for a release"
         "notFound" -> "No download found yet"
-        "waiting" -> if (isMovie) "Not released yet" else "Not aired yet"
+        "waiting" -> when { !isMovie -> "Not aired yet"; d.waitingFor == "digital" -> "In cinemas"; else -> "Not released yet" }
         "queued" -> "Queued"
         "downloading" -> "Downloading"
         "stalled" -> "Download stalled"
@@ -253,7 +253,11 @@ internal fun DownloadStatusCard(
         when (d.state) {
             "searching" -> "$arr is searching"
             "notFound" -> ago(d.lastSearch)?.let { "Searched $it · $arr keeps checking" } ?: "$arr keeps checking for new releases"
-            "waiting" -> day(d.nextAir)?.let { if (isMovie) "Releases $it" else "First episode airs $it" }
+            "waiting" -> when {
+                !isMovie -> day(d.nextAir)?.let { "First episode airs $it" }
+                d.waitingFor == "digital" -> day(d.nextAir)?.let { "Radarr fetches it once it is out digitally ($it)" } ?: "Radarr fetches it once it is out digitally"
+                else -> day(d.nextAir)?.let { "Releases $it" }
+            }
             "downloading", "stalled" -> timeLeft(d.timeLeftSec)
             "complete" -> if (!isMovie && d.upcoming > 0) day(d.nextAir)?.let { "Next episode $it" } else "Adding to your library"
             else -> null

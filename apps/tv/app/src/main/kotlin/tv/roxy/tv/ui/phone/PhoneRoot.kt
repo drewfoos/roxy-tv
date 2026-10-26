@@ -199,6 +199,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onOpenSeries = { id, title -> nav.navigate(Route.Series(id, title)) }, // Discover has no library item to seed from
                             onOpenMovie = { id, title -> nav.navigate(Route.Movie(id, title)) },
                             onMoreDetails = { title -> nav.navigate(Route.DiscoverMoreDetails(r.type, r.tmdbId, title)) },
+                            onOpenPerson = { c -> nav.navigate(Route.Person(c.tmdbId, c.name)) },
                         )
                     }
                 }

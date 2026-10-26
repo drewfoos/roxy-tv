@@ -449,13 +449,15 @@ internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: M
  * Radarr are connected, then sent, or failed with the reason) and can be withdrawn.
  */
 @Composable
-fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSeries: (String, String) -> Unit, onOpenMovie: (String, String) -> Unit, onMoreDetails: (String) -> Unit = {}) {
+fun PhoneDiscoverDetail(
+    type: String, tmdbId: Int, onBack: () -> Unit, onOpenSeries: (String, String) -> Unit, onOpenMovie: (String, String) -> Unit,
+    onMoreDetails: (String) -> Unit = {}, onOpenPerson: (tv.roxy.tv.api.CastMember) -> Unit = {},
+) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<DiscoverDetail?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var expanded by rememberSaveable { mutableStateOf(false) }
     var setupPrompt by remember { mutableStateOf(false) }
     // An action the server refused ("already on it", "searched a moment ago"): shown for a few seconds.
     var notice by remember { mutableStateOf<String?>(null) }
@@ -465,6 +467,12 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
         runCatching { app.api.discoverDetail(type, tmdbId) }
             .onSuccess { detail = it; error = null }
             .onFailure { t -> Timber.w(t, "discover detail"); error = t.message }
+    }
+    // A movie has no seasons: its page carries what "More details" would (cast, studio,
+    // dates, keywords, links) instead of a link to it.
+    var movieDetails by remember { mutableStateOf<tv.roxy.tv.api.ItemDetails?>(null) }
+    LaunchedEffect(type, tmdbId) {
+        if (type == "movie") movieDetails = runCatching { app.api.discoverMoreDetails(type, tmdbId) }.onFailure { Timber.w(it, "movie details") }.getOrNull()
     }
     LaunchedEffect(type, tmdbId) {
         reload()
@@ -527,18 +535,20 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                         ),
                     )
                     d.networks.firstOrNull()?.let { Text(it, fontSize = 11.sp, color = RoxyColors.muted.copy(alpha = 0.8f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)) }
-                    d.overview?.takeIf { it.isNotBlank() }?.let {
+                    if (!d.isMovie) {
+                        d.overview?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
+                                maxLines = 4, overflow = TextOverflow.Ellipsis, // the whole text is on "More details"
+                                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                            )
+                        }
+                        // Crunchyroll's "More details": cast, studio, dates, keywords, links.
                         Text(
-                            it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f),
-                            maxLines = if (expanded) Int.MAX_VALUE else 5, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp).clickable { expanded = !expanded },
+                            "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
+                            modifier = Modifier.padding(top = 10.dp).clickable { onMoreDetails(d.title) }.padding(vertical = 4.dp, horizontal = 8.dp),
                         )
                     }
-                    // Crunchyroll's "More details": cast, studio, dates, keywords, links.
-                    Text(
-                        "More details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
-                        modifier = Modifier.padding(top = 10.dp).clickable { onMoreDetails(d.title) }.padding(vertical = 4.dp, horizontal = 8.dp),
-                    )
                     if (d.seasons.isNotEmpty()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(top = 22.dp)) {
                             Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
@@ -590,6 +600,13 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                             fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp),
                         )
                     }
+                }
+            }
+            if (d.isMovie) item(key = "details") {
+                val m = movieDetails
+                if (m != null) DetailsSections(m, onOpenPerson = onOpenPerson, showTagline = false) // the tagline is under the title already
+                else Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    BoneLine(width = 120.dp, height = 16.dp); repeat(4) { BoneLine(width = 300.dp, height = 12.dp) }
                 }
             }
         }
