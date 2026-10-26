@@ -409,19 +409,22 @@ private fun DiscoverCard(item: DiscoverItem, modifier: Modifier = Modifier, onCl
         ) {
             if (item.poster != null) AsyncImage(model = item.poster, contentDescription = item.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Text(item.title, color = RoxyColors.muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).padding(6.dp))
-            if (moving) ProgressBadge(dl!!, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
-            else StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp), download = dl)
+            // The corner says it all: a downloading title its episodes and progress (tap for
+            // the list), a requested one its state ("Searching", "Not out yet", "Failed"),
+            // a title in the library the tick.
+            when {
+                moving -> ProgressBadge(dl!!, item.isMovie, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).clickable { showDownloads = true })
+                dl != null && !item.inLibrary -> StateBox(dl, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
+                else -> StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp), download = dl)
+            }
             if (moving) DownloadBar(dl!!.progress, dl.state, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth())
             androidx.compose.material3.DropdownMenu(expanded = showDownloads, onDismissRequest = { showDownloads = false }, containerColor = RoxyColors.surface) {
                 if (dl != null) ActiveDownloadsList(dl, item.title, item.isMovie)
             }
         }
         Text(item.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-        if (dl != null && (!item.inLibrary || moving)) {
-            Text(dl.shortLine(item.isMovie), fontSize = 11.sp, color = stateColor(dl.state), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        } else {
-            Text(listOfNotNull(item.year?.toString(), if (item.isAnime) "Anime" else if (item.isMovie) "Movie" else null).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1)
-        }
+        // Under the title only the year and type; the state lives in the corner box.
+        Text(listOfNotNull(item.year?.toString(), if (item.isAnime) "Anime" else if (item.isMovie) "Movie" else null).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1)
     }
 }
 

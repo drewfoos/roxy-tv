@@ -47,6 +47,7 @@ var (
 	radarrURL  = flag.String("radarr", "", "Radarr URL, to turn TMDB ids into titles")
 	radarrKey  = flag.String("radarr-key", "", "Radarr API key")
 	downloadTo = flag.Duration("duration", 90*time.Second, "how long an ok download takes")
+	slots      = flag.Int("slots", 3, "downloads at once; the rest wait as Queued, like a real client")
 )
 
 // ---- simulated downloads ----
@@ -57,14 +58,17 @@ type job struct {
 	Category string    `json:"category"`
 	Mode     string    `json:"mode"` // ok | slow | stall | fail | badimport
 	Size     int64     `json:"size"`
-	Started  time.Time `json:"started"`
-	Files    []string  `json:"files"` // episode file names inside the folder ("" for a movie: one file)
+	Started  time.Time `json:"started"` // when it got a download slot (zero while queued)
+	Files    []string  `json:"files"`   // episode file names inside the folder ("" for a movie: one file)
 	Done     bool      `json:"done"`
 	Failed   string    `json:"failed,omitempty"`
 	Deleted  bool      `json:"deleted"`
 }
 
 func (j *job) progress(now time.Time) float64 {
+	if j.Started.IsZero() {
+		return 0 // still waiting for a slot
+	}
 	d := *downloadTo
 	switch j.Mode {
 	case "slow":
@@ -472,7 +476,7 @@ func addJob(w http.ResponseWriter, r *http.Request, q url.Values) {
 	if n := q.Get("nzbname"); n != "" {
 		rel.Title = strings.TrimSuffix(n, ".nzb")
 	}
-	j := &job{ID: fmt.Sprintf("SABnzbd_nzo_arrsim%s%04d", runID, nextID), Name: rel.Title, Category: q.Get("cat"), Mode: m, Size: rel.Size, Started: time.Now(), Files: rel.Files}
+	j := &job{ID: fmt.Sprintf("SABnzbd_nzo_arrsim%s%04d", runID, nextID), Name: rel.Title, Category: q.Get("cat"), Mode: m, Size: rel.Size, Files: rel.Files}
 	if m == "none" || m == "" {
 		j.Mode = "ok"
 	}
@@ -549,10 +553,19 @@ func queue() map[string]any {
 	mu.Lock()
 	defer mu.Unlock()
 	now := time.Now()
+	assignSlots(now)
 	var slots []map[string]any
 	for _, j := range jobs {
 		finish(j, now)
 		if j.Done || j.Deleted {
+			continue
+		}
+		if j.Started.IsZero() {
+			mb := float64(j.Size) / 1e6
+			slots = append(slots, map[string]any{
+				"nzo_id": j.ID, "filename": j.Name, "cat": j.Category, "status": "Queued", "priority": "Normal",
+				"mb": fmt.Sprintf("%.2f", mb), "mbleft": fmt.Sprintf("%.2f", mb), "percentage": "0", "timeleft": "0:00:00",
+			})
 			continue
 		}
 		p := j.progress(now)
@@ -582,10 +595,30 @@ func queue() map[string]any {
 	return map[string]any{"paused": false, "speed": "10 M", "kbpersec": "10000", "slots": slots, "noofslots": len(slots), "status": "Downloading"}
 }
 
+// assignSlots gives waiting jobs a download slot as running ones finish (mu held).
+func assignSlots(now time.Time) {
+	running := 0
+	for _, j := range jobs {
+		if !j.Done && !j.Deleted && !j.Started.IsZero() {
+			running++
+		}
+	}
+	for _, j := range jobs {
+		if running >= *slots {
+			return
+		}
+		if !j.Done && !j.Deleted && j.Started.IsZero() {
+			j.Started = now
+			running++
+		}
+	}
+}
+
 func history(cat string) map[string]any {
 	mu.Lock()
 	defer mu.Unlock()
 	now := time.Now()
+	assignSlots(now)
 	var slots []map[string]any
 	for _, j := range jobs {
 		finish(j, now)

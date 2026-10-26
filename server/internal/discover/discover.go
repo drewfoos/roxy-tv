@@ -560,6 +560,10 @@ func (s *Service) annotate(ctx context.Context, items []Item) {
 		}
 		if r, ok := reqs[it.Type+":"+strconv.Itoa(it.TMDBID)]; ok {
 			it.RequestStatus = r.Status
+			// Every row shows the same corner box as "Your requests".
+			if it.Download == nil {
+				it.Download = s.Download(r.ID)
+			}
 		}
 	}
 }
@@ -1044,7 +1048,12 @@ func (s *Service) Requests(ctx context.Context) ([]Item, error) {
 	}
 	items := make([]Item, 0, len(all))
 	for _, r := range all {
-		items = append(items, Item{TMDBID: r.TMDBID, Type: r.MediaType, Title: r.Title, Year: r.Year, Poster: r.PosterPath, RequestStatus: r.Status, Download: s.Download(r.ID)})
+		it := Item{TMDBID: r.TMDBID, Type: r.MediaType, Title: r.Title, Year: r.Year, Poster: r.PosterPath, RequestStatus: r.Status, Download: s.Download(r.ID)}
+		// "Anime" under the title, as on every other row (the detail is cached).
+		if det, err := s.Detail(ctx, r.MediaType, r.TMDBID); err == nil {
+			it.IsAnime = det.IsAnime
+		}
+		items = append(items, it)
 	}
 	s.annotate(ctx, items)
 	return items, nil

@@ -1,6 +1,9 @@
 package tv.roxy.tv.ui.phone
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,7 +61,7 @@ private fun stateWord(state: String): String = when (state) {
     "importing" -> "Adding to library"
     "queued" -> "Queued"
     "searching" -> "Searching"
-    "notFound" -> "No release yet"
+    "notFound" -> "Not found yet" // a download, not the show: "not out yet" is "waiting"
     "waiting" -> "Not out yet"
     "stalled" -> "Stalled"
     "attention" -> "Needs attention"
@@ -89,37 +93,92 @@ internal fun DownloadStatus.shortLine(isMovie: Boolean): String = when (state) {
     else -> stateWord(state)
 }
 
-/** The badge while something downloads: a ring filling with the progress around a small arrow. */
+/**
+ * The poster's corner box while something downloads: which episodes and how far,
+ * "S1 E5 · 45%", "S1 E1–E9 · 41%", or "45%" for a movie. Amber when stalled.
+ */
 @Composable
-internal fun ProgressBadge(d: DownloadStatus, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.size(26.dp).clip(CircleShape).background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
-        androidx.compose.material3.CircularProgressIndicator(
-            progress = { if (d.state == "importing") 1f else d.progress.toFloat().coerceIn(0f, 1f) },
-            modifier = Modifier.size(22.dp), color = stateColor(d.state), trackColor = Color(0x44FFFFFF), strokeWidth = 2.5.dp,
-        )
-        Icon(Icons.Filled.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+internal fun ProgressBadge(d: DownloadStatus, isMovie: Boolean, modifier: Modifier = Modifier) {
+    val active = d.activeEpisodes.sortedWith(compareBy({ it.season }, { it.episode }))
+    val which = when {
+        isMovie || active.isEmpty() -> null
+        active.size == 1 -> "S${active[0].season} E${active[0].episode}"
+        else -> "${active.size} eps" // the exact episodes are in the list a tap opens
+    }
+    val how = if (d.state == "importing") "Adding" else pct(d.progress)
+    Box(modifier = modifier.widthIn(max = 96.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xE6000000)).padding(horizontal = 6.dp, vertical = 3.dp)) {
+        Text(listOfNotNull(which, how).joinToString(" · "), fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = stateColor(d.state), maxLines = 1)
+    }
+}
+
+/** The corner box for a request that is not downloading: "Searching", "Not out yet", "Failed"... */
+@Composable
+internal fun StateBox(d: DownloadStatus, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xE6000000)).padding(horizontal = 6.dp, vertical = 3.dp)) {
+        Text(stateWord(d.state), fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = if (d.state in setOf("searching", "notFound", "waiting", "queued")) Color.White else stateColor(d.state), maxLines = 1)
     }
 }
 
 /** What a long-press on a request poster shows: each episode in the download client with its bar. */
 @Composable
 internal fun ActiveDownloadsList(d: DownloadStatus, title: String, isMovie: Boolean, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.width(260.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val active = d.activeEpisodes
+    // Moving ones get a bar each, stalled first, then the furthest along; queued and
+    // importing fold into one line each, so a whole season stays a short list.
+    val moving = active.filter { it.state == "downloading" || it.state == "stalled" }
+        .sortedWith(compareBy<tv.roxy.tv.api.EpisodeDownload>({ if (it.state == "stalled") 0 else 1 }, { -it.progress }))
+    val queued = active.filter { it.state == "queued" }
+    val importing = active.filter { it.state == "importing" }
+    Column(modifier = modifier.width(270.dp).padding(horizontal = 14.dp, vertical = 10.dp)) {
         Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        val rows = if (isMovie || d.activeEpisodes.isEmpty()) listOf(Triple("Movie", d.progress, d.state) to d.timeLeftSec)
-        else d.activeEpisodes.take(12).map { Triple("S${it.season} E${it.episode}", it.progress, it.state) to it.timeLeftSec }
-        rows.forEach { (r, left) ->
-            val (label, progress, state) = r
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
-                    Text(listOfNotNull(if (state == "importing") "Adding" else pct(progress), timeLeft(left)?.removeSuffix(" left")).joinToString(" · "), fontSize = 12.sp, color = stateColor(state))
-                }
-                DownloadBar(if (state == "importing") 1.0 else progress, state, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(2.dp)))
+        Text(
+            listOfNotNull(
+                if (isMovie || active.isEmpty()) null else "${active.size} episode${if (active.size == 1) "" else "s"}",
+                pct(d.progress), timeLeft(d.timeLeftSec),
+            ).joinToString(" · "),
+            fontSize = 12.sp, color = stateColor(d.state), modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+        )
+        Column(
+            modifier = Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (isMovie || active.isEmpty()) {
+                BarRow(if (isMovie) "Movie" else "Download", d.progress, d.state, d.timeLeftSec)
+            } else {
+                moving.forEach { BarRow("S${it.season} E${it.episode}", it.progress, it.state, it.timeLeftSec) }
+                if (importing.isNotEmpty()) FoldRow("Adding to library", importing, "importing")
+                if (queued.isNotEmpty()) FoldRow("Queued", queued, "queued")
             }
         }
-        if (!isMovie && d.activeEpisodes.size > 12) Text("and ${d.activeEpisodes.size - 12} more", fontSize = 12.sp, color = RoxyColors.muted)
-        if (!isMovie && d.wanted > 1) Text("${d.have} of ${d.wanted} episodes downloaded", fontSize = 12.sp, color = RoxyColors.muted)
+        if (!isMovie && d.wanted > 1) Text("${d.have} of ${d.wanted} episodes downloaded", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp))
+    }
+}
+
+@Composable
+private fun BarRow(label: String, progress: Double, state: String, left: Int) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, modifier = Modifier.weight(1f))
+            Text(listOfNotNull(if (state == "stalled") "Stalled" else null, pct(progress), timeLeft(left)?.removeSuffix(" left")).joinToString(" · "), fontSize = 12.sp, color = stateColor(state))
+        }
+        DownloadBar(progress, state, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(2.dp)))
+    }
+}
+
+/** "Queued · S1 E10–E20 (11)": several episodes in one line. */
+@Composable
+private fun FoldRow(word: String, eps: List<tv.roxy.tv.api.EpisodeDownload>, state: String) {
+    val sorted = eps.sortedWith(compareBy({ it.season }, { it.episode }))
+    val first = sorted.first()
+    val last = sorted.last()
+    val range = when {
+        sorted.size == 1 -> "S${first.season} E${first.episode}"
+        first.season == last.season -> "S${first.season} E${first.episode}–E${last.episode}"
+        else -> "S${first.season} E${first.episode} – S${last.season} E${last.episode}"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(word, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = stateColor(state), modifier = Modifier.width(118.dp))
+        Text(if (sorted.size == 1) range else "$range (${sorted.size})", fontSize = 12.sp, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -179,7 +238,7 @@ internal fun DownloadStatusCard(
     val episodes = !isMovie && d.wanted > 1
     val headline = when (d.state) {
         "searching" -> "Looking for a release"
-        "notFound" -> "No release found yet"
+        "notFound" -> "No download found yet"
         "waiting" -> if (isMovie) "Not released yet" else "Not aired yet"
         "queued" -> "Queued"
         "downloading" -> "Downloading"
