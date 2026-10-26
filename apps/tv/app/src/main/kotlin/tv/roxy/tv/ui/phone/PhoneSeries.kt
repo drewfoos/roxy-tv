@@ -317,7 +317,8 @@ fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier
 @Composable
 private fun SeasonRow(label: String, menu: @Composable ColumnScope.(close: () -> Unit) -> Unit, trailing: @Composable () -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Column {
+    // Solid, like the tab strip: the pinned banner must not show through it.
+    Column(modifier = Modifier.background(RoxyColors.background)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalAlignment = Alignment.CenterVertically) {
             Box {
                 Row(
@@ -370,15 +371,16 @@ fun TitlePageScaffold(
     // The strip is clear over the banner and only goes solid as the picture itself goes
     // black (it fades into it); the name fades in once the logo block has scrolled under it.
     val density = LocalDensity.current
-    // The strip goes solid only as the picture is about to leave the screen.
-    val stripFromPx = with(density) { (BannerHeight * 0.55f).toPx() }
-    val stripPx = with(density) { (BannerHeight * 0.3f).toPx() }
+    // The strip stays clear (over the banner's top fade) until the logo reaches it, then
+    // goes solid over a short scroll, just before the name fades in (Crunchyroll's).
+    val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
+    val stripPx = with(density) { 70.dp.toPx() }
+    val stripFromPx = titleFromPx - stripPx
     val headerAlpha by remember {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) 1f else ((listState.firstVisibleItemScrollOffset - stripFromPx) / stripPx).coerceIn(0f, 1f)
         }
     }
-    val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
     val titleOverPx = with(density) { 70.dp.toPx() }
     val titleAlpha by remember {
         derivedStateOf {
@@ -389,6 +391,9 @@ fun TitlePageScaffold(
         content(barHeight + navInset + 8.dp)
         // Crunchyroll's header: a plain white X at the left, Cast and the three-dot menu
         // at the right, over the banner's top fade; the strip turns solid once scrolled.
+        // A short fade under the solid strip, so text slides under it instead of being cut.
+        Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(top = HeaderRow).height(18.dp).alpha(headerAlpha)
+            .background(Brush.verticalGradient(0f to RoxyColors.background, 1f to Color.Transparent)))
         Row(
             modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -492,10 +497,11 @@ fun TitleBannerArt(url: String?, title: String, listState: LazyListState, warm: 
     Box(
         modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
-            // Half-speed parallax: the picture moves up as the page scrolls (swiped away, not
-            // faded out), dimming only a little on the way.
-            translationY = off * 0.5f
-            alpha = (1f - 0.45f * off / heightPx).coerceIn(0.55f, 1f)
+            // Crunchyroll's: the picture stays where it is and darkens steadily as the page
+            // slides up over it; it is nearly black by the time the logo reaches the header.
+            translationY = off
+            // Gone by the time the header turns solid (the logo reaching it).
+            alpha = (1f - off / (heightPx - LogoOverlap.toPx() + 30.dp.toPx())).coerceIn(0f, 1f)
         },
     ) {
         RoxyImage(url, title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)

@@ -76,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -506,9 +507,9 @@ fun PhoneDiscoverDetail(
     // its faded foot. The header strip goes solid as the art fades, and the name takes it
     // over once the logo has scrolled under it.
     val density = LocalDensity.current
-    val stripFromPx = with(density) { (BannerHeight * 0.55f).toPx() }
-    val stripPx = with(density) { (BannerHeight * 0.3f).toPx() }
     val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
+    val stripPx = with(density) { 70.dp.toPx() }
+    val stripFromPx = titleFromPx - stripPx
     val headerAlpha by remember { derivedStateOf { if (listState.firstVisibleItemIndex > 0) 1f else ((listState.firstVisibleItemScrollOffset - stripFromPx) / stripPx).coerceIn(0f, 1f) } }
     val pinned by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleFromPx } }
     Box(modifier = Modifier.fillMaxSize()) {
@@ -603,6 +604,8 @@ fun PhoneDiscoverDetail(
                 }
             }
         }
+        Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(top = HeaderRow).height(18.dp).alpha(headerAlpha)
+            .background(Brush.verticalGradient(0f to RoxyColors.background, 1f to Color.Transparent)))
         Row(modifier = Modifier.fillMaxWidth().background(RoxyColors.background.copy(alpha = headerAlpha)).statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             BackCircle(onBack)
             if (pinned) Text(d.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp))
