@@ -127,6 +127,7 @@ fun PosterTile(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onClick:
         modifier = modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
     ) {
         RoxyImage(api.imageUrl(item, "poster", widthPx(PosterW) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
+        DownloadCorner(item, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
 }
 
@@ -142,6 +143,7 @@ fun TitleCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
         ) {
             RoxyImage(api.imageUrl(item, "poster", widthPx(width) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+            DownloadCorner(item, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
         }
         // One line, so every card in a row is the same height (the full name is on the title page).
         Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
@@ -170,6 +172,7 @@ fun ThumbTile(item: Item, api: RoxyApi, width: Dp = ThumbW, onClick: () -> Unit)
             RoxyImage(url, item.episodeCode.ifEmpty { item.title }, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
             PlayBadge(size = 38.dp, modifier = Modifier.align(Alignment.Center))
             audioBadge(item)?.let { BadgePill(it, modifier = Modifier.align(Alignment.TopStart).padding(6.dp)) }
+            DownloadCorner(item, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
             ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
         }
         Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 6.dp)) {
@@ -213,6 +216,7 @@ private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Uni
             RoxyImage(url, item.seriesTitle ?: item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             PlayBadge(size = 52.dp, modifier = Modifier.align(Alignment.Center))
             audioBadge(item)?.let { BadgePill(it, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) }
+            DownloadCorner(item, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
             // What is left, as a corner tag on the picture, where a long episode title cannot push it off.
             item.userData?.positionMs?.takeIf { it > 0 }?.let { pos -> item.runtimeMs?.takeIf { it > pos }?.let { "${((it - pos) / 60000L + 1).coerceAtLeast(1)}m left" } }
                 ?.let { BadgePill(it, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 12.dp)) }
