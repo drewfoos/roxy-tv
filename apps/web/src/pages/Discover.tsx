@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { DiscoverItem } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
+import { Footer } from '../components/Footer'
 import { Row } from '../components/Cards'
 import { RowSkeleton } from '../components/Skeleton'
 import { IconCheckCircle, IconSearch } from '../components/Icons'
@@ -76,6 +77,7 @@ export function Discover() {
           </Row>
         ))
       )}
+      <Footer />
     </div>
   )
 }

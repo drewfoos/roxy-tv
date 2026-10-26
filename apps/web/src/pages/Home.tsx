@@ -5,6 +5,7 @@ import { isEpisode, isMovie, isSeries } from '../api/items'
 import type { HomeRow, Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
+import { Footer } from '../components/Footer'
 import { Hero, type HeroPick } from '../components/Hero'
 import { Row, ThumbTile, TitleCard } from '../components/Cards'
 import { RowSkeleton, Spinner } from '../components/Skeleton'
@@ -127,6 +128,7 @@ export function Home() {
           {loading && <RowSkeleton />}
         </>
       )}
+      <Footer />
     </div>
   )
 }

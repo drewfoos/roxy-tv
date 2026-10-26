@@ -9,6 +9,7 @@ import { IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
+import { Footer } from '../components/Footer'
 
 /**
  * A series, laid out like Crunchyroll's: the banner with the info over its left side,
@@ -151,6 +152,7 @@ export function Series() {
           )}
         </div>
       )}
+      <Footer />
     </div>
   )
 }

@@ -10,6 +10,7 @@ import { Account } from '../pages/Account'
 import { Series } from '../pages/Series'
 import { Movie } from '../pages/Movie'
 import { Watch } from '../pages/Watch'
+import { Legal } from '../pages/Legal'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { Spinner } from '../components/Skeleton'
@@ -52,6 +53,7 @@ export default function App() {
       <Route path="/series/:id" element={<Series />} />
       <Route path="/movie/:id" element={<Movie />} />
       <Route path="/watch/:id" element={<Watch />} />
+      <Route path="/legal/:doc" element={<Legal />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

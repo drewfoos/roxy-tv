@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { isMovie } from '../api/items'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
+import { Footer } from '../components/Footer'
 import { PosterTile } from '../components/Cards'
 import { GridSkeleton } from '../components/Skeleton'
 
@@ -57,6 +58,7 @@ export function Browse() {
           ))}
         </div>
       )}
+      <Footer />
     </div>
   )
 }

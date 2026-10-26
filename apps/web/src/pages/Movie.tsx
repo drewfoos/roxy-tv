@@ -9,6 +9,7 @@ import { IconPlay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
+import { Footer } from '../components/Footer'
 
 /** A film: the same frame as a series, the film as one card under a "Movie" tab, and "Part of" links. */
 export function Movie() {
@@ -121,6 +122,7 @@ export function Movie() {
           })}
         </div>
       )}
+      <Footer />
     </div>
   )
 }

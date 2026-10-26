@@ -3,6 +3,7 @@ import { api, px, APP_VERSION } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useSession } from '../app/useSession'
 import { Avatar, TopBar, signOut } from '../components/TopBar'
+import { Footer } from '../components/Footer'
 import { IconLogout, IconPerson } from '../components/Icons'
 
 /** Account: the profile card, switch profile, sign out, and what server this is. */
@@ -58,6 +59,7 @@ export function Account() {
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   )
 }

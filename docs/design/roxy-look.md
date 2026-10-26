@@ -151,7 +151,31 @@ readout.
 
 ## 4. Mapping to a desktop / web layout
 
-Crunchyroll's site is the same system at a wider size. What changes:
+Crunchyroll's site is the same system at a wider size. Roxy Web (apps/web) follows it as
+built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
+
+- **Top bar**: the hat and name (Home), Discover, Browse | Movies; at the right a search
+  that opens on click, the bookmark (My Lists) and the avatar with a caret that opens
+  the account drawer: avatar + name + edit; Switch Profile, Settings; Watchlist, History;
+  Log Out, each group separated by a hairline, over a dimmed page.
+- **Footer** on every page: the mark, "SERVER NAME | Roxy TV", a line about the service;
+  Explore / Resources / Account columns; a thin strip with Terms of Use, Privacy Policy
+  and the versions.
+- **Player**: back 10, play, forward 10, volume, time; next episode, the subtitles
+  button (a two-column panel, Audio beside Subtitles/CC with None last), speed
+  (Playback Speed panel), the gear (Settings: Autoplay Next toggle, Quality rows named
+  "1080p (Original)", 720p, 480p with a line under each), fullscreen. Panels are dark
+  sheets above the bar with bold headings and tall rows; the age card with advisories
+  shows top-left for the first seconds.
+- **Watch page**: the player in a full-width black band; under it the series name in
+  blue, "E3 – Title", "14+ • Dub | Sub", "Released on …", the synopsis clamped to four
+  lines and SHOW MORE, which opens an Audio / Subtitles / Content Advisory / File table
+  with right-aligned values; NEXT EPISODE and PREVIOUS EPISODE cards and SEE MORE
+  EPISODES at the right.
+- **My Lists**: the bookmark and title centred, WATCHLIST | HISTORY tabs centred and
+  uppercase, a "Recent Activity" heading, wide cards four across.
+
+What changes from the phone, in general:
 
 - **Top bar instead of the bottom bar**: the hat at the left, then Home, Discover,
   Browse (a dropdown on Crunchyroll: Popular, New, Genres), My Lists; search and the
