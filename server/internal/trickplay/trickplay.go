@@ -135,6 +135,23 @@ func (s *Service) Enqueue(sourceID string) {
 	}
 }
 
+// Regenerate drops a source's thumbnails and queues them again (Library > Refresh >
+// Trickplay), e.g. after the file was replaced or the sheets came out wrong.
+func (s *Service) Regenerate(sourceID string) {
+	if sourceID == "" {
+		return
+	}
+	s.mu.Lock()
+	running := s.pending[sourceID]
+	delete(s.failed, sourceID)
+	s.mu.Unlock()
+	if running {
+		return // already being made
+	}
+	os.RemoveAll(s.dir(sourceID))
+	s.Enqueue(sourceID)
+}
+
 // Pending reports whether generation is queued or running for the source.
 func (s *Service) Pending(sourceID string) bool {
 	s.mu.Lock()

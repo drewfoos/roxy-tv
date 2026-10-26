@@ -82,6 +82,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/libraries/scan", s.scanAll)
 			r.Get("/library/manage", s.libraryManage)
 			r.Post("/library/scan", s.libraryScan)
+			r.Post("/library/refresh", s.libraryRefresh)
 			r.Get("/items/{id}/identify", s.identifySearch)
 			r.Post("/items/{id}/identify", s.identifyApply)
 			r.Put("/items/{id}/metadata", s.editMetadata)

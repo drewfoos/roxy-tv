@@ -69,6 +69,71 @@ func (s *Server) libraryScan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// POST /v1/library/refresh {ids, all, metadata, images, trickplay, segments} -> 202
+// Jellyfin's "Refresh metadata" dialog: redo any mix of parts for some titles (series or
+// movies) or, with all, the whole library. Locked titles keep their details.
+func (s *Server) libraryRefresh(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	var body struct {
+		IDs       []string `json:"ids"`
+		All       bool     `json:"all"`
+		Metadata  bool     `json:"metadata"`
+		Images    bool     `json:"images"`
+		Trickplay bool     `json:"trickplay"`
+		Segments  bool     `json:"segments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, "bad body")
+		return
+	}
+	if !body.Metadata && !body.Images && !body.Trickplay && !body.Segments {
+		writeError(w, 400, "pick something to refresh")
+		return
+	}
+	ids := body.IDs
+	if body.All {
+		all, err := s.store.TopLevelItemIDs(r.Context())
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		ids = all
+	}
+	if len(ids) == 0 {
+		writeError(w, 400, "no titles given")
+		return
+	}
+	go func() {
+		ctx := context.Background()
+		for _, id := range ids {
+			if s.meta != nil && (body.Metadata || body.Images) {
+				if body.Images {
+					s.meta.RefreshImages(id)
+				} else {
+					s.meta.Refresh(id)
+				}
+			}
+			if body.Trickplay && s.trick != nil {
+				if srcs, err := s.store.SourceIDsUnder(ctx, id); err == nil {
+					for _, src := range srcs {
+						s.trick.Regenerate(src)
+					}
+				}
+			}
+			if body.Segments && s.segs != nil {
+				if seasons, err := s.store.Children(ctx, id, model.TypeSeason); err == nil {
+					for _, se := range seasons {
+						s.segs.EnqueueSeason(se.ID)
+					}
+				}
+			}
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // GET /v1/items/{id}/identify?provider=tmdb|anilist&q=&year= -> {candidates}
 func (s *Server) identifySearch(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {

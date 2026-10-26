@@ -41,6 +41,9 @@ type Service struct {
 
 	queue   chan job
 	force   bool // the job being processed was a forced refresh (worker-local)
+	// replaceImages: the job re-downloads art even when the provider's URL is unchanged
+	// (worker-local; locked images are still kept).
+	replaceImages bool
 	mu      sync.Mutex
 	pending map[string]bool      // queued but not yet picked up (dedupe)
 	failed  map[string]time.Time // top-level item id -> last unmatched attempt
@@ -49,6 +52,7 @@ type Service struct {
 type job struct {
 	itemID string
 	force  bool
+	images bool // also re-download images whose URL did not change
 }
 
 // TMDB exposes the TMDB client when configured (Discover), else nil.
@@ -107,7 +111,14 @@ func (s *Service) Enqueue(itemID string) { s.enqueue(itemID, false) }
 // Refresh schedules a forced lookup, ignoring the 7-day freshness window.
 func (s *Service) Refresh(itemID string) { s.enqueue(itemID, true) }
 
-func (s *Service) enqueue(itemID string, force bool) {
+// RefreshImages is Refresh that also re-downloads every image (Library > Refresh >
+// Replace images): a broken or low-quality cached copy is fetched again.
+func (s *Service) RefreshImages(itemID string) { s.enqueueJob(job{itemID: itemID, force: true, images: true}) }
+
+func (s *Service) enqueue(itemID string, force bool) { s.enqueueJob(job{itemID: itemID, force: force}) }
+
+func (s *Service) enqueueJob(j job) {
+	itemID, force := j.itemID, j.force
 	if itemID == "" {
 		return
 	}
@@ -119,7 +130,7 @@ func (s *Service) enqueue(itemID string, force bool) {
 	s.pending[itemID] = true
 	s.mu.Unlock()
 	select {
-	case s.queue <- job{itemID: itemID, force: force}:
+	case s.queue <- j:
 	default:
 		s.mu.Lock()
 		delete(s.pending, itemID)
@@ -149,6 +160,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 		return err
 	}
 	s.force = j.force
+	s.replaceImages = j.images
 	// Details set by hand (or a custom show no provider knows) stay as they are.
 	if locked, err := s.store.MetadataLocked(ctx, it.ID); err == nil && locked {
 		return nil
@@ -160,7 +172,9 @@ func (s *Service) process(ctx context.Context, j job) error {
 	}
 	onlyNewEpisodes := false
 	if !j.force {
-		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval {
+		// .nfo files or artwork added or changed next to the media since the last lookup
+		// count as a reason to look again, so "Scan for new files" picks them up.
+		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval && !s.localChangedSince(ctx, it, *it.MetadataRefreshedAt) {
 			if it.Type != model.TypeSeries {
 				return nil
 			}
@@ -674,7 +688,7 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 		if existing.Locked && !force {
 			return
 		}
-		if existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext {
+		if existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext && !s.replaceImages {
 			if _, err := os.Stat(existing.Path); err == nil {
 				return
 			}

@@ -264,6 +264,11 @@ class RoxyApi(private val prefs: Prefs) {
         postNoBody("/v1/items/$itemId/identify", json.encodeToString(IdentifyChoice.serializer(), IdentifyChoice(provider, providerId)))
     suspend fun editMetadata(itemId: String, edit: MetadataEdit): Item = putJson("/v1/items/$itemId/metadata", json.encodeToString(MetadataEdit.serializer(), edit))
     suspend fun refreshItem(itemId: String) = postNoBody("/v1/items/$itemId/refresh", "")
+    /** Redo any mix of parts for some titles, or all of them (Library > Refresh). */
+    suspend fun libraryRefresh(ids: List<String>, all: Boolean, parts: RefreshParts) = postNoBody(
+        "/v1/library/refresh",
+        json.encodeToString(RefreshRequest.serializer(), RefreshRequest(ids, all, parts.metadata, parts.images, parts.trickplay, parts.segments)),
+    )
     suspend fun saveTranscodingSettings(hwAccel: String): TranscodingSettings = putJson("/v1/settings/transcoding", json.encodeToString(TranscodingChoice.serializer(), TranscodingChoice(hwAccel)))
 
     suspend fun arrSettings(): ArrSettingsResponse = get("/v1/settings/arr")
@@ -1017,6 +1022,14 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 
 @Serializable
 private data class ScanMode(val mode: String)
+
+/** What Library > Refresh redoes. */
+data class RefreshParts(val metadata: Boolean = true, val images: Boolean = false, val trickplay: Boolean = false, val segments: Boolean = false) {
+    val any: Boolean get() = metadata || images || trickplay || segments
+}
+
+@Serializable
+private data class RefreshRequest(val ids: List<String>, val all: Boolean, val metadata: Boolean, val images: Boolean, val trickplay: Boolean, val segments: Boolean)
 
 @Serializable
 private data class IdentifyChoice(val provider: String, val id: String)

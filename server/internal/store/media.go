@@ -207,6 +207,29 @@ func (s *Store) PathsUnder(ctx context.Context, itemID string) ([]ItemPath, erro
 	return out, rows.Err()
 }
 
+// SourceIDsUnder lists the media source ids of an item and everything under it.
+func (s *Store) SourceIDsUnder(ctx context.Context, itemID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+			SELECT id FROM items WHERE id = ?
+			UNION ALL
+			SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+		)
+		SELECT ms.id FROM media_sources ms WHERE ms.item_id IN (SELECT id FROM tree)`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // AllSourceIDs lists every media source id, newest items first.
 func (s *Store) AllSourceIDs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT ms.id FROM media_sources ms JOIN items i ON i.id = ms.item_id ORDER BY i.date_created DESC`)

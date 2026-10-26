@@ -65,7 +65,7 @@ func (s *Store) LibraryTitles(ctx context.Context) ([]TitleStatus, error) {
 	}
 	for i := range out {
 		ids := out[i].ProviderIDs
-		out[i].Matched = ids["tmdb"] != "" || ids["anilist"] != ""
+		out[i].Matched = ids["tmdb"] != "" || ids["anilist"] != "" || ids["nfo"] != ""
 	}
 	// Unmatched first: those are the ones that need a hand.
 	sorted := make([]TitleStatus, 0, len(out))

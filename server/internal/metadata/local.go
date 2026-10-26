@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -205,6 +206,8 @@ func (s *Service) applyLocal(ctx context.Context, it *model.Item) (handled bool,
 	if m.Title == "" {
 		m.Title = it.Title
 	}
+	// Marks the title as described by its .nfo (Library settings lists it as matched).
+	m.ProviderIDs = map[string]string{"nfo": "1"}
 	if err := s.store.UpdateItemMetadata(ctx, it.ID, m); err != nil {
 		return true, err
 	}
@@ -242,6 +245,42 @@ func (s *Service) applyLocal(ctx context.Context, it *model.Item) (handled bool,
 	}
 	slog.Info("metadata: from .nfo", "item", it.Title, "title", m.Title, "episodes", n)
 	return true, nil
+}
+
+// localFileExt are the sidecar files that feed local metadata.
+var localFileExt = map[string]bool{".nfo": true, ".jpg": true, ".jpeg": true, ".png": true}
+
+// localChangedSince reports whether any .nfo or image next to the item's media (the show
+// or movie folder, its season folders, beside each file) changed after t.
+func (s *Service) localChangedSince(ctx context.Context, it *model.Item, t time.Time) bool {
+	paths, err := s.store.PathsUnder(ctx, it.ID)
+	if err != nil || len(paths) == 0 {
+		return false
+	}
+	dirs := map[string]bool{}
+	for _, p := range paths {
+		dirs[filepath.Dir(p.Path)] = true
+	}
+	if it.Type == model.TypeSeries {
+		if d := s.showDir(ctx, it, paths[0].Path); d != "" {
+			dirs[d] = true
+		}
+	}
+	for d := range dirs {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !localFileExt[strings.ToLower(filepath.Ext(e.Name()))] {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info.ModTime().After(t) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // showDir is the series folder: the first path component under the library root.

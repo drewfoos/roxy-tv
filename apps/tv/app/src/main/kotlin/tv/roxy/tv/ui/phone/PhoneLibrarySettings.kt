@@ -3,6 +3,12 @@ package tv.roxy.tv.ui.phone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import tv.roxy.tv.api.RefreshParts
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +38,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -97,9 +105,16 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
     var state by remember { mutableStateOf<LibraryManage?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var confirmReplace by remember { mutableStateOf(false) }
+    // Refresh dialog: null = closed; a title = just that one; else the whole-library dialog.
+    var refreshDialog by remember { mutableStateOf(false) }
+    var refreshOne by remember { mutableStateOf<LibraryTitle?>(null) }
+    var parts by remember { mutableStateOf(RefreshParts()) }
     var filter by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
+    // Choosing titles: tick some and refresh just those (from the Refresh dialog, or a long press).
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var refreshing by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         runCatching { app.api.libraryManage() }
@@ -112,6 +127,16 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
     LaunchedEffect(busy) {
         while (busy) { delay(3_000); reload() }
     }
+    fun refresh(ids: List<String>, all: Boolean, p: RefreshParts, label: String) = scope.launch {
+        runCatching { app.api.libraryRefresh(ids, all, p) }
+            .onSuccess {
+                notice = "Refreshing $label: " + listOfNotNull(
+                    "metadata".takeIf { p.metadata }, "images".takeIf { p.images }, "trickplay".takeIf { p.trickplay }, "intro & outro".takeIf { p.segments },
+                ).joinToString(", ") + "…"
+                delay(1500); reload(); app.items.userDataChanged()
+            }
+            .onFailure { t -> notice = t.message }
+    }
     fun run(mode: String, message: String) = scope.launch {
         runCatching { app.api.libraryScan(mode) }
             .onSuccess { notice = message; delay(800); reload(); app.items.userDataChanged() }
@@ -121,10 +146,17 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             BackCircle(onBack)
-            Text("Library", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp))
+            Text(if (selecting) "Choose titles" else "Library", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp).weight(1f))
+            if (selecting) Text(
+                "Cancel", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { selecting = false; selected = emptySet() }.padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
         val s = state
-        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val rowRefresh: (LibraryTitle) -> Unit = { t -> refreshOne = t }
+        val toggle: (LibraryTitle) -> Unit = { t -> selected = if (t.id in selected) selected - t.id else selected + t.id }
+        val startChoosing: (LibraryTitle) -> Unit = { t -> if (!selecting) { selecting = true; selected = setOf(t.id) } else toggle(t) }
+        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item(key = "status") {
                 val line = when {
                     s == null -> "…"
@@ -144,7 +176,7 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
                     Divider()
                     ActionRow(Icons.Outlined.ManageSearch, "Find missing metadata", "Looks up titles that matched nothing yet") { run("missing", "Looking up unmatched titles…") }
                     Divider()
-                    ActionRow(Icons.Filled.Refresh, "Refresh all metadata", "Looks up every title again and replaces its details. Edited titles and art you picked are kept.") { confirmReplace = true }
+                    ActionRow(Icons.Filled.Refresh, "Refresh…", "Metadata, images, trickplay or intro detection, for every title or the ones you choose") { refreshDialog = true }
                 }
             }
             notice?.let { n -> item(key = "notice") { Text(n, fontSize = 13.sp, color = RoxyColors.muted) } }
@@ -173,22 +205,100 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
                 val unmatched = shown.filter { !it.matched && !it.locked }
                 if (unmatched.isNotEmpty()) {
                     item(key = "h-unmatched") { SectionLabel("Needs attention  ·  ${unmatched.size}") }
-                    items(unmatched, key = { "u" + it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = { t -> scope.launch { runCatching { app.api.refreshItem(t.id) }; notice = "Looking up ${t.title}…"; delay(1500); tick++ } }) }
+                    items(unmatched, key = { "u" + it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = rowRefresh, selecting = selecting, checked = it.id in selected, onToggle = toggle, onLongPress = startChoosing) }
                 }
                 val rest = shown.filter { it.matched || it.locked }
                 item(key = "h-all") { SectionLabel("All titles  ·  ${rest.size}") }
-                items(rest, key = { it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = { t -> scope.launch { runCatching { app.api.refreshItem(t.id) }; notice = "Looking up ${t.title}…"; delay(1500); tick++ } }) }
+                items(rest, key = { it.id }) { TitleRow(it, onIdentify, onEdit, onOpen, onRefresh = rowRefresh, selecting = selecting, checked = it.id in selected, onToggle = toggle, onLongPress = startChoosing) }
+            }
+        }
+        if (selecting) {
+            Box(modifier = Modifier.fillMaxWidth().background(RoxyColors.background).navigationBarsPadding().padding(horizontal = PhonePad, vertical = 10.dp)) {
+                val n = selected.size
+                PlayButton(
+                    when { refreshing -> "Refreshing…"; n == 0 -> "Tick the titles to refresh"; n == 1 -> "Refresh 1 title"; else -> "Refresh $n titles" },
+                    icon = Icons.Filled.Refresh, pill = true,
+                    container = if (n > 0) RoxyColors.accent else RoxyColors.surface, content = if (n > 0) OnBrand else RoxyColors.muted,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        if (n == 0 || refreshing) return@PlayButton
+                        // What to redo for them: the parts picked in the dialog.
+                        refreshOne = null
+                        refreshDialog = true
+                    },
+                )
             }
         }
     }
-    if (confirmReplace) {
-        ConfirmDialog(
-            title = "Refresh all metadata?",
-            text = "Every title is looked up again and its details and art replaced with what TMDB and AniList have now. Titles you edited and art you picked stay as they are. This can take a while on a big library.",
-            confirm = "Refresh all",
-            onConfirm = { confirmReplace = false; run("replace", "Refreshing every title…") },
-            onDismiss = { confirmReplace = false },
+    val one = refreshOne
+    if (refreshDialog || one != null) {
+        val chosen = selected.size
+        RefreshDialog(
+            heading = when {
+                one != null -> "Refresh ${one.title}"
+                selecting && chosen > 0 -> "Refresh $chosen title${if (chosen == 1) "" else "s"}"
+                else -> "Refresh"
+            },
+            parts = parts, onParts = { parts = it },
+            primary = when { one != null || (selecting && chosen > 0) -> "Refresh"; else -> "All titles" },
+            onPrimary = {
+                val p = parts
+                when {
+                    one != null -> refresh(listOf(one.id), false, p, one.title)
+                    selecting && chosen > 0 -> { refresh(selected.toList(), false, p, "$chosen title${if (chosen == 1) "" else "s"}"); selecting = false; selected = emptySet() }
+                    else -> refresh(emptyList(), true, p, "every title")
+                }
+                refreshDialog = false; refreshOne = null
+            },
+            secondary = if (one == null && !(selecting && chosen > 0)) "Choose titles" else null,
+            onSecondary = { refreshDialog = false; selecting = true; selected = emptySet() },
+            onDismiss = { refreshDialog = false; refreshOne = null },
         )
+    }
+}
+
+/** Jellyfin's refresh dialog: tick what to redo, then run it. */
+@Composable
+private fun RefreshDialog(
+    heading: String, parts: RefreshParts, onParts: (RefreshParts) -> Unit,
+    primary: String, onPrimary: () -> Unit, secondary: String?, onSecondary: () -> Unit, onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+        title = { Text(heading, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                PartRow("Metadata", "Details and episode names from TMDB / AniList (or the .nfo files)", parts.metadata) { onParts(parts.copy(metadata = it)) }
+                PartRow("Replace images", "Download posters, banners, logos and thumbnails again. Art you picked stays.", parts.images) { onParts(parts.copy(images = it)) }
+                PartRow("Trickplay", "Make the seek-bar preview thumbnails again", parts.trickplay) { onParts(parts.copy(trickplay = it)) }
+                PartRow("Intro & outro", "Detect where intros and credits are again", parts.segments) { onParts(parts.copy(segments = it)) }
+                Text("Titles you edited by hand keep their details.", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 8.dp))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onPrimary, enabled = parts.any) { Text(primary, color = if (parts.any) RoxyColors.accent else RoxyColors.muted, fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = {
+            Row {
+                if (secondary != null) TextButton(onClick = onSecondary, enabled = parts.any) { Text(secondary, color = if (parts.any) Color.White else RoxyColors.muted) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = RoxyColors.muted) }
+            }
+        },
+    )
+}
+
+@Composable
+private fun PartRow(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onChange(!checked) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            if (checked) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank, contentDescription = null,
+            tint = if (checked) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.size(24.dp),
+        )
+        Column(modifier = Modifier.padding(start = 12.dp)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground)
+            Text(sub, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted)
+        }
     }
 }
 
@@ -220,20 +330,31 @@ private fun ActionRow(icon: ImageVector, title: String, sub: String, onClick: ()
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun TitleRow(t: LibraryTitle, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit, onRefresh: (LibraryTitle) -> Unit) {
+private fun TitleRow(
+    t: LibraryTitle, onIdentify: (LibraryTitle) -> Unit, onEdit: (LibraryTitle) -> Unit, onOpen: (LibraryTitle) -> Unit, onRefresh: (LibraryTitle) -> Unit,
+    selecting: Boolean = false, checked: Boolean = false, onToggle: (LibraryTitle) -> Unit = {}, onLongPress: (LibraryTitle) -> Unit = {},
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface).clickable { open = true }.padding(horizontal = 14.dp, vertical = 11.dp),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface)
+                .then(if (checked) Modifier.border(1.5.dp, RoxyColors.accent, RoundedCornerShape(12.dp)) else Modifier)
+                .combinedClickable(onLongClick = { onLongPress(t) }) { if (selecting) onToggle(t) else open = true }.padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (selecting) Icon(
+                if (checked) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = if (checked) "Selected" else "Not selected",
+                tint = if (checked) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.padding(end = 12.dp).size(22.dp),
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(t.title + (t.year?.let { " ($it)" } ?: ""), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val kind = if (t.type == "movie") "Movie" else "Series"
                 val match = when {
                     t.locked -> "Edited by hand"
                     !t.matched -> "No match"
+                    t.providerIds["nfo"] != null && t.providerIds["tmdb"] == null && t.providerIds["anilist"] == null -> "From .nfo"
                     else -> listOfNotNull(t.providerIds["tmdb"]?.let { "TMDB $it" }, t.providerIds["anilist"]?.let { "AniList $it" }).joinToString("  ·  ")
                 }
                 Text("$kind  ·  $match", fontSize = 12.sp, color = if (!t.matched && !t.locked) RoxyColors.error else RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -247,7 +368,7 @@ private fun TitleRow(t: LibraryTitle, onIdentify: (LibraryTitle) -> Unit, onEdit
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
             DropdownMenuItem(text = { Text("Identify", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.ManageSearch, null, tint = Color.White) }, onClick = { open = false; onIdentify(t) })
             DropdownMenuItem(text = { Text("Edit details", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Edit, null, tint = Color.White) }, onClick = { open = false; onEdit(t) })
-            if (!t.locked) DropdownMenuItem(text = { Text("Refresh metadata", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Refresh, null, tint = Color.White) }, onClick = { open = false; onRefresh(t) })
+            DropdownMenuItem(text = { Text("Refresh…", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Refresh, null, tint = Color.White) }, onClick = { open = false; onRefresh(t) })
             DropdownMenuItem(text = { Text("Open", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.OpenInNew, null, tint = Color.White) }, onClick = { open = false; onOpen(t) })
         }
     }
