@@ -66,6 +66,27 @@ fun SeasonsPage(entries: List<SeasonEntry>, onPick: (SeasonEntry) -> Unit, onDis
     }
 }
 
+/**
+ * Under a season the library lacks: not out yet ("Coming Apr 2027", or no date known),
+ * else whether it was requested. A season already airing counts as out.
+ */
+internal fun seasonNote(airDate: String?, requested: Boolean): String {
+    val date = airDate?.takeIf { it.length >= 10 }?.let { runCatching { java.time.LocalDate.parse(it.take(10)) }.getOrNull() }
+    return when {
+        date == null -> if (requested) "Requested  ·  not released yet" else "Not released yet"
+        date.isAfter(java.time.LocalDate.now()) -> "Coming " + date.format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy")) + if (requested) "  ·  requested" else ""
+        requested -> "Requested"
+        else -> "Not in your library"
+    }
+}
+
+/** "Nov 5" this year, "Nov 5, 2027" otherwise; null for an unreadable date. */
+internal fun friendlyDate(iso: String): String? {
+    val d = iso.takeIf { it.length >= 10 }?.let { runCatching { java.time.LocalDate.parse(it.take(10)) }.getOrNull() } ?: return null
+    val pattern = if (d.year == java.time.LocalDate.now().year) "MMM d" else "MMM d, yyyy"
+    return d.format(java.time.format.DateTimeFormatter.ofPattern(pattern))
+}
+
 internal fun episodesLabel(n: Int): String? = when {
     n <= 0 -> null
     n == 1 -> "1 Episode"

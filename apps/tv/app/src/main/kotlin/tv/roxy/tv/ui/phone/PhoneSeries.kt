@@ -234,7 +234,7 @@ fun PhoneSeries(
                                     add(SeasonEntry("s$i", season.title.ifEmpty { "Season ${n ?: i + 1}" }, episodesLabel(count), selected = selectedExtra == null && !state.showRelated && i == state.selectedSeason))
                                 }
                                 extraSeasons.forEach { sn ->
-                                    add(SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, episodesLabel(sn.episodes), selected = selectedExtra == sn.number, note = if (sn.requested) "Requested" else "Not in your library"))
+                                    add(SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, episodesLabel(sn.episodes), selected = selectedExtra == sn.number, note = seasonNote(sn.airDate, sn.requested)))
                                 }
                                 if (hasRelated) add(SeasonEntry("related", "Movies & OVAs", (state.related.size.takeIf { it > 0 } ?: series.relatedCount).takeIf { it > 0 }?.let { "$it ${if (it == 1) "Title" else "Titles"}" }, selected = state.showRelated && selectedExtra == null))
                             }
@@ -634,8 +634,8 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
     val positionMs = ep.userData?.positionMs ?: 0L
     val runtimeMs = ep.runtimeMs ?: 0L
     val badge = when (ep.availability) {
-        "missing" -> "Missing"
-        "unaired" -> ep.airDate?.takeIf { it.isNotBlank() }?.let { "Airs $it" } ?: "Unaired"
+        "missing" -> "Not in your library"
+        "unaired" -> ep.airDate?.let { friendlyDate(it) }?.let { "Not released · $it" } ?: "Not released yet"
         else -> null
     }
     // Crunchyroll's thumbnail tag: the length, "7m left" once started, "Watched" when done.
@@ -663,7 +663,7 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
                 Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                 val sub = listOfNotNull(
                     badge,
-                    if (placeholder && ep.availability == "missing" && !ep.airDate.isNullOrBlank()) "Aired ${ep.airDate}" else null,
+                    if (placeholder && ep.availability == "missing") ep.airDate?.let { friendlyDate(it) }?.let { "Aired $it" } else null,
                 ).joinToString("  ·  ")
                 if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 3.dp))
                 if (!placeholder) {
