@@ -104,6 +104,7 @@ fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSea
     val state by vm.state.collectAsStateWithLifecycle()
     val items = RoxyApp.get(LocalContext.current).items
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(version = items.version) }
+    OnUserDataChanged { vm.load(version = items.version) }
     var movies by rememberSaveable { mutableStateOf(false) }
 
     val all = state.items
@@ -145,6 +146,7 @@ private fun WatchlistGrid(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> U
     val vm: LibraryViewModel = viewModel(key = "watchlist") { LibraryViewModel(app.api, favoritesOnly = true) }
     val state by vm.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(force = true) } // a + on a title page changes it
+    OnUserDataChanged { vm.load(force = true) }
     Spacer(Modifier.height(6.dp))
     PosterGrid(
         items = state.items, error = state.error,
@@ -161,13 +163,13 @@ private fun HistoryGrid(bottomInset: Dp) {
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        scope.launch {
-            runCatching { app.api.history(200).items }
-                .onSuccess { items = it; error = null }
-                .onFailure { Timber.w(it, "history"); error = it.message }
-        }
+    fun reload() = scope.launch {
+        runCatching { app.api.history(200).items }
+            .onSuccess { items = it; error = null }
+            .onFailure { Timber.w(it, "history"); error = it.message }
     }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { reload() }
+    OnUserDataChanged { reload() }
     val list = items
     val tileWidth = (LocalConfiguration.current.screenWidthDp.dp - PhonePad * 2 - 10.dp) / 2
     when {

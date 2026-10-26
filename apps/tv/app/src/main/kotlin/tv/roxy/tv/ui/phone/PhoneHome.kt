@@ -118,6 +118,7 @@ fun PhoneHome(
     val scope = rememberCoroutineScope()
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(silent = state is HomeUiState.Ready) }
+    OnUserDataChanged { vm.load(silent = true) }
 
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
     fun open(item: Item) {

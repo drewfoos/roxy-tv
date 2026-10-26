@@ -98,6 +98,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
     var siblings by remember { mutableStateOf<List<Item>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var watchedKey by remember { mutableIntStateOf(0) }
+    OnUserDataChanged { watchedKey++ }
     var expanded by rememberSaveable { mutableStateOf(false) }
 
     fun setFullscreen(on: Boolean) {
@@ -252,7 +253,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         Text(fileFacts(ep), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 2, lineHeight = 16.sp, modifier = Modifier.weight(1f).padding(end = 8.dp))
                         val startDownload = rememberDownloadStarter()
                         if (ep.isPlayable) DownloadButton(ep, onDownload = { startDownload(listOf(ep), ep, null) }, size = 24.dp)
-                        EpisodeMenu(ep, app.api, onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(ep.id, on) }; watchedKey++ } })
+                        EpisodeMenu(ep, app.api, onMarkWatched = { on -> scope.launch { app.markWatched(ep.id, on) } })
                     }
                     ep.overview?.takeIf { it.isNotBlank() }?.let { ExpandableSynopsis(it, expanded, onToggle = { expanded = !expanded }) }
                     // Content advisory, Crunchyroll's row under the synopsis: the descriptors the
@@ -274,7 +275,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
                         next, app.api,
                         onClick = { onOpenEpisode(next) },
                         onDownload = { startDownload(listOf(next), next, null) },
-                        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(next.id, on) }; watchedKey++ } },
+                        onMarkWatched = { on -> scope.launch { app.markWatched(next.id, on) } },
                     )
                 }
                 // A film's cast (the series page keeps it under More details): the player

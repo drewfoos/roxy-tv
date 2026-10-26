@@ -62,6 +62,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
+    OnUserDataChanged { vm.load() }
 
     val movie = state.movie
     if (movie == null) {
@@ -79,7 +80,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
         playLabel = if (resumable) "Resume" else "Start watching",
         onPlay = { scope.launch { playItem(context, movie).onFailure { Timber.w(it, "play failed") } } },
         onSaved = { vm.load() },
-        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(movie.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+        onMarkWatched = { on -> scope.launch { app.markWatched(movie.id, on) } },
         markAll = false,
         onArtChanged = { vm.load() },
     ) { bottomInset ->
@@ -125,7 +126,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                         movie, app.api,
                         onClick = { if (movie.isPlayable) scope.launch { playItem(context, movie) } },
                         onDownload = { startDownload(listOf(movie), movie, null) },
-                        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(movie.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+                        onMarkWatched = { on -> scope.launch { app.markWatched(movie.id, on) } },
                     )
                 }
             }

@@ -122,6 +122,7 @@ fun PhoneSeries(
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
+    OnUserDataChanged { vm.load() }
 
     val series = state.series
     if (series == null) {
@@ -171,7 +172,7 @@ fun PhoneSeries(
     TitlePageScaffold(
         item = series, api = app.api, listState = listState, onBack = onBack,
         playLabel = label, onPlay = { next?.let { play(it) } }, onSaved = { vm.load() },
-        onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(series.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+        onMarkWatched = { on -> scope.launch { app.markWatched(series.id, on) } },
         onArtChanged = { vm.load() },
     ) { bottomInset ->
         // Crunchyroll's order: key art with the logo, the facts and synopsis centred, a tab
@@ -284,7 +285,7 @@ fun PhoneSeries(
                             ep, app.api,
                             onClick = { if (ep.isPlayable) onOpenEpisode(ep) },
                             onDownload = { download(listOf(ep)) },
-                            onMarkWatched = { on -> scope.launch { runCatching { app.api.setPlayed(ep.id, on) }.onFailure { Timber.w(it, "mark watched") }; vm.load() } },
+                            onMarkWatched = { on -> scope.launch { app.markWatched(ep.id, on) } },
                         )
                     }
                 }

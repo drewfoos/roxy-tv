@@ -36,6 +36,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.data.downloads.DownloadState
+import androidx.compose.material.icons.outlined.RemoveDone
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material.icons.outlined.ArrowCircleDown
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.DropdownMenu
@@ -382,10 +390,28 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
     val startDownload = rememberDownloadStarter()
+    // What this phone already holds: an episode or movie that is downloaded (or on its way)
+    // offers Delete / Cancel instead of Download; a show with some episodes here offers the rest.
+    val app = RoxyApp.get(context)
+    val downloads = app.downloads
+    val index by downloads.index.collectAsStateWithLifecycle()
+    val entry = if (item.isSeries) null else index.entries[item.id]
+    val seriesHas = if (item.isSeries) index.entries.values.count { it.titleId == item.id } else 0
+    var confirmDelete by remember { mutableStateOf(false) }
     val downloadLabel = when {
+        item.isSeries && seriesHas > 0 -> "Download remaining episodes"
         item.isSeries -> "Download all episodes"
         item.isEpisode -> "Download episode"
         else -> "Download"
+    }
+    if (confirmDelete && entry != null) {
+        ConfirmDialog(
+            title = "Delete download?",
+            text = "${if (item.isEpisode) listOfNotNull(item.seriesTitle, item.episodeCode.takeIf { it.isNotEmpty() }).joinToString(" ") else item.title} will be removed from this phone.",
+            confirm = "Delete",
+            onConfirm = { confirmDelete = false; downloads.delete(item.id) },
+            onDismiss = { confirmDelete = false },
+        )
     }
     /** Resolve what the card stands for into downloadable items plus the title snapshot, then queue them. */
     fun download() = scope.launch {
@@ -417,22 +443,52 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
             if (item.isPlayable || item.isSeries) {
                 DropdownMenuItem(text = { Text("Watch now", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null, tint = Color.White) }, onClick = { open = false; onPlay() })
-                DropdownMenuItem(text = { Text(downloadLabel, color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.ArrowCircleDown, null, tint = Color.White) }, onClick = { open = false; download() })
+                when (entry?.state) {
+                    null -> DropdownMenuItem(text = { Text(downloadLabel, color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.ArrowCircleDown, null, tint = Color.White) }, onClick = { open = false; download() })
+                    DownloadState.Done -> DropdownMenuItem(text = { Text("Delete download", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Delete, null, tint = Color.White) }, onClick = { open = false; confirmDelete = true })
+                    DownloadState.Failed -> DropdownMenuItem(text = { Text("Retry download", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Refresh, null, tint = Color.White) }, onClick = { open = false; downloads.resume(item.id) })
+                    else -> DropdownMenuItem(
+                        text = { Text("Cancel download  ·  ${(entry.fraction * 100).toInt()}%", color = Color.White) },
+                        leadingIcon = { Icon(Icons.Filled.Close, null, tint = Color.White) },
+                        onClick = { open = false; downloads.delete(item.id) },
+                    )
+                }
             }
+            // The Watchlist holds shows and movies: an episode's card saves its show. Whether
+            // it is saved already comes from the card, or (for an episode) the show itself.
+            val target = if (item.isEpisode) item.seriesId ?: item.id else item.id
+            var saved by remember(target, item.userData?.isFavorite) { mutableStateOf(if (item.isEpisode) null else item.userData?.isFavorite == true) }
+            LaunchedEffect(open, target) {
+                if (open && saved == null) saved = runCatching { api.item(target).userData?.isFavorite == true }.getOrNull()
+            }
+            val isSaved = saved == true
             DropdownMenuItem(
-                text = { Text("Add to Watchlist", color = Color.White) },
-                leadingIcon = { Icon(Icons.Outlined.BookmarkBorder, null, tint = Color.White) },
+                text = { Text(if (isSaved) "Remove from Watchlist" else "Add to Watchlist", color = Color.White) },
+                leadingIcon = { Icon(if (isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, null, tint = Color.White) },
                 onClick = {
                     open = false
-                    val target = if (item.isEpisode) item.seriesId ?: item.id else item.id
-                    scope.launch { runCatching { api.setFavorite(target, true) }.onFailure { Timber.w(it, "favorite failed") } }
+                    val want = !isSaved
+                    scope.launch { app.setWatchlist(target, want).onSuccess { saved = want } }
                 },
             )
             if (item.isPlayable) {
+                val watched = item.userData?.played == true
                 DropdownMenuItem(
-                    text = { Text("Mark as watched", color = Color.White) },
+                    text = { Text(if (watched) "Mark as unwatched" else "Mark as watched", color = Color.White) },
+                    leadingIcon = { Icon(if (watched) Icons.Outlined.RemoveDone else Icons.Filled.CheckCircle, null, tint = Color.White) },
+                    onClick = { open = false; scope.launch { app.markWatched(item.id, !watched) } },
+                )
+            } else if (item.isSeries) {
+                // A show's own flag isn't kept (its progress is its episodes'), so offer both.
+                DropdownMenuItem(
+                    text = { Text("Mark all as watched", color = Color.White) },
                     leadingIcon = { Icon(Icons.Filled.CheckCircle, null, tint = Color.White) },
-                    onClick = { open = false; scope.launch { runCatching { api.setPlayed(item.id, true) }.onFailure { Timber.w(it, "played failed") } } },
+                    onClick = { open = false; scope.launch { app.markWatched(item.id, true) } },
+                )
+                DropdownMenuItem(
+                    text = { Text("Mark all as unwatched", color = Color.White) },
+                    leadingIcon = { Icon(Icons.Outlined.RemoveDone, null, tint = Color.White) },
+                    onClick = { open = false; scope.launch { app.markWatched(item.id, false) } },
                 )
             }
             DropdownMenuItem(
@@ -454,14 +510,15 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
 @Composable
 fun SaveButton(item: Item, api: RoxyApi, onSaved: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
+    val app = RoxyApp.get(LocalContext.current)
     var on by remember(item.id, item.userData?.isFavorite) { mutableStateOf(item.userData?.isFavorite == true) }
     Box(
         modifier = Modifier.size(44.dp).clip(CircleShape).border(2.dp, RoxyColors.accent, CircleShape).clickable {
             val want = !on
             on = want
             scope.launch {
-                runCatching { api.setFavorite(item.id, want) }
-                    .onFailure { Timber.w(it, "favorite failed"); on = !want }
+                app.setWatchlist(item.id, want)
+                    .onFailure { on = !want }
                     .onSuccess { onSaved() }
             }
         },

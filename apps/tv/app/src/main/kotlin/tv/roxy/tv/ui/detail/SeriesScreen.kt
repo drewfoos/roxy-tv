@@ -98,7 +98,9 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 series to seasons
             }.onSuccess { (series, seasons) ->
                 val keep = _state.value.selectedSeason.coerceIn(0, (seasons.size - 1).coerceAtLeast(0))
-                _state.value = SeriesUiState(loading = false, series = series, seasons = seasons, selectedSeason = keep)
+                // A reload (after marking watched, say) keeps the episodes and related rows on
+                // screen until the fresh ones land, so the list doesn't empty and jump to the top.
+                _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep)
                 if (seasons.isNotEmpty()) loadEpisodes(seasons[keep].id)
                 else loadEpisodes(seriesId, recursive = true) // flat series without season folders
                 loadRelated()

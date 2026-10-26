@@ -106,7 +106,9 @@ fun rememberDownloadStarter(): (items: List<Item>, title: Item, seasonName: Stri
         )
     }
     return remember {
-        { items, title, seasonName ->
+        { all, title, seasonName ->
+            // Episodes already here (or on their way) are skipped, so they don't count toward the space check.
+            val items = all.filter { app.downloads.entry(it.id).let { e -> e == null || e.state == DownloadState.Failed } }
             // Room for the whole batch plus a margin, before anything is queued; a season
             // that would stop two-thirds through is worse than one that never starts.
             val needed = items.sumOf { it.primarySource?.size ?: 0L }
@@ -504,7 +506,7 @@ private fun StorageBar(used: Long, free: Long, wifiOnly: Boolean, onWifiOnly: (B
 }
 
 @Composable
-private fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = RoxyColors.surfaceHigh,
