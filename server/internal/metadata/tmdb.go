@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -16,7 +17,8 @@ import (
 // TMDB is the themoviedb.org v3 provider. Movies and series; TVDB ids from Sonarr are
 // resolved through /find so TheTVDB itself is never called.
 type TMDB struct {
-	key    string
+	mu     sync.RWMutex
+	key    string // read through apiKey(); SetKey swaps it while the server runs
 	base   string
 	images string
 	client *http.Client
@@ -42,20 +44,37 @@ func NewTMDB(key string) *TMDB {
 
 func (t *TMDB) Name() string { return "tmdb" }
 
+func (t *TMDB) apiKey() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.key
+}
+
+// HasKey reports whether a TMDB key is set (without one, TMDB lookups and Discover are off).
+func (t *TMDB) HasKey() bool { return t != nil && t.apiKey() != "" }
+
+// SetKey replaces the key (setup wizard / settings); "" turns TMDB off.
+func (t *TMDB) SetKey(k string) {
+	t.mu.Lock()
+	t.key = strings.TrimSpace(k)
+	t.mu.Unlock()
+}
+
 func (t *TMDB) get(ctx context.Context, path string, q url.Values, out any) error {
 	if q == nil {
 		q = url.Values{}
 	}
 	headers := map[string]string{}
-	if strings.HasPrefix(t.key, "eyJ") {
-		headers["Authorization"] = "Bearer " + t.key
+	key := t.apiKey()
+	if strings.HasPrefix(key, "eyJ") {
+		headers["Authorization"] = "Bearer " + key
 	} else {
-		q.Set("api_key", t.key)
+		q.Set("api_key", key)
 	}
 	err := getJSON(ctx, t.client, t.lim, http.MethodGet, t.base+path+"?"+q.Encode(), headers, nil, out)
-	if err != nil && t.key != "" {
+	if err != nil && key != "" {
 		// Transport errors quote the URL; the key must never leave the server (logs or API).
-		return errors.New(strings.ReplaceAll(err.Error(), t.key, "***"))
+		return errors.New(strings.ReplaceAll(err.Error(), key, "***"))
 	}
 	return err
 }
@@ -376,7 +395,7 @@ func round1(f float64) float64 {
 // ---- Provider ----
 
 func (t *TMDB) Match(ctx context.Context, item *model.Item, hints Hints) (*Result, error) {
-	if t.key == "" {
+	if !t.HasKey() {
 		return nil, nil
 	}
 	isMovie := item.Type == model.TypeMovie
@@ -483,7 +502,7 @@ func (t *TMDB) search(ctx context.Context, item *model.Item, isMovie bool) (int,
 }
 
 func (t *TMDB) Episodes(ctx context.Context, series *Result, season int) (*Season, error) {
-	if t.key == "" || series == nil || series.Provider != "tmdb" {
+	if !t.HasKey() || series == nil || series.Provider != "tmdb" {
 		return nil, nil
 	}
 	var s tmdbSeason

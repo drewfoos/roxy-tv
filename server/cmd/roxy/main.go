@@ -111,13 +111,14 @@ func bootstrapAdmin(ctx context.Context, db *store.Store, cfg *config.Config) er
 	if err != nil || n > 0 {
 		return err
 	}
-	// No ROXY_ADMIN_PASSWORD: never fall back to a known default on a real server; make a
-	// random one and show it once in the log.
+	// No ROXY_ADMIN_PASSWORD: the first person to open the app on the home network creates
+	// the admin in the setup wizard (Jellyfin's way). Never a known default.
 	pw := cfg.AdminPassword
-	generated := os.Getenv("ROXY_ADMIN_PASSWORD") == ""
-	if generated {
-		pw = auth.NewToken()[:20]
+	if os.Getenv("ROXY_ADMIN_PASSWORD") == "" {
+		slog.Warn("no accounts yet: open the Roxy app on a phone on the same network to set up this server")
+		return nil
 	}
+	generated := false
 	hash, err := auth.HashPassword(pw)
 	if err != nil {
 		return err

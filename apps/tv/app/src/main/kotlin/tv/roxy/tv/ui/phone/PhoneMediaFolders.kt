@@ -73,7 +73,7 @@ fun MediaFoldersCard(reloadKey: Any?, onAdd: () -> Unit, onChanged: () -> Unit) 
     var editing by remember { mutableStateOf<MediaFolder?>(null) }
     var tick by remember { mutableStateOf(0) }
     LaunchedEffect(reloadKey, tick) {
-        runCatching { app.api.mediaFolders() }.onSuccess { folders = it; error = null }.onFailure { error = it.message }
+        runCatching { app.api.mediaFolders() }.onSuccess { folders = it; error = null }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; error = it.message }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Media folders", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 6.dp))
@@ -121,11 +121,11 @@ fun MediaFoldersCard(reloadKey: Any?, onAdd: () -> Unit, onChanged: () -> Unit) 
             onDismiss = { editing = null },
             onSave = { name, kind, anime ->
                 editing = null
-                scope.launch { runCatching { app.api.updateMediaFolder(f.id, name, kind, anime) }.onFailure { error = it.message }; tick++; onChanged() }
+                scope.launch { runCatching { app.api.updateMediaFolder(f.id, name, kind, anime) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; error = it.message }; tick++; onChanged() }
             },
             onRemove = {
                 editing = null
-                scope.launch { runCatching { app.api.removeMediaFolder(f.id) }.onFailure { error = it.message }; tick++; app.items.userDataChanged(); onChanged() }
+                scope.launch { runCatching { app.api.removeMediaFolder(f.id) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; error = it.message }; tick++; app.items.userDataChanged(); onChanged() }
             },
         )
     }
@@ -216,10 +216,12 @@ fun PhoneAddFolder(onBack: () -> Unit) {
         scope.launch {
             runCatching { app.api.browseFolders(p) }
                 .onSuccess { r -> path = r.path; parent = r.parent?.takeIf { it.isNotEmpty() }; dirs = r.dirs; videosHere = r.videos }
-                .onFailure { t -> error = t.message; dirs = emptyList() }
+                .onFailure { t -> if (t is kotlinx.coroutines.CancellationException) throw t; error = t.message; dirs = emptyList() }
         }
     }
     LaunchedEffect(Unit) { open("") }
+    // The phone's back gesture walks up the folders, then leaves the browser.
+    androidx.activity.compose.BackHandler(enabled = !choosing) { if (path.isNotEmpty()) open(parent ?: "") else onBack() }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -277,7 +279,7 @@ fun PhoneAddFolder(onBack: () -> Unit) {
                     scope.launch {
                         runCatching { app.api.addMediaFolder(path, name.trim(), kind, anime) }
                             .onSuccess { choosing = false; app.items.userDataChanged(); onBack() }
-                            .onFailure { t -> error = t.message?.substringAfter(": ")?.trim('{', '}', '"')?.removePrefix("error\":\"") }
+                            .onFailure { t -> if (t is kotlinx.coroutines.CancellationException) throw t; error = t.message?.substringAfter(": ")?.trim('{', '}', '"')?.removePrefix("error\":\"") }
                         saving = false
                     }
                 }) { Text(if (saving) "Adding…" else "Add and scan", color = RoxyColors.accent, fontWeight = FontWeight.SemiBold) }

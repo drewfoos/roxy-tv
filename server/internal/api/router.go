@@ -52,13 +52,15 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 		s.loadTranscodingSetting()
 		s.transcoder.Encoder()
 	}()
-	if meta != nil && meta.TMDB() != nil {
-		s.discover = discover.New(st, cfg, meta.TMDB())
+	s.loadSavedTMDBKey(context.Background())
+	// Discover is set up even before a TMDB key exists; it switches on when one is entered.
+	if meta != nil {
+		s.discover = discover.New(st, cfg, meta.TMDBProvider())
 		s.discover.Start(context.Background())
 	}
 
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP)
+	r.Use(trustedRealIP)
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors)
@@ -70,6 +72,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/system/info", s.systemInfo)
 		r.Post("/auth/login", s.login)
+		r.Get("/setup", s.setupStatus)
+		r.Post("/setup/admin", s.setupAdmin)
 		r.Get("/legal/terms", s.legalDoc)
 		r.Get("/legal/privacy", s.legalDoc)
 
@@ -127,6 +131,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/settings/fanart", s.fanartSettingsGet)
 			r.Put("/settings/fanart", s.fanartSettingsPut)
 			r.Get("/settings/transcoding", s.transcodingSettingsGet)
+			r.Get("/settings/tmdb", s.tmdbSettingsGet)
+			r.Put("/settings/tmdb", s.tmdbSettingsPut)
 			r.Put("/settings/transcoding", s.transcodingSettingsPut)
 			r.Get("/items/{id}/images/{type}/candidates", s.imageCandidates)
 			r.Get("/apps/{app}/latest", s.appLatest)

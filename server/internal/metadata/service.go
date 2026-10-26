@@ -38,6 +38,7 @@ type Service struct {
 	cfg       *config.Config
 	providers []Provider // in default preference order (TMDB first when configured)
 	anilist   Provider
+	tmdb      *TMDB
 	images    *http.Client
 
 	queue chan job
@@ -56,8 +57,19 @@ type job struct {
 	images bool // also re-download images whose URL did not change
 }
 
-// TMDB exposes the TMDB client when configured (Discover), else nil.
+// TMDB exposes the TMDB client when it has a key (Discover), else nil.
 func (s *Service) TMDB() *TMDB {
+	if s.tmdb.HasKey() {
+		return s.tmdb
+	}
+	return nil
+}
+
+// TMDBProvider is the TMDB client whether or not it has a key yet (so Discover can be
+// set up once and come alive when a key is entered).
+func (s *Service) TMDBProvider() *TMDB { return s.tmdb }
+
+func (s *Service) tmdbFromProviders() *TMDB {
 	for _, p := range s.providers {
 		if t, ok := p.(*TMDB); ok {
 			return t
@@ -79,12 +91,12 @@ func New(st *store.Store, cfg *config.Config) *Service {
 		failed:  map[string]time.Time{},
 	}
 	s.anilist = NewAniList()
-	if cfg.TMDBAPIKey != "" {
-		s.providers = append(s.providers, NewTMDB(cfg.TMDBAPIKey))
-	} else {
-		slog.Warn("metadata: TMDB disabled (ROXY_TMDB_API_KEY not set); AniList only")
+	// Always there; without a key it matches nothing until one is entered (setup / settings).
+	s.tmdb = NewTMDB(cfg.TMDBAPIKey)
+	if !s.tmdb.HasKey() {
+		slog.Warn("metadata: no TMDB key yet; AniList only until one is entered in setup or settings")
 	}
-	s.providers = append(s.providers, s.anilist)
+	s.providers = append(s.providers, s.tmdb, s.anilist)
 	return s
 }
 

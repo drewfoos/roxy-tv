@@ -38,6 +38,7 @@ import tv.roxy.tv.ui.detail.MovieScreen
 import tv.roxy.tv.ui.detail.SeriesScreen
 import tv.roxy.tv.ui.home.HomeScreen
 import tv.roxy.tv.ui.login.LoginScreen
+import tv.roxy.tv.ui.setup.SetupWizard
 import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.phone.PhoneRoot
 import tv.roxy.tv.ui.profiles.ProfilePicker
@@ -198,6 +199,11 @@ private fun AppRoot(tv: Boolean) {
     }
     if (!session.isLoggedIn) {
         LoginScreen()
+        return
+    }
+    // Signed in by the setup wizard, which isn't finished: carry on where it was.
+    if (session.setupInProgress) {
+        SetupWizard(serverUrl = session.serverUrl, serverName = "")
         return
     }
     // "Who's watching?" until a profile is chosen (and again after Switch profile).

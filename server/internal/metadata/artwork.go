@@ -42,7 +42,7 @@ type tmdbSizedImage struct {
 
 // Candidates lists what TMDB has for one image type of a title.
 func (t *TMDB) Candidates(ctx context.Context, isMovie bool, tmdbID int, typ string) ([]Candidate, error) {
-	if t.key == "" || tmdbID == 0 {
+	if !t.HasKey() || tmdbID == 0 {
 		return nil, nil
 	}
 	kind := "tv"

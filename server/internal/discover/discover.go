@@ -295,7 +295,7 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 // Enabled is false without a TMDB key.
-func (s *Service) Enabled() bool { return s != nil && s.tmdb != nil }
+func (s *Service) Enabled() bool { return s != nil && s.tmdb.HasKey() }
 
 func (s *Service) RequestsEnabled(mediaType string) bool {
 	s.mu.Lock()

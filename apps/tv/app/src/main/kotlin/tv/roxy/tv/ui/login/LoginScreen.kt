@@ -174,6 +174,27 @@ fun LoginScreen() {
     var showTerms by rememberSaveable { mutableStateOf(false) }
     val canConnect = !state.busy && agreed && serverUrl.isNotBlank() && username.isNotBlank()
 
+    // A brand-new server (no accounts yet) gets the setup wizard instead of a sign-in form.
+    var setup by remember { mutableStateOf<tv.roxy.tv.api.SetupStatus?>(null) }
+    var openSetup by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(serverUrl) {
+        setup = null
+        val url = serverUrl.trim().trimEnd('/').let { if (it.isEmpty() || it.startsWith("http")) it else "http://$it" }
+        if (url.isEmpty()) return@LaunchedEffect
+        kotlinx.coroutines.delay(500) // typing: wait for a pause
+        setup = runCatching { app.api.setupStatus(url) }.getOrNull()
+    }
+    val needsSetup = setup?.required == true
+    if (openSetup && needsSetup && setup?.allowed == true) {
+        val url = serverUrl.trim().trimEnd('/').let { if (it.startsWith("http")) it else "http://$it" }
+        tv.roxy.tv.ui.setup.SetupWizard(
+            serverUrl = url,
+            serverName = setup?.serverName?.ifEmpty { null } ?: url.removePrefix("http://"),
+            onCancel = { openSetup = false },
+        )
+        return
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
         // A soft blue glow behind the mark, like the splash, fading into the page.
         Box(
@@ -192,44 +213,68 @@ fun LoginScreen() {
 
             LoginField(serverUrl, { serverUrl = it }, placeholder = "Server address", icon = Icons.Outlined.Dns, keyboardType = KeyboardType.Uri)
             FoundServers(state, selectedUrl = serverUrl, onPick = { serverUrl = it.url }, onRescan = vm::scan)
-            Spacer(Modifier.height(12.dp))
-            LoginField(username, { username = it }, placeholder = "User name", icon = Icons.Outlined.Person)
-            Spacer(Modifier.height(12.dp))
-            LoginField(
-                password, { password = it }, placeholder = "Password", icon = Icons.Outlined.Lock,
-                keyboardType = KeyboardType.Password, imeAction = ImeAction.Done,
-                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                trailing = {
-                    Icon(
-                        if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = if (showPassword) "Hide password" else "Show password",
-                        tint = RoxyColors.muted, modifier = Modifier.size(22.dp).clickable { showPassword = !showPassword },
+            // A brand-new server: offer setup instead of a sign-in it can't answer yet.
+            if (needsSetup && setup?.allowed == true) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp).clip(RoundedCornerShape(16.dp))
+                        .background(RoxyColors.accent.copy(alpha = 0.12f)).border(1.dp, RoxyColors.accent.copy(alpha = 0.4f), RoundedCornerShape(16.dp)).padding(16.dp),
+                ) {
+                    Text("This server is new", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground)
+                    Text(
+                        "${setup?.serverName?.ifEmpty { null } ?: "It"} has no accounts yet. Set it up to create yours and choose where your media lives.",
+                        fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                     )
-                },
-                onDone = { if (canConnect) vm.login(serverUrl, username, password) },
-            )
-
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp)) {
-                Checkbox(checked = agreed, onCheckedChange = { agreed = it }, colors = CheckboxDefaults.colors(checkedColor = RoxyColors.accent, uncheckedColor = RoxyColors.muted, checkmarkColor = OnBrand))
-                Text(
-                    buildAnnotatedString {
-                        append("I agree to the ")
-                        withStyle(SpanStyle(color = RoxyColors.accent, fontWeight = FontWeight.SemiBold)) { append("Terms of Use") }
+                    PlayButton(
+                        text = "Set up this server", icon = Icons.AutoMirrored.Filled.Login, height = 46.dp, pill = true,
+                        container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), onClick = { openSetup = true },
+                    )
+                }
+            }
+            // No accounts exist on a new server, so there's nothing to sign in to yet.
+            if (!needsSetup) {
+                Spacer(Modifier.height(12.dp))
+                LoginField(username, { username = it }, placeholder = "User name", icon = Icons.Outlined.Person)
+                Spacer(Modifier.height(12.dp))
+                LoginField(
+                    password, { password = it }, placeholder = "Password", icon = Icons.Outlined.Lock,
+                    keyboardType = KeyboardType.Password, imeAction = ImeAction.Done,
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailing = {
+                        Icon(
+                            if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = if (showPassword) "Hide password" else "Show password",
+                            tint = RoxyColors.muted, modifier = Modifier.size(22.dp).clickable { showPassword = !showPassword },
+                        )
                     },
-                    color = RoxyColors.onBackground, fontSize = 14.sp,
-                    modifier = Modifier.clickable { showTerms = true },
+                    onDone = { if (canConnect) vm.login(serverUrl, username, password) },
                 )
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp)) {
+                    Checkbox(checked = agreed, onCheckedChange = { agreed = it }, colors = CheckboxDefaults.colors(checkedColor = RoxyColors.accent, uncheckedColor = RoxyColors.muted, checkmarkColor = OnBrand))
+                    Text(
+                        buildAnnotatedString {
+                            append("I agree to the ")
+                            withStyle(SpanStyle(color = RoxyColors.accent, fontWeight = FontWeight.SemiBold)) { append("Terms of Use") }
+                        },
+                        color = RoxyColors.onBackground, fontSize = 14.sp,
+                        modifier = Modifier.clickable { showTerms = true },
+                    )
+                }
+                PlayButton(
+                    text = if (state.busy) "Connecting…" else "Connect",
+                    icon = Icons.AutoMirrored.Filled.Login, height = 50.dp, pill = true,
+                    container = if (canConnect) RoxyColors.accent else RoxyColors.accent.copy(alpha = 0.35f),
+                    content = if (canConnect) OnBrand else OnBrand.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    onClick = { if (canConnect) vm.login(serverUrl, username, password) },
+                )
+                state.error?.let {
+                    Text(it, color = RoxyColors.error, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp))
+                }
             }
-            PlayButton(
-                text = if (state.busy) "Connecting…" else "Connect",
-                icon = Icons.AutoMirrored.Filled.Login, height = 50.dp, pill = true,
-                container = if (canConnect) RoxyColors.accent else RoxyColors.accent.copy(alpha = 0.35f),
-                content = if (canConnect) OnBrand else OnBrand.copy(alpha = 0.6f),
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                onClick = { if (canConnect) vm.login(serverUrl, username, password) },
+            if (needsSetup && setup?.allowed != true) Text(
+                "This server hasn't been set up yet. Open Roxy on a phone connected to the same network as the server to set it up.",
+                color = RoxyColors.accent, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp),
             )
-            state.error?.let {
-                Text(it, color = RoxyColors.error, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp))
-            }
             Text(
                 "Your server's address is where Roxy Server runs, like http://192.168.1.10:8096 or your Tailscale name.",
                 color = RoxyColors.muted.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 28.dp),

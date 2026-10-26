@@ -34,6 +34,8 @@ data class Session(
     val acceptedTerms: String = "",
     /** The profile used last, kept across Switch profile so the picker can mark it and offer a way back. */
     val lastProfileId: String? = null,
+    /** Signed in by the first-time setup, which isn't finished yet: the wizard stays on screen. */
+    val setupInProgress: Boolean = false,
 ) {
     val isLoggedIn: Boolean get() = token != null && serverUrl.isNotEmpty()
     val hasProfile: Boolean get() = profileId != null
@@ -168,6 +170,11 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    suspend fun setSetupInProgress(on: Boolean) {
+        val cur = _session.value
+        if (cur.setupInProgress != on) saveSession(cur.copy(setupInProgress = on))
+    }
+
     suspend fun setAcceptedTerms(version: String) {
         val cur = _session.value
         if (cur.acceptedTerms != version) saveSession(cur.copy(acceptedTerms = version))
@@ -202,6 +209,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_PROFILE_AVATAR_V] = s.profileAvatarVersion
             it[KEY_PROFILE_AVATAR_KEY] = s.profileAvatarKey
             it[KEY_TERMS] = s.acceptedTerms
+            it[KEY_SETUP] = s.setupInProgress
             if (s.lastProfileId == null) it.remove(KEY_LAST_PROFILE) else it[KEY_LAST_PROFILE] = s.lastProfileId
         }
     }
@@ -265,6 +273,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         profileAvatarKey = this[KEY_PROFILE_AVATAR_KEY].orEmpty(),
         acceptedTerms = this[KEY_TERMS].orEmpty(),
         lastProfileId = this[KEY_LAST_PROFILE]?.takeIf { it.isNotEmpty() },
+        setupInProgress = this[KEY_SETUP] ?: false,
     )
 
     private fun Preferences.toSettings(): PlayerSettings {
@@ -297,6 +306,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_PROFILE_AVATAR_V = intPreferencesKey("profile_avatar_v")
         val KEY_PROFILE_AVATAR_KEY = stringPreferencesKey("profile_avatar_key")
         val KEY_TERMS = stringPreferencesKey("accepted_terms")
+        val KEY_SETUP = booleanPreferencesKey("setup_in_progress")
         val KEY_LAST_PROFILE = stringPreferencesKey("last_profile_id")
         val KEY_HWDEC = stringPreferencesKey("hwdec")
         val KEY_VO = stringPreferencesKey("vo")

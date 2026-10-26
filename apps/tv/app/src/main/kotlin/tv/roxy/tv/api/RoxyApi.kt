@@ -70,6 +70,26 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun me(): MeResponse = get("/v1/auth/me")
 
+    // ---- first-time setup (before anyone is signed in) ----
+
+    /** Whether the server at [serverUrl] still needs setting up, and whether this device may. */
+    suspend fun setupStatus(serverUrl: String): SetupStatus = withContext(Dispatchers.IO) {
+        execute<SetupStatus>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/setup").get().build())
+    }
+
+    /** Creates the server's admin and signs in as them. */
+    suspend fun setupAdmin(serverUrl: String, name: String, password: String, device: String, deviceId: String, version: String): LoginResponse =
+        withContext(Dispatchers.IO) {
+            val body = SetupAdmin(name, password, device, deviceId, version)
+            execute<LoginResponse>(
+                Request.Builder().url(serverUrl.trimEnd('/') + "/v1/setup/admin")
+                    .post(json.encodeToString(SetupAdmin.serializer(), body).toRequestBody(JSON_TYPE)).build(),
+            )
+        }
+
+    suspend fun tmdbSettings(): TmdbSettings = get("/v1/settings/tmdb")
+    suspend fun saveTmdbKey(key: String): TmdbSettings = putJson("/v1/settings/tmdb", json.encodeToString(TmdbKey.serializer(), TmdbKey(key)))
+
     suspend fun logout() { postNoBody("/v1/auth/logout", "") }
 
     // ---- users (admin) ----
@@ -1072,6 +1092,18 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 
 @Serializable
 private data class ScanMode(val mode: String)
+
+@Serializable
+data class SetupStatus(val required: Boolean = false, val allowed: Boolean = false, val tmdb: Boolean = false, val serverName: String = "")
+
+@Serializable
+private data class SetupAdmin(val name: String, val password: String, val device: String, val deviceId: String, val version: String)
+
+@Serializable
+data class TmdbSettings(val set: Boolean = false, val source: String = "")
+
+@Serializable
+private data class TmdbKey(val key: String)
 
 @Serializable
 data class ServerUser(val id: String, val name: String = "", val role: String = "requester", val isDisabled: Boolean = false, val isYou: Boolean = false, val createdAt: String = "")
