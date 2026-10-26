@@ -352,7 +352,7 @@ fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifie
     Text(
         buildAnnotatedString {
             if (audio != null) {
-                withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.Medium)) { append(audio) }
+                append(audio) // same grey as the rest of the line
                 if (rating != null || rest.isNotEmpty()) append("  ·  ")
             }
             if (rating != null) {
