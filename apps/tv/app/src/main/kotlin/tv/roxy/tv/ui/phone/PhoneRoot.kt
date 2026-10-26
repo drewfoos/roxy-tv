@@ -75,7 +75,7 @@ private enum class Tab(val label: String, val route: Route) {
     Home("Home", Route.Home),
     Discover("Discover", Route.Discover),
     Browse("Browse", Route.Browse),
-    Watchlist("Watchlist", Route.Watchlist),
+    Watchlist("My Lists", Route.Watchlist),
     Account("Account", Route.Account),
 }
 
@@ -212,7 +212,17 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Watchlist> {
                     Page {
-                        PhoneWatchlist(onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset, onSearch = { nav.navigate(Route.Search) })
+                        PhoneWatchlist(
+                            onOpenSeries = { openSeries(it) }, onOpenMovie = { openMovie(it) }, bottomInset = bottomInset, onSearch = { nav.navigate(Route.Search) },
+                            onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
+                            onBrowse = {
+                                nav.navigate(Tab.Browse.route) {
+                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                        )
                     }
                 }
                 composable<Route.Browse> {

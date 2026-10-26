@@ -121,6 +121,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/items/{id}/details", s.itemDetails)
 			r.Get("/home", s.home)
 			r.Get("/me/resume", s.resume)
+			r.Get("/me/history", s.history)
 			r.Get("/sessions/commands", s.sessionCommands)
 			r.Post("/sessions/state", s.sessionState)
 			r.Get("/sessions/players", s.sessionPlayers)

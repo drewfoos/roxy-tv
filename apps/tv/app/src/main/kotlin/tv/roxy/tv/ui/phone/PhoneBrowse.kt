@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +41,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +64,7 @@ import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
+import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
 data class LibraryUiState(val items: List<Item>? = null, val error: String? = null)
@@ -113,20 +118,77 @@ fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSea
     }
 }
 
-/** Watchlist tab: the user's favourites. */
+/**
+ * My Lists tab (Crunchyroll's): Watchlist (the profile's saved titles), History (what it
+ * played, newest first, as a two-column grid of episodes that play on tap) and Downloads.
+ */
 @Composable
-fun PhoneWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bottomInset: Dp, onSearch: (() -> Unit)? = null) {
+fun PhoneWatchlist(
+    onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bottomInset: Dp, onSearch: (() -> Unit)? = null,
+    onOpenDownloadedTitle: (String) -> Unit = {}, onBrowse: () -> Unit = {},
+) {
+    var tab by rememberSaveable { mutableStateOf(0) }
+    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+        TabHeader("My Lists", onSearch = onSearch)
+        SectionTabs(listOf("Watchlist", "History", "Downloads"), tab) { tab = it }
+        when (tab) {
+            0 -> WatchlistGrid(onOpenSeries, onOpenMovie, bottomInset)
+            1 -> HistoryGrid(bottomInset)
+            else -> PhoneDownloads(onBack = null, onOpenTitle = onOpenDownloadedTitle, onBrowse = onBrowse, bottomInset = bottomInset)
+        }
+    }
+}
+
+@Composable
+private fun WatchlistGrid(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bottomInset: Dp) {
     val app = RoxyApp.get(LocalContext.current)
     val vm: LibraryViewModel = viewModel(key = "watchlist") { LibraryViewModel(app.api, favoritesOnly = true) }
     val state by vm.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(force = true) } // a + on a title page changes it
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        TabHeader("Watchlist", onSearch = onSearch)
-        PosterGrid(
-            items = state.items, error = state.error,
-            emptyText = "Titles you add with \"My List\" on their page show up here.",
-            bottomInset = bottomInset, onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) },
-        )
+    Spacer(Modifier.height(6.dp))
+    PosterGrid(
+        items = state.items, error = state.error,
+        emptyText = "Titles you add with \"My List\" on their page show up here.",
+        bottomInset = bottomInset, onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) },
+    )
+}
+
+/** Everything this profile played, newest first, two episodes across; a tap plays (or resumes) it. */
+@Composable
+private fun HistoryGrid(bottomInset: Dp) {
+    val context = LocalContext.current
+    val app = RoxyApp.get(context)
+    val scope = rememberCoroutineScope()
+    var items by remember { mutableStateOf<List<Item>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        scope.launch {
+            runCatching { app.api.history(200).items }
+                .onSuccess { items = it; error = null }
+                .onFailure { Timber.w(it, "history"); error = it.message }
+        }
+    }
+    val list = items
+    val tileWidth = (LocalConfiguration.current.screenWidthDp.dp - PhonePad * 2 - 10.dp) / 2
+    when {
+        list == null && error != null -> Text(error ?: "", color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
+        list == null -> Column(modifier = Modifier.padding(start = PhonePad, end = PhonePad, top = 14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            repeat(3) { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(2) { Bone(Modifier.weight(1f).aspectRatio(16f / 9f)) } } }
+        }
+        list.isEmpty() -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+            Text("Episodes and movies you watch show up here, newest first.", color = RoxyColors.muted, textAlign = TextAlign.Center, lineHeight = 20.sp)
+        }
+        else -> LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 14.dp, bottom = bottomInset + 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(list, key = { it.id }) { item ->
+                ThumbTile(item, app.api, width = tileWidth, onClick = { scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } } })
+            }
+        }
     }
 }
 

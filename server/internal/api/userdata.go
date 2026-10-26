@@ -48,6 +48,26 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items})
 }
 
+// GET /v1/me/history?limit= -> {items}: what the profile played, most recent first.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	p := userFrom(w, r)
+	if p == nil {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.store.HistoryItems(r.Context(), p.ScopeID, limit)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if items == nil {
+		items = []model.Item{}
+	}
+	s.fillSeriesRefs(r.Context(), items)
+	s.attachUserData(r.Context(), items)
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
 // POST /v1/me/progress {itemId, positionMs, audioIndex?, subtitleIndex?} -> 204
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	p := userFrom(w, r)

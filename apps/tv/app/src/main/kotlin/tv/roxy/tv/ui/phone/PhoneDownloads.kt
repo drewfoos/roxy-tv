@@ -310,7 +310,7 @@ fun MovieDownloadButton(movie: Item, modifier: Modifier = Modifier, onDownload: 
  * coming in; the storage bar at the bottom. Works entirely from the local index.
  */
 @Composable
-fun PhoneDownloads(onBack: () -> Unit, onOpenTitle: (String) -> Unit, onBrowse: () -> Unit) {
+fun PhoneDownloads(onBack: (() -> Unit)?, onOpenTitle: (String) -> Unit, onBrowse: () -> Unit, bottomInset: Dp = 0.dp) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val index by app.downloads.index.collectAsStateWithLifecycle()
@@ -319,10 +319,13 @@ fun PhoneDownloads(onBack: () -> Unit, onOpenTitle: (String) -> Unit, onBrowse: 
     val titles = remember(index) { app.downloads.titles() }
     var confirmAll by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        PageHeader("Downloads", onBack = onBack, trailing = {
+    // onBack == null: shown as My Lists' Downloads tab, under that page's header and tabs.
+    Column(modifier = Modifier.fillMaxSize().then(if (onBack != null) Modifier.statusBarsPadding() else Modifier)) {
+        if (onBack != null) PageHeader("Downloads", onBack = onBack, trailing = {
             if (titles.isNotEmpty()) Icon(Icons.Filled.Delete, contentDescription = "Delete all", tint = RoxyColors.muted, modifier = Modifier.size(24.dp).clickable { confirmAll = true })
-        })
+        }) else if (titles.isNotEmpty()) Row(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad, top = 8.dp), horizontalArrangement = Arrangement.End) {
+            Text("Delete all", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted, modifier = Modifier.clickable { confirmAll = true }.padding(4.dp))
+        }
         if (titles.isEmpty()) {
             Column(modifier = Modifier.fillMaxWidth().weight(1f).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(Icons.Outlined.Download, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(56.dp))
@@ -346,6 +349,7 @@ fun PhoneDownloads(onBack: () -> Unit, onOpenTitle: (String) -> Unit, onBrowse: 
             }
         }
         StorageBar(used = app.downloads.usedBytes(), free = app.downloads.freeBytes(), wifiOnly = wifiOnly, onWifiOnly = { scope.launch { app.prefs.setDownloadsWifiOnly(it) } })
+        Spacer(Modifier.height(bottomInset))
     }
     if (confirmAll) {
         ConfirmDialog(

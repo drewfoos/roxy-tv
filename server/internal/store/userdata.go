@@ -146,6 +146,36 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 	return out, s.fillItemExtras(ctx, out)
 }
 
+// HistoryItems lists the episodes and movies the profile has played (started or
+// finished), most recently played first: My Lists' History tab.
+func (s *Store) HistoryItems(ctx context.Context, userID string, limit int) ([]model.Item, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items i
+		JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
+		WHERE (u.position_ms > 0 OR u.played = 1) AND u.last_played_at IS NOT NULL AND u.last_played_at <> ''
+		  AND i.type IN ('movie', 'episode')
+		ORDER BY u.last_played_at DESC, i.id DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Item
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return out, s.fillItemExtras(ctx, out)
+}
+
 // UserDataForItems fetches watch state for many items (by GUID) in one query.
 func (s *Store) UserDataForItems(ctx context.Context, userID string, guids []string) (map[string]*UserItemData, error) {
 	out := map[string]*UserItemData{}

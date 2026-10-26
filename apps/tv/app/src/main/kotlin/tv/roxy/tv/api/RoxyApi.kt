@@ -319,6 +319,9 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun resume(limit: Int = 20): ItemsResponse = get("/v1/me/resume?limit=$limit")
 
+    /** What this profile played, newest first (My Lists > History). */
+    suspend fun history(limit: Int = 100): ItemsResponse = get("/v1/me/history?limit=$limit")
+
     suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null) {
         val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex)
         postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body))
