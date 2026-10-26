@@ -348,16 +348,36 @@ class RoxyApi(private val prefs: Prefs) {
 
     // ---- urls the player and image loader fetch on their own ----
 
-    /** libmpv cannot send headers, so the token rides as `api_key`. */
-    fun streamUrl(sourceId: String): String = "$baseUrl/v1/stream/$sourceId?api_key=$token"
+    // libmpv (and an external player) cannot send headers, so the credential has to ride
+    // in the URL. It is a media token: one source, one day, nothing else; the account
+    // token never goes into a URL.
+    private val mediaTokens = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+
+    /** A media token for [sourceId], reused while it has more than an hour left. */
+    suspend fun mediaToken(sourceId: String): String {
+        val now = System.currentTimeMillis()
+        mediaTokens[sourceId]?.let { (tok, exp) -> if (exp - now > 3_600_000L) return tok }
+        val r: MediaTokenResponse = get("/v1/sources/$sourceId/token")
+        val exp = runCatching { java.time.Instant.parse(r.expiresAt).toEpochMilli() }.getOrDefault(now + 6 * 3_600_000L)
+        mediaTokens[sourceId] = r.token to exp
+        return r.token
+    }
+
+    /** The cached media token, for places that cannot wait (fetched when playback started). */
+    fun cachedMediaToken(sourceId: String): String? = mediaTokens[sourceId]?.first
+
+    fun streamUrl(sourceId: String, mediaToken: String): String = "$baseUrl/v1/stream/$sourceId?mt=$mediaToken"
+
+    /** The stream with no credential in it, for requests made with [http] (it sends the token as a header). */
+    fun streamUrlForHttp(sourceId: String): String = "$baseUrl/v1/stream/$sourceId"
 
     /**
      * The source re-encoded by the server (H.264 at [height]p, [kbps] video, AAC audio;
      * subtitles, fonts and chapters copied) as a Matroska stream starting at [startSec].
      * Timestamps keep the file's clock, so the stream's first frame is at [startSec].
      */
-    fun transcodeUrl(sourceId: String, height: Int, kbps: Int, startSec: Double): String =
-        "$baseUrl/v1/sources/$sourceId/transcode?height=$height&bitrate=$kbps&start=${"%.3f".format(java.util.Locale.ROOT, startSec)}&api_key=$token"
+    fun transcodeUrl(sourceId: String, height: Int, kbps: Int, startSec: Double, mediaToken: String): String =
+        "$baseUrl/v1/sources/$sourceId/transcode?height=$height&bitrate=$kbps&start=${"%.3f".format(java.util.Locale.ROOT, startSec)}&mt=$mediaToken"
 
     /** Absolute image URL for an item's image, or null when the server has none (no 404 spam). */
     fun imageUrl(item: Item, type: String, widthPx: Int? = null): String? {
@@ -398,7 +418,7 @@ class RoxyApi(private val prefs: Prefs) {
             title = displayLabel,
             videoLine = videoLine,
             tracksLine = tracksLine,
-            streamUrl = source?.let { streamUrl(it.id) } ?: "",
+            streamUrl = source?.let { s -> cachedMediaToken(s.id)?.let { streamUrl(s.id, it) } } ?: "",
             hasAss = subs.any { it.codec.equals("ass", true) || it.codec.equals("ssa", true) },
             isHi10p = video?.codec.equals("h264", true) && video?.bitDepth == 10,
         )
@@ -1026,6 +1046,9 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 
 @Serializable
 private data class ScanMode(val mode: String)
+
+@Serializable
+data class MediaTokenResponse(val token: String = "", val expiresAt: String = "")
 
 /** What Library > Refresh redoes. */
 data class RefreshParts(val metadata: Boolean = true, val images: Boolean = false, val trickplay: Boolean = false, val segments: Boolean = false) {

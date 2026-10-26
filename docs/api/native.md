@@ -4,8 +4,8 @@ The API Roxy's own clients (Roxy TV app, Roxy Web) speak. It is deliberately sma
 lenient: clients read the fields they need and ignore the rest, so the server can add fields
 without breaking anyone. JSON, camelCase, ISO-8601 times, milliseconds for durations.
 
-The Jellyfin-compatible surface (`jellyfin-compat.md`) exists only so request app, Sonarr and
-Radarr can treat Roxy as a Jellyfin server. Roxy clients never use it (ADR-0007).
+There is no Jellyfin-compatible surface any more (ADR-0008): Roxy's clients, Discover and
+the Sonarr / Radarr webhooks all use this API.
 
 ## Auth
 
@@ -15,12 +15,14 @@ Radarr can treat Roxy as a Jellyfin server. Roxy clients never use it (ADR-0007)
 | GET | `/v1/auth/me` | `{id, name, isAdmin}` or `{apiKey: true, isAdmin: true}` |
 | POST | `/v1/auth/logout` | revokes the calling device token, 204 |
 
-- The token is an opaque 64-hex device token, stored hashed. The same token store backs
-  the compat surface, so a token minted here also works there and vice versa.
-- Send it as `Authorization: Bearer <token>`. Media URLs that a player fetches on its own
-  (libmpv cannot set headers reliably) carry it as `?api_key=<token>`.
-- Integration API keys (minted through the compat `/Auth/Keys` for request app/arr) are accepted
-  everywhere a device token is.
+- The token is an opaque 64-hex device token, stored hashed (SHA-256).
+- Send it as `Authorization: Bearer <token>`. Media URLs a player fetches on its own carry
+  a media token instead (`GET /v1/sources/{id}/token`, then `?mt=<token>`): one source,
+  24 hours, only its stream / transcode / subtitles / attachments / trickplay.
+- Passwords are bcrypt (cost 12). Wrong passwords are throttled per account and per address:
+  5 free misses in 15 minutes, then 429 with `Retry-After` (30 s, doubling to 15 min).
+- Integration API keys (`/v1/auth/keys`, for the arr webhooks) are accepted everywhere a
+  device token is, and as `?api_key=`.
 - Unauthenticated calls to anything but `system/info` and `auth/login` get `401 {"error": ...}`.
 
 ## Finding the server

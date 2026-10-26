@@ -169,6 +169,9 @@ func (s *Server) putItemImage(w http.ResponseWriter, r *http.Request) {
 // POST /v1/items/{id}/refresh: force a metadata lookup for the item (its series when
 // it is a season or episode). 202.
 func (s *Server) refreshItem(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, 500, err.Error())

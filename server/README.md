@@ -64,30 +64,18 @@ media URLs the player fetches itself may carry the token as `?api_key=<token>` i
 | GET/HEAD | `/v1/stream/{id}` | direct play with HTTP ranges; `{id}` is a source id |
 | GET | `/v1/sources/{id}/attachments/{index}` | extracted font / attachment |
 | GET | `/v1/sources/{id}/subtitles/{index}` | text subtitle track, byte for byte (embedded tracks are extracted on first request; sidecars served directly) |
-| GET | `/stream/{id}` | **unauthenticated dev convenience** for the player spike; `{id}` may be a file-name stem. Remove before release. |
+| GET | `/v1/sources/{id}/token` | a media token for this source (`?mt=` on its stream, transcode, subtitles, fonts, trickplay; 24 h) |
 
-## Jellyfin-compatible surface (implemented subset)
+## Sign-in and media URLs (ADR-0008)
 
-Mounted at the root so request app, Sonarr, Radarr and Jellyfin clients can point at Roxy
-unchanged. Contract: `../docs/api/jellyfin-compat.md`.
-
-- Public: `/System/Info/Public`, `/System/Ping`, `/Branding/Configuration`, `/Users/Public`,
-  `POST /Users/AuthenticateByName`, `/QuickConnect/Enabled` (false for now),
-  `/Videos/{id}/stream[.ext]`, `/Videos/{id}/{sourceId}/Attachments/{i}`,
-  `/Videos/{id}/{sourceId}/Subtitles/{i}[/0]/Stream.{ext}` (token via `api_key`).
-- Authenticated (device token or API key, via `Authorization: MediaBrowser ... Token=`,
-  `X-MediaBrowser-Token`, `X-Emby-Token`, `Bearer`, or `?api_key=`): `/System/Info`,
-  `/System/Configuration`, `/Users`, `/Users/Me`, `/Users/{id}`, `/Users/{id}/Views`,
-  `/Auth/Keys` (POST/GET/DELETE), `/Library/MediaFolders`, `/Library/Media/Updated`,
-  `/Library/Refresh`, `/Notifications/Admin`, `/Items` (incl. `ids=` detail form),
-  `/Items/Latest`, `/Items/{id}`, `/Shows/{id}/Seasons`, `/Shows/{id}/Episodes`,
-  `/Items/{id}/PlaybackInfo` (direct play only; ASS -> `External` when the profile
-  declares it, else `Encode`), session reporting stubs (204), `/DisplayPreferences`.
+No Jellyfin-compatible API (removed 2026-10-26). Passwords are bcrypt (cost 12); wrong
+passwords are throttled per account and per address; players get media tokens, never the
+account token.
 
 `POST /v1/libraries/scan` and `POST /v1/segments/detect` are admin only.
 
-First run creates an admin user from `ROXY_ADMIN_USER` / `ROXY_ADMIN_PASSWORD`
-(defaults `roxy` / `roxy`; set them in production).
+First run creates an admin user from `ROXY_ADMIN_USER` / `ROXY_ADMIN_PASSWORD`; with no
+password set, a random one is generated and printed once in the log.
 
 ## Metadata and images
 

@@ -145,14 +145,27 @@ class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
     private val _state = MutableStateFlow(DiscoverUiState())
     val state: StateFlow<DiscoverUiState> = _state
     private var searchJob: Job? = null
+    private var loadedAt = 0L
 
-    fun load() {
+    /**
+     * The rows and "Your requests". Coming back to the tab within a couple of minutes only
+     * refreshes the requests (their status moves); the TMDB rows (~100 KB) are kept.
+     */
+    fun load(force: Boolean = false) {
+        val fresh = System.currentTimeMillis() - loadedAt < 120_000L && !_state.value.rows.isNullOrEmpty()
+        if (fresh && !force) {
+            viewModelScope.launch { refreshRequests() }
+            return
+        }
         viewModelScope.launch {
             // Both at once and shown together: "Your requests" arriving after the rows would be
             // inserted above the first visible row, i.e. out of sight.
             val reqs = async { runCatching { api.discoverRequests() }.getOrNull() }
             runCatching { api.discover() }
-                .onSuccess { d -> _state.value = _state.value.copy(rows = d.rows, requestsEnabled = d.requestsEnabled, requests = reqs.await() ?: _state.value.requests, error = null) }
+                .onSuccess { d ->
+                    loadedAt = System.currentTimeMillis()
+                    _state.value = _state.value.copy(rows = d.rows, requestsEnabled = d.requestsEnabled, requests = reqs.await() ?: _state.value.requests, error = null)
+                }
                 .onFailure { t -> Timber.w(t, "discover failed"); _state.value = _state.value.copy(error = t.message) }
         }
     }
@@ -273,7 +286,7 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
             state.rows == null && state.error != null -> Column(modifier = Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Discover is unavailable", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
                 Text(state.error ?: "", color = RoxyColors.muted, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
-                GreyButton("Try again", onClick = { vm.load() })
+                GreyButton("Try again", onClick = { vm.load(force = true) })
             }
             state.rows == null -> Column(modifier = Modifier.fillMaxSize().padding(bottom = bottomInset)) {
                 RowSkeleton(modifier = Modifier.padding(top = 16.dp)); RowSkeleton(modifier = Modifier.padding(top = 22.dp)); RowSkeleton(modifier = Modifier.padding(top = 22.dp))

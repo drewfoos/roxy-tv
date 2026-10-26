@@ -144,15 +144,21 @@ fun PhoneSeries(
     // Episodes per season (TVDB numbering) for the Seasons page's counts.
     var seasonEpisodes by remember(series.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
-    LaunchedEffect(series.id, state.seasons.size) {
+    // Fetched once per show (not again when the library's seasons arrive); which of its
+    // seasons the library lacks is worked out from what is on hand.
+    var providerSeasons by remember(series.id) { mutableStateOf<List<DiscoverSeason>>(emptyList()) }
+    LaunchedEffect(series.id) {
         if (tmdbId == null) return@LaunchedEffect
-        val have = state.seasons.mapNotNull { it.indexAired }.toSet()
         runCatching { app.api.discoverDetail("tv", tmdbId) }
             .onSuccess { d ->
-                extraSeasons = d.seasons.filter { it.number !in have && it.number != 0 }
+                providerSeasons = d.seasons
                 tvdbSeasons = d.seasonCount.takeIf { it > 0 }
                 seasonEpisodes = d.seasons.associate { it.number to it.episodes }
             }
+    }
+    LaunchedEffect(providerSeasons, state.seasons) {
+        val have = state.seasons.mapNotNull { it.indexAired }.toSet()
+        extraSeasons = providerSeasons.filter { it.number !in have && it.number != 0 }
     }
     val seasonLabel = when {
         selectedExtra != null -> "Season $selectedExtra"

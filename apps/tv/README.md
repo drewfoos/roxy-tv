@@ -2,8 +2,8 @@
 
 Android TV client for **Roxy Server**, written in Kotlin with Compose for TV
 (`androidx.tv.material3`) and **libmpv + libass** for playback. It speaks Roxy's native
-`/v1` API only (ADR-0007): no Jellyfin SDK, no Jellyfin login. The Jellyfin-compatible
-surface on the server exists for request app and the arr apps, not for this app.
+`/v1` API only (ADR-0007): no Jellyfin SDK, no Jellyfin login. The server has no
+Jellyfin-compatible API any more (ADR-0008); players get per-video media tokens.
 
 Look and feel follows the owner's brief: dark, Netflix-style. Home has a hero banner and
 horizontal rows; cards scale on focus; detail pages have a backdrop hero with a season row

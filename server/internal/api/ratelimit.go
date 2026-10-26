@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -33,18 +34,21 @@ func newRateLimiter(perSecond, burst float64) *rateLimiter {
 	return rl
 }
 
-func (rl *rateLimiter) allow(key string) bool {
+func (rl *rateLimiter) allow(key string) bool { return rl.allowN(key, 1) }
+
+// allowN is allow with a bucket scale times larger (rate and burst).
+func (rl *rateLimiter) allowN(key string, scale float64) bool {
 	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	b := rl.buckets[key]
 	if b == nil {
-		b = &bucket{tokens: rl.burst, last: now}
+		b = &bucket{tokens: rl.burst * scale, last: now}
 		rl.buckets[key] = b
 	}
-	b.tokens += now.Sub(b.last).Seconds() * rl.rate
-	if b.tokens > rl.burst {
-		b.tokens = rl.burst
+	b.tokens += now.Sub(b.last).Seconds() * rl.rate * scale
+	if b.tokens > rl.burst*scale {
+		b.tokens = rl.burst * scale
 	}
 	b.last = now
 	if b.tokens < 1 {
@@ -74,22 +78,34 @@ func exemptFromRateLimit(path string) bool {
 		strings.Contains(path, "/attachments/") || strings.Contains(path, "/subtitles/")
 }
 
+// humanWait: "30 seconds", "2 minutes".
+func humanWait(secs int) string {
+	if secs < 90 {
+		return fmt.Sprintf("%d seconds", secs)
+	}
+	return fmt.Sprintf("%d minutes", (secs+59)/60)
+}
+
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exemptFromRateLimit(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		key := r.RemoteAddr
-		if i := strings.LastIndex(key, ":"); i > 0 {
-			key = key[:i]
+		ip := r.RemoteAddr
+		if i := strings.LastIndex(ip, ":"); i > 0 {
+			ip = ip[:i]
 		}
+		key := ip
 		if tok := r.Header.Get("Authorization"); tok != "" {
 			key += "|" + tok
 		} else if k := r.URL.Query().Get("api_key"); k != "" {
 			key += "|" + k
 		}
-		if !rl.allow(key) {
+		// Each token has its own bucket (two people behind one router don't share), and
+		// the address as a whole is capped at three times that, so inventing a new token
+		// per request doesn't escape the limit.
+		if !rl.allow(key) || !rl.allowN("ip|"+ip, 3) {
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, "too many requests; slow down")
 			return

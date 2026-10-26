@@ -118,7 +118,7 @@ class DownloadService : Service() {
             return
         }
         var offset = part.length()
-        val url = app.api.streamUrl(start.sourceId)
+        val url = app.api.streamUrlForHttp(start.sourceId) // the http client adds the token as a header
         val req = Request.Builder().url(url).apply { if (offset > 0) header("Range", "bytes=$offset-") }.build()
         try {
             app.api.http.newCall(req).execute().use { resp ->

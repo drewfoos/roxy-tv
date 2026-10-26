@@ -53,7 +53,8 @@ services:
       # ROXY_VAAPI_DEVICE: "/dev/dri/renderD128"   # if the AMD card is not the first render node
       # First run only (empty database): the admin account. Defaults are roxy / roxy.
       ROXY_ADMIN_USER: "${ROXY_ADMIN_USER:-roxy}"
-      ROXY_ADMIN_PASSWORD: "${ROXY_ADMIN_PASSWORD:-roxy}"
+      # Unset: the first start makes a random admin password and prints it once in the log.
+      ROXY_ADMIN_PASSWORD: "${ROXY_ADMIN_PASSWORD:-}"
       # ROXY_ADVERTISE_URL: "http://192.168.1.10:8096"  # what clients should use if the LAN address is wrong
       ROXY_TMDB_API_KEY: "${TMDB_API_KEY:-}" # or drop a tmdb.key file in ./config/roxy; release images carry a project default
       ROXY_SONARR_URL: "http://sonarr:8989"

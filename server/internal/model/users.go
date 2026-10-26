@@ -60,4 +60,7 @@ type Principal struct {
 	// ScopeID keys watch state: the profile named by X-Roxy-Profile when it belongs to
 	// the user, else the user's default profile. Empty for API keys.
 	ScopeID string
+	// MediaSource is set when the caller came in with a media token (?mt=): it may only
+	// read that one source's stream and the files that play with it.
+	MediaSource string
 }

@@ -171,3 +171,9 @@ func (s *Store) SetAcceptedTerms(ctx context.Context, userID, version string) er
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET accepted_terms = ? WHERE id = ?`, version, userID)
 	return err
 }
+
+// SetPasswordHash replaces a user's password hash (a cost upgrade, or a new password).
+func (s *Store) SetPasswordHash(ctx context.Context, userID, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID)
+	return err
+}

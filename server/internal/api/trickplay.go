@@ -14,6 +14,10 @@ import (
 // queueing them (the client retries later); 404 for an unknown source.
 func (s *Server) trickplayManifest(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !safeID(id) {
+		writeError(w, 404, "no such source")
+		return
+	}
 	if s.trick == nil {
 		writeError(w, 404, "trickplay disabled")
 		return
@@ -36,7 +40,7 @@ func (s *Server) trickplayManifest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) trickplaySheet(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	n, err := strconv.Atoi(chi.URLParam(r, "n"))
-	if s.trick == nil || err != nil || n < 0 {
+	if s.trick == nil || err != nil || n < 0 || !safeID(id) {
 		writeError(w, 404, "no such sheet")
 		return
 	}
@@ -48,4 +52,18 @@ func (s *Server) trickplaySheet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeFile(w, r, p)
+}
+
+// safeID: a source id is letters, digits and dashes, so it can name a folder safely
+// (never "..", never a path).
+func safeID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
 }

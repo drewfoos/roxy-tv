@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -20,22 +21,39 @@ import (
 var ErrInvalidCredentials = errors.New("invalid username or password")
 
 type Service struct {
-	store *store.Store
+	store    *store.Store
+	throttle *loginThrottle
+	mk       mediaKey
 }
 
-func New(st *store.Store) *Service { return &Service{store: st} }
+func New(st *store.Store) *Service { return &Service{store: st, throttle: newLoginThrottle()} }
 
+// PasswordCost is bcrypt's work factor (2^12 rounds, ~250 ms on a desktop CPU). bcrypt
+// salts every hash itself; hashes made with a lower cost are upgraded at the next sign-in.
+const PasswordCost = 12
+
+// HashPassword hashes a password with bcrypt (salted, slow on purpose). bcrypt reads at
+// most 72 bytes, so longer passwords are refused rather than silently cut.
 func HashPassword(pw string) (string, error) {
-	b, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	if pw == "" {
+		return "", errors.New("a password is required")
+	}
+	b, err := bcrypt.GenerateFromPassword([]byte(pw), PasswordCost)
 	return string(b), err
 }
 
+// CheckPassword reports whether pw matches hash. An account with no hash never matches:
+// a blank password is not a password.
 func CheckPassword(hash, pw string) bool {
-	if hash == "" {
-		return pw == ""
+	if hash == "" || pw == "" {
+		return false
 	}
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
+
+// dummyHash is compared against when the account does not exist, so a wrong username
+// takes as long as a wrong password and response times don't reveal which names exist.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("roxy-timing-equaliser"), PasswordCost)
 
 // NewToken returns a random 32-byte token as 64 hex chars (what clients store) .
 func NewToken() string {
@@ -52,13 +70,33 @@ func HashToken(token string) string {
 }
 
 // Login verifies credentials and issues a device token.
+// Wrong passwords are throttled per account and per address (ErrTooManyAttempts).
 func (s *Service) Login(ctx context.Context, username, password string, client ClientInfo) (*model.User, *model.Device, string, error) {
+	uk, ak := userKey(username), addrKey(client.Address)
+	if wait := s.throttle.wait(uk, ak); wait > 0 {
+		return nil, nil, "", &RetryError{After: wait}
+	}
 	u, err := s.store.GetUserByName(ctx, strings.TrimSpace(username))
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if u == nil || u.IsDisabled || !CheckPassword(u.PasswordHash, password) {
+	if u == nil || u.IsDisabled || u.PasswordHash == "" {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password)) // same time as a real check
+		s.throttle.fail(uk, ak)
 		return nil, nil, "", ErrInvalidCredentials
+	}
+	if !CheckPassword(u.PasswordHash, password) {
+		s.throttle.fail(uk, ak)
+		return nil, nil, "", ErrInvalidCredentials
+	}
+	s.throttle.succeed(uk)
+	// Upgrade an older, cheaper hash now that we know the password.
+	if cost, err := bcrypt.Cost([]byte(u.PasswordHash)); err == nil && cost < PasswordCost {
+		if h, err := HashPassword(password); err == nil {
+			if err := s.store.SetPasswordHash(ctx, u.ID, h); err == nil {
+				u.PasswordHash = h
+			}
+		}
 	}
 	token := NewToken()
 	d := &model.Device{
@@ -83,7 +121,6 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (*model.APIKey,
 	if err := s.store.CreateAPIKey(ctx, k); err != nil {
 		return nil, err
 	}
-	rememberPlainKey(k.TokenHash, token)
 	return k, nil
 }
 
@@ -117,6 +154,22 @@ type ClientInfo struct {
 	Device   string
 	DeviceID string
 	Version  string
+	Address  string // the caller's IP, for sign-in throttling
+}
+
+// RetryError is ErrTooManyAttempts with how long to wait.
+type RetryError struct{ After time.Duration }
+
+func (e *RetryError) Error() string { return ErrTooManyAttempts.Error() }
+func (e *RetryError) Unwrap() error { return ErrTooManyAttempts }
+
+// RemoteIP is the request's client address without the port.
+func RemoteIP(r *http.Request) string {
+	a := r.RemoteAddr
+	if i := strings.LastIndex(a, ":"); i > 0 && !strings.HasSuffix(a, "]") {
+		a = a[:i]
+	}
+	return strings.Trim(a, "[]")
 }
 
 // TokenFromRequest extracts the credential from any of the places Jellyfin clients put it.
@@ -208,6 +261,16 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 				http.Error(w, `{"Message":"auth lookup failed"}`, http.StatusInternalServerError)
 				return
 			}
+			// A media token (?mt=) opens one source's stream and what plays with it, nothing else.
+			if p == nil {
+				if mt := r.URL.Query().Get("mt"); mt != "" {
+					if src, uid, err := s.verifyMediaToken(r.Context(), mt); err == nil && mediaPathFor(r.URL.Path, src) {
+						if u, err := s.store.GetUser(r.Context(), uid); err == nil && u != nil && !u.IsDisabled {
+							p = &model.Principal{UserID: u.ID, User: u, MediaSource: src}
+						}
+					}
+				}
+			}
 			if p == nil && required {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -215,7 +278,7 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 				return
 			}
 			if p != nil {
-				if p.User != nil {
+				if p.User != nil && p.MediaSource == "" {
 					scope, err := s.resolveScope(r.Context(), p.UserID, r.Header.Get("X-Roxy-Profile"))
 					if err != nil {
 						http.Error(w, `{"Message":"profile lookup failed"}`, http.StatusInternalServerError)

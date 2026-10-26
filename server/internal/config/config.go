@@ -39,7 +39,7 @@ type Config struct {
 	RadarrQualityProfile string // ROXY_RADARR_QUALITY_PROFILE
 	// First-run admin account (only used when the users table is empty).
 	AdminUser     string // ROXY_ADMIN_USER, default roxy
-	AdminPassword string // ROXY_ADMIN_PASSWORD, default roxy (dev only; set it in production)
+	AdminPassword string // ROXY_ADMIN_PASSWORD; unset = a random one, shown once in the log
 }
 
 func Load() (*Config, error) {
@@ -65,7 +65,7 @@ func Load() (*Config, error) {
 		RadarrRootFolder:     env("ROXY_RADARR_ROOT_FOLDER", ""),
 		RadarrQualityProfile: env("ROXY_RADARR_QUALITY_PROFILE", ""),
 		AdminUser:            env("ROXY_ADMIN_USER", "roxy"),
-		AdminPassword:        env("ROXY_ADMIN_PASSWORD", "roxy"),
+		AdminPassword:        env("ROXY_ADMIN_PASSWORD", ""),
 	}
 	for _, r := range strings.Split(env("ROXY_MEDIA_ROOTS", ""), ",") {
 		r = strings.TrimSpace(r)

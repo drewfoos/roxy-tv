@@ -47,7 +47,8 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
     val watched = (full.userData?.played ?: item.userData?.played) == true
     val position = if (fromStart) 0L else listOfNotNull(item.userData?.positionMs, full.userData?.positionMs).maxOrNull() ?: 0L
     val start = if (watched && position == 0L) 0 else (position / 1000).toInt()
-    return Result.success(PlayRequest(item = full, url = local?.path ?: app.api.streamUrl(source.id), sourceId = source.id, startSeconds = start, local = local != null))
+    val url = local?.path ?: runCatching { app.api.streamUrl(source.id, app.api.mediaToken(source.id)) }.getOrElse { return Result.failure(it) }
+    return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, local = local != null))
 }
 
 /** Starts [PlayerActivity] for an item (see [playRequest]). */

@@ -107,7 +107,14 @@ func bootstrapAdmin(ctx context.Context, db *store.Store, cfg *config.Config) er
 	if err != nil || n > 0 {
 		return err
 	}
-	hash, err := auth.HashPassword(cfg.AdminPassword)
+	// No ROXY_ADMIN_PASSWORD: never fall back to a known default on a real server; make a
+	// random one and show it once in the log.
+	pw := cfg.AdminPassword
+	generated := os.Getenv("ROXY_ADMIN_PASSWORD") == ""
+	if generated {
+		pw = auth.NewToken()[:20]
+	}
+	hash, err := auth.HashPassword(pw)
 	if err != nil {
 		return err
 	}
@@ -115,7 +122,11 @@ func bootstrapAdmin(ctx context.Context, db *store.Store, cfg *config.Config) er
 	if err := db.CreateUser(ctx, u); err != nil {
 		return err
 	}
-	slog.Warn("created initial admin user", "name", u.Name, "password_from_env", os.Getenv("ROXY_ADMIN_PASSWORD") != "")
+	if generated {
+		slog.Warn("created initial admin user with a random password; sign in and keep it safe (shown only now)", "name", u.Name, "password", pw)
+	} else {
+		slog.Warn("created initial admin user", "name", u.Name, "password_from_env", true)
+	}
 	return nil
 }
 

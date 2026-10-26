@@ -1,5 +1,8 @@
 # Roxy TV architecture
 
+> **2026-10-26:** the Jellyfin-compatible API described below was removed (ADR-0008). Roxy's
+> clients, Discover and the arr webhooks use the native `/v1` API; compat mentions here are history.
+
 Status: draft v1, 2026-10-13. Based on the research in `docs/research/`.
 
 ## 1. Goals and non-goals

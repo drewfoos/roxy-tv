@@ -349,7 +349,8 @@ class PlayerSession(
                 val use = wantTranscode && (!qualityFromSettings || worthTranscoding(quality, source.await()))
                 if (wantTranscode && !use) Timber.i("preferred quality %s skipped: the file is already smaller", quality.key)
                 transcoding = use
-                player.play(if (use) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble()) else url, start, transcoded = use)
+                val mt = if (use) runCatching { app.api.mediaToken(sourceId) }.getOrNull() else null
+                player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null)
             }
         } else {
             player.play(url, start)
@@ -529,7 +530,17 @@ class PlayerSession(
         transcoding = true
         reloadTarget = at
         switching = true // the replaced stream's end is not the end of the episode
-        player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at), 0, transcoded = true)
+        val cached = app.api.cachedMediaToken(sid)
+        if (cached != null) {
+            player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at, cached), 0, transcoded = true)
+        } else {
+            // A download playing offline-first has no media token yet: fetch one, then switch.
+            scope.launch {
+                runCatching { app.api.mediaToken(sid) }
+                    .onSuccess { player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at, it), 0, transcoded = true) }
+                    .onFailure { Timber.w(it, "media token") }
+            }
+        }
         watchReload(at)
     }
 

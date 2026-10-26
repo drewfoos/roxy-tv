@@ -166,6 +166,14 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
                             onUnauthorized = onUnauthorized,
                             bottomInset = bottomInset,
+                            onOpenDiscover = {
+                                nav.navigate(Tab.Discover.route) {
+                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onOpenLibrarySettings = { nav.navigate(Route.LibrarySettings) },
                         )
                     }
                 }

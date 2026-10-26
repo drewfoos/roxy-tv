@@ -69,6 +69,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -110,6 +111,8 @@ fun PhoneHome(
     onOpenDownloadedTitle: (String) -> Unit,
     onUnauthorized: () -> Unit,
     bottomInset: Dp,
+    onOpenDiscover: () -> Unit = {},
+    onOpenLibrarySettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
@@ -145,6 +148,11 @@ fun PhoneHome(
                 Text(s.message, color = RoxyColors.muted, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
                 if (s.unauthorized) GreyButton("Sign in again", onClick = onUnauthorized) else GreyButton("Retry", onClick = { vm.load() })
             }
+        }
+        // Nothing in the library yet: a proper welcome instead of an empty banner.
+        is HomeUiState.Ready if s.heroes.isEmpty() && s.rows.all { it.items.isEmpty() } -> Box(modifier = Modifier.fillMaxSize()) {
+            EmptyLibrary(isAdmin = app.prefs.session.value.isAdmin, bottomInset = bottomInset, onOpenDiscover = onOpenDiscover, onOpenLibrarySettings = onOpenLibrarySettings)
+            HomeHeader(alpha = 0f, onSearch = onSearch, modifier = Modifier.align(Alignment.TopCenter))
         }
         is HomeUiState.Ready -> {
             val listState = rememberLazyListState()
@@ -186,6 +194,29 @@ fun PhoneHome(
                 HomeHeader(alpha = headerAlpha, onSearch = onSearch, modifier = Modifier.align(Alignment.TopCenter))
             }
         }
+    }
+}
+
+/**
+ * Home with an empty library: the witch hat, what to do next, and buttons for it. The
+ * admin is pointed at Library settings (where folders are scanned) as well as Discover.
+ */
+@Composable
+private fun EmptyLibrary(isAdmin: Boolean, bottomInset: Dp, onOpenDiscover: () -> Unit, onOpenLibrarySettings: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(start = PhonePad, end = PhonePad, bottom = bottomInset),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        WitchHat(size = 72.dp)
+        Text("Nothing to watch yet", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 20.dp))
+        Text(
+            if (isAdmin) "Request shows and movies in Discover, or scan your media folders in Library settings. They show up here as soon as they're in."
+            else "Request shows and movies in Discover. They show up here as soon as the server has them.",
+            fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp, bottom = 24.dp),
+        )
+        PlayButton("Discover something", icon = Icons.Filled.Explore, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(0.8f), onClick = onOpenDiscover)
+        if (isAdmin) GreyButton("Library settings", modifier = Modifier.padding(top = 12.dp).fillMaxWidth(0.8f), onClick = onOpenLibrarySettings)
     }
 }
 

@@ -34,7 +34,7 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
   Quick Sync, VAAPI, AMD AMF or the CPU. Auto picks the best one; an admin can choose in
   the app. Runs in Docker with the GPU passed through.
 - LAN discovery (a UDP beacon on 8096), in-app APK updates, server-served Terms of Use and
-  Privacy, a Jellyfin-compatible subset for request app and the arr apps.
+  Privacy. (The Jellyfin-compatible API was removed; see ADR-0008.)
 
 **Roxy TV app** (`apps/tv/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.3.1)
 
@@ -65,8 +65,9 @@ go build -o bin/roxy ./cmd/roxy
 ROXY_MEDIA_ROOTS=/data/media ROXY_DATA_DIR=./data ROXY_LISTEN=0.0.0.0:8096 ./bin/roxy serve
 ```
 
-The first start creates an admin account (`ROXY_ADMIN_USER` / `ROXY_ADMIN_PASSWORD`,
-default `roxy` / `roxy`: change it). Put a TMDB key in `ROXY_TMDB_API_KEY` or in
+The first start creates an admin account named `ROXY_ADMIN_USER` (default `roxy`) with
+the password in `ROXY_ADMIN_PASSWORD`; leave it unset and a random password is generated
+and printed once in the server log. Put a TMDB key in `ROXY_TMDB_API_KEY` or in
 `<data dir>/tmdb.key`; a fanart.tv key, and the Sonarr and Radarr settings, are entered in
 the app under Account → Server and stored in the database. Every setting is an environment
 variable with a `ROXY_` prefix; `server/internal/config/config.go` lists them all. Port
@@ -125,7 +126,7 @@ font set and how to fetch it (fonts are not in the repository).
 - `docs/ROADMAP.md`: phases, and a dated log of what has shipped.
 - `docs/adr/`: architecture decision records.
 - `docs/api/native.md`: the `/v1` API the Roxy clients speak.
-- `docs/api/jellyfin-compat.md`: the Jellyfin-compatible subset for request app, Sonarr and Radarr.
+- `docs/adr/0008-remove-jellyfin-compat-and-harden-auth.md`: why the Jellyfin API went, and how sign-in and media URLs are protected.
 - `docs/api/arr-webhooks.md`: the webhook payloads the server consumes.
 - `docs/research/`: the research this design is based on, and the player spike results.
 

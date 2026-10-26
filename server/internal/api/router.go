@@ -1,5 +1,6 @@
-// Package api exposes Roxy's HTTP surfaces: the native /v1 API and, later, the
-// Jellyfin-compatible subset (docs/api/jellyfin-compat.md).
+// Package api exposes Roxy's HTTP surface: the native /v1 API (docs/api/native.md).
+// The Jellyfin-compatible API was removed on 2026-10-26: Roxy's clients, Discover and
+// the Sonarr / Radarr webhooks all use /v1.
 package api
 
 import (
@@ -11,7 +12,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/roxy-media/roxy/server/internal/api/compat"
 	"github.com/roxy-media/roxy/server/internal/arrhook"
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/config"
@@ -145,6 +145,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/avatars/search", s.avatarSearch)
 			r.Get("/avatars/suggested", s.avatarSuggested)
 			r.Get("/sources/{id}", s.getSource)
+			r.Get("/sources/{id}/token", s.mediaToken)
 			r.Get("/sources/{id}/attachments/{index}", s.getAttachment)
 			r.Get("/sources/{id}/subtitles/{index}", s.getSubtitle)
 			r.Get("/sources/{id}/trickplay", s.trickplayManifest)
@@ -155,15 +156,6 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/system/transcoding", s.transcodingInfo)
 		})
 	})
-
-	// Dev convenience for the player spike, unauthenticated: /stream/<source id or file
-	// name stem>. Remove before anything resembling a release.
-	r.Get("/stream/{id}", s.stream)
-
-	// Jellyfin-compatible subset (docs/api/jellyfin-compat.md).
-	c := compat.New(cfg, st, authSvc, lib)
-	c.Stream, c.Attachment, c.Subtitle = s.stream, s.getAttachment, s.getSubtitle
-	c.Mount(r)
 
 	return r
 }
@@ -200,7 +192,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, X-MediaBrowser-Token, X-Emby-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, X-Roxy-Profile")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
 		if r.Method == http.MethodOptions {
