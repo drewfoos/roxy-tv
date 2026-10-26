@@ -339,17 +339,22 @@ fun languageName(code: String): String {
  * as a single taper: title, tagline, genres, facts.
  */
 @Composable
-fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifier, age: String? = null) {
+fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifier, age: String? = null, audio: String? = null) {
     val rest = facts.filter { it.isNotBlank() }
-    if (rating == null && rest.isEmpty() && age == null) return
-    // The age badge leads the line, left of the stars ("14+ · ★ 8.7 · 2023").
+    if (rating == null && rest.isEmpty() && age == null && audio == null) return
+    // The age badge leads the line, then the audio ("Dub | Sub"), then the stars:
+    // "14+ · Dub | Sub · ★ 8.7 · 2023".
     Row(modifier = modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
     if (age != null) {
         AgePill(age, small = true)
-        if (rating != null || rest.isNotEmpty()) Text("  ·  ", fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f))
+        if (rating != null || rest.isNotEmpty() || audio != null) Text("  ·  ", fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f))
     }
     Text(
         buildAnnotatedString {
+            if (audio != null) {
+                withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.Medium)) { append(audio) }
+                if (rating != null || rest.isNotEmpty()) append("  ·  ")
+            }
             if (rating != null) {
                 withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
                 if (rest.isNotEmpty()) append("  ·  ")

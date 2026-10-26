@@ -522,10 +522,11 @@ private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints
  */
 @Composable
 fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
-    TitleLogoColumn(logo = api.imageUrl(item, "logo", widthPx(320.dp)), title = item.title, badge = badge) {
+    TitleLogoColumn(logo = api.imageUrl(item, "logo", widthPx(320.dp)), title = item.title) {
         FactsLine(
             rating = item.communityRating,
             age = item.officialRating?.let { ageLabel(it) },
+            audio = badge,
             facts = listOfNotNull(
                 (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.toString(),
                 seasons.takeIf { it > 0 }?.let { if (it == 1) "1 Season" else "$it Seasons" },
