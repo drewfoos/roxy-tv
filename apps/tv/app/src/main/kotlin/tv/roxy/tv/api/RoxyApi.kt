@@ -690,6 +690,8 @@ data class Item(
 data class MediaSource(
     val id: String,
     val container: String? = null,
+    /** File size in bytes. */
+    val size: Long = 0,
     val durationMs: Long? = null,
     val streams: List<MediaStream> = emptyList(),
     val attachments: List<Attachment> = emptyList(),

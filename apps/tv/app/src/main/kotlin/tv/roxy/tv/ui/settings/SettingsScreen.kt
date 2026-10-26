@@ -29,6 +29,7 @@ import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.data.Languages
 import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.player.AudioPassthrough
+import tv.roxy.tv.player.QualityOption
 import tv.roxy.tv.ui.components.ChoiceRow
 import tv.roxy.tv.ui.components.ScreenPadding
 import tv.roxy.tv.ui.components.SecondaryButton
@@ -65,6 +66,10 @@ fun SettingsScreen(onLoggedOut: () -> Unit) {
         }
         ChoiceRow("Subtitles", PlayerSettings.subModeChoices.map { PlayerSettings.subModeLabel(it) }, PlayerSettings.subModeLabel(settings.subMode)) { picked ->
             PlayerSettings.subModeChoices.firstOrNull { PlayerSettings.subModeLabel(it) == picked }?.let { save(settings.copy(subMode = it)) }
+        }
+        val qLabels = QualityOption.Presets.map { it.key to it.label }
+        ChoiceRow("Video quality", qLabels.map { it.second }, qLabels.firstOrNull { it.first == settings.qualityWifi }?.second ?: qLabels.first().second) { picked ->
+            qLabels.firstOrNull { it.second == picked }?.let { save(settings.copy(qualityWifi = it.first)) }
         }
         val passthroughFound = remember { AudioPassthrough.detect(context) }
         val passLabels = listOf("auto" to AudioPassthrough.autoLabel(passthroughFound), "off" to "Off (decode on the TV)")

@@ -121,6 +121,10 @@ as-is (MP4 `mov_text` becomes SRT), so it plays like direct play at a lower bitr
   track is stereo AAC at 128 kb/s.
 - HDR sources are tone-mapped to SDR (`tonemapx`) when the build has the filter.
 - At most 4 transcodes run at once; a fifth gets `503`.
+- The apps offer 4K (40 Mb/s), 1440p (16), 1080p (8), 720p (4) and 480p (1.5), listing
+  only the ones below the file's own resolution; the file itself is shown as its
+  resolution ("1080p", "4K"). A default per network (Wi-Fi, mobile data) lives in the
+  app's settings and is skipped for a file whose bitrate is already below it.
 - `GET /v1/system/transcoding` -> `{encoder}`: the encoder in use (`nvenc`, `qsv`,
   `vaapi`, `amf` or `software`).
 
@@ -306,8 +310,10 @@ TMDB client has its own token bucket, so the app cannot hammer TMDB.
 - `POST /v1/discover/request` `{type, tmdbId}` → the request row. Sent to Sonarr
   (by TVDB id, series type "anime" for anime) or Radarr (by TMDB id) when
   `ROXY_SONARR_URL` / `ROXY_SONARR_API_KEY` / `ROXY_RADARR_URL` / `ROXY_RADARR_API_KEY`
-  are set (`ROXY_*_ROOT_FOLDER`, `ROXY_*_QUALITY_PROFILE` optional); otherwise kept as
-  `pending`. 409 when the library already has it.
+  are configured (Account -> Server -> Sonarr & Radarr, or the `ROXY_*` variables).
+  Without the matching app the request is refused with `412` and a message naming it;
+  the apps show a "set up requests" prompt instead of a Request button (admins get a
+  link to the settings page). 409 when the library already has it.
 - `GET /v1/discover/browse?type=tv|movie&sort=popular|top|newest|oldest|votes&genres=16,35&lang=ja&anime=1&yearFrom=&yearTo=&minRating=&status=airing|ended&page=`
   → `{items, page, totalPages}` (TMDB discover; cached 5 min per query; `anime` =
   Animation + Japanese original language). `GET /v1/discover/genres?type=` → `{genres}`.

@@ -171,7 +171,7 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
         Spacer(Modifier.height(4.dp))
         PlayButton(if (saved) "Saved" else "Save", icon = Icons.Filled.Check, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), onClick = onSave)
         error?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
-        Text("Saving sends any pending requests. Leave the URL empty to disconnect; requests then wait as pending.", fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted)
+        Text("Saving sends any requests made earlier. Leave the URL empty to disconnect; requesting is then turned off.", fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted)
         Spacer(Modifier.height(24.dp))
     }
 }

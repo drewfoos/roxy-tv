@@ -26,8 +26,8 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
 - Users with device tokens, profiles with AniList character avatars, per-profile watch
   state, favourites, Continue Watching, a Home feed.
 - Discover: trending, seasonal anime, search, filters, title pages with per-season and
-  per-episode requests; requests go to Sonarr and Radarr when configured, else stay pending
-  for the household. Sonarr and Radarr webhooks keep the library in step without a rescan.
+  per-episode requests sent to Sonarr and Radarr; until those are connected the app
+  offers to set them up instead of taking requests. Sonarr and Radarr webhooks keep the library in step without a rescan.
 - Transcoding for lower qualities: H.264 in Matroska with every subtitle track, font and
   chapter kept, audio chosen per track (5.1 kept where it can be), on NVIDIA NVENC, Intel
   Quick Sync, VAAPI, AMD AMF or the CPU. Auto picks the best one; an admin can choose in

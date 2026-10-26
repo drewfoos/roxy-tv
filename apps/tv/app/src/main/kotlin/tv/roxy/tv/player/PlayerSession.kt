@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -138,6 +139,8 @@ class PlayerSession(
     // their own file). A transcode is a live stream with no byte ranges: mpv can seek only
     // inside what it has buffered, so any other seek restarts the stream at the target.
     private var quality: QualityOption = QualityOption.Original
+    /** True while [quality] came from the settings: then a file already smaller than it plays as-is. */
+    private var qualityFromSettings = true
     private var transcoding = false
     private var directUrl = params.url
     private var sourceHeight = 0
@@ -200,6 +203,7 @@ class PlayerSession(
                 reportProgress(if (paused) "pause" else "resume")
             }
         }
+        quality = QualityOption.byKey(if (onMeteredNetwork()) settings.qualityMobile else settings.qualityWifi)
         prepareAndPlay(params.url, params.sourceId, params.local, params.startSeconds)
         app.remote.activePlayer = this
 
@@ -294,8 +298,8 @@ class PlayerSession(
         sourceHeight = 0
         sourceDurationSec = null
         reloadTarget = null
-        transcoding = !local && sourceId != null && !quality.isOriginal && app.prefs.session.value.isLoggedIn
-        val playUrl = if (transcoding) app.api.transcodeUrl(sourceId!!, quality.height, quality.kbps, start.toDouble()) else url
+        transcoding = false
+        val wantTranscode = !local && sourceId != null && !quality.isOriginal && app.prefs.session.value.isLoggedIn
         val snapshot = if (local) itemId?.let { app.downloads.entry(it)?.item } else null
         if (snapshot != null) {
             val src = snapshot.primarySource
@@ -308,17 +312,16 @@ class PlayerSession(
                 if (m != null && m.sheets > 0 && this@PlayerSession.sourceId == sourceId) trickplay = TrickplayPreview(app.api, sourceId, m)
             }
         } else if (sourceId != null && app.prefs.session.value.isLoggedIn) {
-            // Skippable segments (intro/outro) from the server's chapter analysis.
+            // What the server knows about the file: skippable segments (intro/outro), its
+            // size and length for the Quality menu, and whether a preferred quality helps.
+            val source = scope.async { runCatching { app.api.source(sourceId) }.onFailure { Timber.w(it, "source %s", sourceId) }.getOrNull() }
             scope.launch {
-                runCatching { app.api.source(sourceId) }
-                    .onSuccess { src ->
-                        if (this@PlayerSession.sourceId != sourceId) return@onSuccess
-                        segments = src.segments
-                        segments.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) }
-                        sourceHeight = src.streams.firstOrNull { it.type == "video" }?.height ?: 0
-                        sourceDurationSec = src.durationMs?.let { it / 1000.0 }
-                    }
-                    .onFailure { Timber.w(it, "segments for %s", sourceId) }
+                val src = source.await() ?: return@launch
+                if (this@PlayerSession.sourceId != sourceId) return@launch
+                segments = src.segments
+                segments.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) }
+                sourceHeight = src.streams.firstOrNull { it.type == "video" }?.height ?: 0
+                sourceDurationSec = src.durationMs?.let { it / 1000.0 }
             }
             // Seek-preview thumbnails: ask once now and, if the server is still generating
             // them (202), a few more times while the episode plays.
@@ -338,7 +341,12 @@ class PlayerSession(
                         player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
                     }
                     .onFailure { Timber.w(it, "could not fetch subtitle languages for %s", sourceId) }
-                player.play(playUrl, start, transcoded = transcoding)
+                // A quality from the settings is for saving data: a file already smaller
+                // than it plays as-is. One picked in the menu is always honoured.
+                val use = wantTranscode && (!qualityFromSettings || worthTranscoding(quality, source.await()))
+                if (wantTranscode && !use) Timber.i("preferred quality %s skipped: the file is already smaller", quality.key)
+                transcoding = use
+                player.play(if (use) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble()) else url, start, transcoded = use)
             }
         } else {
             player.play(url, start)
@@ -425,7 +433,7 @@ class PlayerSession(
             positionSec = reloadTarget ?: timePos ?: 0.0,
             // A transcode stream has no length of its own; the source knows it.
             durationSec = (if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec ?: 0.0,
-            qualityOptions = if (offline) listOf(QualityOption.Original) else QualityOption.forSource(sourceHeight),
+            qualityOptions = QualityOption.forSource(sourceHeight).let { if (offline) it.take(1) else it },
             qualityKey = if (transcoding) quality.key else QualityOption.Original.key,
             qualityNote = if (local) "Downloads play from this device at their original quality." else null,
             bufferedSec = player.cacheEndSeconds() ?: 0.0,
@@ -535,6 +543,7 @@ class PlayerSession(
         if (q == current) return
         val pos = reloadTarget ?: player.timePosSeconds() ?: 0.0
         quality = q
+        qualityFromSettings = false
         Timber.i("quality -> %s at %.1f s", q.key, pos)
         if (q.isOriginal) {
             transcoding = false
@@ -545,9 +554,32 @@ class PlayerSession(
         } else {
             restartTranscode(pos)
         }
-        flashOsd(if (q.isOriginal) "Original quality" else "${q.label} · ${q.detail}")
         refreshUi()
     }
+
+    /** Mobile data, a metered hotspot: the "on mobile data" default applies. */
+    private fun onMeteredNetwork(): Boolean = runCatching {
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        cm.isActiveNetworkMetered
+    }.getOrDefault(false)
+
+    /**
+     * Whether converting to [q] saves anything: the file's bitrate (size over length) is
+     * clearly above the preset's, or, when that is unknown, the picture is taller.
+     */
+    private fun worthTranscoding(q: QualityOption, src: tv.roxy.tv.api.MediaSource?): Boolean {
+        if (src == null) return true
+        val kbps = sourceKbps(src)
+        if (kbps > 0) return kbps > (q.kbps + 200) * 1.2
+        val h = src.streams.firstOrNull { it.type == "video" }?.height ?: 0
+        return h <= 0 || h > q.height * 1.06
+    }
+
+    private fun sourceKbps(src: tv.roxy.tv.api.MediaSource): Double {
+        val ms = src.durationMs ?: 0L
+        return if (src.size > 0 && ms > 0) src.size * 8.0 / (ms / 1000.0) / 1000.0 else 0.0
+    }
+
 
     fun showControls() {
         if (host.inPip) return

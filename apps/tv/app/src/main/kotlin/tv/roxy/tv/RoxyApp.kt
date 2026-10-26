@@ -53,6 +53,9 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
      */
     @Volatile var openPlayerPage: ((Item) -> Unit)? = null
 
+    /** Opens Account → Server → Sonarr & Radarr (set by the phone layout), for "set up requests" prompts. */
+    @Volatile var openArrSettings: (() -> Unit)? = null
+
     /** Directory holding the bundled fallback fonts for libass (copied from assets). */
     lateinit var fontsDir: File
         private set

@@ -127,25 +127,44 @@ data class PlayerUiState(
 }
 
 /**
- * One Quality menu entry. Original plays the file itself (direct play); the others ask
+ * One Quality menu entry, named by resolution the way YouTube does. The top entry is the
+ * file itself (direct play), labelled with its own resolution ("1080p"); the lower ones ask
  * the server for an H.264 transcode at that height and video bitrate.
  */
 data class QualityOption(val key: String, val label: String, val height: Int, val kbps: Int) {
     val isOriginal: Boolean get() = height == 0
-    val detail: String get() = if (isOriginal) "" else "%s Mb/s".format(java.util.Locale.ROOT, if (kbps % 1000 == 0) (kbps / 1000).toString() else "%.1f".format(java.util.Locale.ROOT, kbps / 1000.0))
 
     companion object {
-        val Original = QualityOption("original", "Original", 0, 0)
+        val Original = QualityOption("original", "Best", 0, 0)
         val Presets = listOf(
             Original,
+            QualityOption("2160", "4K", 2160, 40000),
+            QualityOption("1440", "1440p", 1440, 16000),
             QualityOption("1080", "1080p", 1080, 8000),
             QualityOption("720", "720p", 720, 4000),
             QualityOption("480", "480p", 480, 1500),
         )
 
-        /** The presets that make sense for a video [sourceHeight] tall (unknown height: all). */
-        fun forSource(sourceHeight: Int): List<QualityOption> =
-            Presets.filter { it.isOriginal || sourceHeight <= 0 || it.height <= sourceHeight }
+        /** "1080p" for a 1038- or 1080-line picture, "4K" for 2160 lines: what people call it. */
+        fun resolutionLabel(height: Int): String? = height.takeIf { it > 0 }?.let { h ->
+            when (val std = listOf(4320, 2160, 1440, 1080, 720, 576, 480, 360).firstOrNull { h >= it * 0.94 }) {
+                4320 -> "8K"
+                2160 -> "4K"
+                null -> "${h}p"
+                else -> "${std}p"
+            }
+        }
+
+        /**
+         * The menu for a video [sourceHeight] tall: the file itself under its resolution,
+         * then only the presets that are actually smaller. Unknown height: "Best" and all.
+         */
+        fun forSource(sourceHeight: Int): List<QualityOption> {
+            val res = resolutionLabel(sourceHeight)
+            val top = if (res != null) Original.copy(label = res) else Original
+            val smaller = Presets.filter { !it.isOriginal && (sourceHeight <= 0 || it.height < sourceHeight * 0.94) }
+            return listOf(top) + smaller
+        }
 
         fun byKey(key: String): QualityOption = Presets.firstOrNull { it.key == key } ?: Original
     }
@@ -307,7 +326,7 @@ fun PlayerControls(
                     Sheet.Settings -> MenuPopup(
                         title = null,
                         rows = listOf(
-                            MenuRow("quality", "Quality", QualityOption.byKey(state.qualityKey).label, submenu = true),
+                            MenuRow("quality", "Quality", state.qualityOptions.firstOrNull { it.key == state.qualityKey }?.label ?: QualityOption.byKey(state.qualityKey).label, submenu = true),
                             MenuRow("speed", "Playback speed", if (state.speed == 1.0) "Normal" else "${state.speed}×", submenu = true),
                             MenuRow("audio", "Audio", state.audioTracks.firstOrNull { it.id == state.currentAid }?.let { shortTrackName(it) } ?: "—", submenu = true),
                             MenuRow("subtitles", "Subtitles", state.subtitleTracks.firstOrNull { it.id == state.currentSid }?.let { shortTrackName(it) } ?: "Off", submenu = true),
@@ -336,11 +355,8 @@ fun PlayerControls(
                     )
                     Sheet.Quality -> MenuPopup(
                         title = "Quality",
-                        rows = state.qualityOptions.map { o ->
-                            val detail = if (o.isOriginal) (if (state.qualityKey == o.key) state.quality else "").ifEmpty { "direct play" } else o.detail
-                            MenuRow(o.key, o.label, detail, checked = o.key == state.qualityKey)
-                        },
-                        footer = state.qualityNote ?: "Original plays the file as-is. Lower qualities are converted by the server, for slow connections; subtitles and audio tracks stay the same.",
+                        rows = state.qualityOptions.map { o -> MenuRow(o.key, o.label, checked = o.key == state.qualityKey) },
+                        footer = state.qualityNote,
                         onPick = { actions.setQuality(it); onSheet(Sheet.None) }, onBack = { onSheet(Sheet.Settings) }, onInteraction = onInteraction,
                     )
                     Sheet.Speed -> MenuPopup(
@@ -595,10 +611,10 @@ private fun MenuRowView(row: MenuRow, isBack: Boolean, focusRequester: FocusRequ
             else -> Icon(Icons.Filled.Check, contentDescription = null, tint = if (row.checked) Color.White else Color.Transparent, modifier = Modifier.size(glyph))
         }
         Spacer(Modifier.width(if (compact) 8.dp else 14.dp))
-        Text(row.label, color = Color.White, fontSize = if (compact) 12.sp else 14.sp, fontWeight = if (isBack) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        Text(row.label, color = Color.White, fontSize = if (compact) 12.sp else 14.sp, fontWeight = if (isBack) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
         if (row.value != null) {
             Spacer(Modifier.width(if (compact) 10.dp else 18.dp))
-            Text(row.value, color = Muted, fontSize = if (compact) 11.sp else 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(row.value, color = Muted, fontSize = if (compact) 11.sp else 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)) // the label always shows whole; the value gives way
         }
         if (row.submenu) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Muted, modifier = Modifier.padding(start = 4.dp).size(20.dp))
     }

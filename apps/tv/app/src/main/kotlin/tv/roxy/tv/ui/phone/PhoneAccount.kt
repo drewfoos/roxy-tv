@@ -85,6 +85,9 @@ import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Profile
 import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.player.AudioPassthrough
+import tv.roxy.tv.player.QualityOption
+import androidx.compose.material.icons.outlined.SignalCellularAlt
+import androidx.compose.material.icons.outlined.HighQuality
 import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.profiles.AvatarCircle
@@ -154,6 +157,20 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
             SettingRow(Icons.Outlined.ClosedCaption, "Subtitles", PlayerSettings.subModeLabel(settings.subMode) + "  ·  " + PlayerSettings.subModeHint(settings.subMode)) {
                 pick = Pick("Subtitles", PlayerSettings.subModeChoices.map { PlayerSettings.subModeLabel(it) }, PlayerSettings.subModeLabel(settings.subMode)) { picked ->
                     PlayerSettings.subModeChoices.firstOrNull { PlayerSettings.subModeLabel(it) == picked }?.let { save(settings.copy(subMode = it)) }
+                }
+            }
+            Divider()
+            val qLabels = QualityOption.Presets.map { it.key to it.label }
+            fun qLabel(k: String) = qLabels.firstOrNull { it.first == k }?.second ?: qLabels.first().second
+            SettingRow(Icons.Outlined.HighQuality, "Video quality on Wi-Fi", qLabel(settings.qualityWifi)) {
+                pick = Pick("Video quality on Wi-Fi", qLabels.map { it.second }, qLabel(settings.qualityWifi)) { picked ->
+                    qLabels.firstOrNull { it.second == picked }?.let { save(settings.copy(qualityWifi = it.first)) }
+                }
+            }
+            Divider()
+            SettingRow(Icons.Outlined.SignalCellularAlt, "Video quality on mobile data", qLabel(settings.qualityMobile)) {
+                pick = Pick("Video quality on mobile data", qLabels.map { it.second }, qLabel(settings.qualityMobile)) { picked ->
+                    qLabels.firstOrNull { it.second == picked }?.let { save(settings.copy(qualityMobile = it.first)) }
                 }
             }
             Divider()

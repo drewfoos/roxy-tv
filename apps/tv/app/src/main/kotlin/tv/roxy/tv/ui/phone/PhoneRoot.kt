@@ -132,7 +132,8 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     // Every play on the phone (hero, Resume pill, downloads, episode rows) lands on the player page.
     DisposableEffect(nav) {
         app.openPlayerPage = { item -> openEpisode(item) }
-        onDispose { app.openPlayerPage = null }
+        app.openArrSettings = { nav.navigate(Route.ArrSettings) }
+        onDispose { app.openPlayerPage = null; app.openArrSettings = null }
     }
 
     PhoneTheme {

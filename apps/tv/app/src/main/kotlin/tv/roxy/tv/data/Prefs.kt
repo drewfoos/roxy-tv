@@ -73,6 +73,13 @@ data class PlayerSettings(
      * always decodes on the device.
      */
     val passthrough: String = "auto",
+    /**
+     * Quality a playback starts at, by network: "original" (the file itself) or a
+     * transcode preset key ("1080", "720", "480"). A preset is skipped for a file that is
+     * already smaller. The player's Quality menu changes it for one playback.
+     */
+    val qualityWifi: String = "original",
+    val qualityMobile: String = "original",
 ) {
     /** mpv `alang` list: every spelling of each preferred language, since tags vary. */
     val mpvAudioLangs: List<String>
@@ -241,6 +248,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_SKIP_WINDOW] = s.skipWindowSec
             it[KEY_NEXT_CARD] = s.nextCard
             it[KEY_PASSTHROUGH] = s.passthrough
+            it[KEY_QUALITY_WIFI] = s.qualityWifi
+            it[KEY_QUALITY_MOBILE] = s.qualityMobile
         }
     }
 
@@ -272,6 +281,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             skipWindowSec = this[KEY_SKIP_WINDOW] ?: d.skipWindowSec,
             nextCard = this[KEY_NEXT_CARD] ?: d.nextCard,
             passthrough = this[KEY_PASSTHROUGH] ?: d.passthrough,
+            qualityWifi = this[KEY_QUALITY_WIFI] ?: d.qualityWifi,
+            qualityMobile = this[KEY_QUALITY_MOBILE] ?: d.qualityMobile,
         )
     }
 
@@ -298,6 +309,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_SKIP_WINDOW = intPreferencesKey("skip_window_sec")
         val KEY_NEXT_CARD = booleanPreferencesKey("next_card")
         val KEY_PASSTHROUGH = stringPreferencesKey("audio_passthrough")
+        val KEY_QUALITY_WIFI = stringPreferencesKey("quality_wifi")
+        val KEY_QUALITY_MOBILE = stringPreferencesKey("quality_mobile")
         val KEY_DL_WIFI = booleanPreferencesKey("downloads_wifi_only")
         val KEY_PROFILES_CACHE = stringPreferencesKey("profiles_cache")
         val KEY_DISMISSED_UPDATE = intPreferencesKey("dismissed_update")

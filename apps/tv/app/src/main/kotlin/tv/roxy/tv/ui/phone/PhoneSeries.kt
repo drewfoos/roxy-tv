@@ -725,15 +725,19 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var requested by remember(tmdbId, season) { mutableStateOf<Boolean?>(null) }
+    var enabled by remember(tmdbId) { mutableStateOf(true) }
+    var setupPrompt by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(tmdbId, season) {
         runCatching { app.api.discoverDetail("tv", tmdbId) }
-            .onSuccess { d -> requested = d.seasons.firstOrNull { it.number == season }?.requested ?: false }
+            .onSuccess { d -> requested = d.seasons.firstOrNull { it.number == season }?.requested ?: false; enabled = d.requestsEnabled }
             .onFailure { requested = false }
     }
+    if (setupPrompt) RequestsSetupDialog("tv", onDismiss = { setupPrompt = false })
     Row(
         modifier = Modifier.fillMaxWidth().clickable(enabled = requested == false && !busy) {
+            if (!enabled) { setupPrompt = true; return@clickable }
             busy = true
             scope.launch {
                 runCatching { app.api.discoverRequest("tv", tmdbId, listOf(season)) }
@@ -751,7 +755,7 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
                 when { requested == null -> "Checking…"; on -> "$label requested"; busy -> "Requesting…"; else -> "Request $label" },
                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) RoxyColors.muted else RoxyColors.accent,
             )
-            Text(error ?: if (on) "Sonarr will fetch it once connected" else "Not in your library yet", fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
+            Text(error ?: when { on -> "Sonarr is fetching it"; !enabled -> "Not in your library · requests need Sonarr"; else -> "Not in your library yet" }, fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
         }
     }
 }

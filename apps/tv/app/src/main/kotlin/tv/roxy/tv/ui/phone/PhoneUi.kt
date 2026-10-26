@@ -477,14 +477,14 @@ fun Chip(text: String, selected: Boolean, trailing: ImageVector? = null, onClick
     }
 }
 
-/** Round translucent back button drawn over a backdrop. */
+/** Back button: a plain white arrow (no backing circle, the owner's preference); the ripple stays round. */
 @Composable
 fun BackCircle(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
-        modifier = modifier.size(38.dp).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onClick),
+        modifier = modifier.size(40.dp).clip(CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(22.dp))
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(24.dp))
     }
 }
 

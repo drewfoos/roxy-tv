@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -415,6 +416,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var setupPrompt by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         runCatching { app.api.discoverDetail(type, tmdbId) }
@@ -425,6 +427,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
 
     fun requestSeasons(seasons: List<Int>) {
         val cur = detail ?: return
+        if (!cur.requestsEnabled) { setupPrompt = true; return }
         if (busy) return
         busy = true
         scope.launch {
@@ -480,7 +483,8 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                             Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
                             d.seasons.forEach { sn ->
                                 SeasonRow(sn, tmdbId = d.tmdbId, onRequest = { requestSeasons(listOf(sn.number)) }, onRequestEpisode = { code ->
-                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.discoverRequest(d.type, d.tmdbId, episodes = listOf(code)) }.onFailure { t -> error = t.message }; reload(); busy = false } }
+                                    if (!d.requestsEnabled) setupPrompt = true
+                                    else if (!busy) { busy = true; scope.launch { runCatching { app.api.discoverRequest(d.type, d.tmdbId, episodes = listOf(code)) }.onFailure { t -> error = t.message }; reload(); busy = false } }
                                 })
                             }
                         }
@@ -493,9 +497,9 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                         }
                         Text(line, fontSize = 12.sp, color = if (r.status == "failed") RoxyColors.error else RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp))
                     }
-                    if (!d.inLibrary && !d.requestsEnabled) {
+                    if (!d.requestsEnabled && (!d.inLibrary || d.missingSeasons.isNotEmpty())) {
                         Text(
-                            "${if (d.isMovie) "Radarr" else "Sonarr"} isn't connected to Roxy Server yet. Requests are kept here and sent once it is.",
+                            "Requests are off until ${if (d.isMovie) "Radarr" else "Sonarr"} is connected to Roxy Server.",
                             fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp),
                         )
                     }
@@ -503,6 +507,7 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
             }
         }
         Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp)) { BackCircle(onBack) }
+        if (setupPrompt) RequestsSetupDialog(if (d.isMovie) "movie" else "tv", onDismiss = { setupPrompt = false })
         Box(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(0f to Color.Transparent, 0.35f to RoxyColors.background.copy(alpha = 0.96f), 1f to RoxyColors.background))
@@ -524,6 +529,11 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                         scope.launch { runCatching { app.api.deleteRequest(d.request.id) }.onFailure { Timber.w(it, "withdraw") }; reload(); busy = false }
                     })
                 }
+                !d.requestsEnabled -> PlayButton(
+                    if (app.prefs.session.value.isAdmin) "Set up requests" else "Requests aren't set up",
+                    modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.Settings, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White,
+                    onClick = { setupPrompt = true },
+                )
                 else -> PlayButton(
                     when {
                         busy -> "Requesting…"
@@ -646,3 +656,38 @@ private fun statusWord(status: String): String? = when (status.trim().lowercase(
 
 @Suppress("unused")
 private val playIcon = Icons.Filled.PlayArrow
+
+/**
+ * Shown instead of sending a request while Sonarr (series) or Radarr (movies) is not
+ * connected. Admins get a button to the settings page; everyone else is told who can fix it.
+ */
+@Composable
+internal fun RequestsSetupDialog(type: String, onDismiss: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val admin = app.prefs.session.value.isAdmin
+    val arr = if (type == "movie") "Radarr" else "Sonarr"
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RoxyColors.surface,
+        title = { Text("Connect $arr to request", color = RoxyColors.onBackground, fontWeight = FontWeight.Bold) },
+        text = {
+            Text(
+                if (admin) "Requests go straight to $arr, which downloads the ${if (type == "movie") "movie" else "episodes"}. Connect it to Roxy Server first."
+                else "Requests go to $arr, which isn't connected to Roxy Server yet. Ask whoever runs the server to set it up under Account → Server.",
+                color = RoxyColors.muted, fontSize = 14.sp, lineHeight = 20.sp,
+            )
+        },
+        confirmButton = {
+            if (admin) Text(
+                "Set up", color = RoxyColors.accent, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onDismiss(); app.openArrSettings?.invoke() }.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                if (admin) "Not now" else "OK", color = RoxyColors.muted, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onDismiss).padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        },
+    )
+}

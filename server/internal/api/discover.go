@@ -158,6 +158,16 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "at most 12 episodes per request")
 		return
 	}
+	// Requests go straight to Sonarr / Radarr; without one there is nowhere to send them,
+	// so the app asks an admin to connect it instead of queueing requests nobody acts on.
+	if !s.discover.RequestsEnabled(body.Type) {
+		app := "Sonarr"
+		if body.Type == "movie" {
+			app = "Radarr"
+		}
+		writeError(w, 412, app+" isn't connected to Roxy Server yet. An admin can connect it under Account → Server → Sonarr & Radarr.")
+		return
+	}
 	req, err := s.discover.Request(r.Context(), body.Type, body.TMDBID, p, body.Seasons, body.Episodes)
 	if err != nil {
 		writeError(w, 409, err.Error())
