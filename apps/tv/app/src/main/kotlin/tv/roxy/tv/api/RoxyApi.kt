@@ -1122,7 +1122,11 @@ data class ArrSettings(val sonarr: ArrConfig = ArrConfig(), val radarr: ArrConfi
 data class ArrSettingsResponse(val sonarr: ArrConfig = ArrConfig(), val radarr: ArrConfig = ArrConfig(), val requestsEnabled: Map<String, Boolean> = emptyMap())
 
 @Serializable
-data class ArrNamed(val id: Int = 0, val name: String = "", val label: String = "", val path: String = "", val freeSpace: Long = 0)
+data class ArrNamed(
+    val id: Int = 0, val name: String = "", val label: String = "", val path: String = "", val freeSpace: Long = 0,
+    /** Root folders: the Roxy library that reads it; roxyMatch "yes" | "maybe" | "" (Roxy doesn't read it). */
+    val roxy: String = "", val roxyMatch: String = "",
+)
 
 @Serializable
 data class ArrProbe(val version: String = "", val appName: String = "", val supported: Boolean = true, val note: String? = null, val rootFolders: List<ArrNamed> = emptyList(), val qualityProfiles: List<ArrNamed> = emptyList(), val tags: List<ArrNamed> = emptyList())

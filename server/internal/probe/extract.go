@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ func ExtractAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string
 	if len(atts) == 0 {
 		return nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	// jellyfin-ffmpeg: -dump_attachment:t "" dumps all attachments using their filename tags.
@@ -48,7 +49,7 @@ func ExtractAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string
 // ExtractTextSubtitle copies one embedded text subtitle stream (ASS/SSA/SRT/VTT) to dst
 // without conversion. Never converts between formats: ASS stays ASS byte for byte.
 func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, streamIndex int, codec, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := safefs.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
 	format := map[string]string{"ass": "ass", "ssa": "ass", "subrip": "srt", "srt": "srt", "webvtt": "webvtt", "vtt": "webvtt"}[codec]

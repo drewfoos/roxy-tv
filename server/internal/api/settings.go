@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -104,6 +105,22 @@ func (s *Server) arrSettingsTest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 502, err.Error())
 		return
+	}
+	// Does Roxy read each folder the arr app would save into?
+	if libs, err := s.store.ListLibraries(r.Context()); err == nil {
+		for i := range p.RootFolders {
+			rf := &p.RootFolders[i]
+			root := filepath.Clean(rf.Path)
+			for _, l := range libs {
+				if root == l.Root || within(root, l.Root) {
+					rf.Roxy, rf.RoxyMatch = l.Name, "yes"
+					break
+				}
+				if rf.RoxyMatch == "" && strings.EqualFold(filepath.Base(root), filepath.Base(l.Root)) {
+					rf.Roxy, rf.RoxyMatch = l.Name, "maybe"
+				}
+			}
+		}
 	}
 	writeJSON(w, 200, p)
 }

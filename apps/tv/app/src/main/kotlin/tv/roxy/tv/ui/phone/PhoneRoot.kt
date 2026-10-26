@@ -174,6 +174,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                                 }
                             },
                             onOpenLibrarySettings = { nav.navigate(Route.LibrarySettings) },
+                            onAddFolder = { nav.navigate(Route.AddMediaFolder) },
                         )
                     }
                 }

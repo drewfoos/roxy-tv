@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
@@ -83,6 +84,7 @@ func (s *Server) addFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.SetRootRemoved(r.Context(), root, false)
+	library.GuardMediaRoots(r.Context(), s.store, s.cfg.MediaRoots)
 	slog.Info("library added", "name", lib.Name, "root", root, "kind", kind, "anime", lib.AnimeMode)
 	go func() { _ = s.lib.ScanAll(context.Background()) }()
 	writeJSON(w, 201, lib)

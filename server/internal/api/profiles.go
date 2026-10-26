@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"hash/fnv"
 	"image"
 	"image/jpeg"
@@ -136,7 +137,7 @@ func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if prof.AvatarPath != "" {
-		os.Remove(prof.AvatarPath)
+		safefs.Remove(prof.AvatarPath)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -236,17 +237,17 @@ func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
 		return
 	}
 	dir := filepath.Join(s.cfg.ImagesDir(), "profiles")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 	path := filepath.Join(dir, prof.ID+".jpg")
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := safefs.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		return
 	}
 	// Drop stale resized variants from a previous avatar.
 	matches, _ := filepath.Glob(filepath.Join(dir, prof.ID+".w*.jpg"))
 	for _, m := range matches {
-		os.Remove(m)
+		safefs.Remove(m)
 	}
 	if err := s.store.SetProfileAvatarPath(ctx, prof.ID, path); err == nil {
 		prof.AvatarPath = path

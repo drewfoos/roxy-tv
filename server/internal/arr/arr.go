@@ -119,6 +119,12 @@ type NamedID struct {
 	Name  string `json:"name,omitempty"`
 	Label string `json:"label,omitempty"`
 	Path  string `json:"path,omitempty"`
+	// Roxy (root folders only): the Roxy library that reads this folder, and how sure:
+	// "yes" (same path or inside it) or "maybe" (same folder name: likely the same disk
+	// seen from another container). Empty: Roxy doesn't read it, so downloads saved here
+	// would never show up.
+	Roxy      string `json:"roxy,omitempty"`
+	RoxyMatch string `json:"roxyMatch,omitempty"`
 	// Free space on a root folder, bytes (0 when unknown).
 	FreeSpace int64 `json:"freeSpace,omitempty"`
 }

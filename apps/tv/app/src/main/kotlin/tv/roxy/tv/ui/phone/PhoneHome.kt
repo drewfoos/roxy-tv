@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Icon
@@ -113,6 +114,7 @@ fun PhoneHome(
     bottomInset: Dp,
     onOpenDiscover: () -> Unit = {},
     onOpenLibrarySettings: () -> Unit = {},
+    onAddFolder: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
@@ -151,7 +153,7 @@ fun PhoneHome(
         }
         // Nothing in the library yet: a proper welcome instead of an empty banner.
         is HomeUiState.Ready if s.heroes.isEmpty() && s.rows.all { it.items.isEmpty() } -> Box(modifier = Modifier.fillMaxSize()) {
-            EmptyLibrary(isAdmin = app.prefs.session.value.isAdmin, bottomInset = bottomInset, onOpenDiscover = onOpenDiscover, onOpenLibrarySettings = onOpenLibrarySettings)
+            EmptyLibrary(isAdmin = app.prefs.session.value.isAdmin, bottomInset = bottomInset, onOpenDiscover = onOpenDiscover, onOpenLibrarySettings = onOpenLibrarySettings, onAddFolder = onAddFolder, onRescanned = { vm.load(silent = true) })
             HomeHeader(alpha = 0f, onSearch = onSearch, modifier = Modifier.align(Alignment.TopCenter))
         }
         is HomeUiState.Ready -> {
@@ -198,25 +200,63 @@ fun PhoneHome(
 }
 
 /**
- * Home with an empty library: the witch hat, what to do next, and buttons for it. The
- * admin is pointed at Library settings (where folders are scanned) as well as Discover.
+ * Home with an empty library. For the admin it says what is actually wrong, because a
+ * folder being set up is not the same as videos being in it:
+ *  - no media folders yet: add one;
+ *  - a folder the server can't see (not mounted in Docker, a drive unplugged): fix it;
+ *  - folders but no videos found in them: they're empty, or a scan hasn't run;
+ *  - videos found but nothing to show yet: the first scan is still sorting them.
+ * Everyone else is told the server has nothing yet, and pointed at Discover.
  */
 @Composable
-private fun EmptyLibrary(isAdmin: Boolean, bottomInset: Dp, onOpenDiscover: () -> Unit, onOpenLibrarySettings: () -> Unit) {
+private fun EmptyLibrary(isAdmin: Boolean, bottomInset: Dp, onOpenDiscover: () -> Unit, onOpenLibrarySettings: () -> Unit, onAddFolder: () -> Unit, onRescanned: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    var folders by remember { mutableStateOf<List<tv.roxy.tv.api.MediaFolder>?>(null) }
+    var scanning by remember { mutableStateOf(false) }
+    LaunchedEffect(isAdmin) { if (isAdmin) folders = runCatching { app.api.mediaFolders() }.getOrNull() }
+    val f = folders
+    val unreachable = f?.filter { !it.reachable }.orEmpty()
+    val (title, body) = when {
+        !isAdmin -> "Nothing to watch yet" to "The server doesn't have any shows or movies yet. Request some in Discover; they show up here once they're in."
+        f == null -> "Nothing to watch yet" to ""
+        f.isEmpty() -> "Add your media" to "Roxy hasn't been told where your shows and movies are. Pick the folders that hold them on the server."
+        unreachable.isNotEmpty() -> "Roxy can't see a media folder" to "The server can't open ${unreachable.joinToString { it.root }}. If it runs in Docker, check the folder is mounted into the container; if it's a drive, check it's connected."
+        f.sumOf { it.files } == 0 -> "No videos found yet" to "Roxy reads ${f.joinToString { it.root }}, but found no videos there. Make sure the files are in that folder (or a folder inside it), then scan again."
+        else -> "Almost there" to "Roxy found ${f.sumOf { it.files }} videos and is still sorting them into shows and movies. This page fills in as it goes."
+    }
     Column(
         modifier = Modifier.fillMaxSize().padding(start = PhonePad, end = PhonePad, bottom = bottomInset),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         WitchHat(size = 72.dp)
-        Text("Nothing to watch yet", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 20.dp))
-        Text(
-            if (isAdmin) "Request shows and movies in Discover, or scan your media folders in Library settings. They show up here as soon as they're in."
-            else "Request shows and movies in Discover. They show up here as soon as the server has them.",
-            fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp, bottom = 24.dp),
-        )
-        PlayButton("Discover something", icon = Icons.Filled.Explore, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(0.8f), onClick = onOpenDiscover)
-        if (isAdmin) GreyButton("Library settings", modifier = Modifier.padding(top = 12.dp).fillMaxWidth(0.8f), onClick = onOpenLibrarySettings)
+        Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 20.dp))
+        if (body.isNotEmpty()) Text(body, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp, bottom = 24.dp))
+        when {
+            isAdmin && f != null && f.isEmpty() -> {
+                PlayButton("Add media folder", icon = Icons.Filled.Add, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(0.8f), onClick = onAddFolder)
+                GreyButton("Discover something", modifier = Modifier.padding(top = 12.dp).fillMaxWidth(0.8f), onClick = onOpenDiscover)
+            }
+            isAdmin && f != null && (unreachable.isNotEmpty() || f.sumOf { it.files } == 0) -> {
+                PlayButton(if (scanning) "Scanning…" else "Scan again", icon = Icons.Filled.Refresh, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(0.8f), onClick = {
+                    if (scanning) return@PlayButton
+                    scanning = true
+                    scope.launch {
+                        runCatching { app.api.libraryScan("files") }
+                        kotlinx.coroutines.delay(4000)
+                        folders = runCatching { app.api.mediaFolders() }.getOrNull()
+                        scanning = false
+                        onRescanned()
+                    }
+                })
+                GreyButton("Media folders", modifier = Modifier.padding(top = 12.dp).fillMaxWidth(0.8f), onClick = onOpenLibrarySettings)
+            }
+            else -> {
+                PlayButton("Discover something", icon = Icons.Filled.Explore, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(0.8f), onClick = onOpenDiscover)
+                if (isAdmin) GreyButton("Library settings", modifier = Modifier.padding(top = 12.dp).fillMaxWidth(0.8f), onClick = onOpenLibrarySettings)
+            }
+        }
     }
 }
 

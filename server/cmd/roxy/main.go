@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -86,6 +87,9 @@ func run(args []string) error {
 	if err := lib.EnsureLibraries(context.Background(), cfg.MediaRoots); err != nil {
 		return err
 	}
+	// Media is read-only to Roxy: writes and deletes are only allowed in the data folder.
+	safefs.Init(cfg.DataDir)
+	library.GuardMediaRoots(context.Background(), db, cfg.MediaRoots)
 	authSvc := auth.New(db)
 	if err := bootstrapAdmin(context.Background(), db, cfg); err != nil {
 		return err

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -65,6 +66,18 @@ func (l *Library) ScanStatus() (running bool, last time.Time) {
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
 	return &Library{store: s, ff: ff, cfg: cfg}
+}
+
+// GuardMediaRoots tells safefs every folder that holds media (configured and added in
+// the app), so nothing in them is ever written or deleted.
+func GuardMediaRoots(ctx context.Context, st *store.Store, configured []string) {
+	roots := append([]string{}, configured...)
+	if libs, err := st.ListLibraries(ctx); err == nil {
+		for _, l := range libs {
+			roots = append(roots, l.Root)
+		}
+	}
+	safefs.SetMediaRoots(roots)
 }
 
 // EnsureLibraries creates a library row for every configured media root that lacks one.

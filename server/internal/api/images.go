@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -109,11 +110,11 @@ func resizeToFile(src, dst string, width int) error {
 		return err
 	}
 	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
+	if err := safefs.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
+	if err := safefs.Rename(tmp, dst); err != nil {
+		safefs.Remove(tmp)
 		return err
 	}
 	return nil

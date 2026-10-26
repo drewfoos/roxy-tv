@@ -148,10 +148,12 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
         testError?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
         val p = probe
         if (p != null) {
-            Picker("Root folder", p.rootFolders.map { it.path to it.path + (it.freeSpace.takeIf { f -> f > 0 }?.let { f -> "  ·  ${formatBytes(f)} free" } ?: "") }, cfg.rootFolder) { onChange(cfg.copy(rootFolder = it)) }
+            Picker("Root folder (where $name saves downloads)", p.rootFolders.map { it.path to it.path + (it.freeSpace.takeIf { f -> f > 0 }?.let { f -> "  ·  ${formatBytes(f)} free" } ?: "") }, cfg.rootFolder) { onChange(cfg.copy(rootFolder = it)) }
+            RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.rootFolder } ?: p.rootFolders.firstOrNull(), name)
             Picker("Quality profile", p.qualityProfiles.map { it.id.toString() to it.name }, cfg.qualityProfileId.toString()) { onChange(cfg.copy(qualityProfileId = it.toIntOrNull() ?: 0)) }
             if (isSonarr) {
                 Picker("Anime root folder", listOf("" to "Same as above") + p.rootFolders.map { it.path to it.path }, cfg.animeRootFolder) { onChange(cfg.copy(animeRootFolder = it)) }
+                if (cfg.animeRootFolder.isNotEmpty()) RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.animeRootFolder }, name)
                 Picker("Anime quality profile", listOf("0" to "Same as above") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.animeQualityProfileId.toString()) { onChange(cfg.copy(animeQualityProfileId = it.toIntOrNull() ?: 0)) }
                 if (p.tags.isNotEmpty()) {
                     TagPicker("Tags", p.tags, cfg.tags) { onChange(cfg.copy(tags = it)) }
@@ -220,4 +222,20 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         Switch(checked = checked, onCheckedChange = onChange, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = RoxyColors.accent, uncheckedThumbColor = RoxyColors.muted, uncheckedTrackColor = ChipGrey))
         Spacer(Modifier.width(4.dp))
     }
+}
+
+/**
+ * Whether Roxy reads the folder Sonarr / Radarr saves into: if not, requests download
+ * fine but never appear in the library. Paths are compared as each app sees them; in
+ * Docker the same disk can have different paths in each container ("maybe").
+ */
+@Composable
+private fun RootFolderCheck(rf: tv.roxy.tv.api.ArrNamed?, app: String) {
+    if (rf == null) return
+    val (text, color) = when (rf.roxyMatch) {
+        "yes" -> "Roxy reads this folder (library \"${rf.roxy}\"), so downloads show up by themselves." to RoxyColors.accent
+        "maybe" -> "Probably the library \"${rf.roxy}\" (same folder name). If $app runs in its own container, make sure both see the same disk; downloads that don't show up mean they don't." to RoxyColors.muted
+        else -> "Roxy doesn't read ${rf.path}: downloads saved there won't show up. Add it in Library > Media folders, or pick a folder Roxy reads. (In Docker, $app and Roxy may see the same folder under different paths.)" to RoxyColors.error
+    }
+    Text(text, fontSize = 12.sp, lineHeight = 16.sp, color = color)
 }

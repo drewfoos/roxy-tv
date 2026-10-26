@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"image"
 	_ "image/jpeg"
 	"log/slog"
@@ -148,7 +149,7 @@ func (s *Service) Regenerate(sourceID string) {
 	if running {
 		return // already being made
 	}
-	os.RemoveAll(s.dir(sourceID))
+	safefs.RemoveAll(s.dir(sourceID))
 	s.Enqueue(sourceID)
 }
 
@@ -188,8 +189,8 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 	path := src.Parts[0].Path
 	dir := s.dir(sourceID)
 	tmp := dir + ".tmp"
-	os.RemoveAll(tmp)
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
+	safefs.RemoveAll(tmp)
+	if err := safefs.MkdirAll(tmp, 0o755); err != nil {
 		return err
 	}
 	start := time.Now()
@@ -199,7 +200,7 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 	_, err = s.ff.Run(ctx, tmp, "-y", "-v", "error", "-skip_frame", "nokey", "-i", path, "-an", "-sn", "-dn",
 		"-vf", vf, "-qscale:v", "5", "-f", "image2", "sheet_%03d.jpg")
 	if err != nil {
-		os.RemoveAll(tmp)
+		safefs.RemoveAll(tmp)
 		return err
 	}
 	entries, _ := os.ReadDir(tmp)
@@ -211,7 +212,7 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 	}
 	sort.Strings(sheets)
 	if len(sheets) == 0 {
-		os.RemoveAll(tmp)
+		safefs.RemoveAll(tmp)
 		return fmt.Errorf("ffmpeg produced no sheets")
 	}
 	f, err := os.Open(filepath.Join(tmp, sheets[0]))
@@ -221,7 +222,7 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 	cfgImg, _, err := image.DecodeConfig(f)
 	f.Close()
 	if err != nil {
-		os.RemoveAll(tmp)
+		safefs.RemoveAll(tmp)
 		return err
 	}
 	m := Manifest{
@@ -238,11 +239,11 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 		m.Count = max
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmp, "manifest.json"), b, 0o644); err != nil {
+	if err := safefs.WriteFile(filepath.Join(tmp, "manifest.json"), b, 0o644); err != nil {
 		return err
 	}
-	os.RemoveAll(dir)
-	if err := os.Rename(tmp, dir); err != nil {
+	safefs.RemoveAll(dir)
+	if err := safefs.Rename(tmp, dir); err != nil {
 		return err
 	}
 	slog.Info("trickplay: generated", "source", sourceID, "file", filepath.Base(path), "tiles", m.Count, "sheets", m.Sheets, "tile", fmt.Sprintf("%dx%d", m.Width, m.Height), "took", time.Since(start).Round(time.Millisecond))

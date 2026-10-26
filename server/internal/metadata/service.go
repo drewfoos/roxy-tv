@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"image"
 	"image/jpeg"
 	"image/png" // AniList covers are sometimes PNG (re-encoded to JPEG); logos are kept as PNG
@@ -39,14 +40,14 @@ type Service struct {
 	anilist   Provider
 	images    *http.Client
 
-	queue   chan job
-	force   bool // the job being processed was a forced refresh (worker-local)
+	queue chan job
+	force bool // the job being processed was a forced refresh (worker-local)
 	// replaceImages: the job re-downloads art even when the provider's URL is unchanged
 	// (worker-local; locked images are still kept).
 	replaceImages bool
-	mu      sync.Mutex
-	pending map[string]bool      // queued but not yet picked up (dedupe)
-	failed  map[string]time.Time // top-level item id -> last unmatched attempt
+	mu            sync.Mutex
+	pending       map[string]bool      // queued but not yet picked up (dedupe)
+	failed        map[string]time.Time // top-level item id -> last unmatched attempt
 }
 
 type job struct {
@@ -113,7 +114,9 @@ func (s *Service) Refresh(itemID string) { s.enqueue(itemID, true) }
 
 // RefreshImages is Refresh that also re-downloads every image (Library > Refresh >
 // Replace images): a broken or low-quality cached copy is fetched again.
-func (s *Service) RefreshImages(itemID string) { s.enqueueJob(job{itemID: itemID, force: true, images: true}) }
+func (s *Service) RefreshImages(itemID string) {
+	s.enqueueJob(job{itemID: itemID, force: true, images: true})
+}
 
 func (s *Service) enqueue(itemID string, force bool) { s.enqueueJob(job{itemID: itemID, force: force}) }
 
@@ -724,23 +727,23 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 		}
 		data = buf.Bytes()
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		slog.Warn("metadata: image cache dir", "err", err)
 		return
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := safefs.WriteFile(tmp, data, 0o644); err != nil {
 		return
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+	if err := safefs.Rename(tmp, path); err != nil {
+		safefs.Remove(tmp)
 		return
 	}
 	// Drop stale resized variants (<type>.w<px>.jpg) of the previous image.
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, e := range entries {
 			if n := e.Name(); strings.HasPrefix(n, typ+".w") && strings.HasSuffix(n, ".jpg") {
-				os.Remove(filepath.Join(dir, n))
+				safefs.Remove(filepath.Join(dir, n))
 			}
 		}
 	}
