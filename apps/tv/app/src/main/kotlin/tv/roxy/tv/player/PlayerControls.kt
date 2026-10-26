@@ -11,6 +11,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -118,6 +126,8 @@ data class PlayerUiState(
     val skipWindowSec: Int = 15,
     /** Hosted on a page: false = in its 16:9 box, true = filling the screen; null = the player owns the screen. */
     val fullscreen: Boolean? = null,
+    /** The age rating card flashed at the start of a title (null = not showing). */
+    val advisory: Advisory? = null,
 ) {
     /** The skippable segment the playhead is inside, if any. */
     val activeSegment: MediaSegment? get() = segments.firstOrNull { positionSec >= it.startSec && positionSec < it.endSec - 1.0 }
@@ -217,11 +227,26 @@ fun PlayerControls(
     // In the page's 16:9 box everything is scaled down: smaller discs and icons, no clock,
     // tighter popups that stay inside the box.
     val compact = state.fullscreen == false
+    // Keeps the card's text while it fades out (the state drops it at once).
+    val lastAdvisory = remember { mutableStateOf<Advisory?>(null) }
     // Hosted on a page (the phone): Crunchyroll's layout. Back at the top-left; next,
     // settings and fullscreen at the top-right; bare -10 / pause / +10 in the middle;
     // the times over an edge-to-edge seek bar at the bottom and nothing else. The
     // full-screen host (TV, movies) keeps the YouTube layout with its button row.
     val cr = state.fullscreen != null
+    // The age rating card (Netflix / Crunchyroll): top-left for a few seconds as a title
+    // starts, under the controls' layer so it steps aside while they are up.
+    AnimatedVisibility(
+        visible = state.advisory != null && !visible, enter = fadeIn(tween(400)), exit = fadeOut(tween(600)),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            (state.advisory ?: lastAdvisory.value)?.let { a ->
+                lastAdvisory.value = a
+                AdvisoryCard(a, compact = compact, modifier = Modifier.align(Alignment.TopStart).padding(start = if (compact) 10.dp else 32.dp, top = if (compact) 10.dp else 28.dp))
+            }
+        }
+    }
     // Skip button lives outside the auto-hidden layer so it is there when you need it.
     state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
@@ -661,4 +686,29 @@ fun endsAt(remainingSec: Double): String = clockFormat.format(java.util.Date(Sys
 fun fmtTime(d: Double): String {
     val s = d.toLong().coerceAtLeast(0)
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+}
+
+/** What the rating card says: "14+" and the content descriptors ("Sexual Content, Violence"). */
+data class Advisory(val rating: String, val descriptors: List<String>)
+
+/**
+ * The card itself: a short brand-blue bar at the left, the rating large, the descriptors
+ * under it. Smaller in the page's 16:9 box.
+ */
+@Composable
+private fun AdvisoryCard(a: Advisory, compact: Boolean, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.width(if (compact) 3.dp else 4.dp).fillMaxHeight().background(RoxyColors.accent))
+        Column(modifier = Modifier.padding(start = if (compact) 8.dp else 12.dp)) {
+            Text(
+                a.rating, color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (compact) 15.sp else 22.sp,
+                style = TextStyle(shadow = Shadow(Color(0xCC000000), blurRadius = 6f)),
+            )
+            if (a.descriptors.isNotEmpty()) Text(
+                a.descriptors.joinToString(", "), color = Color.White.copy(alpha = 0.9f), fontSize = if (compact) 11.sp else 14.sp,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = if (compact) 220.dp else 420.dp),
+                style = TextStyle(shadow = Shadow(Color(0xCC000000), blurRadius = 6f)),
+            )
+        }
+    }
 }

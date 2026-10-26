@@ -72,6 +72,10 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun logout() { postNoBody("/v1/auth/logout", "") }
 
+    /** Change this account's password; other devices are signed out. 403 = wrong current password. */
+    suspend fun changePassword(current: String, new: String) =
+        postNoBody("/v1/me/password", json.encodeToString(PasswordChange.serializer(), PasswordChange(current, new)))
+
     // ---- library ----
 
     suspend fun home(): HomeResponse = get("/v1/home")
@@ -1046,6 +1050,9 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 
 @Serializable
 private data class ScanMode(val mode: String)
+
+@Serializable
+private data class PasswordChange(val current: String, val new: String)
 
 @Serializable
 data class MediaTokenResponse(val token: String = "", val expiresAt: String = "")

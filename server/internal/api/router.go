@@ -78,6 +78,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/legal/status", s.legalStatus)
 			r.Post("/legal/accept", s.legalAccept)
 			r.Post("/auth/logout", s.logout)
+			r.Post("/me/password", s.changePassword)
 			r.Get("/libraries", s.listLibraries)
 			r.Post("/libraries/scan", s.scanAll)
 			r.Get("/library/manage", s.libraryManage)

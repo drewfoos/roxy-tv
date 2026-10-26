@@ -19,6 +19,7 @@ sealed interface Route {
     @Serializable data object TranscodingSettings : Route
     // Admin: Library (scan / refresh, unmatched titles), Identify and Edit details for one title.
     @Serializable data object LibrarySettings : Route
+    @Serializable data object ChangePassword : Route
     @Serializable data object LibraryRefreshPick : Route
     @Serializable data class Identify(val id: String, val title: String, val type: String) : Route
     @Serializable data class EditMetadata(val id: String, val title: String) : Route

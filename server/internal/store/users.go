@@ -111,6 +111,12 @@ func (s *Store) DeleteDevice(ctx context.Context, id string) error {
 	return err
 }
 
+// DeleteDevicesExcept signs a user out everywhere but keepID (after a password change).
+func (s *Store) DeleteDevicesExcept(ctx context.Context, userID, keepID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE user_id = ? AND id <> ?`, userID, keepID)
+	return err
+}
+
 // ---- API keys ----
 
 func (s *Store) CreateAPIKey(ctx context.Context, k *model.APIKey) error {

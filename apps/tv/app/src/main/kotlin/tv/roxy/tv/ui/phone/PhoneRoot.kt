@@ -244,7 +244,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Account> {
                     Page {
-                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) })
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) })
                     }
                 }
                 composable<Route.ArrSettings> {
@@ -262,6 +262,9 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onPickTitles = { nav.navigate(Route.LibraryRefreshPick) },
                         )
                     }
+                }
+                composable<Route.ChangePassword> {
+                    Page { PhoneChangePassword(onBack = { nav.popBackStack() }) }
                 }
                 composable<Route.LibraryRefreshPick> {
                     Page { PhoneRefreshPicker(onBack = { nav.popBackStack() }) }

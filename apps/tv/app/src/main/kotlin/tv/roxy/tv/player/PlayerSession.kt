@@ -162,6 +162,10 @@ class PlayerSession(
     private var countdownJob: Job? = null
     /** True from "load the next file" until it has loaded, so the old file's end events are ignored. */
     @Volatile private var switching = false
+    // The age rating card: what it says, and whether it is up (a few seconds per title).
+    private var advisory: Advisory? = null
+    private var advisoryUp = false
+    private var advisoryJob: kotlinx.coroutines.Job? = null
 
     val actions: PlayerActions
 
@@ -205,6 +209,7 @@ class PlayerSession(
         }
         quality = QualityOption.byKey(if (onMeteredNetwork()) settings.qualityMobile else settings.qualityWifi)
         prepareAndPlay(params.url, params.sourceId, params.local, params.startSeconds)
+        showAdvisory(params.itemId)
         app.remote.activePlayer = this
 
         actions = object : PlayerActions {
@@ -293,6 +298,36 @@ class PlayerSession(
      * trickplay) and start the file. For a download the snapshot answers instead, so
      * playback never waits on the network. Then resolve the episode after this one.
      */
+    /**
+     * Flash the title's age rating and content descriptors for a few seconds once it
+     * plays. Episodes take the show's (they carry none); a download uses its snapshot.
+     */
+    private fun showAdvisory(id: String?) {
+        advisoryJob?.cancel()
+        advisory = null; advisoryUp = false
+        if (id == null) return
+        advisoryJob = scope.launch {
+            suspend fun lookup(itemId: String): tv.roxy.tv.api.Item? =
+                app.downloads.entry(itemId)?.item ?: app.items[itemId] ?: runCatching { app.api.item(itemId) }.getOrNull()
+            val item = lookup(id) ?: return@launch
+            val show = if (item.officialRating.isNullOrBlank() || item.advisories.isEmpty()) item.seriesId?.let { lookup(it) } else null
+            val rating = (item.officialRating?.takeIf { it.isNotBlank() } ?: show?.officialRating)?.takeIf { it.isNotBlank() } ?: return@launch
+            val descriptors = item.advisories.ifEmpty { show?.advisories.orEmpty() }
+            advisory = Advisory(tv.roxy.tv.ui.phone.ageLabel(rating), descriptors)
+            // Wait for the picture, then hold it long enough to read.
+            var waited = 0
+            while ((player.timePosSeconds() == null || switching) && waited < 40) { delay(250); waited++ }
+            // The player opens with its controls up, which would hide the card: start the
+            // count once they have gone (or after 20 s, if someone keeps them up).
+            waited = 0
+            while (controlsVisible && waited < 80) { delay(250); waited++ }
+            delay(500)
+            advisoryUp = true; refreshUi()
+            delay(6_000)
+            advisoryUp = false; refreshUi()
+        }
+    }
+
     private fun prepareAndPlay(url: String, sourceId: String?, local: Boolean, start: Int) {
         directUrl = url
         sourceHeight = 0
@@ -387,6 +422,7 @@ class PlayerSession(
         trickplay = null
         flashOsd(null)
         prepareAndPlay(req.url, req.sourceId, req.local, req.startSeconds)
+        showAdvisory(req.item.id)
         refreshUi()
         host.nowPlaying(req)
     }
@@ -454,6 +490,7 @@ class PlayerSession(
             pipSupported = host.pipSupported,
             hasNext = next != null,
             nextCardShown = nextCard != null,
+            advisory = if (advisoryUp) advisory else null,
             segments = segments,
             autoSkip = autoSkip,
             skipWindowSec = skipWindowSec,

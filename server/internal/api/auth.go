@@ -77,6 +77,40 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/auth/logout revokes the calling device token.
+// POST /v1/me/password {current, new} -> 204. Other devices are signed out.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	p := userFrom(w, r)
+	if p == nil {
+		return
+	}
+	var body struct {
+		Current string `json:"current"`
+		New     string `json:"new"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	err := s.authSvc.ChangePassword(r.Context(), p.UserID, p.DeviceID, auth.RemoteIP(r), body.Current, body.New)
+	var retry *auth.RetryError
+	switch {
+	case err == nil:
+		slog.Info("password changed", "user", p.User.Name)
+		w.WriteHeader(http.StatusNoContent)
+	case errors.As(err, &retry):
+		secs := int(retry.After.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeError(w, http.StatusTooManyRequests, fmt.Sprintf("Too many wrong passwords. Try again in %s.", humanWait(secs)))
+	case errors.Is(err, auth.ErrWrongPassword):
+		slog.Warn("password change: wrong current password", "user", p.User.Name)
+		writeError(w, 403, err.Error())
+	case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrLongPassword), errors.Is(err, auth.ErrSamePassword):
+		writeError(w, 400, err.Error())
+	default:
+		writeError(w, 500, err.Error())
+	}
+}
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFrom(r.Context())
 	if p != nil && p.DeviceID != "" {
