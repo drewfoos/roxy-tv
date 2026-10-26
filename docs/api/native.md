@@ -320,6 +320,41 @@ TMDB client has its own token bucket, so the app cannot hammer TMDB.
 - `GET /v1/discover/requests` → `{items}` (everyone's, newest first).
 - `POST /v1/discover/requests/retry` (admin) → resend pending requests now.
 
+### Download status
+
+Once Sonarr / Radarr have a request, `GET /v1/discover/{type}/{tmdbId}` and every item of
+`GET /v1/discover/requests` carry `download`:
+
+```
+{ "state": "downloading", "progress": 0.45, "timeLeftSec": 720,
+  "message": "…the arr app's own words for a problem…",
+  "have": 7, "wanted": 12, "upcoming": 1, "nextAir": "2026-11-03T15:00:00Z",
+  "lastSearch": "2026-10-26T06:06:16Z",
+  "items":  [{ "label": "S01E08", "release": "…", "state": "downloading", "progress": 0.45, "timeLeftSec": 720 }],
+  "groups": [{ "state": "downloading", "label": "Season 1 · 5 episodes", "count": 5, "progress": 0.4 }] }
+```
+
+`state` is the most important of: `failed` (the arr's reason in `message`), `attention`
+(downloaded but cannot be imported), `stalled` (an arr warning, paused in the client, or
+no bytes for 10 minutes), `downloading`, `importing`, `queued`, `notFound` (searched,
+nothing grabbed; the arr keeps looking), `searching`, `waiting` (not aired / released
+yet; `nextAir`), `complete`. `have` / `wanted` count requested, aired episodes. While
+the arr app replaces a failed release on its own, `message` says "Trying another
+release: the last one failed (…)". `groups` folds `items` by state for display.
+
+The server builds it from each title's own queue (`/queue/details`, unpaged; request app reads
+only the first 10 queue records), episodes (`hasFile`, `airDateUtc`, `lastSearchTime`)
+and history (`downloadFailed`), every 10 s while something moves and every 2 min
+otherwise, and at once when a Sonarr / Radarr webhook arrives.
+
+- `POST /v1/discover/requests/{id}/search` → `{ok}`: search again for what is missing (anyone).
+- `POST /v1/discover/requests/{id}/replace` (admin) → `{ok}`: remove the failed / stalled /
+  unimportable downloads from the client, blocklist those releases and let the arr app
+  pick another.
+
+A test bench with real Sonarr / Radarr and a fake indexer and download client is in
+`deploy/dev/arrsim/`.
+
 ### Seasons and requests
 
 A series detail carries `seasons: [{number, name, episodes, airDate, poster, have, known,

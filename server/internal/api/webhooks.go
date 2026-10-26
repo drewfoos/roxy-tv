@@ -48,6 +48,10 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "body too large")
 		return
 	}
+	// Grab, Download, ManualInteractionRequired...: request download status changes now.
+	if s.discover != nil {
+		s.discover.KickDownloads()
+	}
 	ev, err := s.hooks.Handle(r.Context(), source, body)
 	if err != nil {
 		writeError(w, 400, err.Error())

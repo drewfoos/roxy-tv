@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.AddCircleOutline
@@ -94,6 +95,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -141,11 +143,18 @@ class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
 
     fun load() {
         viewModelScope.launch {
+            // Both at once and shown together: "Your requests" arriving after the rows would be
+            // inserted above the first visible row, i.e. out of sight.
+            val reqs = async { runCatching { api.discoverRequests() }.getOrNull() }
             runCatching { api.discover() }
-                .onSuccess { d -> _state.value = _state.value.copy(rows = d.rows, requestsEnabled = d.requestsEnabled, error = null) }
+                .onSuccess { d -> _state.value = _state.value.copy(rows = d.rows, requestsEnabled = d.requestsEnabled, requests = reqs.await() ?: _state.value.requests, error = null) }
                 .onFailure { t -> Timber.w(t, "discover failed"); _state.value = _state.value.copy(error = t.message) }
-            runCatching { api.discoverRequests() }.onSuccess { r -> _state.value = _state.value.copy(requests = r) }
         }
+    }
+
+    /** "Your requests" again: their download status moves while the tab is open. */
+    suspend fun refreshRequests() {
+        runCatching { api.discoverRequests() }.onSuccess { r -> _state.value = _state.value.copy(requests = r) }
     }
 
     /** New filters: the grid starts over from page one (the type alone keeps the rows). */
@@ -200,6 +209,11 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
     val app = RoxyApp.get(LocalContext.current)
     val vm: DiscoverViewModel = viewModel { DiscoverViewModel(app.api) }
     val state by vm.state.collectAsStateWithLifecycle()
+    // Keep the request cards' progress current while something is downloading.
+    val anyActive = state.requests.any { it.download?.isActive == true }
+    LaunchedEffect(anyActive) {
+        while (anyActive) { delay(5_000); vm.refreshRequests() }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
@@ -382,19 +396,29 @@ private fun DiscoverCard(item: DiscoverItem, modifier: Modifier = Modifier, onCl
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
             if (item.poster != null) AsyncImage(model = item.poster, contentDescription = item.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Text(item.title, color = RoxyColors.muted, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).padding(6.dp))
-            StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
+            StatusBadge(item.inLibrary, item.requestStatus, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp), download = item.download)
+            val dl = item.download
+            if (dl != null && !item.inLibrary && (dl.state == "downloading" || dl.state == "stalled" || dl.state == "importing")) {
+                DownloadBar(dl.progress, dl.state, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+            }
         }
         Text(item.title, fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-        Text(listOfNotNull(item.year?.toString(), if (item.isAnime) "Anime" else if (item.isMovie) "Movie" else null).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1)
+        val dl = item.download
+        if (dl != null && !item.inLibrary) {
+            Text(dl.shortLine(item.isMovie), fontSize = 11.sp, color = stateColor(dl.state), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            Text(listOfNotNull(item.year?.toString(), if (item.isAnime) "Anime" else if (item.isMovie) "Movie" else null).joinToString("  ·  "), fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1)
+        }
     }
 }
 
 /** Small round badge: brand check when the library has it, clock while requested. */
 @Composable
-internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: Modifier = Modifier) {
+internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: Modifier = Modifier, download: tv.roxy.tv.api.DownloadStatus? = null) {
     val (icon, bg) = when {
         inLibrary -> Icons.Filled.Check to RoxyColors.accent
-        requestStatus == "failed" -> Icons.Filled.Close to RoxyColors.error
+        requestStatus == "failed" || download?.state == "failed" || download?.state == "attention" -> Icons.Filled.Close to RoxyColors.error
+        download?.state == "downloading" || download?.state == "importing" -> Icons.Filled.Download to RoxyColors.accent
         requestStatus != null -> Icons.Outlined.Schedule to Color(0xFF4B4B57)
         else -> return
     }
@@ -423,7 +447,15 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
             .onSuccess { detail = it; error = null }
             .onFailure { t -> Timber.w(t, "discover detail"); error = t.message }
     }
-    LaunchedEffect(type, tmdbId) { reload() }
+    LaunchedEffect(type, tmdbId) {
+        reload()
+        while (true) {
+            val dl = detail?.download
+            if (dl == null && detail?.request?.status != "sent") break
+            delay(if (dl?.isActive == true) 4_000 else 30_000)
+            reload()
+        }
+    }
 
     fun requestSeasons(seasons: List<Int>) {
         val cur = detail ?: return
@@ -489,7 +521,15 @@ fun PhoneDiscoverDetail(type: String, tmdbId: Int, onBack: () -> Unit, onOpenSer
                             }
                         }
                     }
-                    d.request?.let { r ->
+                    val dl = d.download
+                    if (dl != null && d.request?.status == "sent" && !(d.inLibrary && dl.state == "complete")) {
+                        DownloadStatusCard(
+                            dl, isMovie = d.isMovie, admin = app.prefs.session.value.isAdmin, busy = busy,
+                            onSearchAgain = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.searchAgain(id) }.onFailure { t -> error = t.message }; reload(); busy = false } },
+                            onTryAnother = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.tryAnotherRelease(id) }.onFailure { t -> error = t.message }; reload(); busy = false } },
+                            modifier = Modifier.padding(top = 18.dp),
+                        )
+                    } else d.request?.let { r ->
                         val line = when (r.status) {
                             "sent" -> "Requested by ${r.userName.ifEmpty { "someone" }}  ·  sent to ${if (d.isMovie) "Radarr" else "Sonarr"}"
                             "failed" -> "Request failed  ·  ${r.error ?: "unknown error"}"

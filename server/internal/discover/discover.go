@@ -40,6 +40,8 @@ type Item struct {
 	LibraryItemID string `json:"libraryItemId,omitempty"`
 	// Set when someone asked for it: pending | sent | failed.
 	RequestStatus string `json:"requestStatus,omitempty"`
+	// Download is the request's download status once Sonarr / Radarr has it (lists carry it too).
+	Download *Download `json:"download,omitempty"`
 }
 
 // Season is one TMDB season with what the library and the request list say about it.
@@ -116,6 +118,7 @@ type Service struct {
 	details  *ttlCache[*Detail]
 	search   *ttlCache[[]Item]
 	episodes *ttlCache[[]Episode]
+	dl       tracker
 }
 
 // ttlCache is a small bounded map with per-entry expiry.
@@ -165,6 +168,7 @@ func (c *ttlCache[T]) put(k string, v T) {
 
 func New(st *store.Store, cfg *config.Config, tmdb *metadata.TMDB) *Service {
 	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), people: newTTLCache[*Person](time.Hour, 300), similar: newTTLCache[[]Item](time.Hour, 500), episodes: newTTLCache[[]Episode](10*time.Minute, 500)}
+	s.dl = tracker{status: map[string]*Download{}, progress: map[string]progressMark{}, kick: make(chan struct{}, 1), refresh: map[string]time.Time{}}
 	s.loadArr(context.Background())
 	return s
 }
@@ -262,8 +266,9 @@ func (s *Service) RetryPending(ctx context.Context) {
 	}
 }
 
-// Start runs the pending-request retry every 10 minutes.
+// Start runs the pending-request retry every 10 minutes and the download tracker.
 func (s *Service) Start(ctx context.Context) {
+	s.startTracker(ctx)
 	go func() {
 		t := time.NewTicker(10 * time.Minute)
 		defer t.Stop()
@@ -767,8 +772,10 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 	det.Item = items[0]
 	det.Requests = s.RequestsEnabled(kind)
 	det.Request = nil
+	det.Download = nil
 	if r, err := s.store.GetRequest(ctx, kind, tmdbID); err == nil && r != nil {
 		det.Request = r
+		det.Download = s.Download(r.ID)
 	}
 	// Seasons: library counts and request coverage are live; copy the slice first.
 	det.Seasons = append([]Season(nil), base.Seasons...)
@@ -975,6 +982,7 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 			}
 		}
 		r.Status, r.ArrID, r.Error = "sent", id, ""
+		s.KickDownloads()
 	case "movie":
 		if radarr == nil {
 			return
@@ -986,6 +994,7 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 			return
 		}
 		r.Status, r.ArrID, r.Error = "sent", id, ""
+		s.KickDownloads()
 	}
 }
 
@@ -997,7 +1006,7 @@ func (s *Service) Requests(ctx context.Context) ([]Item, error) {
 	}
 	items := make([]Item, 0, len(all))
 	for _, r := range all {
-		items = append(items, Item{TMDBID: r.TMDBID, Type: r.MediaType, Title: r.Title, Year: r.Year, Poster: r.PosterPath, RequestStatus: r.Status})
+		items = append(items, Item{TMDBID: r.TMDBID, Type: r.MediaType, Title: r.Title, Year: r.Year, Poster: r.PosterPath, RequestStatus: r.Status, Download: s.Download(r.ID)})
 	}
 	s.annotate(ctx, items)
 	return items, nil

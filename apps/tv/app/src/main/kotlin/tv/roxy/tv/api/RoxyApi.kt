@@ -197,6 +197,12 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
 
+    /** Ask Sonarr / Radarr to look for what the request still lacks. */
+    suspend fun searchAgain(requestId: String) { postNoBody("/v1/discover/requests/$requestId/search", "{}") }
+
+    /** Admin: drop the failed / stalled download, blocklist it, and let the arr app pick another. */
+    suspend fun tryAnotherRelease(requestId: String) { postNoBody("/v1/discover/requests/$requestId/replace", "{}") }
+
     suspend fun deleteRequest(id: String) = delete("/v1/discover/requests/$id")
 
     /** Filtered browsing over TMDB's discover endpoint (one page of 20). */
@@ -745,10 +751,39 @@ data class DiscoverItem(
     val libraryItemId: String? = null,
     /** pending | sent | failed when someone asked for it. */
     val requestStatus: String? = null,
+    /** What Sonarr / Radarr are doing with the request (null before it reached them). */
+    val download: DownloadStatus? = null,
 ) {
     val isMovie: Boolean get() = type == "movie"
     val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()
 }
+
+/**
+ * A request's download status from the server's tracker. [state]: searching | notFound |
+ * waiting | queued | downloading | stalled | importing | attention | failed | complete.
+ */
+@Serializable
+data class DownloadStatus(
+    val state: String = "",
+    val progress: Double = 0.0,
+    val timeLeftSec: Int = 0,
+    /** Sonarr's / Radarr's own words when something is wrong. */
+    val message: String? = null,
+    val have: Int = 0,
+    val wanted: Int = 0,
+    val upcoming: Int = 0,
+    val nextAir: String? = null,
+    val lastSearch: String? = null,
+    val groups: List<DownloadGroup> = emptyList(),
+) {
+    /** Worth refreshing every few seconds. */
+    val isActive: Boolean get() = state in setOf("downloading", "importing", "queued", "searching", "stalled")
+    /** Something an admin can fix by trying another release. */
+    val isProblem: Boolean get() = state in setOf("failed", "attention", "stalled")
+}
+
+@Serializable
+data class DownloadGroup(val state: String, val label: String = "", val count: Int = 0, val progress: Double = 0.0, val timeLeftSec: Int = 0, val message: String? = null)
 
 @Serializable
 data class DiscoverEpisode(val number: Int, val title: String = "", val overview: String? = null, val airDate: String? = null, val still: String? = null, val have: Boolean = false, val requested: Boolean = false)
@@ -805,6 +840,7 @@ data class DiscoverDetail(
     val request: RequestRow? = null,
     val requestsEnabled: Boolean = false,
     val seasons: List<DiscoverSeason> = emptyList(),
+    val download: DownloadStatus? = null,
 ) {
     val isMovie: Boolean get() = type == "movie"
     val inLibrary: Boolean get() = !libraryItemId.isNullOrEmpty()

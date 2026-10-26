@@ -1,0 +1,29 @@
+# Real Sonarr and Radarr for testing Roxy's request tracking against arrsim (a fake
+# indexer + download client; see server/cmd/arrsim). Development only.
+#
+#   MEDIA=/path/to/roxy/testdata/out docker compose -f deploy/dev/arrsim/docker-compose.yml up -d
+#   then deploy/dev/arrsim/setup.sh
+#
+# Host networking so Sonarr, Radarr, arrsim and Roxy reach each other on localhost.
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: arrsim-sonarr
+    network_mode: host
+    environment: { PUID: "1000", PGID: "1000", TZ: "America/Los_Angeles" }
+    volumes:
+      - ${ARRSIM_HOME:-/srv/arrsim}/sonarr:/config
+      - ${ARRSIM_HOME:-/srv/arrsim}/downloads:/downloads
+      - ${MEDIA:?set MEDIA to the library folder}:/media
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: arrsim-radarr
+    network_mode: host
+    environment: { PUID: "1000", PGID: "1000", TZ: "America/Los_Angeles" }
+    volumes:
+      - ${ARRSIM_HOME:-/srv/arrsim}/radarr:/config
+      - ${ARRSIM_HOME:-/srv/arrsim}/downloads:/downloads
+      - ${MEDIA:?set MEDIA to the library folder}:/media
+    restart: unless-stopped

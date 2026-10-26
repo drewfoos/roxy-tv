@@ -190,6 +190,17 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   (WSL2 + Docker 29, NVENC in the container); the dev server now runs in WSL because Smart
   App Control blocks fresh Windows builds (`deploy/wsl-firewall.ps1` opens 8096 in WSL's
   Hyper-V firewall).
+- Also done (2026-10-26): **download status for requests** (request app's "Processing", done
+  better): per request and per episode from the arr apps' queue, episodes and history:
+  downloading with % and time left, queued, importing, stalled (with the arr's message,
+  or no progress for 10 min), cannot import, failed with the reason, no release found,
+  not aired / released yet, complete. "Trying another release" is shown while the arr
+  app replaces a failed one. Search again (anyone) and Try another release (admin:
+  blocklist + search). Status card on Discover title pages, a line and bar on request
+  posters. Tested end to end against real Sonarr v4 / Radarr in Docker with
+  `server/cmd/arrsim` (fake indexer + SABnzbd, `deploy/dev/arrsim`). Also: quality menu
+  by resolution with 4K/1440p, per-network default quality, requests refused until
+  Sonarr / Radarr are connected (the app prompts to set them up).
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks

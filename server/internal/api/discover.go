@@ -176,6 +176,32 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, req)
 }
 
+// POST /v1/discover/requests/{id}/search -> {ok}: ask Sonarr / Radarr to look again for
+// what is still missing. Anyone may (it only searches).
+func (s *Server) discoverSearchAgain(w http.ResponseWriter, r *http.Request) {
+	if !s.discoverGuard(w) || userFrom(w, r) == nil {
+		return
+	}
+	if err := s.discover.SearchAgain(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeError(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// POST /v1/discover/requests/{id}/replace (admin) -> {ok}: drop the failed / stalled /
+// unimportable downloads, blocklist those releases and let the arr app pick another.
+func (s *Server) discoverReplaceRelease(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
+		return
+	}
+	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeError(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 // upstreamError logs the real cause and tells the client only that TMDB did not answer:
 // transport errors quote URLs and must not reach the app.
 func upstreamError(w http.ResponseWriter, what string, err error) {
