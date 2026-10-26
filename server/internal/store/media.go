@@ -176,6 +176,37 @@ func (s *Store) ListPartPaths(ctx context.Context, libraryID int64) (map[string]
 	return out, rows.Err()
 }
 
+// ItemPath is a media file and the item (movie or episode) it belongs to.
+type ItemPath struct {
+	ItemID string
+	Path   string
+}
+
+// PathsUnder lists the media files of an item: a movie's own, or every episode's under a
+// series (for reading .nfo files and artwork next to them).
+func (s *Store) PathsUnder(ctx context.Context, itemID string) ([]ItemPath, error) {
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+			SELECT id FROM items WHERE id = ?
+			UNION ALL
+			SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+		)
+		SELECT ms.item_id, mp.path FROM media_parts mp JOIN media_sources ms ON ms.id = mp.source_id
+		WHERE ms.item_id IN (SELECT id FROM tree) ORDER BY mp.path`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ItemPath
+	for rows.Next() {
+		var p ItemPath
+		if err := rows.Scan(&p.ItemID, &p.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // AllSourceIDs lists every media source id, newest items first.
 func (s *Store) AllSourceIDs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT ms.id FROM media_sources ms JOIN items i ON i.id = ms.item_id ORDER BY i.date_created DESC`)

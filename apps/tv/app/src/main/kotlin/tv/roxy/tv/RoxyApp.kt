@@ -55,6 +55,8 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
 
     /** Opens Account → Server → Sonarr & Radarr (set by the phone layout), for "set up requests" prompts. */
     @Volatile var openArrSettings: (() -> Unit)? = null
+    /** Phone: an admin's Identify / Edit details for a title ("identify" | "edit"), set by the phone UI. */
+    var openTitleAdmin: ((tv.roxy.tv.api.Item, String) -> Unit)? = null
 
     /** Directory holding the bundled fallback fonts for libass (copied from assets). */
     lateinit var fontsDir: File

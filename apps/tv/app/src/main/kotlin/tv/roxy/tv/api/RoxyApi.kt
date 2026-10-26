@@ -252,6 +252,18 @@ class RoxyApi(private val prefs: Prefs) {
 
     /** Which encoder the server transcodes with; the first call can take a few seconds (the server test-encodes). */
     suspend fun transcodingSettings(): TranscodingSettings = get("/v1/settings/transcoding")
+
+    // ---- library management (admin) ----
+
+    suspend fun libraryManage(): LibraryManage = get("/v1/library/manage")
+    /** mode: files (new / removed files) | missing (titles without a match) | replace (look everything up again). */
+    suspend fun libraryScan(mode: String) = postNoBody("/v1/library/scan", json.encodeToString(ScanMode.serializer(), ScanMode(mode)))
+    suspend fun identifySearch(itemId: String, provider: String, query: String): IdentifyResults =
+        get("/v1/items/$itemId/identify?provider=${provider.urlEncoded()}&q=${query.urlEncoded()}")
+    suspend fun identify(itemId: String, provider: String, providerId: String) =
+        postNoBody("/v1/items/$itemId/identify", json.encodeToString(IdentifyChoice.serializer(), IdentifyChoice(provider, providerId)))
+    suspend fun editMetadata(itemId: String, edit: MetadataEdit): Item = putJson("/v1/items/$itemId/metadata", json.encodeToString(MetadataEdit.serializer(), edit))
+    suspend fun refreshItem(itemId: String) = postNoBody("/v1/items/$itemId/refresh", "")
     suspend fun saveTranscodingSettings(hwAccel: String): TranscodingSettings = putJson("/v1/settings/transcoding", json.encodeToString(TranscodingChoice.serializer(), TranscodingChoice(hwAccel)))
 
     suspend fun arrSettings(): ArrSettingsResponse = get("/v1/settings/arr")
@@ -983,6 +995,36 @@ private data class ImageUrlBody(val url: String)
 data class FanartSettings(val apiKey: String = "", val enabled: Boolean = false)
 
 /** The server's transcoding encoder: [hwAccel] is the saved choice, [encoder] what runs now. */
+@Serializable
+data class LibraryManage(val scanning: Boolean = false, val lastScanAt: String? = null, val queue: Int = 0, val titles: List<LibraryTitle> = emptyList())
+
+@Serializable
+data class LibraryTitle(
+    val id: String,
+    val type: String = "series",
+    val title: String = "",
+    val year: Int? = null,
+    val matched: Boolean = false,
+    val locked: Boolean = false,
+    val providerIds: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class MatchCandidate(val provider: String = "tmdb", val id: String = "", val title: String = "", val year: Int? = null, val overview: String? = null, val poster: String? = null)
+
+@Serializable
+data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val query: String = "")
+
+@Serializable
+private data class ScanMode(val mode: String)
+
+@Serializable
+private data class IdentifyChoice(val provider: String, val id: String)
+
+/** Hand-entered details (no defaults, so every field is sent). */
+@Serializable
+data class MetadataEdit(val title: String, val year: Int?, val overview: String, val genres: List<String>, val studio: String, val premiered: String, val locked: Boolean)
+
 @Serializable
 data class TranscodingSettings(val hwAccel: String = "auto", val encoder: String = "", val options: List<EncoderOption> = emptyList())
 

@@ -177,6 +177,8 @@ type tmdbSearchMovie struct {
 		Title         string `json:"title"`
 		OriginalTitle string `json:"original_title"`
 		ReleaseDate   string `json:"release_date"`
+		Overview      string `json:"overview"`
+		PosterPath    string `json:"poster_path"`
 	} `json:"results"`
 }
 
@@ -186,6 +188,8 @@ type tmdbSearchTV struct {
 		Name         string `json:"name"`
 		OriginalName string `json:"original_name"`
 		FirstAirDate string `json:"first_air_date"`
+		Overview     string `json:"overview"`
+		PosterPath   string `json:"poster_path"`
 	} `json:"results"`
 }
 

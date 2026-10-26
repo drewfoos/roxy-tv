@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,17 @@ type Library struct {
 	// Force makes the next scan re-probe files whose size and mtime are unchanged
 	// (after a probe/segment change). Reset to false when the scan completes.
 	Force bool
+
+	scanMu   sync.Mutex
+	scanning bool
+	lastScan time.Time
+}
+
+// ScanStatus reports whether a full scan is running and when the last one finished.
+func (l *Library) ScanStatus() (running bool, last time.Time) {
+	l.scanMu.Lock()
+	defer l.scanMu.Unlock()
+	return l.scanning, l.lastScan
 }
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
@@ -81,6 +93,18 @@ func (l *Library) EnsureLibraries(ctx context.Context, roots []string) error {
 }
 
 func (l *Library) ScanAll(ctx context.Context) error {
+	l.scanMu.Lock()
+	if l.scanning {
+		l.scanMu.Unlock()
+		return nil // one at a time; the running scan covers it
+	}
+	l.scanning = true
+	l.scanMu.Unlock()
+	defer func() {
+		l.scanMu.Lock()
+		l.scanning, l.lastScan = false, time.Now()
+		l.scanMu.Unlock()
+	}()
 	libs, err := l.store.ListLibraries(ctx)
 	if err != nil {
 		return err

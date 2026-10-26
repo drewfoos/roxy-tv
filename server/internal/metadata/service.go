@@ -149,6 +149,15 @@ func (s *Service) process(ctx context.Context, j job) error {
 		return err
 	}
 	s.force = j.force
+	// Details set by hand (or a custom show no provider knows) stay as they are.
+	if locked, err := s.store.MetadataLocked(ctx, it.ID); err == nil && locked {
+		return nil
+	}
+	// Kodi .nfo files and artwork next to the media (One Pace ships them) come first:
+	// an .nfo with provider ids steers the lookup below; one without ids is the metadata.
+	if handled, err := s.applyLocal(ctx, it); handled || err != nil {
+		return err
+	}
 	onlyNewEpisodes := false
 	if !j.force {
 		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval {
@@ -621,6 +630,37 @@ func (s *Service) SetImage(ctx context.Context, itemID, typ, srcURL string) erro
 	return nil
 }
 
+// readImageSource fetches an image's bytes: over HTTP, or from disk for "file://<path>"
+// sources (artwork next to the media: poster.jpg, fanart.jpg, episode thumbs). A local
+// source may carry "#<mtime>" so a replaced file counts as a new source.
+func (s *Service) readImageSource(ctx context.Context, srcURL string) ([]byte, error) {
+	if local, ok := strings.CutPrefix(srcURL, "file://"); ok {
+		if i := strings.LastIndex(local, "#"); i > 0 {
+			local = local[:i]
+		}
+		f, err := os.Open(local)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		return io.ReadAll(io.LimitReader(f, 20<<20))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := s.images.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+}
+
 // fetchImageOpt downloads one image into the cache. A locked image (admin's choice) is
 // kept unless force is set, which is how the admin replaces it.
 func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string, force bool) {
@@ -640,23 +680,9 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 			}
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
-	if err != nil {
-		return
-	}
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := s.images.Do(req)
+	data, err := s.readImageSource(ctx, srcURL)
 	if err != nil {
 		slog.Warn("metadata: image download failed", "url", srcURL, "err", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		slog.Warn("metadata: image download failed", "url", srcURL, "status", resp.StatusCode)
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
-	if err != nil {
 		return
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))

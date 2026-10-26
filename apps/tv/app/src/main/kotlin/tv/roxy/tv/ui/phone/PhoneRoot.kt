@@ -133,7 +133,11 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     DisposableEffect(nav) {
         app.openPlayerPage = { item -> openEpisode(item) }
         app.openArrSettings = { nav.navigate(Route.ArrSettings) }
-        onDispose { app.openPlayerPage = null; app.openArrSettings = null }
+        app.openTitleAdmin = { item, action ->
+            if (action == "identify") nav.navigate(Route.Identify(item.id, item.title, if (item.isMovie) "movie" else "series"))
+            else nav.navigate(Route.EditMetadata(item.id, item.title))
+        }
+        onDispose { app.openPlayerPage = null; app.openArrSettings = null; app.openTitleAdmin = null }
     }
 
     PhoneTheme {
@@ -232,12 +236,34 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Account> {
                     Page {
-                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) })
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) })
                     }
                 }
                 composable<Route.ArrSettings> {
                     Page {
                         PhoneArrSettings(onBack = { nav.popBackStack() })
+                    }
+                }
+                composable<Route.LibrarySettings> {
+                    Page {
+                        PhoneLibrarySettings(
+                            onBack = { nav.popBackStack() },
+                            onIdentify = { t -> nav.navigate(Route.Identify(t.id, t.title, t.type)) },
+                            onEdit = { t -> nav.navigate(Route.EditMetadata(t.id, t.title)) },
+                            onOpen = { t -> if (t.type == "movie") nav.navigate(Route.Movie(t.id, t.title)) else nav.navigate(Route.Series(t.id, t.title)) },
+                        )
+                    }
+                }
+                composable<Route.Identify> { e ->
+                    Page {
+                        val r = e.toRoute<Route.Identify>()
+                        PhoneIdentify(itemId = r.id, title = r.title, type = r.type, onBack = { nav.popBackStack() })
+                    }
+                }
+                composable<Route.EditMetadata> { e ->
+                    Page {
+                        val r = e.toRoute<Route.EditMetadata>()
+                        PhoneEditMetadata(itemId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() })
                     }
                 }
                 composable<Route.TranscodingSettings> {

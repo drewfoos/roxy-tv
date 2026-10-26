@@ -1,0 +1,160 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
+)
+
+// Library settings (admin): scan / refresh the library, see what failed to match, and
+// fix a match by hand (Identify) or type a title's details (custom shows like One Pace).
+
+// GET /v1/library/manage -> {scanning, lastScanAt, queue, titles}
+func (s *Server) libraryManage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	titles, err := s.store.LibraryTitles(r.Context())
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if titles == nil {
+		titles = []store.TitleStatus{}
+	}
+	running, last := s.lib.ScanStatus()
+	out := map[string]any{"scanning": running, "titles": titles, "queue": 0}
+	if !last.IsZero() {
+		out["lastScanAt"] = last.UTC().Format(time.RFC3339)
+	}
+	if s.meta != nil {
+		out["queue"] = s.meta.QueueLength()
+	}
+	writeJSON(w, 200, out)
+}
+
+// POST /v1/library/scan {mode: files | missing | replace} -> 202
+//   - files:   find new, changed and removed files (then look up anything new)
+//   - missing: look up titles that have no match yet
+//   - replace: look up every title again and replace its details (locked ones are kept)
+func (s *Server) libraryScan(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	switch body.Mode {
+	case "", "files":
+		go func() { _ = s.lib.ScanAll(context.Background()) }()
+	case "missing", "replace":
+		if s.meta == nil {
+			writeError(w, 503, "metadata service not running")
+			return
+		}
+		missing := body.Mode == "missing"
+		go func() { _ = s.meta.RefreshAll(context.Background(), missing) }()
+	default:
+		writeError(w, 400, "mode must be files, missing or replace")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// GET /v1/items/{id}/identify?provider=tmdb|anilist&q=&year= -> {candidates}
+func (s *Server) identifySearch(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	it, ok := s.topItem(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) == "" {
+		q = it.Title
+	}
+	var year *int
+	if y, err := strconv.Atoi(r.URL.Query().Get("year")); err == nil && y > 0 {
+		year = &y
+	}
+	cands, err := s.meta.Search(r.Context(), it.Type, r.URL.Query().Get("provider"), q, year)
+	if err != nil {
+		writeError(w, 502, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"candidates": cands, "query": q})
+}
+
+// POST /v1/items/{id}/identify {provider, id} -> 202
+func (s *Server) identifyApply(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	it, ok := s.topItem(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		ID       string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		writeError(w, 400, "provider and id are required")
+		return
+	}
+	if err := s.meta.Identify(r.Context(), it.ID, body.Provider, body.ID); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// PUT /v1/items/{id}/metadata {title, year, overview, genres, studio, premiered, locked} -> item
+func (s *Server) editMetadata(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || it == nil {
+		writeError(w, 404, "item not found")
+		return
+	}
+	var m store.ManualMetadata
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil || strings.TrimSpace(m.Title) == "" {
+		writeError(w, 400, "a title is required")
+		return
+	}
+	if err := s.store.EditItemMetadata(r.Context(), it.ID, m); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	updated, _ := s.store.GetItem(r.Context(), it.ID)
+	writeJSON(w, 200, updated)
+}
+
+// topItem loads the {id} item and checks it is a series or movie (what Identify works on).
+func (s *Server) topItem(w http.ResponseWriter, r *http.Request) (*model.Item, bool) {
+	if s.meta == nil {
+		writeError(w, 503, "metadata service not running")
+		return nil, false
+	}
+	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || it == nil {
+		writeError(w, 404, "item not found")
+		return nil, false
+	}
+	if it.Type != model.TypeSeries && it.Type != model.TypeMovie {
+		writeError(w, 400, "only shows and movies can be identified")
+		return nil, false
+	}
+	return it, true
+}

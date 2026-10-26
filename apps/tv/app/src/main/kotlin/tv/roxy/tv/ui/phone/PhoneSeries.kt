@@ -75,6 +75,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.outlined.ManageSearch
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -405,6 +407,10 @@ fun TitlePageScaffold(
                         DropdownMenuItem(text = { Text("Mark $what as watched", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Check, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(true) })
                         DropdownMenuItem(text = { Text("Mark $what as unwatched", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.RemoveDone, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(false) })
                         if (isAdmin) {
+                            val app = RoxyApp.get(LocalContext.current)
+                            // Admin only: fix the match, or type the details (custom shows).
+                            DropdownMenuItem(text = { Text("Identify", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.ManageSearch, null, tint = Color.White) }, onClick = { open = false; app.openTitleAdmin?.invoke(item, "identify") })
+                            DropdownMenuItem(text = { Text("Edit details", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Edit, null, tint = Color.White) }, onClick = { open = false; app.openTitleAdmin?.invoke(item, "edit") })
                             // Admin only: swap the art for any the providers hold (TMDB, fanart.tv).
                             DropdownMenuItem(text = { Text("Change banner", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "backdrop" })
                             DropdownMenuItem(text = { Text("Change poster", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Image, null, tint = Color.White) }, onClick = { open = false; pickArt = "poster" })
