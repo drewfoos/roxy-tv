@@ -25,6 +25,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/store"
 	"github.com/roxy-media/roxy/server/internal/transcode"
 	"github.com/roxy-media/roxy/server/internal/trickplay"
+	"github.com/roxy-media/roxy/server/internal/web"
 )
 
 type Server struct {
@@ -175,7 +176,12 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/sources/{id}/transcode", s.transcodeStream)
 			r.Get("/system/transcoding", s.transcodingInfo)
 		})
+		// An unknown /v1 path is an API error, not the web shell.
+		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "no such endpoint") })
 	})
+
+	// Everything else is Roxy Web (the built client embedded in the binary).
+	r.NotFound(web.Handler().ServeHTTP)
 
 	return r
 }

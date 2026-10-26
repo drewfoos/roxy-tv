@@ -3,7 +3,7 @@
 What the phone app looks like today (2026-10-26), written down so the desktop and web
 clients draw the same thing. The phone follows Crunchyroll's app with Roxy's own colours
 (blue, never orange) and a Discover tab Crunchyroll does not have. Source of truth for
-the values: `apps/tv/app/src/main/kotlin/tv/roxy/tv/ui/theme/Theme.kt` and
+the values: `apps/android/app/src/main/kotlin/tv/roxy/tv/ui/theme/Theme.kt` and
 `ui/phone/PhoneUi.kt`; screenshots were taken on a Galaxy S25 Ultra.
 
 ## 1. Tokens

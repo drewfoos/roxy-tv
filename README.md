@@ -7,8 +7,24 @@ and Radarr. It replaces Jellyfin for one household and keeps its port so the arr
 only changes a host and a token.
 
 ```
-you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Roxy Server -> Roxy TV app
+you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Roxy Server -> Roxy apps
 ```
+
+## Repository map
+
+One repository, three deliverables that version together:
+
+| Path | What | Stack |
+| --- | --- | --- |
+| `server/` | **Roxy Server**: library, metadata, streaming, Discover, users; serves the `/v1` API and Roxy Web | Go 1.27, SQLite, jellyfin-ffmpeg |
+| `apps/android/` | **Roxy Android app**: one APK with a phone layout and an Android TV layout | Kotlin, Jetpack Compose, libmpv |
+| `apps/web/` | **Roxy Web**: the browser client for Windows, Linux and macOS, served by the server at `/` | TypeScript, React, Vite, jassub |
+| `deploy/` | Dockerfile, Compose stack beside the arr apps, WSL firewall script | |
+| `docs/` | architecture, roadmap, ADRs, API reference, design spec, research | |
+| `testdata/` | scripts that generate the synthetic test media (the media itself is git-ignored) | |
+
+`.github/workflows/ci.yml` vets and tests the server, builds the web app and assembles the
+Android debug APK on every push.
 
 ## What works today (2026-10-20)
 
@@ -36,7 +52,7 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
 - LAN discovery (a UDP beacon on 8096), in-app APK updates, server-served Terms of Use and
   Privacy. (The Jellyfin-compatible API was removed; see ADR-0008.)
 
-**Roxy TV app** (`apps/tv/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.3.1)
+**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.3.1)
 
 - One APK with two layouts: a phone layout (portrait, Crunchyroll-style title pages, a
   Netflix-style hero carousel, bottom bar Home / Discover / Watchlist / Browse / Account)
@@ -53,7 +69,17 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
 - The login screen lists servers found on the network; tap one to fill the address.
 
 Phone screens are verified on a Galaxy S25 Ultra after every change; the TV layout runs on
-a TCL Q77K (Google TV). Roxy Web (`apps/web/`) is a placeholder with no code yet.
+a TCL Q77K (Google TV).
+
+**Roxy Web** (`apps/web/`, TypeScript, React, Vite; started 2026-10-26)
+
+- The computer client: Crunchyroll's layout at desktop width (`docs/design/roxy-look.md`),
+  the same `/v1` API as the Android app, served by the server itself at `/`.
+- Playback is the browser's own decoder with no transcoding: MKV, H.264 (8-bit and
+  Hi10P), HEVC 10-bit (GPU), AV1; ASS/SSA rendered by jassub (libass in WebAssembly)
+  with the fonts from the MKV. Verified in Chrome on every file in the test library,
+  including the KonoSuba opening and ending karaoke. Chrome and Edge are the targets;
+  Firefox cannot play MKV or Hi10P.
 
 ## Running the server
 
@@ -105,19 +131,31 @@ blocks inbound LAN traffic by default: run `deploy/wsl-firewall.ps1` once in an 
 PowerShell to open 8096 (TCP and UDP). NVENC works inside WSL with the normal Windows
 NVIDIA driver.
 
-## Building the app
+## Building Roxy Web
+
+Node 24 and npm. The build lands in `server/internal/web/dist/`, which the server embeds,
+so `go build` after `npm run build` gives one binary that serves the UI at `/`.
+
+```
+cd apps/web
+npm ci
+npm run dev      # Vite on http://127.0.0.1:5173, /v1 proxied to the server on 8096
+npm run build    # production bundle into server/internal/web/dist
+```
+
+## Building the Android app
 
 Android Studio's JDK and the Gradle wrapper:
 
 ```
-cd apps/tv
+cd apps/android
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The debug build can prefill a server URL and login through `BuildConfig`; see
-`apps/tv/app/build.gradle.kts`. `apps/tv/tools/publish-apk.ps1` copies a build to the
-server so installed phones get the update bar. `apps/tv/FONTS.md` explains the fallback
+`apps/android/app/build.gradle.kts`. `apps/android/tools/publish-apk.ps1` copies a build to the
+server so installed phones get the update bar. `apps/android/FONTS.md` explains the fallback
 font set and how to fetch it (fonts are not in the repository).
 
 ## Documents
@@ -140,6 +178,7 @@ first public release.
 
 ## Naming
 
-The project is **Roxy TV**. The backend is **Roxy Server**, the Android client is the
-**Roxy TV app**, the browser client will be **Roxy Web**. The bare name `roxy` is taken
-by several reverse-proxy projects, so the namespace is `roxy-media`.
+The project is **Roxy TV**. The backend is **Roxy Server** (`server/`), the Android client
+is the **Roxy Android app** (`apps/android/`, phone and Android TV in one APK; its package
+is still `tv.roxy.tv`), the browser client is **Roxy Web** (`apps/web/`). The bare name
+`roxy` is taken by several reverse-proxy projects, so the namespace is `roxy-media`.

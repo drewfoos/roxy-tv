@@ -9,11 +9,11 @@ testdata/hold/
 *.ts
 *.sup
 
-# downloaded fonts (fetched by scripts; licences listed in apps/tv/FONTS.md)
+# downloaded fonts (fetched by scripts; licences listed in apps/android/FONTS.md)
 testdata/fonts/*.otf
 testdata/fonts/*.ttf
 testdata/fonts/*.ttc
-apps/tv/app/src/main/assets/fonts/
+apps/android/app/src/main/assets/fonts/
 
 # ---- secrets and local config ----
 .env
@@ -35,7 +35,7 @@ server/data-wsl/
 server/roxy.db*
 server/cache/
 deploy/fonts/
-apps/tv/spike-runs/
+apps/android/spike-runs/
 *.apk
 *.aab
 build/
@@ -51,3 +51,9 @@ __pycache__/
 .idea/
 .vscode/
 *.swp
+
+# ---- Roxy Web ----
+apps/web/node_modules/
+apps/web/dist/
+server/internal/web/dist/*
+!server/internal/web/dist/.keep

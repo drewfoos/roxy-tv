@@ -1,7 +1,8 @@
-# Roxy TV app
+# Roxy Android app
 
-Android TV client for **Roxy Server**, written in Kotlin with Compose for TV
-(`androidx.tv.material3`) and **libmpv + libass** for playback. It speaks Roxy's native
+Android client for **Roxy Server**, one APK with a phone layout (Material 3, Crunchyroll
+style) and an Android TV layout (Compose for TV, `androidx.tv.material3`), written in
+Kotlin with **libmpv + libass** for playback. The package name stays `tv.roxy.tv`. It speaks Roxy's native
 `/v1` API only (ADR-0007): no Jellyfin SDK, no Jellyfin login. The server has no
 Jellyfin-compatible API any more (ADR-0008); players get per-video media tokens.
 

@@ -48,7 +48,7 @@ media URLs the player fetches itself may carry the token as `?api_key=<token>` i
 | GET/PUT/POST | `/v1/settings/arr`, `/v1/settings/arr/test` | admin: Sonarr / Radarr connection and defaults (request app-style), test connection lists root folders / profiles / tags |
 | POST | `/v1/webhooks/sonarr`, `/v1/webhooks/radarr` | arr Webhook connections (API key): import / rename / delete without a rescan; `GET /v1/webhooks/events` (admin) |
 | GET/POST/DELETE | `/v1/auth/keys[/{id}]` | admin: API keys for the arr apps |
-| GET | `/v1/apps/tv/latest?package=` | newest published build of the app for that applicationId (`{versionCode, versionName, notes, size, url}`), from `data/apps/tv/latest.json` written by `apps/tv/tools/publish-apk.ps1` |
+| GET | `/v1/apps/tv/latest?package=` | newest published build of the app for that applicationId (`{versionCode, versionName, notes, size, url}`), from `data/apps/tv/latest.json` written by `apps/android/tools/publish-apk.ps1` |
 | GET | `/v1/apps/tv/download?package=` | that APK |
 | POST | `/v1/segments/detect?season=&dry=1` | intro/outro detection by audio fingerprint for a season (report), or queue all seasons missing segments (202) |
 | GET | `/v1/items?type=episode,movie&parent=&recursive=1&library=&sort=date_created|title|index&desc=1&limit=&offset=&include=sources` | list items; episodes carry `seriesId` + `seriesTitle`; every item carries `images` and (for a user token) `userData` |

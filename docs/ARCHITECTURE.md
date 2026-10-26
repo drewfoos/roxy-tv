@@ -104,8 +104,9 @@ roxy/
         arr/              Sonarr/Radarr webhook receiver + /api/v3 reconciliation
     migrations/
   apps/
-    tv/                   Android TV app (Kotlin, Gradle)
-    web/                  Browser client (TypeScript, Vite)
+    android/              Android app, phone and TV layouts in one APK (Kotlin, Compose, libmpv)
+    web/                  Roxy Web, the browser client (TypeScript, React, Vite, jassub);
+                          its build is embedded in the server (server/internal/web)
   deploy/
     docker-compose.yml    Roxy + arr stack reference
   docs/
@@ -427,7 +428,7 @@ strictly better than Kodi on weak hardware.
 ### 5.6 App structure
 
 ```
-apps/tv/
+apps/android/
   app/                 Compose for TV screens: Home, Library, Series, Season, Player, Login (device code), Settings
   core/api/            backend adapter interface + Jellyfin-compat implementation (+ Roxy native later)
   core/player/         PlayerEngine interface, MpvEngine, Media3Engine, engine selector

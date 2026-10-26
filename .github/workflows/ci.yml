@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    name: Server (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CGO_ENABLED=0 go build -trimpath -o /tmp/roxy ./cmd/roxy
+
+  android:
+    name: Android (Gradle)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew && ./gradlew :app:assembleDebug --no-daemon

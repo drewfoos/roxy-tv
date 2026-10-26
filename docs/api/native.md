@@ -453,7 +453,7 @@ acceptance after login; Account → About links both documents.
 ## App updates
 
 Self-hosted apps have no store, so Roxy Server is the update channel. After a build,
-`apps/tv/tools/publish-apk.ps1 -Notes "..."` copies the APK into `<data>/apps/tv/` and
+`apps/android/tools/publish-apk.ps1 -Notes "..."` copies the APK into `<data>/apps/tv/` and
 writes `latest.json` keyed by applicationId (debug and release tracked separately).
 
 - `GET /v1/apps/tv/latest?package=<applicationId>` → `{versionCode, versionName, notes,

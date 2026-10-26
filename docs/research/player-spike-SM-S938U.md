@@ -10,7 +10,7 @@ libass 0.17.4, HarfBuzz 14.1.0. Server: Roxy Server dev build on the laptop over
 *correctness* (libass rendering, font selection, hwdec selection, HDR signalling, the
 native API end to end). The performance decision (default `hwdec`/`vo`, whether 4K ASS
 needs server burn-in) still has to come from the Costco TV. Raw output (overlay
-screenshots, mpv logs, `results.csv`): `apps/tv/spike-runs/20261013-SM-S938U/`.
+screenshots, mpv logs, `results.csv`): `apps/android/spike-runs/20261013-SM-S938U/`.
 
 ## Matrix (vo=gpu, ~12 s into each file, 23.976 fps content)
 
@@ -35,7 +35,7 @@ mistimed) in every run.
 | AV1 10-bit 1080p | mediacodec | mediacodec | mediacodec | 16% |
 | AV1 10-bit 1080p | no | software | yuv420p10 | 51% |
 
-Set 2 (2026-10-14, same device and build; raw output in `apps/tv/spike-runs/20261014-SM-S938U-set2/`):
+Set 2 (2026-10-14, same device and build; raw output in `apps/android/spike-runs/20261014-SM-S938U-set2/`):
 
 | File | hwdec requested | decoder actually used | output format | CPU | drops |
 |---|---|---|---|---|---|
@@ -134,14 +134,14 @@ Findings that the synthetic set could not produce:
       default flag: "full" mode scores signs/songs titles down and dialogue titles up;
       ASS beats SRT; the server's detected language overrides the tag. With that the
       English ASS dialogue track was selected and rendered (screenshots in
-      `apps/tv/spike-runs/20261014-konosuba-dialogue3/`).
+      `apps/android/spike-runs/20261014-konosuba-dialogue3/`).
 16. **Audio defaults to the English dub** when present (`alang=eng,en,jpn,ja`), per the
     owner's preference. The companion subtitle choice (full dialogue vs signs only) must
     come from the user's profile, not from the file's default flag.
 17. **Fonts in real releases are the weak spot, now covered by a bundled fallback set.**
     The English track asks for "Open Sans Semibold", which is not attached (only
     arial.ttf is); before the bundle libass fell back to the phone's Roboto Bold. The app
-    now ships 50 fallback fonts (`apps/tv/FONTS.md`, fetched by `tools/fetch-fonts.ps1`):
+    now ships 50 fallback fonts (`apps/android/FONTS.md`, fetched by `tools/fetch-fonts.ps1`):
     Open Sans in six styles, Liberation Sans/Serif, Carlito, Lato, Montserrat, Source
     Sans 3, Fira Sans, Cabin, Gandhi Sans, Noto Sans, DejaVu Sans, Noto Sans CJK JP, and
     Noto Sans Symbols / Symbols 2 / Math / Music / Emoji. With it the same track resolves
@@ -159,7 +159,7 @@ Findings that the synthetic set could not produce:
       so fallback lands on the bundled monochrome Noto Emoji and Noto Sans CJK JP. The
       colour a glyph is drawn in comes from the ASS style anyway, never from the font.
     - `testdata/out/test-symbols-fallback.mkv` (no attachments) exercises all of this;
-      every line rendered with no boxes (`apps/tv/spike-runs/20261014-symbols2/`).
+      every line rendered with no boxes (`apps/android/spike-runs/20261014-symbols2/`).
     - Symbola 9.00 was added and tested first-in-chain (`20261014-symbols-symbola-first/`):
       it renders every symbol and emoji in the test except kana and post-2016 emoji, in a
       heavier hand-drawn style than Noto Emoji. `tools/font-coverage.py` over the test and

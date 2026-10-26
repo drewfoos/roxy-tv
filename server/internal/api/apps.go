@@ -17,7 +17,7 @@ import (
 //	{"tv.roxy.tv.debug": {"versionCode": 3, "versionName": "0.3.0", "file": "roxy-tv-0.3.0-debug.apk",
 //	                      "notes": "Downloads and autoplay", "publishedAt": "2026-10-19T08:00:00Z"}}
 //
-// apps/tv/tools/publish-apk.ps1 writes it after a build. Nothing here is public: the
+// apps/android/tools/publish-apk.ps1 writes it after a build. Nothing here is public: the
 // manifest needs a Bearer token and the APK a token or api_key, like media.
 
 type appBuild struct {

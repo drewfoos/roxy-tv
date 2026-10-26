@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Optional dev defaults in apps/tv/spike.properties (git-ignored). They only prefill the
+// Optional dev defaults in apps/android/spike.properties (git-ignored). They only prefill the
 // login screen of the debug build; release builds get empty defaults.
 val devProps = Properties().apply {
     val f = rootProject.file("spike.properties")

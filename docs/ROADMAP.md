@@ -18,13 +18,13 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   Android SDK installed headlessly (API 36/37, build-tools 37), Gradle 9.8 wrapper in place.
 - Also done (2026-10-13, evening): persisted watch state on the compat surface. **Spike
   APK ran on the owner's phone (Galaxy S25 Ultra)**: libmpv + libass rendered the ASS
-  test with MKV-attached fonts correctly in all 15 runs of `apps/tv/tools/spike-matrix.ps1`;
+  test with MKV-attached fonts correctly in all 15 runs of `apps/android/tools/spike-matrix.ps1`;
   Hi10P decodes in software, HEVC10 / 4K HDR10 / AV1 10-bit in hardware. 2026-10-14: test
   set grown to 10 files (H.264 8-bit, HEVC 60 fps + 5.1, Blu-ray TrueHD + PGS via
   `testdata/tools/make-pgs.py`, HLG, MP4); all 30 runs pass, PGS renders. Two real
   releases (KonoSuba movie, Toy Story 5) play and seek; a mislabelled subtitle track led
   to server-side subtitle language sniffing (`detectedLanguage`) and a title-aware track
-  policy in the player. The app now bundles a 50-font fallback set (`apps/tv/FONTS.md`)
+  policy in the player. The app now bundles a 50-font fallback set (`apps/android/FONTS.md`)
   with fontconfig aliases, fixed `FONTCONFIG_FILE` wiring, and colour-emoji rejection;
   `test-symbols-fallback.mkv` renders every symbol/emoji/CJK line with no boxes. Results:
   `docs/research/player-spike-SM-S938U.md`. Decision (ADR-0007): Roxy clients speak the
@@ -33,13 +33,13 @@ APK can be sideloaded on the owner's Android phone meanwhile.
 - Also done (2026-10-14, night): **Phase 1b has started.** Server: TMDB + AniList metadata
   with a local image cache and `?w=` resizing, `/v1/home`, native watch state
   (`/v1/me/*`), Jellyfin-style **missing/unaired episode placeholders** (`isVirtual`,
-  `availability`) with Specials handled as season 0. App (`apps/tv`, package
+  `availability`) with Specials handled as season 0. App (`apps/android`, package
   `tv.roxy.tv`): login, Netflix-style home (hero + rows), series page with season row,
   episode list with thumbs, titles, progress and greyed "Missing" rows, movie page,
   settings, player with progress reporting. Verified on the phone against the real
   KonoSuba S1+S2+OVA release (Cerberus) with one episode held back: AniList matched,
   stills and titles filled, E5 shown as Missing, and the placeholder flipped to real when
-  the file was put back. Screens: `apps/tv/spike-runs/20261014-missing-episodes/`.
+  the file was put back. Screens: `apps/android/spike-runs/20261014-missing-episodes/`.
 - Also done (2026-10-14, later): the user's corrections. OVAs stay where the release numbers
   them (KonoSuba OVA = S01E11; Specials only for `S00Exx` files). AniList sequel chains
   are followed (Season n = n-th SEQUEL entry), relations are stored and exposed at
@@ -56,7 +56,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   keyframes, tiled sheets, ~9 s per episode), and the player got a **YouTube-layout
   control bar** with scrubbing preview, Autoplay switch, CC toggle, Settings sheet,
   picture-in-picture, mute and fill. All verified on the phone (PiP via button and via
-  Home). Screens in `apps/tv/spike-runs/20261014-controls/`.
+  Home). Screens in `apps/android/spike-runs/20261014-controls/`.
 - Also done (2026-10-14, 03:30): owner feedback round on the player. Seek bar redrawn by
   hand (full width, red from 0:00, round thumb), trickplay preview aspect fixed, Settings
   is now a YouTube-style popup that closes on tap-away, Autoplay switch removed (always
@@ -73,7 +73,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   (hero poster card with Play/Info, poster rows, bottom bar Home / Series / Movies /
   Settings, Netflix title pages with season chips and episode rows). Navigation moved to
   Navigation Compose with typed routes. Verified on the S25 Ultra, including play and
-  return. Screens in `apps/tv/spike-runs/20261014-controls/5*.png`.
+  return. Screens in `apps/android/spike-runs/20261014-controls/5*.png`.
 - Also done (2026-10-14, 07:20): phone layout round two from the owner's feedback. Hero is
   a full-bleed Crunchyroll-style carousel (poster bleeding under logo, "★ 8.5 Dub | Sub •
   genres", 3-line synopsis, pill Start watching + save circle, story-style timer bars,
@@ -124,7 +124,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   first time (fingerprints), ~1 s after. Not yet: recap detection, black-frame credits
   fallback for live action, a per-series "no OP" opt-out.
 - Also done (2026-10-19, late): **in-app updates**. The server hosts the newest APK per
-  applicationId (`data/apps/tv/latest.json` + file, written by `apps/tv/tools/publish-apk.ps1`;
+  applicationId (`data/apps/tv/latest.json` + file, written by `apps/android/tools/publish-apk.ps1`;
   `GET /v1/apps/tv/latest|download`). The app checks after login and shows a bar above the
   bottom navigation ("Roxy 0.3.1 is available · notes · Update · ×"), downloads with
   progress, then opens the package installer (REQUEST_INSTALL_PACKAGES + FileProvider).

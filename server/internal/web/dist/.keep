@@ -1,0 +1,1 @@
+The Roxy Web build (apps/web, `npm run build`) lands in this folder and is embedded in the server binary.

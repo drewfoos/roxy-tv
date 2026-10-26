@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "roxy-tv"
+rootProject.name = "roxy-android"
 
 include(":app")

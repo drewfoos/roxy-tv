@@ -42,7 +42,7 @@ sealed interface UpdateState {
  * Checks the server for a newer build of this app (same applicationId, higher
  * versionCode) once per launch, downloads it on request and hands it to Android's
  * installer. Self-hosted apps have no store, so the server is the update channel:
- * `apps/tv/tools/publish-apk.ps1` puts a build there after `gradlew assembleDebug`.
+ * `apps/android/tools/publish-apk.ps1` puts a build there after `gradlew assembleDebug`.
  */
 class Updates(private val context: Context, private val api: RoxyApi, private val prefs: Prefs, private val scope: CoroutineScope) {
 
