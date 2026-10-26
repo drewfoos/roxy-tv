@@ -26,20 +26,42 @@ func (l *Library) IngestPath(ctx context.Context, path string) error {
 			// Deleted or renamed away: a rescan of the library reconciles it.
 			return l.Scan(ctx, lib)
 		}
+		if insideSkipped(lib.Root, path) {
+			return nil // a download folder, extras, .ignore'd... (same rules as a scan)
+		}
 		if !info.IsDir() {
-			if !videoExts[strings.ToLower(filepath.Ext(path))] {
+			if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(info.Name()) != "" {
 				return nil
 			}
 			return l.addFileSafe(ctx, lib, path)
 		}
 		return filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil || d.IsDir() || !videoExts[strings.ToLower(filepath.Ext(p))] {
+			if walkErr != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if p != path && SkipDirReason(p) != "" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !videoExts[strings.ToLower(filepath.Ext(p))] || SkipFileReason(d.Name()) != "" {
 				return nil
 			}
 			return l.addFileSafe(ctx, lib, p)
 		})
 	}
 	return fmt.Errorf("path %s is not under any library root", path)
+}
+
+// insideSkipped: path is, or sits in, a folder below root that a scan skips.
+func insideSkipped(root, path string) bool {
+	for p := path; isUnder(root, p) && p != root; p = filepath.Dir(p) {
+		if st, err := os.Stat(p); err == nil && st.IsDir() && SkipDirReason(p) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func isUnder(root, path string) bool {

@@ -54,6 +54,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import tv.roxy.tv.ui.phone.shimmerBrush
+import tv.roxy.tv.ui.phone.WitchHat
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import coil3.request.ImageRequest
@@ -105,21 +109,41 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
     Box(modifier = modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
         // The skeleton shimmer while the picture is on its way (the same as the page skeletons).
         if (url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
-        if (url == null || failed) Text(
-            title,
-            color = RoxyColors.muted,
-            fontSize = placeholderTextSize.sp,
-            textAlign = TextAlign.Center,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(8.dp),
-        )
+        if (url == null || failed) ArtFallback(title, placeholderTextSize)
         if (url != null) {
             val context = LocalPlatformContext.current
             val request = remember(url, placeholderKey) {
                 ImageRequest.Builder(context).data(url).apply { if (placeholderKey != null && placeholderKey != url) placeholderMemoryCacheKey(placeholderKey) }.build()
             }
             AsyncImage(model = request, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), onError = { failed = true }, onSuccess = { loaded = true })
+        }
+    }
+}
+
+/**
+ * Stand-in art for a title with no picture: a deep gradient tinted per title (blue to
+ * violet, so a row of them isn't one flat grey), a faint hat and the name, like a
+ * designed card rather than a missing one.
+ */
+@Composable
+private fun ArtFallback(title: String, textSize: Int) {
+    val hue = remember(title) { 200f + (title.lowercase().hashCode() and 0x7fffffff) % 70 }
+    val brush = remember(hue) { Brush.verticalGradient(listOf(Color.hsv(hue, 0.55f, 0.30f), Color.hsv(hue, 0.45f, 0.11f))) }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().background(brush), contentAlignment = Alignment.Center) {
+        val hat = minOf(maxWidth * 0.3f, maxHeight * 0.28f, 64.dp)
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 10.dp)) {
+            if (hat >= 18.dp) WitchHat(size = hat, modifier = Modifier.alpha(0.3f).padding(bottom = 8.dp))
+            Text(
+                // File-style names (test-hevc10-ass, One.Pace.Arc) wrap at their separators, not mid-word.
+                remember(title) { title.replace(Regex("""([-_.])(?=\S)"""), "\$1​") },
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = textSize.sp,
+                lineHeight = (textSize * 1.25f).sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

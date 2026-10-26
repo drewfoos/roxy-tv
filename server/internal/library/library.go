@@ -167,12 +167,13 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 			return ctx.Err()
 		}
 		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") && path != lib.Root {
+			// Download folders, extras, recycle bins, .ignore'd folders: see skip.go.
+			if path != lib.Root && SkipDirReason(path) != "" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !videoExts[strings.ToLower(filepath.Ext(path))] {
+		if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(d.Name()) != "" {
 			return nil
 		}
 		seen[path] = true

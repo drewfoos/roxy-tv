@@ -1155,7 +1155,7 @@ data class MediaFolder(
 private data class MediaFoldersResponse(val libraries: List<MediaFolder> = emptyList())
 
 @Serializable
-data class FolderEntry(val name: String = "", val path: String = "", val videos: Int = 0)
+data class FolderEntry(val name: String = "", val path: String = "", val videos: Int = 0, val skip: String = "")
 
 @Serializable
 data class FolderListing(val path: String = "", val parent: String? = null, val dirs: List<FolderEntry> = emptyList(), val videos: Int = 0)

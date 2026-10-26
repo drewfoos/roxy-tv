@@ -27,6 +27,9 @@ import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.alpha
+import androidx.compose.material.icons.outlined.FolderOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -245,7 +248,12 @@ fun PhoneAddFolder(onBack: () -> Unit) {
                 list == null -> items(5) { Bone(Modifier.fillMaxWidth().height(56.dp)) }
                 list.isEmpty() && error == null -> item { Text("No folders in here.", fontSize = 13.sp, color = RoxyColors.muted) }
                 else -> items(list, key = { it.path }) { d ->
-                    FolderRow(name = d.name, sub = when (d.videos) { 0 -> d.path; in 1..999 -> "${d.videos} videos  ·  ${d.path}"; else -> "1000+ videos  ·  ${d.path}" }, icon = Icons.Outlined.Folder) { open(d.path) }
+                    if (d.skip.isNotEmpty()) {
+                        FolderRow(name = d.name, sub = d.skip, icon = Icons.Outlined.FolderOff, skipped = true) { open(d.path) }
+                    } else {
+                        val count = when (d.videos) { 0 -> null; 1 -> "1 video"; in 2..999 -> "${d.videos} videos"; else -> "1000+ videos" }
+                        FolderRow(name = d.name, sub = listOfNotNull(count, d.path).joinToString("  ·  "), icon = Icons.Outlined.Folder) { open(d.path) }
+                    }
                 }
             }
         }
@@ -290,9 +298,14 @@ fun PhoneAddFolder(onBack: () -> Unit) {
 }
 
 @Composable
-private fun FolderRow(name: String, sub: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+private fun FolderRow(
+    name: String, sub: String, icon: androidx.compose.ui.graphics.vector.ImageVector, skipped: Boolean = false, onClick: () -> Unit,
+) {
+    // Skipped folders (downloads, extras, recycle bins...) stay visible but faded, with a tag,
+    // so nobody wonders where they went.
     Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface).clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp).alpha(if (skipped) 0.55f else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, tint = RoxyColors.onBackground, modifier = Modifier.size(22.dp))
@@ -301,6 +314,13 @@ private fun FolderRow(name: String, sub: String, icon: androidx.compose.ui.graph
             if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.size(8.dp))
-        Icon(Icons.Filled.ChevronRight, null, tint = RoxyColors.muted)
+        if (skipped) {
+            Text(
+                "Skipped", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted,
+                modifier = Modifier.clip(RoundedCornerShape(50)).border(1.dp, RoxyColors.muted.copy(alpha = 0.6f), RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        } else {
+            Icon(Icons.Filled.ChevronRight, null, tint = RoxyColors.muted)
+        }
     }
 }

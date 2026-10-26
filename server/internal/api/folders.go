@@ -170,7 +170,8 @@ func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 	type dir struct {
 		Name   string `json:"name"`
 		Path   string `json:"path"`
-		Videos int    `json:"videos"` // video files directly inside (a hint, not a full count)
+		Videos int    `json:"videos"`         // video files up to two levels in (a hint, not a full count)
+		Skip   string `json:"skip,omitempty"` // why a scan leaves it alone (download folder, extras...)
 	}
 	dirs := []dir{}
 	videosHere := 0
@@ -184,8 +185,12 @@ func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 			continue // kernel and system folders, never media (and slow to look into)
 		}
 		if e.IsDir() || (e.Type()&fs.ModeSymlink != 0 && isDir(full)) {
-			dirs = append(dirs, dir{Name: name, Path: full, Videos: countVideos(full)})
-		} else if videoExt[strings.ToLower(filepath.Ext(name))] {
+			if why := library.SkipDirReason(full); why != "" {
+				dirs = append(dirs, dir{Name: name, Path: full, Skip: why})
+			} else {
+				dirs = append(dirs, dir{Name: name, Path: full, Videos: countVideos(full)})
+			}
+		} else if videoExt[strings.ToLower(filepath.Ext(name))] && library.SkipFileReason(name) == "" {
 			videosHere++
 		}
 	}
@@ -304,10 +309,10 @@ func countVideos(p string) int {
 				return
 			}
 			if e.IsDir() {
-				if depth < 2 && !strings.HasPrefix(e.Name(), ".") {
-					walk(filepath.Join(dir, e.Name()), depth+1)
+				if sub := filepath.Join(dir, e.Name()); depth < 2 && library.SkipDirReason(sub) == "" {
+					walk(sub, depth+1)
 				}
-			} else if videoExt[strings.ToLower(filepath.Ext(e.Name()))] {
+			} else if videoExt[strings.ToLower(filepath.Ext(e.Name()))] && library.SkipFileReason(e.Name()) == "" {
 				n++
 			}
 		}
