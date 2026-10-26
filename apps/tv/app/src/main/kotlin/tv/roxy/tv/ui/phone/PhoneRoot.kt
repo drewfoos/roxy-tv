@@ -98,7 +98,7 @@ private fun <T> pushSpec() = tween<T>(300, easing = FastOutSlowInEasing)
 private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabToTab() = initialState.destination.isTab() && targetState.destination.isTab()
 
 /** Height of the bottom bar's content (small, like most apps); the system inset is added on top. */
-private val BarHeight = 54.dp
+private val BarHeight = 58.dp
 
 /**
  * Phone shell: a compact bottom bar (Home, Watchlist, Browse, Account) over a Navigation
