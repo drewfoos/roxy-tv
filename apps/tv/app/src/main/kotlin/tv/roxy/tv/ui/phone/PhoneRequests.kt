@@ -78,7 +78,7 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
     val scope = rememberCoroutineScope()
     var list by remember { mutableStateOf<List<AdminRequest>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var filter by rememberSaveable { mutableStateOf("waiting") }
+    var filter by rememberSaveable { mutableStateOf("all") }
     var busy by remember { mutableStateOf<String?>(null) }
     suspend fun reload() {
         runCatching { app.api.adminRequests() }.onSuccess { list = it; error = null }.onFailure { error = it.message }
@@ -94,8 +94,7 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
     val waiting = all.filter { it.status == "approval" }
     val problems = all.filter { it.status == "failed" || it.download?.isProblem == true }
     val active = all.filter { it.status == "sent" && it.download?.state in setOf("downloading", "importing", "queued", "searching", "stalled") }
-    // Nothing waiting: start on everything instead of an empty tab.
-    val tab = if (filter == "waiting" && list != null && waiting.isEmpty()) "all" else filter
+    val tab = filter
     val shown = when (tab) {
         "waiting" -> waiting
         "active" -> active
@@ -109,10 +108,10 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
             Text("Requests", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp))
         }
         Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("All · ${all.size}", selected = tab == "all", onClick = { filter = "all" })
             Chip("Waiting · ${waiting.size}", selected = tab == "waiting", onClick = { filter = "waiting" })
             Chip("Downloading · ${active.size}", selected = tab == "active", onClick = { filter = "active" })
             Chip("Problems · ${problems.size}", selected = tab == "problems", onClick = { filter = "problems" })
-            Chip("All · ${all.size}", selected = tab == "all", onClick = { filter = "all" })
         }
         error?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp)) }
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 12.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
