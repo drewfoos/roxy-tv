@@ -370,10 +370,12 @@ fun TitlePageScaffold(
     // The strip is clear over the banner and only goes solid as the picture itself goes
     // black (it fades into it); the name fades in once the logo block has scrolled under it.
     val density = LocalDensity.current
-    val stripPx = with(density) { (BannerHeight * 0.55f).toPx() }
+    // The strip goes solid only as the picture is about to leave the screen.
+    val stripFromPx = with(density) { (BannerHeight * 0.55f).toPx() }
+    val stripPx = with(density) { (BannerHeight * 0.3f).toPx() }
     val headerAlpha by remember {
         derivedStateOf {
-            if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / stripPx).coerceIn(0f, 1f)
+            if (listState.firstVisibleItemIndex > 0) 1f else ((listState.firstVisibleItemScrollOffset - stripFromPx) / stripPx).coerceIn(0f, 1f)
         }
     }
     val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
@@ -490,8 +492,10 @@ fun TitleBannerArt(url: String?, title: String, listState: LazyListState, warm: 
     Box(
         modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
             val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
-            translationY = off
-            alpha = (1f - off / (heightPx * 0.55f)).coerceIn(0f, 1f)
+            // Half-speed parallax: the picture moves up as the page scrolls (swiped away, not
+            // faded out), dimming only a little on the way.
+            translationY = off * 0.5f
+            alpha = (1f - 0.45f * off / heightPx).coerceIn(0.55f, 1f)
         },
     ) {
         RoxyImage(url, title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)

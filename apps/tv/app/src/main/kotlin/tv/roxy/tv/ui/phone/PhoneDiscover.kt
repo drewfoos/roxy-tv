@@ -506,9 +506,10 @@ fun PhoneDiscoverDetail(
     // its faded foot. The header strip goes solid as the art fades, and the name takes it
     // over once the logo has scrolled under it.
     val density = LocalDensity.current
-    val stripPx = with(density) { (BannerHeight * 0.55f).toPx() }
+    val stripFromPx = with(density) { (BannerHeight * 0.55f).toPx() }
+    val stripPx = with(density) { (BannerHeight * 0.3f).toPx() }
     val titleFromPx = with(density) { (BannerHeight - LogoOverlap + 30.dp).toPx() }
-    val headerAlpha by remember { derivedStateOf { if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / stripPx).coerceIn(0f, 1f) } }
+    val headerAlpha by remember { derivedStateOf { if (listState.firstVisibleItemIndex > 0) 1f else ((listState.firstVisibleItemScrollOffset - stripFromPx) / stripPx).coerceIn(0f, 1f) } }
     val pinned by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleFromPx } }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 120.dp)) {
