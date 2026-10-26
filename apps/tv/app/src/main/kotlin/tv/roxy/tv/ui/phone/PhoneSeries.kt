@@ -299,7 +299,9 @@ fun PhoneSeries(
 /** Crunchyroll's tab strip: bold labels, a brand-colour underline under the open one, a hairline across. */
 @Composable
 fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
-    Column(modifier = modifier.fillMaxWidth()) {
+    // The grey divider runs under the tabs and the blue underline sits on it, not above it.
+    Box(modifier = modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(1.dp).background(RoxyColors.surfaceHigh))
         Row(modifier = Modifier.padding(horizontal = PhonePad)) {
             tabs.forEachIndexed { i, tab ->
                 val on = i == selected
@@ -309,7 +311,6 @@ fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier
                 }
             }
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(RoxyColors.surfaceHigh))
     }
 }
 
