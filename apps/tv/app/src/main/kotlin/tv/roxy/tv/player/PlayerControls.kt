@@ -247,11 +247,11 @@ fun PlayerControls(
                 when {
                     // The mini player carries no title: the page spells it out right under the video.
                     compact -> {}
-                    // Crunchyroll's: the series small on top, "E3 — Title" under it, both modest.
+                    // Crunchyroll's: the series on top, "E3 — Title" under it, readable at arm's length.
                     cr -> {
                         val (series, code) = splitSubtitle(state.subtitle)
-                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" — "), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" — "), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     else -> {
                         Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

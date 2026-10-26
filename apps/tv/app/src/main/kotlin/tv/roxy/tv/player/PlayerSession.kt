@@ -304,6 +304,9 @@ class PlayerSession(
         if (snapshot != null) {
             val src = snapshot.primarySource
             segments = src?.segments.orEmpty()
+            // The Quality menu names the file by its resolution ("1080p", "4K") offline too.
+            sourceHeight = src?.streams?.firstOrNull { it.type == "video" }?.height ?: 0
+            sourceDurationSec = src?.durationMs?.let { it / 1000.0 }
             player.subtitleLanguageOverrides = subtitleInfos(src?.streams.orEmpty()).filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
             player.play(url, start)
             // Seek previews are a bonus when the server happens to be reachable.
@@ -426,7 +429,9 @@ class PlayerSession(
         val wasPaused = ui.paused
         val timePos = player.timePosSeconds()
         if (timePos != null && !switching) reloadTarget = null
-        val offline = local || sourceId == null
+        // A download plays from the phone; while the server is reachable the lower qualities
+        // stream a transcode from it, and the top entry goes back to the file here.
+        val offline = sourceId == null || !app.prefs.session.value.isLoggedIn
         ui = PlayerUiState(
             title = title,
             subtitle = subtitleLine,
@@ -435,7 +440,11 @@ class PlayerSession(
             durationSec = (if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec ?: 0.0,
             qualityOptions = QualityOption.forSource(sourceHeight).let { if (offline) it.take(1) else it },
             qualityKey = if (transcoding) quality.key else QualityOption.Original.key,
-            qualityNote = if (local) "Downloads play from this device at their original quality." else null,
+            qualityNote = when {
+                local && offline -> "Downloads play from this device at their original quality."
+                local -> "Downloaded: the top quality plays from this phone; lower ones stream from the server."
+                else -> null
+            },
             bufferedSec = player.cacheEndSeconds() ?: 0.0,
             paused = player.isPaused(),
             muted = player.isMuted(),
@@ -538,7 +547,7 @@ class PlayerSession(
     }
 
     private fun changeQuality(q: QualityOption) {
-        if (local || sourceId == null) return
+        if (sourceId == null || !app.prefs.session.value.isLoggedIn) return
         val current = if (transcoding) quality else QualityOption.Original
         if (q == current) return
         val pos = reloadTarget ?: player.timePosSeconds() ?: 0.0
