@@ -183,7 +183,7 @@ img { display: block; }
 .card { display: block; position: relative; min-width: 0; }
 .card__art { display: block; position: relative; border-radius: 0; overflow: hidden; background: var(--surface-high); aspect-ratio: 2 / 3; transition: transform 160ms ease, box-shadow 160ms ease; }
 .card__art--thumb { aspect-ratio: 16 / 9; }
-.card:hover .card__art { transform: scale(1.03); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); z-index: 1; }
+/* No zoom on hover: Crunchyroll's cards sit still until the panel slides over them. */
 .card__img { width: 100%; height: 100%; object-fit: cover; }
 .card__name { margin-top: 10px; font-size: 14px; font-weight: 700; line-height: 19px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card__sub { margin-top: 4px; font-size: 13px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
@@ -202,7 +202,6 @@ img { display: block; }
 .card__hover-btn { width: 32px; height: 32px; display: grid; place-items: center; color: var(--accent); }
 .card__hover-btn:hover { color: var(--accent-light); }
 .card__hover .save-btn { width: 32px; height: 32px; border: 0; }
-.card:has(.card__hover) .card__art { transform: none; box-shadow: none; }
 .card__saved { position: absolute; top: 0; right: 0; width: 34px; height: 34px; background: linear-gradient(225deg, var(--accent) 50%, transparent 50%); color: var(--on-brand); display: flex; justify-content: flex-end; padding: 3px 3px 0 0; }
 .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0, 0, 0, 0.55); }
 .progress i { display: block; height: 100%; background: var(--accent); }
@@ -612,7 +611,6 @@ img { display: block; }
   .row__track--thumbs { grid-auto-columns: calc(100% - 60px); }
   .card__art { border-radius: 8px; }
   .card__art--thumb { border-radius: 8px; }
-  .card:hover .card__art { transform: none; box-shadow: none; }
   .card__name { margin-top: 8px; font-size: 14px; line-height: 18px; font-weight: 600; -webkit-line-clamp: 1; }
   .card__sub { margin-top: 2px; font-size: 12px; min-height: 22px; }
   .card__menu { opacity: 1; }
