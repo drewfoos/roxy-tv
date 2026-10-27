@@ -203,7 +203,8 @@ interface PlayerActions {
 enum class Sheet { None, Settings, Subtitles, Audio, Quality, Speed }
 
 private val Panel = Color(0xF21C1C22)
-private val YtRed = Color(0xFFFF0033)
+/** The seek bar, its thumb and the captions underline: Roxy's blue everywhere now. */
+private val Bar = RoxyColors.accent
 private val Muted = Color(0xFFB0B4BA)
 
 /**
@@ -278,9 +279,11 @@ fun PlayerControls(
                         if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" — "), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    // The TV: the series over "E3 - Title", on at most 60 % of the width so the clock keeps its room.
                     else -> {
-                        Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (state.subtitle.isNotEmpty()) Text(state.subtitle, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val (series, code) = splitSubtitle(state.subtitle)
+                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
+                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" \u2014 "), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
                     }
                 }
             }
@@ -302,8 +305,9 @@ fun PlayerControls(
             }
         }
 
-        // Centre transport (big targets for the remote)
-        if (sheet == Sheet.None) {
+        // Centre transport: the phone page's bare -10 / pause / +10. The TV has none
+        // (Crunchyroll's player keeps everything in the bottom row).
+        if (sheet == Sheet.None && cr) {
             Row(modifier = Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(if (compact) 36.dp else 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 RoundButton(Icons.Filled.Replay10, "Back 10 seconds", size = if (compact) 48.dp else 60.dp, iconSize = if (compact) 32.dp else if (cr) 36.dp else 30.dp, disc = !cr, onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
                 RoundButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", size = if (compact) 64.dp else 76.dp, iconSize = if (compact) 50.dp else if (cr) 56.dp else 42.dp, disc = !cr, onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
@@ -321,24 +325,23 @@ fun PlayerControls(
             }
             SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction, color = RoxyColors.accent, flush = true)
         }
+        // The TV (this host serves only TVs now): Crunchyroll's web player's bar. The blue
+        // seek bar, then -10 / play / +10, volume and "elapsed / total" at the left; next
+        // episode, subtitles, the speed and settings at the right. Focus starts on play.
         else Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
             SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                if (!compact) IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction)
-                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
-                if (!compact) IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction)
-                Spacer(Modifier.width(6.dp))
-                Text("${fmtTime(state.positionSec)} / ${fmtTime(state.durationSec)}", color = Color.White, fontSize = if (compact) 11.sp else 13.sp)
+                IconButton(Icons.Filled.Replay10, "Back 10 seconds", onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
+                IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
+                IconButton(Icons.Filled.Forward10, "Forward 10 seconds", onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
+                IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction)
+                Spacer(Modifier.width(8.dp))
+                Text(fmtTime(state.positionSec) + " / " + fmtTime(state.durationSec), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
-                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { actions.toggleCaptions(); onInteraction() }, onFocus = onInteraction, compact = compact)
-                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
-                if (state.pipSupported) IconButton(Icons.Filled.PictureInPictureAlt, "Picture in picture", onClick = { actions.enterPip() }, onFocus = onInteraction, compact = compact)
-                when (state.fullscreen) {
-                    // On a page the button turns the phone; the crop-to-fill toggle stays for the full-screen host (pinch zooms either way).
-                    null -> IconButton(if (state.fillScreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen, if (state.fillScreen) "Fit to screen" else "Fill screen", onClick = { actions.toggleFill(); onInteraction() }, onFocus = onInteraction)
-                    false -> IconButton(Icons.Filled.Fullscreen, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = true)
-                    true -> IconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction)
-                }
+                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction)
+                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { onSheet(if (sheet == Sheet.Subtitles) Sheet.None else Sheet.Subtitles) }, onFocus = onInteraction)
+                SpeedButton(state.speed, onClick = { onSheet(if (sheet == Sheet.Speed) Sheet.None else Sheet.Speed) }, onFocus = onInteraction)
+                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction)
             }
         }
 
@@ -435,7 +438,7 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, c
  * the trickplay tile for the hovered time and seeks on release; Left/Right steps 10 s.
  */
 @Composable
-private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier: Modifier, onSeek: (Double) -> Unit, onStep: (Int) -> Unit, onFocus: () -> Unit, color: Color = YtRed, flush: Boolean = false) {
+private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier: Modifier, onSeek: (Double) -> Unit, onStep: (Int) -> Unit, onFocus: () -> Unit, color: Color = Bar, flush: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     val dur = state.durationSec.takeIf { it > 0 } ?: 1.0
     var dragFraction by remember { mutableStateOf<Float?>(null) }
@@ -537,12 +540,13 @@ private fun TrickplayTile(trickplay: TrickplayPreview, positionSec: Double, modi
 
 /** Flat icon button for the bottom row: white icon, white focus ring, optional red underline. */
 @Composable
-private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false, tint: Color = Color.White) {
+private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false, tint: Color = Color.White, focusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(if (compact) 42.dp else 44.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
@@ -552,8 +556,30 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 28.dp else 26.dp))
-            Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else 18.dp).height(2.dp).background(if (underline) YtRed else Color.Transparent))
+            Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else 18.dp).height(2.dp).background(if (underline) Bar else Color.Transparent))
         }
+    }
+}
+
+/** "1x" / "1.5x": the playback speed as a pill, like the web player's. */
+@Composable
+private fun SpeedButton(speed: Double, onClick: () -> Unit, onFocus: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val label = if (speed == 1.0) "1x" else speed.toString().trimEnd('0').trimEnd('.') + "x"
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .height(44.dp)
+            .widthIn(min = 44.dp)
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+            .focusable()
+            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (focused) Color(0x33FFFFFF) else Color.Transparent)
+            .tapClick(onClick)
+            .padding(horizontal = 8.dp),
+    ) {
+        Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     }
 }
 

@@ -78,7 +78,8 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
             .components { add(OkHttpNetworkFetcherFactory(callFactory = { api.http })) }
-            .crossfade(true)
+            // The fade-in is one animation per card as thumbnails land: a phone shrugs, a TV's processor stutters.
+            .crossfade(!isTelevision(this))
             .build()
 
     companion object {

@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -47,8 +47,20 @@ android {
             buildConfigField("String", "DEFAULT_PASSWORD", "\"${devProp("server.password")}\"")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        // The debug app (same id, key and dev defaults, so it installs over it and keeps the
+        // sign-in) built the release way: R8, no debug checks. What the TV is measured with.
+        create("perf") {
+            initWith(getByName("debug"))
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            matchingFallbacks += listOf("release", "debug")
         }
     }
 
@@ -73,6 +85,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
     implementation(libs.androidx.tv.material)
+    // Android TV's Watch Next store (the launcher's "Continue watching" row).
+    implementation("androidx.tvprovider:tvprovider:1.0.0")
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

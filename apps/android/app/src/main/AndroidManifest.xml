@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android TV: rows in the launcher's Watch Next ("Continue watching") store. -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Finding servers on the LAN: a multicast lock so Wi-Fi delivers the beacon's broadcast replies. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -46,6 +48,12 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- The launcher's Watch Next card: roxytv://play/<itemId> resumes that title. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="roxytv" android:host="play" />
+            </intent-filter>
         </activity>
 
         <!-- Exported so tools/spike-*.ps1 can launch it with extras over adb (diagnostics). -->
@@ -64,6 +72,13 @@
             android:name=".data.downloads.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Watch Next thumbnails for the launcher, which has no network: read-only JPEGs from the cache. -->
+        <provider
+            android:name=".tv.ImageProvider"
+            android:authorities="${applicationId}.images"
+            android:exported="true"
+            android:grantUriPermissions="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

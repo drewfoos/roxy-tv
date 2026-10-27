@@ -53,6 +53,7 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import tv.roxy.tv.isTelevision
 import tv.roxy.tv.ui.phone.shimmerBrush
 import tv.roxy.tv.ui.phone.WitchHat
 import androidx.compose.ui.graphics.Brush
@@ -109,10 +110,10 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
     // The shimmer is one infinite animation per loading card: fine on a phone, a frame
     // drain on a TV's processor with thirty cards in view, so the TV shows a plain tile.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val tv = remember { tv.roxy.tv.isTelevision(context) }
+    val onTv = remember { isTelevision(context) }
     Box(modifier = modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
         // The skeleton shimmer while the picture is on its way (the same as the page skeletons).
-        if (!tv && url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
+        if (!onTv && url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
         if (url == null || failed) ArtFallback(title, placeholderTextSize)
         if (url != null) {
             val context = LocalPlatformContext.current

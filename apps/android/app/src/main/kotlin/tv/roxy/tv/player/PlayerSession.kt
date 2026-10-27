@@ -12,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import tv.roxy.tv.tv.WatchNext
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.MediaSegment
 import tv.roxy.tv.api.subtitleInfos
@@ -429,6 +430,7 @@ class PlayerSession(
 
     private fun markWatched(id: String) {
         if (!app.prefs.session.value.isLoggedIn) return
+        app.scope.launch { WatchNext.remove(app, id) }
         app.scope.launch {
             val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
             if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
@@ -671,6 +673,11 @@ class PlayerSession(
         val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
         val subIndex = runCatching { player.currentStreamIndex("sub") }.getOrNull()
         app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
+        // A pause or stop is when the launcher's Watch Next row should show this title at this position.
+        if (reason == "pause" || reason == "stop") {
+            val durationMs = (ui.durationSec * 1000).toLong()
+            app.scope.launch { (app.items[id] ?: runCatching { app.api.item(id) }.getOrNull())?.let { WatchNext.publish(app, it, positionMs, durationMs) } }
+        }
         app.scope.launch {
             // While the server is unreachable (playing a download away from home) skip the
             // network for a minute at a time instead of timing out on every tick.

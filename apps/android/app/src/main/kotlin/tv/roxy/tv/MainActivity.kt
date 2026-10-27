@@ -49,6 +49,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.compose.runtime.rememberCoroutineScope
 import tv.roxy.tv.ui.login.LoginScreen
+import tv.roxy.tv.tv.WatchNext
+import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.setup.SetupWizard
 import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.phone.PhoneRoot
@@ -131,6 +133,14 @@ class MainActivity : ComponentActivity() {
         inPip = isInPictureInPictureMode
     }
 
+    /** An item the launcher's Watch Next card asked for (roxytv://play/<id>); played once the app is signed in. */
+    var pendingPlayId by mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        WatchNext.itemIdFrom(intent.data)?.let { pendingPlayId = it }
+    }
+
     override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true) }
     override fun onStop() { RoxyApp.get(this).remote.setForeground(false); super.onStop() }
 
@@ -138,6 +148,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Timber.i("Device report:\n%s", DeviceReport.full(this))
         val tv = isTelevision(this)
+        WatchNext.itemIdFrom(intent?.data)?.let { pendingPlayId = it }
         // The TV UI is a landscape, D-pad layout; the phone browses in portrait like Netflix
         // (the player is landscape on both, set in the manifest).
         requestedOrientation = if (tv) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -223,6 +234,15 @@ private fun AppRoot(tv: Boolean) {
     }
 
     val onUnauthorized = { app.scope.launch { app.prefs.clearSession() }; Unit }
+    // The launcher's Watch Next card: resume that title now that the session is ready.
+    val activity = LocalContext.current as? MainActivity
+    val pendingPlay = activity?.pendingPlayId
+    LaunchedEffect(pendingPlay) {
+        if (activity == null || pendingPlay == null) return@LaunchedEffect
+        activity.pendingPlayId = null
+        val item = app.items[pendingPlay] ?: runCatching { app.api.item(pendingPlay) }.getOrNull() ?: return@LaunchedEffect
+        playItem(activity, item).onFailure { Timber.w(it, "watch next play failed") }
+    }
     // Keyed by profile so every screen's ViewModel starts fresh after a switch.
     key(session.profileId) {
         if (tv) TvRoot(onUnauthorized) else PhoneRoot(onUnauthorized)
