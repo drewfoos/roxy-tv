@@ -47,6 +47,7 @@ fun TvWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     val memory = rememberFocusMemory()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    RegisterPageEntry { memory.restore(items?.firstOrNull()?.let { "watchlist/${it.id}" }) }
     suspend fun load() {
         runCatching { app.api.favorites().items }
             .onSuccess { items = it; error = null }
@@ -78,6 +79,7 @@ fun TvHistory() {
     val memory = rememberFocusMemory()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    RegisterPageEntry { memory.restore(items?.firstOrNull()?.let { "history/${it.id}" }) }
     suspend fun load() {
         runCatching { app.api.history(100).items }
             .onSuccess { items = it; error = null }

@@ -36,7 +36,10 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -73,6 +76,8 @@ fun TvTextField(
     onDone: () -> Unit = {},
 ) {
     val fieldFocus = remember { FocusRequester() }
+    val wrapperFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val interaction = remember { MutableInteractionSource() }
     val wrapperFocused by interaction.collectIsFocusedAsState()
@@ -90,6 +95,28 @@ fun TvTextField(
                 val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
                 if (!editing && ok && ev.type == KeyEventType.KeyUp) { editing = true; true } else false
             }
+            // Seen before the text field itself, which would otherwise swallow Up / Down as
+            // cursor moves: while typing (keyboard already closed), Up / Down leave the
+            // field and focus moves on from the wrapper; Back just stops typing.
+            .onPreviewKeyEvent { ev ->
+                when {
+                    editing && ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionDown || ev.key == Key.DirectionUp) -> {
+                        editing = false
+                        keyboard?.hide()
+                        runCatching { wrapperFocus.requestFocus() }
+                        focusManager.moveFocus(if (ev.key == Key.DirectionDown) FocusDirection.Down else FocusDirection.Up)
+                        true
+                    }
+                    editing && ev.type == KeyEventType.KeyDown && ev.key == Key.Back -> {
+                        editing = false
+                        keyboard?.hide()
+                        runCatching { wrapperFocus.requestFocus() }
+                        true
+                    }
+                    else -> false
+                }
+            }
+            .focusRequester(wrapperFocus)
             .focusable(interactionSource = interaction)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -108,7 +135,9 @@ fun TvTextField(
                     .fillMaxWidth()
                     .focusRequester(fieldFocus)
                     .focusProperties { canFocus = editing }
-                    .onFocusChanged { if (!it.isFocused && editing) editing = false },
+                    // The field losing focus on its own (the keyboard going away on some
+                    // TVs) hands focus back to the wrapper rather than to nothing.
+                    .onFocusChanged { if (!it.isFocused && editing) { editing = false; runCatching { wrapperFocus.requestFocus() } } },
             )
         }
     }

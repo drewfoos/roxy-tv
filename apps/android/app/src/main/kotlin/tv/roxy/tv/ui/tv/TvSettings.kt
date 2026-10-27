@@ -84,6 +84,7 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
     )
     val all = preferences + advanced
     var selected by rememberSaveable { mutableStateOf(all.first().key) }
+    RegisterPageEntry { memory.restore("set/$selected") }
     val current = all.firstOrNull { it.key == selected } ?: all.first()
     val device = remember { DeviceReport.soc() + "\n" + DeviceReport.display(context) }
 

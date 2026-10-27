@@ -210,7 +210,14 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   row (-10, play, +10, volume, time ... next, CC, speed, gear), no centre discs. Banner:
   the hat left, "Roxy TV" right. Performance rules for the TV: no shimmer, no crossfade,
   no blurred shadows, plain focusable boxes (not tv-material Surface), scrims sized to the
-  strip they tint, one background fill; measure with the `perf` build type.
+  strip they tint, one background fill; measure with the `perf` build type. D-pad rules:
+  the rail opens only on a Left the page cannot use and, while open, the page cannot take
+  focus; rows and the Home column place the focused card themselves (Compose's
+  scroll-into-view is off there) with the focused card at the content start and earlier
+  cards cut at the rail's middle; grids are entered by explicit focus requesters (Right
+  from a Browse category, Down from the search field, land on the first card); the
+  search field's Up / Down / Back leave it while typing. Episodes with no still get a
+  frame from their file, and a season.nfo in a folder names and numbers that season.
 - **Breakpoints** (`tokens.css`): phone ≤ 600, tablet 601–1023, desktop S 1024–1279,
   desktop M 1280–1599, desktop L 1600–2199, ultra ≥ 2200. They set the gutter, the card
   gap, how many posters a row shows (2.4 / 3.4 / 4.35 / 5.35 / 6.35 / 7.35), grid

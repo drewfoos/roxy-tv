@@ -19,7 +19,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/config"
+	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/stills"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
 
@@ -40,6 +42,7 @@ type Service struct {
 	anilist   Provider
 	tmdb      *TMDB
 	images    *http.Client
+	ff        *ffmpeg.FFmpeg // frame grabs for episodes with no still; nil without ffmpeg
 
 	queue chan job
 	force bool // the job being processed was a forced refresh (worker-local)
@@ -174,6 +177,10 @@ func (s *Service) process(ctx context.Context, j job) error {
 	if err != nil || it == nil {
 		return err
 	}
+	// Whatever the lookup finds, every episode (and a film nobody has art for) ends up
+	// with a picture: a frame of its own file where no still came from a provider or
+	// from a file next to the media.
+	defer s.fillStills(ctx, it)
 	s.force = j.force
 	s.replaceImages = j.images
 	// Details set by hand (or a custom show no provider knows) stay as they are.
@@ -648,6 +655,59 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 }
 
 func newID() string { return uuid.NewString() }
+
+// UseFFmpeg lets the service grab frames for episodes that have no still.
+func (s *Service) UseFFmpeg(ff *ffmpeg.FFmpeg) { s.ff = ff }
+
+// fillStills grabs a frame for every episode of a series (or the film itself when it has
+// neither a thumb nor a backdrop) that still has no thumb. Cheap when nothing is missing.
+func (s *Service) fillStills(ctx context.Context, it *model.Item) {
+	if s.ff == nil {
+		return
+	}
+	var targets []model.Item
+	switch it.Type {
+	case model.TypeSeries:
+		seasons, err := s.store.Children(ctx, it.ID, model.TypeSeason)
+		if err != nil {
+			return
+		}
+		for _, se := range seasons {
+			eps, err := s.store.Children(ctx, se.ID, model.TypeEpisode)
+			if err != nil {
+				return
+			}
+			targets = append(targets, eps...)
+		}
+	case model.TypeMovie:
+		if b, err := s.store.GetItemImage(ctx, it.ID, "backdrop"); err != nil || b != nil {
+			return
+		}
+		targets = []model.Item{*it}
+	default:
+		return
+	}
+	made := 0
+	for i := range targets {
+		if targets[i].IsVirtual {
+			continue
+		}
+		if img, err := s.store.GetItemImage(ctx, targets[i].ID, "thumb"); err != nil || img != nil {
+			continue
+		}
+		img, err := stills.Grab(ctx, s.ff, s.store, s.cfg, targets[i].ID)
+		if err != nil {
+			slog.Warn("metadata: frame still failed", "item", targets[i].Title, "err", err)
+			continue
+		}
+		if img != nil {
+			made++
+		}
+	}
+	if made > 0 {
+		slog.Info("metadata: frame stills made", "item", it.Title, "count", made)
+	}
+}
 
 // fetchImage downloads an image into the cache and records it: photos (poster, backdrop,
 // thumb) as JPEG, logos as PNG so their transparency survives. Already-cached files from

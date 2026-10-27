@@ -28,6 +28,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.toRoute
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
@@ -269,16 +270,22 @@ private fun TvRoot(onUnauthorized: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     val entry by nav.currentBackStackEntryAsState()
-    val page = entry?.destination?.let { d -> RailPage.entries.firstOrNull { d.hasRoute(it.route::class) } }
+    // Matched by the route's serial name (what Navigation stores for a typed route); a class
+    // name would not survive R8.
+    val routeName = entry?.destination?.route
+    val page = RailPage.entries.firstOrNull { routeName == it.routeName }
+    var homeTick by remember { mutableStateOf(0) }
     fun go(p: RailPage) {
-        if (p == page) return
-        nav.navigate(p.route) { popUpTo(Route.Home) { inclusive = false }; launchSingleTop = true }
+        // Read the page at call time: the rail's click handlers can outlive a composition.
+        val now = nav.currentBackStackEntry?.destination?.route?.let { r -> RailPage.entries.firstOrNull { it.routeName == r } }
+        if (p == now) { if (p == RailPage.Home) homeTick++; return }
+        nav.navigate(p.route) { popUpTo(nav.graph.findStartDestination().id) { inclusive = false }; launchSingleTop = true }
     }
     val openSeries = { it: Item -> nav.navigate(Route.Series(it.id, it.title)) }
     val openMovie = { it: Item -> nav.navigate(Route.Movie(it.id, it.title)) }
     TvShell(current = page, onSelect = ::go, onSwitchProfile = { scope.launch { app.prefs.clearProfile() } }) {
         NavHost(nav, startDestination = Route.Home) {
-            composable<Route.Home> { TvHome(onOpenSeries = openSeries, onOpenMovie = openMovie, onUnauthorized = onUnauthorized) }
+            composable<Route.Home> { TvHome(onOpenSeries = openSeries, onOpenMovie = openMovie, onUnauthorized = onUnauthorized, refreshTick = homeTick) }
             composable<Route.Series> { entry ->
                 val r = entry.toRoute<Route.Series>()
                 TvSeries(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie)

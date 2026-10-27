@@ -150,6 +150,9 @@ func normalizeTitle(s string) string {
 	var b strings.Builder
 	lastSpace := true
 	for _, r := range strings.ToLower(s) {
+		if f, ok := accentFold[r]; ok {
+			r = f
+		}
 		switch {
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			b.WriteRune(r)
@@ -200,9 +203,25 @@ func TitleSimilarity(a, b string) float64 {
 	return score
 }
 
+// accentFold maps accented Latin letters to their plain form, so "Pokémon" and "Pokemon"
+// (the provider's spelling and the folder's) count as the same word.
+var accentFold = map[rune]rune{
+	'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'ā': 'a',
+	'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e', 'ē': 'e',
+	'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i', 'ī': 'i',
+	'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o', 'ō': 'o',
+	'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u', 'ū': 'u',
+	'ç': 'c', 'ñ': 'n', 'ý': 'y', 'ÿ': 'y', 'ß': 's',
+}
+
 // minMatchScore is the similarity below which a search hit is treated as noise.
 // Search endpoints always return *something*; "Roxy Test Show" must not become a match.
 const minMatchScore = 0.6
+
+// minMatchScoreSameYear is the bar when the candidate's year is the folder's: a retitled
+// release ("The Legend of Aang - The Last Airbender" for "Avatar Aang: The Last
+// Airbender", 2026) shares fewer words but the year settles it.
+const minMatchScoreSameYear = 0.45
 
 // pickBest scores candidates by title similarity (best of the given names) plus a year
 // bonus, and returns the index of the winner or -1.
@@ -215,7 +234,8 @@ func pickBest(query string, year *int, candidates []candidate) int {
 				score = s
 			}
 		}
-		if score < minMatchScore {
+		sameYear := year != nil && c.year != 0 && *year == c.year
+		if score < minMatchScore && !(sameYear && score >= minMatchScoreSameYear) {
 			continue
 		}
 		if year != nil && c.year != 0 {

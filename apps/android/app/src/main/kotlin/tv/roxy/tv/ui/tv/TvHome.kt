@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package tv.roxy.tv.ui.tv
 
 import androidx.compose.foundation.background
@@ -20,11 +22,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,7 +76,7 @@ private val RowPin = 105.dp
  * Watching is 16:9 cards, the other rows posters.
  */
 @Composable
-fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthorized: () -> Unit) {
+fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthorized: () -> Unit, refreshTick: Int = 0) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: HomeViewModel = viewModel { HomeViewModel(app.api) }
@@ -78,6 +84,16 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
     val scope = rememberCoroutineScope()
     val memory = rememberFocusMemory()
     val listState = rememberLazyListState()
+    // The rail hands focus to the hero's button, or to the card that had it.
+    RegisterPageEntry { memory.restore("hero/play") }
+    // Home chosen on the rail while already on Home: reload, back to the top, focus the hero.
+    LaunchedEffect(refreshTick) {
+        if (refreshTick == 0) return@LaunchedEffect
+        vm.load(silent = true)
+        listState.scrollToItem(0)
+        memory.key = "hero/play"
+        repeat(6) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
+    }
 
     // (Re)load on every return to the foreground so progress made in the player shows up.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(silent = state is HomeUiState.Ready) }
@@ -106,11 +122,17 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
         is HomeUiState.Ready -> {
             val hero = s.heroes.firstOrNull() ?: s.hero?.let { HeroPick(it, it) }
             val pin = with(LocalDensity.current) { RowPin.roundToPx() }
-            // The focused row drives the page scroll through a flow: no recomposition per focus change.
+            // The focused row drives the page scroll through a flow: no recomposition per focus
+            // change. The hero pins the page to its top; a row sits RowPin below the top.
             val focusedRow = remember { mutableStateOf(-1) }
-            LaunchedEffect(listState) { snapshotFlow { focusedRow.value }.collect { if (it >= 0) listState.animateScrollToItem(it, -pin) } }
+            LaunchedEffect(listState) { snapshotFlow { focusedRow.value }.collect { if (it == 0) listState.animateScrollToItem(0) else if (it > 0) listState.animateScrollToItem(it, -pin) } }
             val rows = remember(s.rows) { tvRows(s.rows) }
+            // Each row remembers its last focused card, so Up / Down between rows (and Down
+            // from the hero) land there instead of on whatever card happens to be nearest.
+            val lastInRow = remember { mutableStateMapOf<String, String>() }
+            fun lastKey(i: Int): String? = rows.getOrNull(i)?.let { r -> lastInRow[r.key] ?: r.items.firstOrNull()?.let { "${r.key}/${it.id}" } }
             RestoreFocus(memory, listState, rows, pin, fallback = "hero/play")
+            CompositionLocalProvider(LocalBringIntoViewSpec provides NoBringIntoView) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 item(key = "hero") {
                     Hero(
@@ -118,18 +140,21 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         onPlay = { play -> if (play.isEpisode || play.isMovie) scope.launch { playItem(context, play).onFailure { Timber.w(it, "play failed") } } else open(play) },
                         onInfo = { title -> open(title) },
                         onFocused = { focusedRow.value = 0 },
+                        downKey = lastKey(0),
                     )
                 }
                 itemsIndexed(rows, key = { _, r -> r.key }) { i, row ->
                     TvRow(
                         title = row.title, rowKey = row.key, items = row.items, api = app.api, memory = memory,
-                        onClick = ::open, onRowFocused = { focusedRow.value = i + 1 }, thumbs = row.key == "continue",
+                        onClick = ::open, onRowFocused = { key -> lastInRow[row.key] = key; focusedRow.value = i + 1 }, thumbs = row.key == "continue",
+                        upKey = if (i == 0) "hero/play" else lastKey(i - 1), downKey = lastKey(i + 1),
                     )
                 }
                 item(key = "footer") {
                     if (rows.isEmpty()) PageMessage("The library is empty. Scan a library on the server first.")
                     Spacer(Modifier.height(48.dp))
                 }
+            }
             }
         }
     }
@@ -188,7 +213,7 @@ private fun HomeSkeleton() {
  * START WATCHING / CONTINUE and MORE INFO.
  */
 @Composable
-private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit) {
+private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: String?) {
     Box(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
         if (pick == null) {
             Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 160.dp)) {
@@ -228,9 +253,10 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
                 val started = (play.userData?.positionMs ?: 0L) > 0
                 val label = if (play.isEpisode && (started || (play.indexAired ?: 1) > 1)) "Continue: ${episodeShort(play)}" else if (started) "Continue" else "Start watching"
                 // Focus on either button pins the page to the top.
-                TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play"), onFocused = onFocused)
+                val down = Modifier.focusProperties { if (downKey != null) down = memory.requester(downKey) }
+                TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play").then(down), onFocused = onFocused)
                 Spacer(Modifier.width(18.dp))
-                TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info"), onFocused = onFocused)
+                TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info").then(down), onFocused = onFocused)
             }
         }
     }

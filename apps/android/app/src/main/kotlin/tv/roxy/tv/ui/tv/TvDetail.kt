@@ -322,10 +322,10 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             seasons.forEachIndexed { i, s ->
                 val name = s.title.ifEmpty { "Season ${s.indexAired ?: i + 1}" }
                 val n = if (i == selected && !loading) episodes.size else counts[s.id]
-                val label = when (n) { null -> name; 1 -> "$name: 1 episode"; else -> "$name: $n episodes" }
+                val count = when (n) { null -> null; 1 -> "1 episode"; else -> "$n episodes" }
                 TvListRow(
-                    label = label, selected = i == selected, height = 44.dp, fontSize = 19.sp, startPadding = 16.dp,
-                    onClick = { onSelectSeason(i) }, onFocused = { onSelectSeason(i) },
+                    label = name, trailing = count, selected = i == selected, height = 44.dp, fontSize = 19.sp, startPadding = 16.dp,
+                    onClick = { onSelectSeason(i) },
                     modifier = Modifier.fillMaxWidth()
                         .then(if (i == selected) Modifier.focusRequester(first) else Modifier)
                         .focusProperties { if (episodes.isNotEmpty()) right = firstEpisode },

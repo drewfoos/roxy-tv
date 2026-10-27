@@ -44,6 +44,7 @@ type nfoDoc struct {
 	MPAA          string   `xml:"mpaa"`
 	Rating        string   `xml:"rating"`
 	Season        string   `xml:"season"`
+	SeasonNumber  string   `xml:"seasonnumber"` // season.nfo
 	Episode       string   `xml:"episode"`
 	Status        string   `xml:"status"`
 	UniqueIDs     []struct {
@@ -222,6 +223,7 @@ func (s *Service) applyLocal(ctx context.Context, it *model.Item) (handled bool,
 	}
 	n := 0
 	if it.Type == model.TypeSeries {
+		seasons := map[string]*model.Item{} // season folder -> its season item (from season.nfo)
 		for _, p := range paths {
 			stem := strings.TrimSuffix(p.Path, filepath.Ext(p.Path))
 			ep, err := readNFO(stem + ".nfo")
@@ -239,6 +241,24 @@ func (s *Service) applyLocal(ctx context.Context, it *model.Item) (handled bool,
 			}
 			if src := firstFile(filepath.Dir(p.Path), filepath.Base(stem)+"-thumb.jpg", filepath.Base(stem)+"-thumb.png", filepath.Base(stem)+".jpg"); src != "" {
 				s.fetchImage(ctx, p.ItemID, "thumb", src)
+			}
+			// A season.nfo in the file's folder places the episode in that season, whatever
+			// the folder is called ("[One Pace][1-7] Romance Dawn" is season 1, "Romance Dawn").
+			epDir := filepath.Dir(p.Path)
+			season, seen := seasons[epDir]
+			if !seen {
+				season = s.localSeason(ctx, it, epDir)
+				seasons[epDir] = season
+			}
+			if season != nil {
+				if err := s.placeInSeason(ctx, p.ItemID, season); err != nil {
+					slog.Warn("metadata: placing episode in its season", "path", p.Path, "err", err)
+				}
+			}
+		}
+		if len(seasons) > 0 {
+			if dropped, err := s.store.PruneOrphans(ctx); err == nil && dropped > 0 {
+				slog.Info("metadata: empty seasons removed", "series", it.Title, "count", dropped)
 			}
 		}
 		s.localSeasonPosters(ctx, it, dir)
@@ -304,6 +324,59 @@ func (s *Service) showDir(ctx context.Context, it *model.Item, file string) stri
 		return filepath.Join(l.Root, filepath.FromSlash(parts[0]))
 	}
 	return ""
+}
+
+// localSeason reads <dir>/season.nfo and returns the series' season item for its
+// <seasonnumber>, created (titled from the .nfo, "Romance Dawn") or retitled as needed,
+// with the folder's poster.jpg. Nil when the folder has no usable season.nfo.
+func (s *Service) localSeason(ctx context.Context, series *model.Item, dir string) *model.Item {
+	doc, err := readNFO(filepath.Join(dir, "season.nfo"))
+	if err != nil || doc == nil {
+		return nil
+	}
+	num, err := strconv.Atoi(strings.TrimSpace(doc.SeasonNumber))
+	if err != nil || num < 0 {
+		return nil
+	}
+	title := strings.TrimSpace(doc.Title)
+	if title == "" {
+		title = fmt.Sprintf("Season %d", num)
+	}
+	guid := fmt.Sprintf("%s:season:%d", series.GUID, num)
+	season, err := s.store.GetItemByGUID(ctx, guid)
+	if err != nil {
+		return nil
+	}
+	if season == nil {
+		season = &model.Item{ID: newID(), GUID: guid, LibraryID: series.LibraryID, Type: model.TypeSeason, ParentID: &series.ID, Title: title, IndexAired: &num}
+		if err := s.store.UpsertItem(ctx, season); err != nil {
+			slog.Warn("metadata: creating season from season.nfo", "dir", dir, "err", err)
+			return nil
+		}
+	}
+	if season.Title != title || (doc.Plot != "" && season.Overview != doc.Plot) {
+		if err := s.store.UpdateItemMetadata(ctx, season.ID, store.ItemMetadata{Title: title, Overview: doc.Plot, ProviderIDs: map[string]string{"nfo": "1"}}); err == nil {
+			season.Title = title
+		}
+	}
+	if src := firstFile(dir, "poster.jpg", "poster.png", "folder.jpg", "folder.png"); src != "" {
+		s.fetchImage(ctx, season.ID, "poster", src)
+	}
+	return season
+}
+
+// placeInSeason moves an episode under season when it sits elsewhere.
+func (s *Service) placeInSeason(ctx context.Context, episodeID string, season *model.Item) error {
+	ep, err := s.store.GetItem(ctx, episodeID)
+	if err != nil || ep == nil {
+		return err
+	}
+	if ep.ParentID != nil && *ep.ParentID == season.ID && ep.SeasonAired != nil && season.IndexAired != nil && *ep.SeasonAired == *season.IndexAired {
+		return nil
+	}
+	ep.ParentID = &season.ID
+	ep.SeasonAired = season.IndexAired
+	return s.store.UpsertItem(ctx, ep)
 }
 
 // localSeasonPosters picks up "seasonNN-poster.jpg" in the show folder or "poster.jpg"

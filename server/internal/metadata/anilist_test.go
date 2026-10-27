@@ -121,11 +121,23 @@ func TestTitleSimilarity(t *testing.T) {
 		{"Roxy Test Show", "Working!!!", 0, 0.1},
 		{"Toy Story 5", "Toy Story", 0.6, 0.9},
 		{"Frieren", "Sousou no Frieren", 0.8, 0.9},
+		{"Pokemon - I Choose You!", "Pokémon the Movie: I Choose You!", 0.6, 0.7},
+		{"Pokemon 3 - Spell of the Unown", "Pokémon 3: The Movie", 0.45, 0.6}, // the same-year bar in pickBest takes it
 	}
 	for _, c := range cases {
 		if s := TitleSimilarity(c.a, c.b); s < c.min || s > c.max {
 			t.Errorf("TitleSimilarity(%q, %q) = %.2f, want [%.2f, %.2f]", c.a, c.b, s, c.min, c.max)
 		}
+	}
+	// A retitled release shares few words with the provider's title; the matching year
+	// lowers the bar, a different year does not.
+	y2026, y2024 := 2026, 2024
+	cands := []candidate{{names: []string{"Avatar Aang: The Last Airbender"}, year: 2026}}
+	if i := pickBest("The Legend of Aang - The Last Airbender", &y2026, cands); i != 0 {
+		t.Errorf("pickBest same year = %d, want 0", i)
+	}
+	if i := pickBest("The Legend of Aang - The Last Airbender", &y2024, cands); i != -1 {
+		t.Errorf("pickBest other year = %d, want -1", i)
 	}
 	if StripHTML("a<br/>b<BR>c &amp; d <b>e</b>") != "a\nb\nc & d e" {
 		t.Errorf("StripHTML = %q", StripHTML("a<br/>b<BR>c &amp; d <b>e</b>"))

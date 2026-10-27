@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package tv.roxy.tv.ui.tv
 
 import androidx.compose.foundation.background
@@ -28,10 +30,16 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +99,8 @@ object TvDims {
     val FocusBorder = 4.dp
     /** Card lists start one frame left of the text, so the image lines up with it. */
     val CardStart = ContentStart - FocusBorder
+    /** Where a scrolled row is cut at the left: the middle of the collapsed rail. */
+    val RowClip = RailWidth / 2
     val PosterCardWidth = 137.dp
     val PosterCaption = 52.dp
     val ContinueCardWidth = 282.dp
@@ -133,6 +143,35 @@ class FocusMemory(private val saved: androidx.compose.runtime.MutableState<Strin
             if (runCatching { r.requestFocus() }.isSuccess) return true
         }
         return false
+    }
+}
+
+/**
+ * How a rail page takes focus: the page sets [enter] to focus its first (or remembered)
+ * element, and the shell calls it when the rail hands over (OK, Right, Back on the rail)
+ * or when the page is (re)entered. Provided by TvShell; pages register in a DisposableEffect.
+ */
+class PageEntry {
+    var enter: () -> Boolean = { false }
+    /** Which rail page registered [enter]: a page on its way out (still composed during the
+     *  switch) must not take the focus meant for the one coming in. */
+    var owner: Any? = null
+}
+
+val LocalPageEntry = compositionLocalOf<PageEntry?> { null }
+
+/** The rail page being shown, as the shell knows it; pages register their entry under it. */
+val LocalPageOwner = compositionLocalOf<Any?> { null }
+
+/** Registers this page's way in for the shell, for as long as the page is composed. */
+@Composable
+fun RegisterPageEntry(enter: () -> Boolean) {
+    val entry = LocalPageEntry.current
+    val owner = LocalPageOwner.current
+    DisposableEffect(entry, enter) {
+        entry?.enter = enter
+        entry?.owner = owner
+        onDispose { if (entry?.enter === enter) { entry.enter = { false }; entry.owner = null } }
     }
 }
 
@@ -309,20 +348,30 @@ fun ThumbCard(
 @Composable
 fun TvRow(
     title: String, rowKey: String, items: List<Item>, api: RoxyApi, memory: FocusMemory,
-    onClick: (Item) -> Unit, onRowFocused: () -> Unit, modifier: Modifier = Modifier, thumbs: Boolean = false,
+    onClick: (Item) -> Unit, onRowFocused: (itemKey: String) -> Unit, modifier: Modifier = Modifier, thumbs: Boolean = false,
+    upKey: String? = null, downKey: String? = null,
 ) {
     // Three cards of a row about to scroll into view are composed ahead of it.
     val rowState = rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 3) })
     // The focused card's index drives the scroll through a flow, so a focus change does
-    // not recompose the row.
-    val pivot = remember { mutableStateOf(-1) }
-    LaunchedEffect(rowState) { snapshotFlow { pivot.value }.collect { if (it >= 0) rowState.animateScrollToItem(it) } }
+    // not recompose the row. The focused card lands at the content start; the cards before
+    // it scroll on under the rail and are cut at its middle, as on Crunchyroll.
+    // Every focus gain re-pins (a Pair, so the same card focused again still emits):
+    // Compose's own scroll-into-view is switched off for the row (NoBringIntoView), since
+    // it fought this scroll and dragged rows back to their start.
+    val pivot = remember { mutableStateOf(-1 to 0) }
+    LaunchedEffect(rowState) { snapshotFlow { pivot.value }.collect { (i, _) -> if (i >= 0) rowState.animateScrollToItem(i) } }
     Column(modifier = modifier.fillMaxWidth().padding(top = 10.dp)) {
         Text(title, color = RoxyColors.muted, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TvDims.ContentStart))
-        LazyRow(state = rowState, contentPadding = PaddingValues(start = TvDims.CardStart, end = TvDims.CardStart)) {
+        CompositionLocalProvider(LocalBringIntoViewSpec provides NoBringIntoView) {
+        LazyRow(state = rowState, modifier = Modifier.padding(start = TvDims.RowClip), contentPadding = PaddingValues(start = TvDims.CardStart - TvDims.RowClip, end = TvDims.CardStart)) {
             itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
-                val focusMod = Modifier.focusKey(memory, "$rowKey/${item.id}")
-                val focused = { pivot.value = i; onRowFocused() }
+                val key = "$rowKey/${item.id}"
+                val focusMod = Modifier.focusKey(memory, key).focusProperties {
+                    if (upKey != null) up = memory.requester(upKey)
+                    if (downKey != null) down = memory.requester(downKey)
+                }
+                val focused = { pivot.value = i to pivot.value.second + 1; onRowFocused(key) }
                 if (thumbs || item.isEpisode) {
                     ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = { onClick(item) }, modifier = focusMod, onFocused = focused)
                 } else {
@@ -330,7 +379,14 @@ fun TvRow(
                 }
             }
         }
+        }
     }
+}
+
+/** A scroll-into-view rule that never scrolls: the pages place focused cards themselves. */
+@OptIn(ExperimentalFoundationApi::class)
+val NoBringIntoView: BringIntoViewSpec = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
 }
 
 /**

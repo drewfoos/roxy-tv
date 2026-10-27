@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/roxy-media/roxy/server/internal/safefs"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +18,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/imaging"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/safefs"
+	"github.com/roxy-media/roxy/server/internal/stills"
 )
 
 // GET /v1/items/{id}/images/{type}[?w=<px>]: a cached poster/backdrop/logo/thumb as
@@ -32,6 +34,13 @@ func (s *Server) getItemImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	if img == nil && typ == "thumb" {
+		// An episode (or film) nobody has a still for gets a frame from its own file.
+		img, err = stills.Grab(r.Context(), s.ff, s.store, s.cfg, id)
+		if err != nil {
+			slog.Warn("images: frame thumb failed", "item", id, "err", err)
+		}
 	}
 	if img == nil {
 		writeError(w, 404, "no image")

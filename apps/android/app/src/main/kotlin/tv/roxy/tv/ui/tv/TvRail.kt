@@ -29,7 +29,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.focusGroup
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -62,13 +64,13 @@ import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /** The rail's pages, top to bottom as on Crunchyroll's TV app. */
-enum class RailPage(val label: String, val icon: ImageVector, val route: Route) {
-    Search("Search", Icons.Outlined.Search, Route.Search),
-    Home("Home", Icons.Outlined.Home, Route.Home),
-    Watchlist("Watchlist", Icons.Outlined.BookmarkBorder, Route.Watchlist),
-    History("History", Icons.Outlined.History, Route.History),
-    Browse("Browse", Icons.Outlined.GridView, Route.Browse),
-    Settings("Settings", Icons.Outlined.Settings, Route.Settings),
+enum class RailPage(val label: String, val icon: ImageVector, val route: Route, val routeName: String) {
+    Search("Search", Icons.Outlined.Search, Route.Search, Route.Search.serializer().descriptor.serialName),
+    Home("Home", Icons.Outlined.Home, Route.Home, Route.Home.serializer().descriptor.serialName),
+    Watchlist("Watchlist", Icons.Outlined.BookmarkBorder, Route.Watchlist, Route.Watchlist.serializer().descriptor.serialName),
+    History("History", Icons.Outlined.History, Route.History, Route.History.serializer().descriptor.serialName),
+    Browse("Browse", Icons.Outlined.GridView, Route.Browse, Route.Browse.serializer().descriptor.serialName),
+    Settings("Settings", Icons.Outlined.Settings, Route.Settings, Route.Settings.serializer().descriptor.serialName),
 }
 
 /**
@@ -79,28 +81,42 @@ enum class RailPage(val label: String, val icon: ImageVector, val route: Route) 
  */
 @Composable
 fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: () -> Unit, content: @Composable () -> Unit) {
-    // The page is one focus group: asking it for focus lands on its first (or remembered) element.
-    val pageFocus = remember { FocusRequester() }
-    var railHasFocus by remember { mutableStateOf(false) }
-    val enterPage = { runCatching { pageFocus.requestFocus() }; Unit }
-    // OK on a rail item opens the page and hands it the focus, so the rail folds away as
-    // Crunchyroll's does. The page may still be composing: try for a few frames.
-    LaunchedEffect(current) {
-        if (current == null || !railHasFocus) return@LaunchedEffect
-        repeat(12) {
-            withFrameNanos { }
-            enterPage()
-            withFrameNanos { }
-            if (!railHasFocus) return@LaunchedEffect
-        }
+    // The rail's items can take focus only while it is open. It opens on a Left press the
+    // page cannot use (the focused element is already at its left edge), so focus never
+    // wanders into it when a page's focused element goes away.
+    var railOpen by remember { mutableStateOf(false) }
+    val entry = remember { PageEntry() }
+    val focusManager = LocalFocusManager.current
+    // Hands focus to the page's own entry element; the page may still be composing, so it
+    // is tried over a few frames. Bumped by the rail when it closes and when a page is (re)entered.
+    var enterTick by remember { mutableStateOf(0) }
+    LaunchedEffect(enterTick, current) {
+        if (current == null || enterTick == 0) return@LaunchedEffect
+        repeat(15) { withFrameNanos { }; if (entry.owner == current && runCatching { entry.enter() }.getOrDefault(false)) return@LaunchedEffect }
     }
     val app = RoxyApp.get(androidx.compose.ui.platform.LocalContext.current)
     val update by app.updates.state.collectAsStateWithLifecycle()
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusGroup()) { content() }
-        if (current != null) Rail(current, onSelect, onSwitchProfile, onFocus = { railHasFocus = it }, onExit = enterPage)
-        if (current != null && update !is UpdateState.None) {
-            TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomEnd))
+    CompositionLocalProvider(LocalPageEntry provides entry, LocalPageOwner provides current) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // While the rail is open the page cannot take focus, so Up / Down on the
+                    // rail never land on a page element that happens to be nearer.
+                    .focusProperties { canFocus = !railOpen }
+                    .onPreviewKeyEvent { ev ->
+                        // Left with nowhere to go inside the page opens the rail.
+                        if (current == null || railOpen || ev.type != KeyEventType.KeyDown || ev.key != Key.DirectionLeft) return@onPreviewKeyEvent false
+                        if (focusManager.moveFocus(FocusDirection.Left)) true else { railOpen = true; true }
+                    },
+            ) { content() }
+            if (current != null) Rail(
+                current, open = railOpen, onSelect = { p -> railOpen = false; onSelect(p); enterTick++ }, onSwitchProfile = onSwitchProfile,
+                onClosed = { railOpen = false; enterTick++ },
+            )
+            if (current != null && update !is UpdateState.None) {
+                TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomEnd))
+            }
         }
     }
 }
@@ -150,14 +166,31 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
 private val RailExpand = tween<androidx.compose.ui.unit.Dp>(150)
 
 @Composable
-private fun Rail(current: RailPage, onSelect: (RailPage) -> Unit, onSwitchProfile: () -> Unit, onFocus: (Boolean) -> Unit, onExit: () -> Unit) {
+private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit, onSwitchProfile: () -> Unit, onClosed: () -> Unit) {
     val app = RoxyApp.get(androidx.compose.ui.platform.LocalContext.current)
     val session by app.prefs.session.collectAsStateWithLifecycle()
-    var expanded by remember { mutableStateOf(false) }
+    val expanded = open
     val width by animateDpAsState(if (expanded) TvDims.RailExpandedWidth else TvDims.RailWidth, RailExpand, label = "rail")
     // The icons sit at x = 40 dp collapsed and 52 dp expanded (measured); the row padding moves them.
     val iconStart by animateDpAsState(if (expanded) 40.dp else 28.dp, RailExpand, label = "railIcon")
     val requesters = remember { RailPage.entries.associateWith { FocusRequester() } }
+    // Opening lands focus on the page's own item.
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
+        repeat(6) { withFrameNanos { }; if (runCatching { requesters.getValue(current).requestFocus() }.isSuccess) return@LaunchedEffect }
+    }
+    // Focus leaving the rail for good (the page took it) closes it. A move between two of
+    // its items reports no focus for an instant, so the loss has to last a couple of frames,
+    // and only counts once the rail has held focus since it opened.
+    var railFocused by remember { mutableStateOf(false) }
+    var held by remember(open) { mutableStateOf(false) }
+    LaunchedEffect(open, railFocused) {
+        if (!open) return@LaunchedEffect
+        if (railFocused) { held = true; return@LaunchedEffect }
+        if (!held) return@LaunchedEffect
+        repeat(3) { withFrameNanos { } }
+        onClosed()
+    }
 
     if (expanded) Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
     Column(
@@ -165,19 +198,18 @@ private fun Rail(current: RailPage, onSelect: (RailPage) -> Unit, onSwitchProfil
             .width(width)
             .fillMaxHeight()
             .then(if (expanded) Modifier.background(RoxyColors.surface) else Modifier)
-            .onFocusChanged { expanded = it.hasFocus; onFocus(it.hasFocus) }
-            // Right (or Back) leaves the rail for the page; the D-pad would otherwise stay inside the group.
+            .onFocusChanged { railFocused = it.hasFocus }
+            // Right or Back leaves the rail for the page.
             .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionRight || ev.key == Key.Back)) { onExit(); true } else false
+                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionRight || ev.key == Key.Back)) { onClosed(); true } else false
             }
-            // One focus group, so entering it (Left from the page) lands on the page's own item, not the nearest one.
-            .focusGroup()
-            .focusProperties { onEnter = { requesters.getValue(current).requestFocus() } },
+            // Items take focus only while the rail is open.
+            .focusProperties { canFocus = open; left = FocusRequester.Cancel },
     ) {
-        Spacer(Modifier.height(46.dp))
+        Spacer(Modifier.height(30.dp))
         // Avatar, name and "Switch Profile" (the name only when expanded).
-        TvFocusable(onClick = onSwitchProfile, modifier = Modifier.fillMaxWidth(), focusedBackground = RoxyColors.accent) { focused ->
-            Row(modifier = Modifier.fillMaxWidth().height(40.dp).padding(start = iconStart - 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TvFocusable(onClick = onSwitchProfile, modifier = Modifier.fillMaxWidth().focusProperties { up = FocusRequester.Cancel }, focusedBackground = RoxyColors.accent) { focused ->
+            Row(modifier = Modifier.fillMaxWidth().height(72.dp).padding(start = iconStart - 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 val avatarUrl = if (session.profileHasAvatar && session.profileId != null) app.api.profileAvatarUrl(session.profileId!!, widthPx(40.dp) * 2, session.profileAvatarKey) else null
                 AvatarCircle(name = session.profileName, imageUrl = avatarUrl, size = 40.dp)
                 if (expanded) {
@@ -188,7 +220,7 @@ private fun Rail(current: RailPage, onSelect: (RailPage) -> Unit, onSwitchProfil
                 }
             }
         }
-        Spacer(Modifier.height(55.dp))
+        Spacer(Modifier.height(39.dp))
         RailPage.entries.forEach { page ->
             TvListRow(
                 label = if (expanded) page.label else "",
@@ -198,7 +230,7 @@ private fun Rail(current: RailPage, onSelect: (RailPage) -> Unit, onSwitchProfil
                 startPadding = iconStart,
                 fontSize = 20.sp,
                 onClick = { onSelect(page) },
-                modifier = Modifier.fillMaxWidth().focusRequester(requesters.getValue(page)),
+                modifier = Modifier.fillMaxWidth().focusRequester(requesters.getValue(page)).focusProperties { if (page == RailPage.entries.last()) down = FocusRequester.Cancel },
             )
         }
     }

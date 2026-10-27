@@ -141,6 +141,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 
 	// Metadata lookups run off a queue fed by ingest (library must not import metadata).
 	meta := metadata.New(db, cfg)
+	meta.UseFFmpeg(ff)
 	meta.Start(ctx)
 	lib.OnItemIngested = meta.Enqueue
 
