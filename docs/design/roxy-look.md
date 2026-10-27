@@ -176,6 +176,16 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   "Watched" pill; no progress bar. Marking from the card menu redraws the card at once.
 - **Player** (not full screen): the frame spans the black band at the page's width,
   the video letterboxed inside it, so the seek bar and controls run edge to edge.
+- **Account Settings** (measured on crunchyroll.com/account): the page is black with a
+  28 px "Account Settings" title; a 240 px column of links in groups (20 px bold group
+  names, 16 px grey links, the current one in the brand colour, 46 px tall); a 780 px
+  panel in `#272727` whose content sits in a centred 420 px column with a 28 px centred
+  title and grey subtitle. Fields are a 12 px grey label over an 18 px bold value with a
+  hairline under it; switches are 40 x 24 outlined pills with a tick or a cross; buttons
+  are uppercase brand. Under 1024 px the links become a scrolling strip above the panel.
+  Groups: General (Profiles, Preferences, Device Management, About), Account (Password,
+  Log Out), Server for admins (Requests, Users, Library, Sonarr & Radarr, Transcoding,
+  TMDB & fanart.tv, Webhooks): the same set as the phone's Account tab.
 - **Breakpoints** (`tokens.css`): phone ≤ 600, tablet 601–1023, desktop S 1024–1279,
   desktop M 1280–1599, desktop L 1600–2199, ultra ≥ 2200. They set the gutter, the card
   gap, how many posters a row shows (2.4 / 3.4 / 4.35 / 5.35 / 6.35 / 7.35), grid

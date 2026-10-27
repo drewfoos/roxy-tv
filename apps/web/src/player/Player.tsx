@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { api } from '../api/client'
 import { ageLabel, languageName, pickSubtitle, primarySource } from '../api/items'
+import { lang3, prefs } from '../api/prefs'
 import type { Item, MediaSegment, MediaStream, TrickplayManifest } from '../api/types'
 import { IconCheckCircle, IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -81,13 +82,17 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [rate, setRate] = useState(1)
   const [visible, setVisible] = useState(true)
   const [menu, setMenu] = useState<'none' | 'tracks' | 'quality' | 'speed'>('none')
-  const [quality, setQuality] = useState<Quality>('original')
-  const [autoplay, setAutoplay] = useState(() => localStorage.getItem('roxy.autoplay') !== 'off')
+  // Account > Preferences sets the defaults; the gear menu overrides them for this episode.
+  const [quality, setQuality] = useState<Quality>(() => {
+    const q = prefs.get().quality
+    return q === 1080 || q === 720 || q === 480 ? q : 'original'
+  })
+  const [autoplay, setAutoplay] = useState(() => prefs.get().autoplay)
   useEffect(() => {
     autoplayRef.current = autoplay
-    localStorage.setItem('roxy.autoplay', autoplay ? 'on' : 'off')
+    if (prefs.get().autoplay !== autoplay) prefs.set({ autoplay })
   }, [autoplay])
-  const qualityRef = useRef<Quality>('original')
+  const qualityRef = useRef<Quality>(quality)
   const autoplayRef = useRef(true)
   const [skip, setSkip] = useState<MediaSegment | null>(null)
   const [advisory, setAdvisory] = useState(true)
@@ -95,14 +100,27 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [trick, setTrick] = useState<TrickplayManifest | null>(null)
   const [audioIndex, setAudioIndex] = useState<number | null>(() => {
     const want = item.userData?.audioIndex
-    return want != null && audioTracks.some((t) => t.index === want) ? want : (audioTracks[0]?.index ?? null)
+    if (want != null && audioTracks.some((t) => t.index === want)) return want
+    const pref = audioTracks.find((t) => lang3(t.language) === prefs.get().audioLang)
+    return pref?.index ?? audioTracks[0]?.index ?? null
   })
   const [subIndex, setSubIndex] = useState<number | null>(() => {
     const want = item.userData?.subtitleIndex
     if (want != null && subTracks.some((t) => t.index === want)) return want
-    return pickSubtitle(source)?.index ?? null
+    return pickSubtitle(source, prefs.get().subLang)?.index ?? null
   })
-  const [subsOn, setSubsOn] = useState(true)
+  const [subsOn, setSubsOn] = useState(() => {
+    // Preferences > Subtitles: off, only with foreign audio, or always; the last choice on
+    // this title (a saved subtitle index) wins over the rule.
+    if (item.userData?.subtitleIndex != null) return true
+    const p = prefs.get()
+    if (p.subMode === 'none') return false
+    if (p.subMode === 'foreign') {
+      const a = audioTracks.find((t) => t.index === (item.userData?.audioIndex ?? -1)) ?? audioTracks.find((t) => lang3(t.language) === p.audioLang) ?? audioTracks[0]
+      return !!a && lang3(a.language) !== p.audioLang
+    }
+    return true
+  })
 
   const absTime = useCallback(() => {
     const v = videoRef.current
@@ -232,7 +250,16 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       if (v.buffered.length) setBuffered(off + v.buffered.end(v.buffered.length - 1))
       if (!v.paused) report()
       const ms = t * 1000
-      setSkip((source.segments ?? []).find((s) => (s.type === 'intro' || s.type === 'outro') && ms >= s.startMs && ms < s.endMs - 1000) ?? null)
+      const seg = (source.segments ?? []).find((s) => (s.type === 'intro' || s.type === 'outro') && ms >= s.startMs && ms < s.endMs - 1000) ?? null
+      const p = prefs.get()
+      if (seg && p.autoSkip && !v.paused && !v.seeking) {
+        // Jump once per segment: the end is past the window, so this does not fire again.
+        setSkip(null)
+        seekTo(seg.endMs / 1000)
+        return
+      }
+      // The button stays for the window, or the whole segment when the window is 0.
+      setSkip(seg && (p.skipWindowSec === 0 || ms < seg.startMs + p.skipWindowSec * 1000) ? seg : null)
     }
     const onPlay = () => setPlaying(true)
     const onPause = () => {
@@ -265,7 +292,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       v.removeEventListener('error', onError)
       v.removeEventListener('ended', onEnd)
     }
-  }, [source, absTime, report, onEnded])
+  }, [source, absTime, report, onEnded, seekTo])
 
   // ---- volume, rate, fullscreen ----
   useEffect(() => {

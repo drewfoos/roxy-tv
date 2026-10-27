@@ -93,7 +93,7 @@ export function TopBar() {
           <div className="drawer__profile">
             <Avatar name={name} url={avatar} size={56} />
             <b>{name}</b>
-            <NavLink to="/account" className="drawer__edit" onClick={close} aria-label="Edit profile">
+            <NavLink to="/account/profiles" className="drawer__edit" onClick={close} aria-label="Edit profile">
               <IconEdit size={20} />
             </NavLink>
           </div>
@@ -101,7 +101,7 @@ export function TopBar() {
             <NavLink to="/profiles" className="drawer__item" onClick={close}>
               <IconSwap size={22} /> Switch Profile
             </NavLink>
-            <NavLink to="/account" className="drawer__item" onClick={close}>
+            <NavLink to="/account/preferences" className="drawer__item" onClick={close}>
               <IconSettings size={22} /> Settings
             </NavLink>
           </div>
@@ -140,7 +140,7 @@ export function TopBar() {
             <NavLink to="/lists" className="drawer__item" onClick={close}>
               <IconBookmarkOutline size={22} /> My Lists
             </NavLink>
-            <NavLink to="/account" className="drawer__item" onClick={close}>
+            <NavLink to="/account/preferences" className="drawer__item" onClick={close}>
               <IconSettings size={22} /> Settings
             </NavLink>
           </div>

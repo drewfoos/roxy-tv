@@ -6,7 +6,7 @@ import { Home } from '../pages/Home'
 import { Browse } from '../pages/Browse'
 import { Discover } from '../pages/Discover'
 import { Lists } from '../pages/Lists'
-import { Account } from '../pages/Account'
+import { AccountSection } from '../pages/account/AccountLayout'
 import { Series } from '../pages/Series'
 import { Movie } from '../pages/Movie'
 import { Watch } from '../pages/Watch'
@@ -49,7 +49,7 @@ export default function App() {
       <Route path="/browse" element={<Browse />} />
       <Route path="/discover" element={<Discover />} />
       <Route path="/lists" element={<Lists />} />
-      <Route path="/account" element={<Account />} />
+      <Route path="/account/*" element={<AccountSection />} />
       <Route path="/series/:id" element={<Series />} />
       <Route path="/movie/:id" element={<Movie />} />
       <Route path="/watch/:id" element={<Watch />} />
