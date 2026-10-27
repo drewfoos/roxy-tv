@@ -30,6 +30,8 @@ sealed interface Route {
     @Serializable data object Webhooks : Route
     @Serializable data class Legal(val doc: String) : Route
     @Serializable data object Watchlist : Route
+    // TV: what the profile played, newest first (the phone shows it inside My Lists).
+    @Serializable data object History : Route
     @Serializable data object Browse : Route
     @Serializable data object Account : Route
     @Serializable data object Search : Route

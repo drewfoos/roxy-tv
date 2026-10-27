@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import tv.roxy.tv.ui.phone.WitchHat
+import tv.roxy.tv.isTelevision
 import tv.roxy.tv.ui.phone.PlayButton
 import tv.roxy.tv.ui.phone.OnBrand
 import androidx.compose.ui.text.style.TextAlign
@@ -195,6 +196,20 @@ fun LoginScreen() {
         return
     }
 
+    if (isTelevision(context)) {
+        TvLogin(
+            state = state,
+            serverUrl = serverUrl, onServerUrl = { serverUrl = it },
+            username = username, onUsername = { username = it },
+            password = password, onPassword = { password = it },
+            agreed = agreed, onAgreed = { agreed = it },
+            canConnect = canConnect, onConnect = { vm.login(serverUrl, username, password) },
+            needsSetup = needsSetup, setupAllowed = setup?.allowed == true, setupName = setup?.serverName?.ifEmpty { null }, onOpenSetup = { openSetup = true },
+            onRescan = vm::scan, onShowTerms = { showTerms = true },
+        )
+        if (showTerms) LoginTermsDialog(serverUrl = serverUrl, onDismiss = { showTerms = false }, onAgree = { agreed = true; showTerms = false })
+        return
+    }
     Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
         // A soft blue glow behind the mark, like the splash, fading into the page.
         Box(

@@ -34,15 +34,25 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.diagnostics.DeviceReport
-import tv.roxy.tv.ui.detail.MovieScreen
-import tv.roxy.tv.ui.detail.SeriesScreen
-import tv.roxy.tv.ui.home.HomeScreen
+import tv.roxy.tv.ui.tv.TvMovie
+import tv.roxy.tv.ui.tv.TvSeries
+import tv.roxy.tv.ui.tv.TvWatchlist
+import tv.roxy.tv.ui.tv.TvHistory
+import tv.roxy.tv.ui.tv.TvBrowse
+import tv.roxy.tv.ui.tv.TvSearch
+import tv.roxy.tv.ui.tv.TvSettings
+import tv.roxy.tv.api.Item
+import tv.roxy.tv.ui.tv.RailPage
+import tv.roxy.tv.ui.tv.TvHome
+import tv.roxy.tv.ui.tv.TvShell
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.compose.runtime.rememberCoroutineScope
 import tv.roxy.tv.ui.login.LoginScreen
 import tv.roxy.tv.ui.setup.SetupWizard
 import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.phone.PhoneRoot
 import tv.roxy.tv.ui.profiles.ProfilePicker
-import tv.roxy.tv.ui.settings.SettingsScreen
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.theme.RoxyTheme
 
@@ -219,33 +229,42 @@ private fun AppRoot(tv: Boolean) {
     }
 }
 
-/** The TV graph: Home with the hero and rows, detail pages, Settings from the hero's button. */
+/**
+ * The TV graph: the rail's pages (Home, Watchlist, History, Browse, Search, Settings) are
+ * switched by the rail and keep Home under them, so Back from any of them is Home; title
+ * pages (series, movie) push on top and have no rail, as on Crunchyroll.
+ */
 @Composable
 private fun TvRoot(onUnauthorized: () -> Unit) {
     val nav = rememberNavController()
-    NavHost(nav, startDestination = Route.Home) {
-        composable<Route.Home> {
-            HomeScreen(
-                onOpenSeries = { nav.navigate(Route.Series(it.id, it.title)) },
-                onOpenMovie = { nav.navigate(Route.Movie(it.id, it.title)) },
-                onOpenSettings = { nav.navigate(Route.Settings) },
-                onUnauthorized = onUnauthorized,
-            )
-        }
-        composable<Route.Series> { entry ->
-            val r = entry.toRoute<Route.Series>()
-            SeriesScreen(
-                r.id, r.title,
-                onOpenMovie = { nav.navigate(Route.Movie(it.id, it.title)) },
-                onOpenSeries = { nav.navigate(Route.Series(it.id, it.title)) },
-            )
-        }
-        composable<Route.Movie> { entry ->
-            val r = entry.toRoute<Route.Movie>()
-            MovieScreen(r.id, r.title, onOpenSeries = { nav.navigate(Route.Series(it.id, it.title)) })
-        }
-        composable<Route.Settings> {
-            SettingsScreen(onLoggedOut = { nav.popBackStack(Route.Home, inclusive = false) })
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    val entry by nav.currentBackStackEntryAsState()
+    val page = entry?.destination?.let { d -> RailPage.entries.firstOrNull { d.hasRoute(it.route::class) } }
+    fun go(p: RailPage) {
+        if (p == page) return
+        nav.navigate(p.route) { popUpTo(Route.Home) { inclusive = false }; launchSingleTop = true }
+    }
+    val openSeries = { it: Item -> nav.navigate(Route.Series(it.id, it.title)) }
+    val openMovie = { it: Item -> nav.navigate(Route.Movie(it.id, it.title)) }
+    TvShell(current = page, onSelect = ::go, onSwitchProfile = { scope.launch { app.prefs.clearProfile() } }) {
+        NavHost(nav, startDestination = Route.Home) {
+            composable<Route.Home> { TvHome(onOpenSeries = openSeries, onOpenMovie = openMovie, onUnauthorized = onUnauthorized) }
+            composable<Route.Series> { entry ->
+                val r = entry.toRoute<Route.Series>()
+                TvSeries(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie)
+            }
+            composable<Route.Movie> { entry ->
+                val r = entry.toRoute<Route.Movie>()
+                TvMovie(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie)
+            }
+            composable<Route.Watchlist> { TvWatchlist(onOpenSeries = openSeries, onOpenMovie = openMovie) }
+            composable<Route.History> { TvHistory() }
+            composable<Route.Browse> { TvBrowse(onOpenSeries = openSeries, onOpenMovie = openMovie) }
+            composable<Route.Search> { TvSearch(onOpenSeries = openSeries, onOpenMovie = openMovie) }
+            composable<Route.Settings> {
+                TvSettings(onSwitchProfile = { scope.launch { app.prefs.clearProfile() } }, onLoggedOut = { nav.popBackStack(Route.Home, inclusive = false) })
+            }
         }
     }
 }

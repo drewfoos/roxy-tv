@@ -106,9 +106,13 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
     // card is a plain tile (Netflix / Crunchyroll), so text never flashes behind art.
     var failed by remember(url) { mutableStateOf(false) }
     var loaded by remember(url) { mutableStateOf(false) }
+    // The shimmer is one infinite animation per loading card: fine on a phone, a frame
+    // drain on a TV's processor with thirty cards in view, so the TV shows a plain tile.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val tv = remember { tv.roxy.tv.isTelevision(context) }
     Box(modifier = modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
         // The skeleton shimmer while the picture is on its way (the same as the page skeletons).
-        if (url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
+        if (!tv && url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
         if (url == null || failed) ArtFallback(title, placeholderTextSize)
         if (url != null) {
             val context = LocalPlatformContext.current

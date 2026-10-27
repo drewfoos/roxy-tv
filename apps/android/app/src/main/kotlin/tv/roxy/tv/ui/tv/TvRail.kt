@@ -1,0 +1,151 @@
+package tv.roxy.tv.ui.tv
+
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Text
+import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.ui.components.widthPx
+import tv.roxy.tv.ui.nav.Route
+import tv.roxy.tv.ui.profiles.AvatarCircle
+import tv.roxy.tv.ui.theme.RoxyColors
+
+/** The rail's pages, top to bottom as on Crunchyroll's TV app. */
+enum class RailPage(val label: String, val icon: ImageVector, val route: Route) {
+    Search("Search", Icons.Outlined.Search, Route.Search),
+    Home("Home", Icons.Outlined.Home, Route.Home),
+    Watchlist("Watchlist", Icons.Outlined.BookmarkBorder, Route.Watchlist),
+    History("History", Icons.Outlined.History, Route.History),
+    Browse("Browse", Icons.Outlined.GridView, Route.Browse),
+    Settings("Settings", Icons.Outlined.Settings, Route.Settings),
+}
+
+/**
+ * The left rail over the page: a column of icons with the profile's avatar on top. Focus
+ * moving into it (Left from a page's first column) widens it to show the labels over a
+ * dimmed page; OK on an item opens that page, OK on the avatar goes back to "Who's
+ * watching?". [current] is null on title pages, which have no rail.
+ */
+@Composable
+fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: () -> Unit, content: @Composable () -> Unit) {
+    // The page is one focus group: asking it for focus lands on its first (or remembered) element.
+    val pageFocus = remember { FocusRequester() }
+    var railHasFocus by remember { mutableStateOf(false) }
+    val enterPage = { runCatching { pageFocus.requestFocus() }; Unit }
+    // OK on a rail item opens the page and hands it the focus, so the rail folds away as
+    // Crunchyroll's does. The page may still be composing: try for a few frames.
+    LaunchedEffect(current) {
+        if (current == null || !railHasFocus) return@LaunchedEffect
+        repeat(12) {
+            withFrameNanos { }
+            enterPage()
+            withFrameNanos { }
+            if (!railHasFocus) return@LaunchedEffect
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusGroup()) { content() }
+        if (current != null) Rail(current, onSelect, onSwitchProfile, onFocus = { railHasFocus = it }, onExit = enterPage)
+    }
+}
+
+private val RailExpand = tween<androidx.compose.ui.unit.Dp>(150)
+
+@Composable
+private fun Rail(current: RailPage, onSelect: (RailPage) -> Unit, onSwitchProfile: () -> Unit, onFocus: (Boolean) -> Unit, onExit: () -> Unit) {
+    val app = RoxyApp.get(androidx.compose.ui.platform.LocalContext.current)
+    val session by app.prefs.session.collectAsStateWithLifecycle()
+    var expanded by remember { mutableStateOf(false) }
+    val width by animateDpAsState(if (expanded) TvDims.RailExpandedWidth else TvDims.RailWidth, RailExpand, label = "rail")
+    // The icons sit at x = 40 dp collapsed and 52 dp expanded (measured); the row padding moves them.
+    val iconStart by animateDpAsState(if (expanded) 40.dp else 28.dp, RailExpand, label = "railIcon")
+    val requesters = remember { RailPage.entries.associateWith { FocusRequester() } }
+
+    if (expanded) Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+    Column(
+        modifier = Modifier
+            .width(width)
+            .fillMaxHeight()
+            .background(if (expanded) RoxyColors.surface else Color.Transparent)
+            .onFocusChanged { expanded = it.hasFocus; onFocus(it.hasFocus) }
+            // Right (or Back) leaves the rail for the page; the D-pad would otherwise stay inside the group.
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionRight || ev.key == Key.Back)) { onExit(); true } else false
+            }
+            // One focus group, so entering it (Left from the page) lands on the page's own item, not the nearest one.
+            .focusGroup()
+            .focusProperties { onEnter = { requesters.getValue(current).requestFocus() } },
+    ) {
+        Spacer(Modifier.height(46.dp))
+        // Avatar, name and "Switch Profile" (the name only when expanded).
+        TvFocusable(onClick = onSwitchProfile, modifier = Modifier.fillMaxWidth(), focusedBackground = RoxyColors.accent) { focused ->
+            Row(modifier = Modifier.fillMaxWidth().height(40.dp).padding(start = iconStart - 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val avatarUrl = if (session.profileHasAvatar && session.profileId != null) app.api.profileAvatarUrl(session.profileId!!, widthPx(40.dp) * 2, session.profileAvatarKey) else null
+                AvatarCircle(name = session.profileName, imageUrl = avatarUrl, size = 40.dp)
+                if (expanded) {
+                    Column(modifier = Modifier.padding(start = 16.dp)) {
+                        Text(session.profileName, color = if (focused) OnAccent else RoxyColors.onBackground, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Switch Profile", color = if (focused) OnAccent else RoxyColors.muted, fontSize = 13.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(55.dp))
+        RailPage.entries.forEach { page ->
+            TvListRow(
+                label = if (expanded) page.label else "",
+                icon = page.icon,
+                selected = page == current,
+                height = TvDims.RailRow,
+                startPadding = iconStart,
+                fontSize = 20.sp,
+                onClick = { onSelect(page) },
+                modifier = Modifier.fillMaxWidth().focusRequester(requesters.getValue(page)),
+            )
+        }
+    }
+}

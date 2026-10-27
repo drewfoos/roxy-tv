@@ -83,6 +83,8 @@ import tv.roxy.tv.ui.phone.PhoneTheme
 import tv.roxy.tv.ui.phone.PlayButton
 import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
+import tv.roxy.tv.isTelevision
+import tv.roxy.tv.ui.tv.TvFocusable
 
 /** Avatar size on the picker: big up to four profiles, a little smaller beyond so six still fit. */
 private fun pickSize(count: Int): Dp = if (count > 4) 96.dp else 112.dp
@@ -147,6 +149,23 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
                         }
                     },
                     onCancel = { creating = false; editing = null; if (editOnly != null) onDone() },
+                )
+                isTelevision(LocalContext.current) -> TvPickerRow(
+                    api = app.api, profiles = profiles, error = error, managing = managing, lastId = last?.id,
+                    onToggleManage = { managing = !managing },
+                    onPick = { p ->
+                        if (managing) editing = p
+                        else scope.launch { app.prefs.selectProfile(p.id, p.name, p.hasAvatar, p.avatarKey); onDone() }
+                    },
+                    onAdd = { creating = true },
+                    onRetry = { scope.launch { reload() } },
+                    onBack = last?.let { l -> { scope.launch { app.prefs.selectProfile(l.id, l.name, l.hasAvatar, l.avatarKey); onDone() } } },
+                    onLogout = {
+                        scope.launch {
+                            runCatching { app.api.logout() }.onFailure { Timber.w("logout: %s", it.message) }
+                            app.prefs.clearSession()
+                        }
+                    },
                 )
                 else -> PickerGrid(
                     api = app.api, profiles = profiles, error = error, managing = managing, lastId = last?.id,
@@ -235,6 +254,99 @@ private fun PickerGrid(
                 }
                 Text("Log out", color = RoxyColors.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp).clickable(onClick = onLogout).padding(8.dp))
             }
+        }
+    }
+}
+
+/**
+ * The TV's picker: every profile (and Add profile) in one row of 112 dp avatars with the
+ * name under each, then the Manage profiles and Log out pills under the row. Focus is a
+ * white ring, the last-used profile an accent ring; the whole thing fits one TV screen.
+ * The remote's Back goes on with the last-used profile, like the phone's back arrow.
+ */
+@Composable
+private fun TvPickerRow(
+    api: RoxyApi,
+    profiles: List<Profile>?,
+    error: String?,
+    managing: Boolean,
+    lastId: String?,
+    onToggleManage: () -> Unit,
+    onPick: (Profile) -> Unit,
+    onAdd: () -> Unit,
+    onRetry: () -> Unit,
+    onBack: (() -> Unit)?,
+    onLogout: () -> Unit,
+) {
+    val tile = 112.dp
+    BackHandler(enabled = onBack != null) { onBack?.invoke() }
+    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        WitchHat(size = 44.dp, modifier = Modifier.padding(top = 40.dp))
+        Text("Who's watching?", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 14.dp, bottom = 36.dp))
+        when {
+            profiles == null && error != null -> {
+                Text(error, color = RoxyColors.error, textAlign = TextAlign.Center)
+                TvPill("Try again", onClick = onRetry, modifier = Modifier.padding(top = 16.dp))
+            }
+            profiles == null -> Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                repeat(2) { Box(Modifier.size(tile).clip(CircleShape).background(RoxyColors.surfaceHigh)) }
+            }
+            else -> Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                profiles.forEach { p -> TvProfileTile(p, api, tile, managing = managing, current = p.id == lastId, onClick = { onPick(p) }) }
+                if (profiles.size < 6) TvAddTile(tile, onAdd)
+            }
+        }
+        if (profiles != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 40.dp)) {
+                TvPill(if (managing) "Done" else "Manage profiles", onClick = onToggleManage, filled = managing)
+                TvPill("Log out", onClick = onLogout)
+            }
+        }
+    }
+}
+
+/** One avatar for the TV row: the ring space is reserved so the names line up, focus is a white ring. */
+@Composable
+private fun TvProfileTile(p: Profile, api: RoxyApi, tile: Dp, managing: Boolean, current: Boolean, onClick: () -> Unit) {
+    TvFocusable(onClick = onClick) { focused ->
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 6.dp)) {
+            Box(modifier = Modifier.size(tile + 16.dp), contentAlignment = Alignment.Center) {
+                val ring = if (focused) Color.White else if (current) RoxyColors.accent else Color.Transparent
+                Box(Modifier.size(tile + 16.dp).clip(CircleShape).border(if (focused) 4.dp else 3.dp, ring, CircleShape))
+                ProfileAvatar(p, api, size = tile)
+                if (managing) {
+                    Box(modifier = Modifier.size(tile).clip(CircleShape).background(Color(0x88000000)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White, modifier = Modifier.size(36.dp))
+                    }
+                }
+            }
+            Text(p.name, color = if (focused) RoxyColors.onBackground else RoxyColors.muted, fontSize = 16.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 12.dp))
+        }
+    }
+}
+
+@Composable
+private fun TvAddTile(tile: Dp, onAdd: () -> Unit) {
+    TvFocusable(onClick = onAdd) { focused ->
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 6.dp)) {
+            Box(modifier = Modifier.size(tile + 16.dp), contentAlignment = Alignment.Center) {
+                if (focused) Box(Modifier.size(tile + 16.dp).clip(CircleShape).border(4.dp, Color.White, CircleShape))
+                Box(modifier = Modifier.size(tile).clip(CircleShape).border(2.dp, RoxyColors.muted, CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add profile", tint = RoxyColors.muted, modifier = Modifier.size(44.dp))
+                }
+            }
+            Text("Add profile", color = if (focused) RoxyColors.onBackground else RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 12.dp))
+        }
+    }
+}
+
+/** An outlined accent pill for the TV picker; filled with the accent when focused (or [filled]). */
+@Composable
+private fun TvPill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, filled: Boolean = false) {
+    TvFocusable(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(20.dp), focusedBackground = RoxyColors.accent, background = if (filled) RoxyColors.accent else Color.Transparent) { focused ->
+        val on = focused || filled
+        Box(modifier = Modifier.border(1.5.dp, RoxyColors.accent, RoundedCornerShape(20.dp)).padding(horizontal = 24.dp, vertical = 10.dp)) {
+            Text(text, color = if (on) OnBrand else RoxyColors.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
