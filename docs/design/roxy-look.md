@@ -167,7 +167,8 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   current one 48 wide and filling with the brand colour over its 10 s; the timer keeps
   running under the pointer. Arrows are bare 46 px chevrons in the gutters.
 - **Rows**: a bare 40 px chevron in each gutter, light grey to white on hover, shown
-  only where there is more to scroll; it sits over the card that peeks past the edge.
+  only where there is more to scroll; it sits over the card that peeks past the edge
+  and is as tall as the art, so the chevron centres on the image, not the caption.
 - **Season picker**: a caret and the season name in the brand colour; a dark panel of
   42 px rows, name cut with an ellipsis, episode count at the right in 12 px, the current
   row white and the rest grey.
