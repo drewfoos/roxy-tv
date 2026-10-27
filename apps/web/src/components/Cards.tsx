@@ -41,7 +41,7 @@ export function Art({ url, title, className = 'card__img', textSize = 13 }: { ur
 
 export function ProgressBar({ item }: { item: Item }) {
   const f = progressFraction(item)
-  if (f == null) return null
+  if (f == null || isWatched(item)) return null
   return (
     <div className="progress">
       <i style={{ width: `${f * 100}%` }} />
@@ -89,15 +89,17 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
   const movie = isMovie(item)
   const url = movie ? (api.imageUrl(item, 'backdrop', px(width)) ?? api.imageUrl(item, 'poster', px(width))) : api.imageUrl(item, 'thumb', px(width))
   const badge = audioBadge(item)
-  const left = timeLeftLabel(item)
-  const watched = item.userData?.played && !left
+  const [played, setPlayed] = useState(!!item.userData?.played)
+  const shown = useMemo(() => withPlayed(item, played), [item, played])
+  const left = timeLeftLabel(shown)
+  const watched = isWatched(shown)
   return (
     <div className="card">
       <Link to={itemPath(item)} className="card__art card__art--thumb">
         <Art url={url} title={episodeCode(item) || item.title} />
         {watched ? (
-          <div className="watched-ring">
-            <IconReplay size={28} />
+          <div className="watched-overlay">
+            <IconReplay size={48} />
           </div>
         ) : (
           <div className={'play-ring' + (big ? ' play-ring--big' : '')}>
@@ -106,22 +108,41 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
         )}
         {badge && <span className="badge badge--tl">{badge}</span>}
         {watched ? <span className="badge badge--br">Watched</span> : left ? <span className="badge badge--br">{left}</span> : null}
-        <ProgressBar item={item} />
+        <ProgressBar item={shown} />
       </Link>
       <div className="card__name">{movie ? item.title : (item.seriesTitle ?? item.title)}</div>
       <div className="card__sub">
         <span>{movie ? [yearOf(item), 'Movie'].filter(Boolean).join('  ·  ') : [episodeCode(item), item.title].filter(Boolean).join('  ')}</span>
-        <CardMenu item={item} />
+        <CardMenu item={item} played={played} onPlayedChange={setPlayed} />
       </div>
     </div>
   )
 }
 
-/** The three-dot menu: Watch now, Watchlist, Mark as watched. */
-export function CardMenu({ item }: { item: Item }) {
+/** The item as it looks once marked watched / unwatched (the server resets the position too). */
+export function withPlayed(item: Item, played: boolean): Item {
+  if (played === !!item.userData?.played) return item
+  return { ...item, userData: { ...(item.userData ?? { positionMs: 0, playCount: 0, played: false, isFavorite: false }), played, positionMs: 0 } }
+}
+
+/** Finished with nothing left to resume: the replay overlay and the "Watched" pill. */
+export function isWatched(item: Item): boolean {
+  return !!item.userData?.played && !timeLeftLabel(item)
+}
+
+/**
+ * The three-dot menu: Watch now, Watchlist, Mark as watched. A card that draws the
+ * watched state passes `played` and `onPlayedChange` so it redraws with the menu.
+ */
+export function CardMenu({ item, played, onPlayedChange }: { item: Item; played?: boolean; onPlayedChange?: (played: boolean) => void }) {
   const [open, setOpen] = useState(false)
   const [saved, setSaved] = useState<boolean | null>(isEpisode(item) ? null : (item.userData?.isFavorite ?? false))
-  const [watched, setWatched] = useState(item.userData?.played ?? false)
+  const [ownWatched, setOwnWatched] = useState(item.userData?.played ?? false)
+  const watched = played ?? ownWatched
+  const setWatched = (v: boolean) => {
+    setOwnWatched(v)
+    onPlayedChange?.(v)
+  }
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
@@ -179,6 +200,24 @@ export function CardMenu({ item }: { item: Item }) {
 /** A titled horizontal row with hover arrows; the track snaps card to card. */
 export function Row({ title, children, thumbs = false, more }: { title: string; children: ReactNode; thumbs?: boolean; more?: ReactNode }) {
   const track = useRef<HTMLDivElement>(null)
+  // Crunchyroll's arrows: a bare chevron in each gutter, shown only where there is more to see.
+  const [ends, setEnds] = useState({ left: false, right: false })
+  useEffect(() => {
+    const el = track.current
+    if (!el) return
+    const measure = () => {
+      const max = el.scrollWidth - el.clientWidth
+      setEnds({ left: el.scrollLeft > 4, right: el.scrollLeft < max - 4 })
+    }
+    measure()
+    el.addEventListener('scroll', measure, { passive: true })
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', measure)
+      ro.disconnect()
+    }
+  }, [children])
   const scrollBy = (dir: 1 | -1) => {
     const el = track.current
     if (el) el.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: 'smooth' })
@@ -190,15 +229,19 @@ export function Row({ title, children, thumbs = false, more }: { title: string; 
         {more}
       </div>
       <div className="row__scroller">
-        <button className="row__arrow row__arrow--left" onClick={() => scrollBy(-1)} aria-label="Scroll left">
-          <IconChevronLeft size={36} />
-        </button>
+        {ends.left && (
+          <button className="row__arrow row__arrow--left" onClick={() => scrollBy(-1)} aria-label="Scroll previous">
+            <IconChevronLeft size={40} />
+          </button>
+        )}
         <div ref={track} className={'row__track' + (thumbs ? ' row__track--thumbs' : '')}>
           {children}
         </div>
-        <button className="row__arrow row__arrow--right" onClick={() => scrollBy(1)} aria-label="Scroll right">
-          <IconChevronRight size={36} />
-        </button>
+        {ends.right && (
+          <button className="row__arrow row__arrow--right" onClick={() => scrollBy(1)} aria-label="Scroll next">
+            <IconChevronRight size={40} />
+          </button>
+        )}
       </div>
     </section>
   )

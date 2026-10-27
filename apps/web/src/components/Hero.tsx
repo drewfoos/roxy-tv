@@ -12,26 +12,26 @@ export interface HeroPick {
   play: Item
 }
 
-const DWELL_MS = 8000
+const DWELL_MS = 10000
 
 /**
  * Crunchyroll's carousel: the art fills the width with a dark fade from the left, and
  * over it the logo, "12+ • Dub | Sub • Action, Comedy", four lines of synopsis, the
- * CONTINUE WATCHING button with the bookmark, thin timer bars at the bottom-left and
- * arrows at both edges. Eight seconds per slide; hovering pauses the timer.
+ * CONTINUE WATCHING button with the bookmark, page pills at the bottom-left (the current
+ * one twice as wide, filling with the brand colour as its ten seconds run) and arrows at
+ * both edges. The timer keeps running under the pointer, as theirs does.
  */
 export function Hero({ heroes }: { heroes: HeroPick[] }) {
   const [index, setIndex] = useState(0)
-  const [paused, setPaused] = useState(false)
   const [round, setRound] = useState(0)
   const nav = useNavigate()
   const count = heroes.length
 
   useEffect(() => {
-    if (count < 2 || paused) return
+    if (count < 2) return
     const t = setTimeout(() => setIndex((i) => (i + 1) % count), DWELL_MS)
     return () => clearTimeout(t)
-  }, [count, index, paused, round])
+  }, [count, index, round])
 
   useEffect(() => {
     if (index >= count) setIndex(0)
@@ -45,7 +45,7 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
   }
 
   return (
-    <section className="hero" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+    <section className="hero">
       {heroes.map((h, i) => {
         const t = h.title
         // Wide art first: the phone's "hero" is tall key art and crops badly at desktop width.
@@ -85,14 +85,14 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
       {count > 1 && (
         <>
           <button className="hero__arrow hero__arrow--left" onClick={() => pick(index - 1)} aria-label="Previous">
-            <IconChevronLeft size={44} />
+            <IconChevronLeft size={46} />
           </button>
           <button className="hero__arrow hero__arrow--right" onClick={() => pick(index + 1)} aria-label="Next">
-            <IconChevronRight size={44} />
+            <IconChevronRight size={46} />
           </button>
-          <div className="hero__bars" style={{ ['--dwell' as string]: `${DWELL_MS}ms` }}>
+          <div className="hero__pills" style={{ ['--dwell' as string]: `${DWELL_MS}ms` }}>
             {heroes.map((h, i) => (
-              <button key={h.title.id + ':' + round} className={'hero__bar' + (i < index ? ' hero__bar--done' : i === index && !paused ? ' hero__bar--on' : '')} onClick={() => pick(i)} aria-label={`Slide ${i + 1}`}>
+              <button key={h.title.id + ':' + round} className={'hero__pill' + (i === index ? ' hero__pill--on' : '')} onClick={() => pick(i)} aria-label={`Slide ${i + 1}`}>
                 <i />
               </button>
             ))}

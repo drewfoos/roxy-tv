@@ -126,16 +126,18 @@ img { display: block; }
 .hero__meta { font-size: 13px; color: rgba(255, 255, 255, 0.85); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .hero__synopsis { font-size: 15px; line-height: 22px; color: rgba(255, 255, 255, 0.92); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
 .hero__actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
-.hero__bars { position: absolute; left: var(--gutter); bottom: 44px; display: flex; gap: 6px; width: 230px; }
-.hero__bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.35); overflow: hidden; cursor: pointer; }
-.hero__bar i { display: block; height: 100%; background: var(--accent); width: 0; }
-.hero__bar--done i { width: 100%; }
-.hero__bar--on i { animation: hero-fill var(--dwell, 8s) linear forwards; }
-@keyframes hero-fill { from { width: 0; } to { width: 100%; } }
-.hero__arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 64px; display: grid; place-items: center; color: #fff; opacity: 0.8; z-index: 3; }
-.hero__arrow:hover { opacity: 1; }
-.hero__arrow--left { left: 8px; }
-.hero__arrow--right { right: 8px; }
+/* Page pills (Crunchyroll's): 24 x 8 at half white, the current one 48 wide and filling with the brand colour over the dwell. */
+.hero__pills { position: absolute; left: calc(var(--gutter) - 4px); bottom: 36px; display: flex; }
+.hero__pill { padding: 8px 4px; cursor: pointer; }
+.hero__pill i { position: relative; display: block; width: 24px; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.5); overflow: hidden; transition: width 300ms; }
+.hero__pill--on i { width: 48px; }
+.hero__pill i::after { content: ""; position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left; }
+.hero__pill--on i::after { animation: hero-fill var(--dwell, 10s) linear forwards; }
+@keyframes hero-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.hero__arrow { position: absolute; top: 50%; transform: translateY(-50%); width: var(--gutter); height: 100px; display: grid; place-items: center; color: #f2f2f2; transition: color 150ms; z-index: 3; }
+.hero__arrow:hover { color: #fff; }
+.hero__arrow--left { left: 0; }
+.hero__arrow--right { right: 0; }
 
 /* ---------- buttons (Crunchyroll's: rectangular, uppercase, bold) ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: var(--radius-button); font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; white-space: nowrap; }
@@ -173,10 +175,10 @@ img { display: block; }
 @media (min-width: 1600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 3.35 * var(--card-gap)) / 4.35); } }
 @media (max-width: 1023px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 1.3 * var(--card-gap)) / 2.3); } }
 @media (max-width: 600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 0.3 * var(--card-gap)) / 1.3); } }
-.row__arrow { position: absolute; top: 0; bottom: 10px; width: var(--gutter); display: grid; place-items: center; color: #fff; opacity: 0; transition: opacity 160ms; z-index: 2; }
-.row__arrow--right { right: 0; background: linear-gradient(to left, rgba(11, 11, 15, 0.9), rgba(11, 11, 15, 0)); }
-.row__arrow--left { left: 0; background: linear-gradient(to right, rgba(11, 11, 15, 0.9), rgba(11, 11, 15, 0)); }
-.row__scroller:hover .row__arrow { opacity: 1; }
+.row__arrow { position: absolute; top: 4px; bottom: 10px; width: var(--gutter); display: grid; place-items: center; color: #f2f2f2; transition: color 150ms; z-index: 2; }
+.row__arrow:hover { color: #fff; }
+.row__arrow--right { right: 0; }
+.row__arrow--left { left: 0; }
 
 .card { display: block; position: relative; min-width: 0; }
 .card__art { display: block; position: relative; border-radius: 0; overflow: hidden; background: var(--surface-high); aspect-ratio: 2 / 3; transition: transform 160ms ease, box-shadow 160ms ease; }
@@ -196,7 +198,7 @@ img { display: block; }
 .badge--br { bottom: 10px; right: 8px; }
 .play-ring { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); display: grid; place-items: center; color: #fff; }
 .play-ring--big { width: 60px; height: 60px; margin: -30px 0 0 -30px; }
-.watched-ring { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); display: grid; place-items: center; color: #fff; }
+.watched-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; color: #fff; }
 .art-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 10px; text-align: center; color: rgba(255, 255, 255, 0.92); font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
 .art-fallback svg { opacity: 0.3; margin: 0 auto 8px; }
 
@@ -209,7 +211,7 @@ img { display: block; }
 /* ---------- tab pages ---------- */
 .tabhead { display: flex; align-items: center; gap: 16px; padding: 36px var(--gutter) 18px; }
 .tabhead h1 { font-size: 30px; font-weight: 700; margin: 0; }
-@media (max-width: 600px) { .tabhead { padding-top: 20px; } .tabhead h1 { font-size: 24px; } .row__title { font-size: 20px; } .row { margin-top: 32px; } .hero__title { font-size: 28px; } .title__actions { flex-wrap: wrap; } .seasonrow select { font-size: 15px; } .watch__title { font-size: 20px; } }
+@media (max-width: 600px) { .tabhead { padding-top: 20px; } .tabhead h1 { font-size: 24px; } .row__title { font-size: 20px; } .row { margin-top: 32px; } .hero__title { font-size: 28px; } .title__actions { flex-wrap: wrap; } .seasonsel__btn { font-size: 15px; } .watch__title { font-size: 20px; } }
 .tabhead__spacer { flex: 1; }
 .chips { display: flex; gap: 8px; padding: 0 var(--gutter) 24px; flex-wrap: wrap; }
 .sectiontabs { display: flex; gap: 28px; padding: 0 var(--gutter); border-bottom: 1px solid var(--surface-high); margin-top: 22px; }
@@ -239,8 +241,17 @@ img { display: block; }
 .title__kv b { color: #fff; font-weight: 700; }
 .age { display: inline-block; padding: 1px 6px; border-radius: 3px; background: var(--age-pill); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; line-height: 15px; }
 .seasonrow { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin: 40px 0 18px; }
-.seasonrow select { background: transparent; color: var(--fg); border: 0; font-size: 17px; font-weight: 700; padding: 10px 0; outline: 0; cursor: pointer; max-width: 70vw; }
-.seasonrow select option { background: var(--surface); }
+.seasonsel { position: relative; min-width: 0; }
+.seasonsel__btn { display: flex; align-items: center; gap: 8px; max-width: 70vw; padding: 10px 0; color: var(--accent); font-size: 17px; font-weight: 700; text-align: left; }
+.seasonsel__btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seasonsel__btn:hover { color: var(--accent-light); }
+.seasonsel__menu { position: absolute; left: 0; top: 100%; z-index: 20; min-width: min(520px, 90vw); max-width: 90vw; padding: 8px 0; background: #1f1f24; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6); }
+.seasonsel__row { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; padding: 10px 20px; min-height: 42px; color: #a0a0a0; font-size: 16px; text-align: left; }
+.seasonsel__row:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.seasonsel__row--on { color: #fff; }
+.seasonsel__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seasonsel__count { flex: none; font-size: 12px; font-weight: 500; line-height: 18px; }
+.seasonsel__row--on .seasonsel__count { color: #f2f2f2; }
 .seasonrow__spacer { flex: 1; }
 .seasonrow__tool { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; }
 .seasonrow__tool:hover { color: #fff; }
@@ -261,11 +272,11 @@ img { display: block; }
 
 /* ---------- watch page (Crunchyroll's: a full-width dark band with the 16:9 player in it, the text column under it, Next episode at the right) ---------- */
 .watch__band { background: #000; display: grid; place-items: center; }
-.player { position: relative; width: min(100%, calc((100vh - var(--topbar-h) - 140px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; user-select: none; container-type: size; }
-.player:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; }
+.player { position: relative; width: 100%; height: min(calc(100vw * 9 / 16), calc(100vh - var(--topbar-h) - 140px)); min-height: 200px; background: #000; user-select: none; container-type: size; }
+.player:fullscreen { width: 100%; height: 100%; }
 .player--hidden { cursor: none; }
 .player--empty { display: grid; place-items: center; color: var(--muted); }
-.player video { width: 100%; height: 100%; display: block; background: #000; }
+.player video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
 .player canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
 .player__wait { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .player__error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--error); background: rgba(0, 0, 0, 0.7); }
@@ -297,7 +308,7 @@ img { display: block; }
 .controls__volume { display: flex; align-items: center; }
 .controls__volume input { width: 0; opacity: 0; transition: width 160ms, opacity 160ms; accent-color: #fff; cursor: pointer; }
 .controls__volume:hover input, .controls__volume input:focus { width: 90px; opacity: 1; margin-right: 8px; }
-.controls__time { margin-left: 10px; font-size: 15px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+.controls__time { margin-left: 10px; font-size: 15px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .controls__spacer { flex: 1; }
 .controls__menu-anchor { position: relative; }
 .controls__btn--open { background: rgba(255, 255, 255, 0.16); }
@@ -388,11 +399,20 @@ img { display: block; }
   .hero__scrim-left, .hero__scrim-top { display: none; }
   .hero__scrim-bottom { background: linear-gradient(to bottom, rgba(11, 11, 15, 0) 55%, var(--bg) 100%); bottom: auto; height: 62.5vw; }
   .hero__body { position: relative; left: 0; top: 0; transform: none; width: auto; margin: -56px var(--gutter) 0; }
-  .hero__bars { position: relative; left: 0; bottom: 0; margin: 16px var(--gutter) 20px; }
+  .hero__pills { position: relative; left: 0; bottom: 0; margin: 12px calc(var(--gutter) - 4px) 16px; }
   .hero.bone { aspect-ratio: 16 / 10; }
 }
+/* Phone player: tighter buttons, no volume slider (the phone has buttons for that), so one row fits 390 px. */
+@media (max-width: 600px) {
+  .player__controls { padding: 0 8px 2px; }
+  .controls { gap: 0; height: 46px; }
+  .controls__btn { width: 36px; height: 40px; }
+  .controls__volume { display: none; }
+  .controls__time { margin-left: 4px; font-size: 13px; }
+  .controls__rate { min-width: 36px; padding: 0 4px; font-size: 13px; }
+}
 /* No arrows where there is a finger: the bars and a swipe move the carousel. */
-@media (max-width: 1023px) { .hero__arrow { display: none; } }
+@media (max-width: 1023px) { .hero__arrow, .row__arrow { display: none; } }
 @media (max-width: 600px) {
   .title__banner { height: auto; min-height: 0; }
   .title__banner > img { aspect-ratio: 16 / 10; height: auto; }

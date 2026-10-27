@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, px } from '../api/client'
 import { audioBadge, episodeCode, isPlayable, nextToPlay, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
-import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard } from '../components/Cards'
+import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard, isWatched, withPlayed } from '../components/Cards'
 import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
@@ -82,16 +82,7 @@ export function Series() {
         <>
           <div className="seasonrow">
             {seasons.length > 0 ? (
-              <>
-                <IconExpand size={22} />
-                <select value={season?.id ?? ''} onChange={(e) => setSeasonIndex(seasons.findIndex((s) => s.id === e.target.value))} aria-label="Season">
-                  {seasons.map((s, i) => (
-                    <option key={s.id} value={s.id}>
-                      {s.title || `Season ${s.indexAired ?? i + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </>
+              <SeasonSelect seasons={seasons} index={Math.min(seasonIndex, seasons.length - 1)} onSelect={setSeasonIndex} />
             ) : (
               <span style={{ fontWeight: 700, fontSize: 17 }}>{series.title}</span>
             )}
@@ -167,23 +158,100 @@ export function Series() {
   )
 }
 
+function seasonName(s: Item, i: number): string {
+  return s.title || `Season ${s.indexAired ?? i + 1}`
+}
+
 /**
- * Episode card (Crunchyroll's): 16:9 still with a play ring, or a replay ring and a
- * "Watched" pill, "23m left" and the progress bar; under it the series name in tiny
- * capitals, "E1 – Title", then "Dub | Sub" with the menu.
+ * Crunchyroll's season picker: a caret and the season name in the brand colour; clicking
+ * it drops a dark panel of rows, each the season name (cut with an ellipsis) and its
+ * episode count at the right, the current one in white. Counts load once it opens.
  */
-export function EpisodeCard({ ep, seriesTitle }: { ep: Item; seriesTitle?: string }) {
+function SeasonSelect({ seasons, index, onSelect }: { seasons: Item[]; index: number; onSelect: (i: number) => void }) {
+  const [open, setOpen] = useState(false)
+  const [counts, setCounts] = useState<Record<string, number>>({})
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', key)
+    }
+  }, [open])
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    for (const s of seasons) {
+      if (counts[s.id] != null) continue
+      api
+        .items({ type: 'episode', parent: s.id, limit: 1 })
+        .then((r) => live && r.total != null && setCounts((c) => ({ ...c, [s.id]: r.total! })))
+        .catch(() => undefined)
+    }
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, seasons])
+  const current = seasons[index]
+  return (
+    <div ref={ref} className="seasonsel">
+      <button className="seasonsel__btn" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open} aria-label="Seasons">
+        <IconExpand size={18} />
+        <span>{current ? seasonName(current, index) : ''}</span>
+      </button>
+      {open && (
+        <div className="seasonsel__menu" role="listbox">
+          {seasons.map((s, i) => {
+            const n = counts[s.id]
+            return (
+              <button
+                key={s.id}
+                role="option"
+                aria-selected={i === index}
+                className={'seasonsel__row' + (i === index ? ' seasonsel__row--on' : '')}
+                onClick={() => {
+                  onSelect(i)
+                  setOpen(false)
+                }}
+              >
+                <span className="seasonsel__name">{seasonName(s, i)}</span>
+                {n != null && <span className="seasonsel__count">{n === 1 ? '1 Episode' : `${n} Episodes`}</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Episode card (Crunchyroll's): 16:9 still with a play ring, or a dark overlay with a
+ * replay arrow and a "Watched" pill, "23m left" and the progress bar; under it the
+ * series name in tiny capitals, "E1 – Title", then "Dub | Sub" with the menu. Marking
+ * it watched from the menu redraws the card at once.
+ */
+export function EpisodeCard({ ep: given, seriesTitle }: { ep: Item; seriesTitle?: string }) {
+  const [played, setPlayed] = useState(!!given.userData?.played)
+  const ep = useMemo(() => withPlayed(given, played), [given, played])
   const playable = isPlayable(ep)
   const left = timeLeftLabel(ep)
-  const watched = !!ep.userData?.played && !left
+  const watched = isWatched(ep)
   const n = ep.indexAired ?? ep.indexAbsolute
   const art = (
     <div className="ep__art">
       <Art url={api.imageUrl(ep, 'thumb', px(420))} title={episodeCode(ep) || ep.title} />
       {playable &&
         (watched ? (
-          <div className="watched-ring">
-            <IconReplay size={28} />
+          <div className="watched-overlay">
+            <IconReplay size={48} />
           </div>
         ) : (
           <div className="play-ring">
@@ -216,7 +284,7 @@ export function EpisodeCard({ ep, seriesTitle }: { ep: Item; seriesTitle?: strin
       )}
       <div className="ep__sub">
         <span>{audioBadge(ep) ?? runtimeLabel(ep) ?? ''}</span>
-        {playable && <CardMenu item={ep} />}
+        {playable && <CardMenu item={ep} played={played} onPlayedChange={setPlayed} />}
       </div>
     </div>
   )

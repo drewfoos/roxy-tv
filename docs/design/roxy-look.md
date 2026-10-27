@@ -163,6 +163,18 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   edit; Switch Profile, Settings; Watchlist, History; Log Out, groups split by hairlines,
   over a dimmed page). Under 1024 px the links move into a left drawer behind a
   hamburger and the name drops from the mark.
+- **Hero carousel** (measured): page pills, not bars: 24 x 8 at half white, 8 apart, the
+  current one 48 wide and filling with the brand colour over its 10 s; the timer keeps
+  running under the pointer. Arrows are bare 46 px chevrons in the gutters.
+- **Rows**: a bare 40 px chevron in each gutter, light grey to white on hover, shown
+  only where there is more to scroll; it sits over the card that peeks past the edge.
+- **Season picker**: a caret and the season name in the brand colour; a dark panel of
+  42 px rows, name cut with an ellipsis, episode count at the right in 12 px, the current
+  row white and the rest grey.
+- **Watched episode**: the still dims under 60 % black with a 48 px replay arrow and a
+  "Watched" pill; no progress bar. Marking from the card menu redraws the card at once.
+- **Player** (not full screen): the frame spans the black band at the page's width,
+  the video letterboxed inside it, so the seek bar and controls run edge to edge.
 - **Breakpoints** (`tokens.css`): phone ≤ 600, tablet 601–1023, desktop S 1024–1279,
   desktop M 1280–1599, desktop L 1600–2199, ultra ≥ 2200. They set the gutter, the card
   gap, how many posters a row shows (2.4 / 3.4 / 4.35 / 5.35 / 6.35 / 7.35), grid

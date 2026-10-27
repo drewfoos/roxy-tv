@@ -138,7 +138,7 @@ function SideEpisode({ label, ep }: { label: string; ep: Item }) {
       <Link to={`/watch/${ep.id}`} className="upnext">
         <div className="ep__art">
           <Art url={api.imageUrl(ep, 'thumb', px(320))} title={ep.title} />
-          <div className={watched ? 'watched-ring' : 'play-ring'}>{watched ? <IconReplay size={24} /> : <IconPlay size={24} />}</div>
+          <div className={watched ? 'watched-overlay' : 'play-ring'}>{watched ? <IconReplay size={40} /> : <IconPlay size={24} />}</div>
           {watched ? <span className="badge badge--br">Watched</span> : left ? <span className="badge badge--br">{left}</span> : null}
           <ProgressBar item={ep} />
         </div>
