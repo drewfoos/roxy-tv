@@ -4,6 +4,7 @@ import { api, px } from '../api/client'
 import { ageLabel, languageName, primarySource } from '../api/items'
 import type { Item } from '../api/types'
 import { IconMore } from './Icons'
+import { PhoneTitleHeader } from './PhoneChrome'
 
 /**
  * The frame every title page shares, laid out like Crunchyroll's: the key art fills the
@@ -18,6 +19,7 @@ export function TitleBanner({ item, badge, extra, actions, menu }: { item: Item;
   const genres = (item.genres ?? []).slice(0, 4)
   return (
     <div className="title__banner">
+      <PhoneTitleHeader title={item.title} menu={menu} />
       {url && <img src={url} alt="" />}
       {menu && (
         <div className="title__more">
@@ -29,8 +31,10 @@ export function TitleBanner({ item, badge, extra, actions, menu }: { item: Item;
         <div className="title__facts">
           {item.officialRating && <span className="age">{ageLabel(item.officialRating)}</span>}
           {badge && <span>• {badge}</span>}
+          {item.communityRating != null && <span className="phone-only">• ★ {(item.communityRating / 2).toFixed(1)}</span>}
+          {item.year != null && <span className="phone-only">• {item.year}</span>}
           {genres.length > 0 && (
-            <span>
+            <span className="title__genres">
               •{' '}
               {genres.map((g, i) => (
                 <span key={g}>
@@ -43,7 +47,7 @@ export function TitleBanner({ item, badge, extra, actions, menu }: { item: Item;
           {extra && <span>• {extra}</span>}
         </div>
         {item.communityRating != null && (
-          <div className="title__facts">
+          <div className="title__facts title__facts--stars desk-only">
             <Stars value={item.communityRating / 2} />
             <b>Average rating: {(item.communityRating / 2).toFixed(1)}</b>
             {item.year && <span className="muted">• {item.year}</span>}

@@ -36,8 +36,8 @@ export function Movie() {
   const relatedItems = (related?.related ?? []).map((r) => r.item).filter((x): x is Item => !!x)
 
   return (
-    <div className="page">
-      <TopBar />
+    <div className="page page--phone">
+      <TopBar phone="title" />
       <TitleBanner
         item={movie}
         badge={audioBadge(movie)}

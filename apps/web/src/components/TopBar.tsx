@@ -4,15 +4,24 @@ import { api, px } from '../api/client'
 import { session } from '../api/session'
 import { useSession } from '../app/useSession'
 import { IconBookmarkOutline, IconClose, IconEdit, IconExpand, IconExplore, IconGrid, IconHistory, IconHome, IconLogout, IconMenu, IconSearch, IconSettings, IconSwap, WitchHat } from './Icons'
+import { BottomNav, PhoneHomeHeader } from './PhoneChrome'
 
 /**
  * The top bar, measured from Crunchyroll's: a solid grey bar the full width with no
  * gutters, every control a "tile" the bar's full height that darkens on hover. Left:
  * the mark and name (Home), then Discover, Browse | Movies. Right, flush with the edge:
  * search (opens a field), the bookmark (My Lists), the avatar with a caret (account
- * drawer). Under 900 px the links move into a menu behind a hamburger at the left.
+ * drawer). Under 1024 px the links move into a menu behind a hamburger at the left.
+ *
+ * Under 601 px the page follows the phone app instead (`phone`): 'home' = the pinned
+ * hat + search header and the bottom tabs; 'tab' = the bottom tabs under the page's
+ * own title; 'title' = nothing here (the title page draws its own X header); 'bar'
+ * keeps this bar (watch, legal, sign-in pages); 'page' = a pushed page that draws its
+ * own back header (account sub-pages).
  */
-export function TopBar() {
+export type PhoneChrome = 'bar' | 'home' | 'tab' | 'title' | 'page'
+
+export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
   const s = useSession()
   const nav = useNavigate()
   const [searching, setSearching] = useState(false)
@@ -45,7 +54,9 @@ export function TopBar() {
 
   return (
     <>
-      <header className="topbar">
+      {phone === 'home' && <PhoneHomeHeader />}
+      {(phone === 'home' || phone === 'tab') && <BottomNav />}
+      <header className={'topbar' + (phone !== 'bar' ? ' topbar--desk' : '')}>
         <button className="tile tile--icon topbar__menu" onClick={() => setDrawer((d) => (d === 'menu' ? 'none' : 'menu'))} aria-label="Menu" aria-expanded={drawer === 'menu'}>
           <IconMenu size={26} />
         </button>

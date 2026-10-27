@@ -6,6 +6,7 @@ import { useAsync, clearAsyncCache } from '../hooks/useAsync'
 import { Avatar, signOut } from '../components/TopBar'
 import { Spinner } from '../components/Skeleton'
 import { useSession } from '../app/useSession'
+import { WitchHat } from '../components/Icons'
 
 /** "Who's watching?": the profiles on this login. */
 export function Profiles() {
@@ -22,6 +23,9 @@ export function Profiles() {
   if (loading && !data) return <Spinner />
   return (
     <div className="profiles">
+      <span className="profiles__hat">
+        <WitchHat size={44} />
+      </span>
       <h1>Who's watching?</h1>
       {error && <div className="error">{error}</div>}
       <div className="profiles__list">
@@ -32,9 +36,14 @@ export function Profiles() {
           </button>
         ))}
       </div>
-      <button className="link" onClick={signOut}>
-        Sign out of {s?.userName}
-      </button>
+      <div className="profiles__actions">
+        <button className="profiles__manage" onClick={() => nav('/account/profiles')}>
+          Manage profiles
+        </button>
+        <button className="link" onClick={signOut}>
+          Sign out of {s?.userName}
+        </button>
+      </div>
     </div>
   )
 }

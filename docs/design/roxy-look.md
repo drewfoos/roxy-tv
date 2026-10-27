@@ -186,6 +186,18 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   Groups: General (Profiles, Preferences, Device Management, About), Account (Password,
   Log Out), Server for admins (Requests, Users, Library, Sonarr & Radarr, Transcoding,
   TMDB & fanart.tv, Webhooks): the same set as the phone's Account tab.
+- **Phones (<= 600 px) follow the Android phone app, not Crunchyroll's mobile site.**
+  The web's phone breakpoint is a translation of `apps/android/.../ui/phone` (dp = px):
+  bottom tabs Home / Discover / Browse / My Lists / Account (56 + safe area, `#23252B`,
+  26 px icons, 11 px labels, blue when current); Home's hero is 640 px of key art with
+  the logo at 62 % width on its foot, a 12 px facts line, three lines of synopsis, the
+  44 px blue pill and bookmark circle, and seven-pixel equal timer bars; rows are
+  18 px titles over (W - 36) / 2.5 cards; title pages pin the art (translateY by the
+  scroll, fading over 320 px), pull the logo column 230 px up over it, fade in a 52 px
+  X header between 250 and 320 px of scroll, list episodes as 150 px stills with the
+  title at their right, and keep Play in a sticky bottom bar; Browse and the watchlist
+  are three-wide 6 px-radius posters; Account is the phone's grouped cards. Scroll-linked
+  pieces read the unitless `--sy` variable (hooks/useScrollVar.ts) in CSS calc.
 - **Breakpoints** (`tokens.css`): phone ≤ 600, tablet 601–1023, desktop S 1024–1279,
   desktop M 1280–1599, desktop L 1600–2199, ultra ≥ 2200. They set the gutter, the card
   gap, how many posters a row shows (2.4 / 3.4 / 4.35 / 5.35 / 6.35 / 7.35), grid

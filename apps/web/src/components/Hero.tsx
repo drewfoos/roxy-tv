@@ -50,6 +50,9 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
         const t = h.title
         // Wide art first: the phone's "hero" is tall key art and crops badly at desktop width.
         const art = api.imageUrl(t, 'backdrop', px(1800)) ?? api.imageUrl(t, 'hero', px(1800)) ?? api.imageUrl(h.play, 'thumb', px(1800)) ?? api.imageUrl(t, 'poster', px(900))
+        // The phone app's slide (PhoneHome.kt:414): textless key art, else the poster, else the still.
+        const tall = api.imageUrl(t, 'hero', px(480)) ?? api.imageUrl(t, 'poster', px(480)) ?? api.imageUrl(h.play, 'thumb', px(480))
+        const rating = t.communityRating != null ? (t.communityRating / 2).toFixed(1) : null
         const logo = api.imageUrl(t, 'logo', px(360))
         const genres = (t.genres ?? []).slice(0, 4).join(', ')
         const badge = audioBadge(h.play) ?? audioBadge(t)
@@ -60,13 +63,19 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
         const playTo = isEpisode(h.play) || isMovie(h.play) ? `/watch/${h.play.id}` : itemPath(h.play)
         return (
           <div key={t.id} className={'hero__slide' + (i === index ? ' hero__slide--on' : '')} aria-hidden={i !== index}>
-            {art && <img className="hero__art" src={art} alt="" />}
+            {art && (
+              <picture>
+                {tall && <source media="(max-width: 600px)" srcSet={tall} />}
+                <img className="hero__art" src={art} alt="" />
+              </picture>
+            )}
             <div className="hero__scrim-top" />
             <div className="hero__scrim-left" />
             <div className="hero__scrim-bottom" />
             <div className="hero__body">
               <Link to={itemPath(t)}>{logo ? <img className="hero__logo" src={logo} alt={t.title} /> : <h1 className="hero__title">{t.title}</h1>}</Link>
               <div className="hero__meta">
+                {rating && <span className="hero__rating phone-only">★ {rating}</span>}
                 {t.officialRating && <span className="age">{ageLabel(t.officialRating)}</span>}
                 {badge && <span>• {badge}</span>}
                 {genres && <span>• {genres}</span>}
@@ -92,7 +101,7 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
           </button>
           <div className="hero__pills" style={{ ['--dwell' as string]: `${DWELL_MS}ms` }}>
             {heroes.map((h, i) => (
-              <button key={h.title.id + ':' + round} className={'hero__pill' + (i === index ? ' hero__pill--on' : '')} onClick={() => pick(i)} aria-label={`Slide ${i + 1}`}>
+              <button key={h.title.id + ':' + round} className={'hero__pill' + (i === index ? ' hero__pill--on' : i < index ? ' hero__pill--done' : '')} onClick={() => pick(i)} aria-label={`Slide ${i + 1}`}>
                 <i />
               </button>
             ))}

@@ -61,8 +61,8 @@ export function Series() {
   const relatedItems = (related?.related ?? []).map((r) => r.item).filter((x): x is Item => !!x)
 
   return (
-    <div className="page">
-      <TopBar />
+    <div className="page page--phone">
+      <TopBar phone="title" />
       <TitleBanner
         item={series}
         badge={audioBadge(series) ?? audioBadge(episodes.find(isPlayable))}

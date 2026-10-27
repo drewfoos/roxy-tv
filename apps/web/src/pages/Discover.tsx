@@ -38,8 +38,8 @@ export function Discover() {
   }, [q])
 
   return (
-    <div className="page page--tab">
-      <TopBar />
+    <div className="page page--tab page--phone">
+      <TopBar phone="tab" />
       <div className="tabhead">
         <h1>Discover</h1>
         <div className="tabhead__spacer" />

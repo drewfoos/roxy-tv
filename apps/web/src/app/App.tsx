@@ -14,11 +14,13 @@ import { Legal } from '../pages/Legal'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { Spinner } from '../components/Skeleton'
+import { useScrollVar } from '../hooks/useScrollVar'
 
 /** Signed out -> login; signed in without a profile -> "Who's watching?"; else the app. */
 export default function App() {
   const s = useSession()
   const loc = useLocation()
+  useScrollVar()
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [loc.pathname])

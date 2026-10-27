@@ -71,8 +71,8 @@ export function Home() {
   const movies = rows.find((r) => r.key === 'movies')
 
   return (
-    <div className="page">
-      <TopBar />
+    <div className="page page--phone">
+      <TopBar phone="home" />
       {loading && !data ? (
         <Spinner />
       ) : error && !data ? (

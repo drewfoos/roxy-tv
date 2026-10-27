@@ -4,6 +4,8 @@ import { api } from '../api/client'
 import { isMovie } from '../api/items'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
+import { TabSearchLink } from '../components/PhoneChrome'
+import { IconSearch } from '../components/Icons'
 import { Footer } from '../components/Footer'
 import { PosterTile } from '../components/Cards'
 import { GridSkeleton } from '../components/Skeleton'
@@ -30,11 +32,30 @@ export function Browse() {
   }
 
   return (
-    <div className="page page--tab">
-      <TopBar />
+    <div className="page page--tab page--phone">
+      <TopBar phone="tab" />
       <div className="tabhead">
         <h1>{q ? `Results for "${params.get('q')}"` : 'Browse'}</h1>
+        <div className="tabhead__spacer" />
+        <TabSearchLink />
       </div>
+      {(params.get('search') === '1' || q) && (
+        <form
+          className="psearch phone-only"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const v = (new FormData(e.currentTarget).get('q') as string).trim()
+            const next = new URLSearchParams(params)
+            if (v) next.set('q', v)
+            else next.delete('q')
+            next.delete('search')
+            setParams(next, { replace: true })
+          }}
+        >
+          <IconSearch size={20} />
+          <input name="q" defaultValue={params.get('q') ?? ''} placeholder="Search series, movies, genres" autoFocus />
+        </form>
+      )}
       {!q && (
         <div className="chips">
           <button className={'chip' + (!movies ? ' chip--on' : '')} onClick={() => setType(false)}>

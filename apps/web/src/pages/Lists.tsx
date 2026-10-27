@@ -5,7 +5,8 @@ import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
-import { Art, ThumbTile, itemPath } from '../components/Cards'
+import { Art, PosterTile, ThumbTile, itemPath } from '../components/Cards'
+import { TabSearchLink } from '../components/PhoneChrome'
 import { IconBookmark } from '../components/Icons'
 import { GridSkeleton } from '../components/Skeleton'
 
@@ -23,11 +24,12 @@ export function Lists() {
     setParams(next, { replace: true })
   }
   return (
-    <div className="page page--tab">
-      <TopBar />
+    <div className="page page--tab page--phone">
+      <TopBar phone="tab" />
       <div className="lists">
         <h1 className="lists__title">
-          <IconBookmark size={30} /> My Lists
+          <IconBookmark size={30} className="desk-only" /> My Lists
+          <TabSearchLink />
         </h1>
         <div className="lists__tabs">
           <button className={tab === 'watchlist' ? 'on' : ''} onClick={() => pick('watchlist')}>
@@ -57,7 +59,14 @@ function Watchlist() {
       </div>
       <div className="lists__grid">
         {items.map((it) => (
-          <WideCard key={it.id} item={it} />
+          <div key={it.id} className="lists__one">
+            <div className="desk-only">
+              <WideCard item={it} />
+            </div>
+            <div className="phone-only">
+              <PosterTile item={it} width={120} />
+            </div>
+          </div>
         ))}
       </div>
     </>
