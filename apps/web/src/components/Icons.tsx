@@ -1,5 +1,6 @@
 // Inline Material Symbols (24 px grid) so the app needs no font or icon CDN: it must
 // work on a server with no internet. Paths are Material Design icons (Apache 2.0).
+import { useId } from 'react'
 import type { SVGProps } from 'react'
 
 type P = SVGProps<SVGSVGElement> & { size?: number }
@@ -46,17 +47,38 @@ export const IconReplay10 = (p: P) => <Svg {...p}><path d="M12 5V1L7 6l5 5V7a6 6
 export const IconForward10 = (p: P) => <Svg {...p}><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z" /><text x="12" y="15.5" textAnchor="middle" fontSize="7" fontWeight="700" fill="currentColor" fontFamily="system-ui, sans-serif">10</text></Svg>
 
 /** Roxy's witch hat: blue cone, gold band, a sparkle at the tip. */
-export const WitchHat = ({ size = 28 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-    <defs>
-      <linearGradient id="roxy-hat-g" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stopColor="#8FD0FF" />
-        <stop offset="1" stopColor="#1B5FA8" />
-      </linearGradient>
-    </defs>
-    <ellipse cx="32" cy="50" rx="26" ry="7" fill="#1B5FA8" />
-    <path d="M20 46 C24 30, 30 20, 40 8 C38 24, 42 36, 46 46 Z" fill="url(#roxy-hat-g)" />
-    <path d="M21 42 C28 44, 38 44, 45 42 L46 46 C40 48, 26 48, 20 46 Z" fill="#E7B23A" />
-    <path d="M44 4 l1.5 3 3 1.5 -3 1.5 -1.5 3 -1.5 -3 -3 -1.5 3 -1.5 Z" fill="#FFFFFF" />
-  </svg>
-)
+/**
+ * The Roxy mark, the phone app's WitchHat (ui/phone/WitchHat.kt) in SVG: a wide brim
+ * shaded blue to navy, a drooping cone from light blue to navy with a fold line, a gold
+ * band with a buckle and a sparkle at the tip. The gradient ids come from useId so that a
+ * hat inside a hidden element (the desktop bar on a phone, the phone header on a
+ * desktop) never shadows the ids of a visible one; a shadowed gradient paints nothing.
+ */
+export const WitchHat = ({ size = 28 }: { size?: number }) => {
+  const id = useId().replace(/:/g, '')
+  const brim = `hat-brim-${id}`
+  const cone = `hat-cone-${id}`
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <linearGradient id={brim} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#3EA6FF" />
+          <stop offset="1" stopColor="#1B5FA8" />
+        </linearGradient>
+        <linearGradient id={cone} x1="0.3" y1="0.2" x2="0.8" y2="0.8">
+          <stop offset="0" stopColor="#8FD0FF" />
+          <stop offset="0.5" stopColor="#3EA6FF" />
+          <stop offset="1" stopColor="#1B5FA8" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="50" cy="79" rx="48" ry="13" fill={`url(#${brim})`} />
+      <ellipse cx="50" cy="73" rx="44" ry="6" fill="#8FD0FF" opacity="0.35" />
+      <path d="M24 74 C33 44, 44 22, 60 2 C70 10, 72 20, 65 30 C70 48, 73 62, 76 74 Z" fill={`url(#${cone})`} />
+      <path d="M50 26 C52 42, 50 56, 46 70" fill="none" stroke="#1B5FA8" strokeOpacity="0.45" strokeWidth="2.5" />
+      <path d="M27 64 C44 72, 58 72, 74 64 L76 74 C58 82, 42 82, 24 74 Z" fill="#F2C35B" />
+      <rect x="47" y="66.5" width="8" height="10" fill="#1B5FA8" />
+      <rect x="49" y="68.5" width="4" height="6" fill="#F2C35B" />
+      <path d="M65 8 h14 M72 1 v14" stroke="#FFFFFF" strokeWidth="2" />
+    </svg>
+  )
+}

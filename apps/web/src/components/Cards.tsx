@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, isEpisode, isMovie, isSeries, progressFraction, timeLeftLabel, yearOf } from '../api/items'
+import { audioBadge, episodeCode, isEpisode, isMovie, isSeries, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
 import { IconBookmark, IconBookmarkOutline, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
@@ -49,11 +49,30 @@ export function ProgressBar({ item }: { item: Item }) {
   )
 }
 
-/** Title card (Crunchyroll's): 2:3 poster with a folded corner when saved, the name, then "Sub | Dub" with the menu. */
+/**
+ * Title card (Crunchyroll's): 2:3 poster with a folded corner when saved, the name, then
+ * "Sub | Dub". With a mouse, resting on it for a moment slides a dark panel over the
+ * card (theirs: #151515 with an 8 px ring) with the name, the rating, "3 Seasons", six
+ * lines of synopsis, the poster showing faintly through, and Play / Save at the foot.
+ * There is no three-dot menu on a mouse; the phone keeps its own.
+ */
 export function TitleCard({ item, width = 260 }: { item: Item; width?: number }) {
   const sub = audioBadge(item) ?? [yearOf(item), isMovie(item) ? 'Movie' : null].filter(Boolean).join('  ·  ')
+  const [hover, setHover] = useState(false)
+  const timer = useRef<number | null>(null)
+  const enter = () => {
+    if (!window.matchMedia('(hover: hover) and (min-width: 601px)').matches) return
+    timer.current = window.setTimeout(() => setHover(true), 320)
+  }
+  const leave = () => {
+    if (timer.current) window.clearTimeout(timer.current)
+    timer.current = null
+    setHover(false)
+  }
+  const rating = item.communityRating != null ? (item.communityRating / 2).toFixed(1) : null
+  const extent = isMovie(item) ? runtimeLabel(item) : item.seasonCount ? (item.seasonCount === 1 ? '1 Season' : `${item.seasonCount} Seasons`) : null
   return (
-    <div className="card">
+    <div className="card" onMouseEnter={enter} onMouseLeave={leave}>
       <Link to={itemPath(item)} className="card__art">
         <Art url={api.imageUrl(item, 'poster', px(width))} title={item.title} />
         {item.userData?.isFavorite && (
@@ -67,8 +86,31 @@ export function TitleCard({ item, width = 260 }: { item: Item; width?: number })
       </Link>
       <div className="card__sub">
         <span>{sub}</span>
-        <CardMenu item={item} />
+        <span className="phone-only">
+          <CardMenu item={item} />
+        </span>
       </div>
+      {hover && (
+        <div className="card__hover">
+          {api.imageUrl(item, 'poster', px(width)) && <img className="card__hover-art" src={api.imageUrl(item, 'poster', px(width)) ?? undefined} alt="" />}
+          <Link to={itemPath(item)} className="card__hover-body">
+            <h3>{item.title}</h3>
+            {(rating || extent) && (
+              <div className="card__hover-meta">
+                {rating && <span>★ {rating}</span>}
+                {extent && <span>{extent}</span>}
+              </div>
+            )}
+            {item.overview && <p>{item.overview}</p>}
+          </Link>
+          <div className="card__hover-actions">
+            <Link to={itemPath(item)} className="card__hover-btn" aria-label="Play" title="Play">
+              <IconPlay size={24} />
+            </Link>
+            <SaveButton item={item} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -190,6 +190,19 @@ img { display: block; }
 .card__sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card__menu { opacity: 0; transition: opacity 120ms; }
 .card:hover .card__menu { opacity: 1; }
+/* The hover panel (Crunchyroll's browse-card-hover): #151515 with an 8 px ring over the whole card. */
+.card__hover { position: absolute; inset: -8px; z-index: 6; background: #151515; box-shadow: 0 0 0 1px #151515; display: flex; flex-direction: column; overflow: hidden; animation: card-hover-in 120ms ease; }
+@keyframes card-hover-in { from { opacity: 0; } to { opacity: 1; } }
+.card__hover-art { position: absolute; left: 8px; right: 8px; bottom: 44px; opacity: 0.08; pointer-events: none; }
+.card__hover-body { position: relative; flex: 1; min-height: 0; padding: 12px; color: #fff; display: flex; flex-direction: column; gap: 6px; }
+.card__hover-body h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 700; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.card__hover-meta { display: flex; gap: 12px; font-size: 14px; line-height: 20px; color: #bbb; }
+.card__hover-body p { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: rgba(255, 255, 255, 0.9); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.card__hover-actions { position: relative; display: flex; align-items: center; gap: 14px; padding: 6px 12px 10px; }
+.card__hover-btn { width: 32px; height: 32px; display: grid; place-items: center; color: var(--accent); }
+.card__hover-btn:hover { color: var(--accent-light); }
+.card__hover .save-btn { width: 32px; height: 32px; border: 0; }
+.card:has(.card__hover) .card__art { transform: none; box-shadow: none; }
 .card__saved { position: absolute; top: 0; right: 0; width: 34px; height: 34px; background: linear-gradient(225deg, var(--accent) 50%, transparent 50%); color: var(--on-brand); display: flex; justify-content: flex-end; padding: 3px 3px 0 0; }
 .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0, 0, 0, 0.55); }
 .progress i { display: block; height: 100%; background: var(--accent); }
