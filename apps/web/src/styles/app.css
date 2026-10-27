@@ -191,8 +191,7 @@ img { display: block; }
 .card__menu { opacity: 0; transition: opacity 120ms; }
 .card:hover .card__menu { opacity: 1; }
 /* The hover panel (Crunchyroll's browse-card-hover): #151515 with an 8 px ring over the whole card. */
-.card__hover { position: absolute; inset: -8px; z-index: 6; background: #151515; box-shadow: 0 0 0 1px #151515; display: flex; flex-direction: column; overflow: hidden; animation: card-hover-in 120ms ease; }
-@keyframes card-hover-in { from { opacity: 0; } to { opacity: 1; } }
+.card__hover { position: absolute; inset: -8px; z-index: 6; background: #151515; box-shadow: 0 0 0 1px #151515; display: flex; flex-direction: column; overflow: hidden; }
 .card__hover-art { position: absolute; left: 8px; right: 8px; bottom: 44px; opacity: 0.08; pointer-events: none; }
 .card__hover-body { position: relative; flex: 1; min-height: 0; padding: 12px; color: #fff; display: flex; flex-direction: column; gap: 6px; }
 .card__hover-body h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 700; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

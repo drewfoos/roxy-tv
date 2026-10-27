@@ -62,7 +62,7 @@ export function TitleCard({ item, width = 260 }: { item: Item; width?: number })
   const timer = useRef<number | null>(null)
   const enter = () => {
     if (!window.matchMedia('(hover: hover) and (min-width: 601px)').matches) return
-    timer.current = window.setTimeout(() => setHover(true), 320)
+    timer.current = window.setTimeout(() => setHover(true), 40) // theirs is near-instant
   }
   const leave = () => {
     if (timer.current) window.clearTimeout(timer.current)
