@@ -175,7 +175,7 @@ img { display: block; }
 @media (min-width: 1600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 3.35 * var(--card-gap)) / 4.35); } }
 @media (max-width: 1023px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 1.3 * var(--card-gap)) / 2.3); } }
 @media (max-width: 600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 0.3 * var(--card-gap)) / 1.3); } }
-.row__arrow { position: absolute; top: 4px; bottom: 10px; width: var(--gutter); display: grid; place-items: center; color: #f2f2f2; transition: color 150ms; z-index: 2; }
+.row__arrow { position: absolute; top: 4px; height: var(--art-h, 60%); width: var(--gutter); display: grid; place-items: center; color: #f2f2f2; transition: color 150ms; z-index: 2; }
 .row__arrow:hover { color: #fff; }
 .row__arrow--right { right: 0; }
 .row__arrow--left { left: 0; }

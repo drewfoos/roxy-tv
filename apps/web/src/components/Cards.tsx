@@ -202,12 +202,15 @@ export function Row({ title, children, thumbs = false, more }: { title: string; 
   const track = useRef<HTMLDivElement>(null)
   // Crunchyroll's arrows: a bare chevron in each gutter, shown only where there is more to see.
   const [ends, setEnds] = useState({ left: false, right: false })
+  // The chevron centres on the art, not the whole card: the arrow is as tall as the first still.
+  const [artH, setArtH] = useState(0)
   useEffect(() => {
     const el = track.current
     if (!el) return
     const measure = () => {
       const max = el.scrollWidth - el.clientWidth
       setEnds({ left: el.scrollLeft > 4, right: el.scrollLeft < max - 4 })
+      setArtH(el.querySelector('.card__art, .ep__art')?.getBoundingClientRect().height ?? 0)
     }
     measure()
     el.addEventListener('scroll', measure, { passive: true })
@@ -228,7 +231,7 @@ export function Row({ title, children, thumbs = false, more }: { title: string; 
         <h2 className="row__title">{title}</h2>
         {more}
       </div>
-      <div className="row__scroller">
+      <div className="row__scroller" style={artH ? { ['--art-h' as string]: `${artH}px` } : undefined}>
         {ends.left && (
           <button className="row__arrow row__arrow--left" onClick={() => scrollBy(-1)} aria-label="Scroll previous">
             <IconChevronLeft size={40} />
