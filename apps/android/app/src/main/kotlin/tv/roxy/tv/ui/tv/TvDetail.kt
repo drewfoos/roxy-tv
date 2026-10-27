@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,8 +26,9 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
@@ -46,12 +49,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -142,14 +149,14 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
         ),
     )
     var tab by rememberSaveable(seriesId) { mutableStateOf(0) }
-    TitlePage(title = series, play = next, api = app.api, actions = actions, tabs = listOf("Episodes", "Details", "More like this"), tab = tab, onTab = { tab = it }) {
+    TitlePage(title = series, play = next, api = app.api, actions = actions, tabs = listOf("Episodes", "Details", "More like this"), tab = tab, onTab = { tab = it }) { first ->
         when (tab) {
             0 -> EpisodesTab(
                 seasons = state.seasons, selected = state.selectedSeason, onSelectSeason = vm::selectSeason,
-                episodes = state.episodes, loading = state.episodesLoading, api = app.api, onPlay = ::play,
+                episodes = state.episodes, loading = state.episodesLoading, api = app.api, onPlay = ::play, first = first,
             )
-            1 -> DetailsTab(series, app.api)
-            else -> MoreLikeThisTab(series, app.api, related = state.related.mapNotNull { if (it.inLibrary) it.item else null }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie)
+            1 -> DetailsTab(series, app.api, first)
+            else -> MoreLikeThisTab(series, app.api, related = state.related.mapNotNull { if (it.inLibrary) it.item else null }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, first = first)
         }
     }
 }
@@ -179,16 +186,16 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
         if (started) add(TitleAction(key = "restart", label = "Start over", icon = Icons.Filled.Replay, onClick = { play(fromStart = true) }))
     }
     var tab by rememberSaveable(movieId) { mutableStateOf(0) }
-    TitlePage(title = movie, play = movie, api = app.api, actions = actions, tabs = listOf("Movie", "Details", "More like this"), tab = tab, onTab = { tab = it }) {
+    TitlePage(title = movie, play = movie, api = app.api, actions = actions, tabs = listOf("Movie", "Details", "More like this"), tab = tab, onTab = { tab = it }) { first ->
         when (tab) {
             0 -> Row(modifier = Modifier.fillMaxSize()) {
                 Spacer(Modifier.width(EpisodeListStart))
                 Column(modifier = Modifier.padding(top = 27.dp)) {
-                    EpisodeRow(movie, app.api, index = 0, onClick = { play() })
+                    EpisodeRow(movie, app.api, index = 0, onClick = { play() }, modifier = Modifier.focusRequester(first))
                 }
             }
-            1 -> DetailsTab(movie, app.api)
-            else -> MoreLikeThisTab(movie, app.api, related = state.partOf, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie)
+            1 -> DetailsTab(movie, app.api, first)
+            else -> MoreLikeThisTab(movie, app.api, related = state.partOf, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, first = first)
         }
     }
 }
@@ -210,11 +217,23 @@ private fun watchlistAction(app: RoxyApp, item: Item, scope: kotlinx.coroutines.
 @Composable
 private fun TitlePage(
     title: Item, play: Item?, api: RoxyApi, actions: List<TitleAction>, tabs: List<String>, tab: Int, onTab: (Int) -> Unit,
-    content: @Composable () -> Unit,
+    content: @Composable (first: FocusRequester) -> Unit,
 ) {
     val memory = rememberFocusMemory()
-    var lowerFocused by remember { mutableStateOf(false) }
-    val topHeight by animateDpAsState(if (lowerFocused) 0.dp else TopBlockHeight, Fold, label = "fold")
+    // Attached by the content to its first focusable (the season picker, the details
+    // block, the first similar title): Down from a tab goes straight to it.
+    val contentFocus = remember { FocusRequester() }
+    // Folded = the art is away and the tab strip sits at the top (Crunchyroll's). Down
+    // on a tab folds and enters the content; Up on a tab while folded unfolds and goes
+    // back to the actions. Focus landing on an action unfolds too (Back from the list).
+    var folded by remember { mutableStateOf(false) }
+    var pendingFocus by remember { mutableStateOf<FocusRequester?>(null) }
+    LaunchedEffect(pendingFocus) {
+        val target = pendingFocus ?: return@LaunchedEffect
+        repeat(10) { withFrameNanos { }; if (runCatching { target.requestFocus() }.isSuccess) { pendingFocus = null; return@LaunchedEffect } }
+        pendingFocus = null
+    }
+    val topHeight by animateDpAsState(if (folded) 0.dp else TopBlockHeight, Fold, label = "fold")
     var restored by remember { mutableStateOf(false) }
     LaunchedEffect(title.id) {
         if (restored) return@LaunchedEffect
@@ -222,12 +241,13 @@ private fun TitlePage(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxWidth().height(topHeight).clipToBounds()) {
+        Box(modifier = Modifier.fillMaxWidth().height(topHeight).clipToBounds().focusProperties { canFocus = !folded }) {
             Box(modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height(TopBlockHeight)) {
                 val art = api.imageUrl(title, "backdrop", widthPx(960.dp)) ?: play?.let { api.imageUrl(it, "thumb", widthPx(960.dp)) }
                 RoxyImage(art, "", modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
-                Box(modifier = Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.92f), 0.5f to Color.Transparent)))
-                Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to RoxyColors.background)))
+                // Scrims sized to the strips they tint (left half, bottom 40 %), not the whole block.
+                Box(modifier = Modifier.fillMaxWidth(0.5f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.92f), 1f to Color.Transparent)))
+                Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.4f).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to RoxyColors.background)))
                 Column(modifier = Modifier.padding(start = PageStart, top = 45.dp)) {
                     Box(modifier = Modifier.height(125.dp).widthIn(max = 480.dp), contentAlignment = Alignment.BottomStart) {
                         val logo = api.imageUrl(title, "logo", widthPx(480.dp))
@@ -242,7 +262,8 @@ private fun TitlePage(
                     actions.forEach { a ->
                         TvListRow(
                             label = a.label, icon = a.icon, trailing = a.trailing, selected = true, height = TvDims.ListRowHeight,
-                            onClick = a.onClick, modifier = Modifier.width(ActionWidth).focusKey(memory, a.key).focusProperties { down = memory.requester("tab/0") }.alpha(if (a.enabled) 1f else 0.5f),
+                            onClick = a.onClick, onFocused = { folded = false },
+                            modifier = Modifier.width(ActionWidth).focusKey(memory, a.key).focusProperties { down = memory.requester("tab/0") }.alpha(if (a.enabled) 1f else 0.5f),
                         )
                         Spacer(Modifier.height(2.dp))
                     }
@@ -250,32 +271,64 @@ private fun TitlePage(
             }
         }
         Row(modifier = Modifier.padding(start = PageStart, top = 23.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            tabs.forEachIndexed { i, t -> TvTab(t, selected = i == tab, onClick = { onTab(i) }, onFocused = { onTab(i) }, modifier = Modifier.focusKey(memory, "tab/$i")) }
+            tabs.forEachIndexed { i, t ->
+                TvTab(
+                    t, selected = i == tab, onClick = { onTab(i) }, onFocused = { onTab(i) },
+                    onDown = { folded = true; pendingFocus = contentFocus },
+                    onUp = { if (folded) { folded = false; pendingFocus = memory.requester("play") } else pendingFocus = memory.requester("play") },
+                    modifier = Modifier.focusKey(memory, "tab/$i"),
+                )
+            }
         }
-        Box(modifier = Modifier.fillMaxWidth().weight(1f).onFocusChanged { lowerFocused = it.hasFocus }) { content() }
+        // Under the art the content gets only a sliver of height; it keeps a working height
+        // anyway (overflowing the screen) so its first rows exist for Down from the tabs to reach.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                // Measured at least 320 dp tall but placed at its top (a child that overflows its
+                // constraints is otherwise centred, which drew the rows over the art).
+                .layout { measurable, constraints ->
+                    val floor = 320.dp.roundToPx()
+                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = maxOf(constraints.maxHeight, floor)))
+                    layout(placeable.width, minOf(placeable.height, constraints.maxHeight)) { placeable.placeRelative(0, 0) }
+                }
+                .clipToBounds()
+                .focusGroup(),
+        ) { content(contentFocus) }
     }
 }
 
-/** Season picker (left) and the season's episodes (right). OK on the picker lists the seasons in its place. */
+/**
+ * Every season as a row at the left ("Season 1: 11 episodes"), the focused season's
+ * episodes at the right; Right from a season goes to its first episode. Counts come
+ * from one small request per season, made once the tab opens.
+ */
 @Composable
-private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit) {
-    var picking by rememberSaveable { mutableStateOf(false) }
-    BackHandler(enabled = picking) { picking = false }
-    val seasonName = seasons.getOrNull(selected)?.let { it.title.ifEmpty { "Season ${it.indexAired ?: selected + 1}" } }
+private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester) {
+    val firstEpisode = remember { FocusRequester() }
+    var counts by remember(seasons) { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    LaunchedEffect(seasons) {
+        for (s in seasons) {
+            val n = runCatching { api.items(type = "episode", parent = s.id, limit = 1).total }.getOrNull() ?: continue
+            counts = counts + (s.id to n)
+        }
+    }
     Row(modifier = Modifier.fillMaxSize().padding(top = 27.dp)) {
         Column(modifier = Modifier.width(EpisodeListStart).padding(start = PageStart, end = EpisodeListStart - PageStart - SeasonPickerWidth)) {
-            if (picking) {
-                seasons.forEachIndexed { i, s ->
-                    TvListRow(
-                        label = s.title.ifEmpty { "Season ${s.indexAired ?: i + 1}" }, selected = i == selected, height = 36.dp, fontSize = 20.sp, startPadding = 16.dp,
-                        onClick = { onSelectSeason(i); picking = false }, modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            } else {
+            if (seasons.isEmpty()) {
+                TvListRow(label = "Episodes", selected = true, height = 44.dp, fontSize = 20.sp, startPadding = 16.dp, onClick = {}, modifier = Modifier.fillMaxWidth().focusRequester(first).focusProperties { if (episodes.isNotEmpty()) { down = firstEpisode; right = firstEpisode } })
+            }
+            seasons.forEachIndexed { i, s ->
+                val name = s.title.ifEmpty { "Season ${s.indexAired ?: i + 1}" }
+                val n = if (i == selected && !loading) episodes.size else counts[s.id]
+                val label = when (n) { null -> name; 1 -> "$name: 1 episode"; else -> "$name: $n episodes" }
                 TvListRow(
-                    label = if (seasonName != null) "Season: $seasonName" else "Episodes", trailing = "${episodes.size} Episodes".takeIf { episodes.isNotEmpty() },
-                    selected = true, height = 36.dp, fontSize = 20.sp, startPadding = 16.dp,
-                    onClick = { if (seasons.size > 1) picking = true }, modifier = Modifier.fillMaxWidth(),
+                    label = label, selected = i == selected, height = 44.dp, fontSize = 19.sp, startPadding = 16.dp,
+                    onClick = { onSelectSeason(i) }, onFocused = { onSelectSeason(i) },
+                    modifier = Modifier.fillMaxWidth()
+                        .then(if (i == selected) Modifier.focusRequester(first) else Modifier)
+                        .focusProperties { if (episodes.isNotEmpty()) right = firstEpisode },
                 )
             }
         }
@@ -283,7 +336,9 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
         } else {
             LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(episodes, key = { it.id }) { ep -> EpisodeRow(ep, api, index = episodes.indexOf(ep), onClick = { if (ep.isPlayable) onPlay(ep) }) }
+                itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
+                    EpisodeRow(ep, api, index = i, onClick = { if (ep.isPlayable) onPlay(ep) }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
+                }
             }
         }
     }
@@ -291,13 +346,13 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
 
 /** One episode (or the movie itself): still with minutes and progress, "E1 - Title", the audio, two lines of synopsis. */
 @Composable
-private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit) {
+private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val placeholder = !ep.isPlayable
     val imageType = if (ep.isEpisode) "thumb" else "backdrop"
     val code = if (ep.isEpisode) episodeShort(ep) else ""
     val name = if (code.isEmpty()) ep.title else "$code - ${ep.title}"
     val audio = audioBadge(ep) ?: ep.availability?.takeIf { placeholder }?.replaceFirstChar { it.uppercase() }
-    TvCard(onClick = onClick, modifier = Modifier.alpha(if (placeholder) 0.5f else 1f)) {
+    TvCard(onClick = onClick, modifier = modifier.alpha(if (placeholder) 0.5f else 1f)) {
         Row(modifier = Modifier.width(EpisodeThumbWidth + 12.dp + 326.dp)) {
             Box(modifier = Modifier.width(EpisodeThumbWidth).aspectRatio(16f / 9f)) {
                 RoxyImage(api.imageUrl(ep, imageType, widthPx(EpisodeThumbWidth)), code.ifEmpty { ep.title }, modifier = Modifier.fillMaxSize())
@@ -306,8 +361,8 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit) 
             }
             Column(modifier = Modifier.padding(start = 12.dp, top = 10.dp)) {
                 Text(name, color = RoxyColors.onBackground, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(audio ?: "", color = RoxyColors.muted, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 1)
-                Text(ep.overview.orEmpty(), color = RoxyColors.muted, fontSize = 16.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(audio ?: "", color = TvSubtle, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 1)
+                Text(ep.overview.orEmpty(), color = TvSubtle, fontSize = 16.sp, lineHeight = 21.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -315,7 +370,7 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit) 
 
 /** Facts about the title: the full synopsis, genres, year, studio, status, audio, cast. Focusable so it can be scrolled up to. */
 @Composable
-private fun DetailsTab(item: Item, api: RoxyApi) {
+private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester) {
     var details by remember(item.id) { mutableStateOf<ItemDetails?>(null) }
     LaunchedEffect(item.id) { details = runCatching { api.itemDetails(item.id) }.getOrNull() }
     val facts = buildList {
@@ -330,9 +385,9 @@ private fun DetailsTab(item: Item, api: RoxyApi) {
         item.runtimeMinutes?.let { add("Runtime" to "$it min") }
         details?.tmdb?.cast?.takeIf { it.isNotEmpty() }?.let { add("Cast" to it.take(8).joinToString(", ") { c -> c.name }) }
     }
-    TvFocusable(onClick = {}, modifier = Modifier.fillMaxSize()) { _ ->
+    TvFocusable(onClick = {}, modifier = Modifier.fillMaxSize().focusRequester(first)) { _ ->
         Row(modifier = Modifier.fillMaxSize().padding(start = PageStart, top = 27.dp, end = PageStart)) {
-            Text(item.overview.orEmpty(), color = TvSubtle, fontSize = 16.sp, lineHeight = 22.sp, maxLines = 14, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(item.overview.orEmpty(), color = RoxyColors.onBackground, fontSize = 17.sp, lineHeight = 24.sp, modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 24.dp))
             Column(modifier = Modifier.width(ActionWidth).padding(start = 40.dp)) {
                 facts.forEach { (k, v) ->
                     Text(k.uppercase(), color = RoxyColors.muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -348,7 +403,7 @@ private fun DetailsTab(item: Item, api: RoxyApi) {
  * series), then TMDB's similar titles; those not in the library are dimmed and inert.
  */
 @Composable
-private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, first: FocusRequester) {
     var similar by remember(item.id) { mutableStateOf<List<DiscoverItem>?>(null) }
     LaunchedEffect(item.id) { similar = runCatching { api.similar(item.id) }.getOrDefault(emptyList()) }
     val cards: List<Any> = related + similar.orEmpty().filter { s -> related.none { it.id == s.libraryItemId } }
@@ -358,11 +413,12 @@ private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpe
         contentPadding = PaddingValues(start = PageStart - TvDims.FocusBorder, top = 23.dp, end = PageStart, bottom = 24.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(cards, key = { c -> if (c is Item) c.id else "tmdb:${(c as DiscoverItem).tmdbId}" }) { c ->
+        itemsIndexed(cards, key = { _, c -> if (c is Item) c.id else "tmdb:${(c as DiscoverItem).tmdbId}" }) { i, c ->
+            val firstMod = if (i == 0) Modifier.focusRequester(first) else Modifier
             when (c) {
-                is Item -> PosterCard(c, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = { if (c.isMovie) onOpenMovie(c) else onOpenSeries(c) })
+                is Item -> PosterCard(c, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = { if (c.isMovie) onOpenMovie(c) else onOpenSeries(c) }, modifier = firstMod)
                 is DiscoverItem -> UrlPosterCard(
-                    title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, dim = !c.inLibrary,
+                    title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, dim = !c.inLibrary, modifier = firstMod,
                     note = if (c.inLibrary) null else "Not in library",
                     onClick = { c.libraryItemId?.let { id -> val stub = Item(id = id, type = c.type.let { t -> if (t == "movie") "movie" else "series" }, title = c.title); if (stub.isMovie) onOpenMovie(stub) else onOpenSeries(stub) } },
                 )

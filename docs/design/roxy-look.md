@@ -198,6 +198,19 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   title at their right, and keep Play in a sticky bottom bar; Browse and the watchlist
   are three-wide 6 px-radius posters; Account is the phone's grouped cards. Scroll-linked
   pieces read the unitless `--sy` variable (hooks/useScrollVar.ts) in CSS calc.
+- **Android TV** (`apps/android` `ui/tv/*`, measured from Crunchyroll's TV app on the
+  TCL, 1 dp = 2 px): a left rail (avatar, Search, Home, Watchlist, History, Browse,
+  Settings) 80 dp collapsed / 264 dp with labels when focus enters it; a focused row is a
+  full-width accent bar with dark text. Home: a 455 dp hero (art, logo, facts, two lines,
+  CONTINUE / MORE INFO outlined buttons) over the phone's rows; posters 137 dp with a
+  52 dp caption box, continue cards 282 dp 16:9; the focused card has a 4 dp accent frame
+  and no scale. Title pages: 452 dp art block with text actions, then EPISODES | DETAILS |
+  MORE LIKE THIS; Down on a tab folds the art away and enters the content, Up on a tab
+  unfolds. Player on TV: blue seek bar, title on 60 % of the width, Crunchyroll's bottom
+  row (-10, play, +10, volume, time ... next, CC, speed, gear), no centre discs. Banner:
+  the hat left, "Roxy TV" right. Performance rules for the TV: no shimmer, no crossfade,
+  no blurred shadows, plain focusable boxes (not tv-material Surface), scrims sized to the
+  strip they tint, one background fill; measure with the `perf` build type.
 - **Breakpoints** (`tokens.css`): phone ≤ 600, tablet 601–1023, desktop S 1024–1279,
   desktop M 1280–1599, desktop L 1600–2199, ultra ≥ 2200. They set the gutter, the card
   gap, how many posters a row shows (2.4 / 3.4 / 4.35 / 5.35 / 6.35 / 7.35), grid

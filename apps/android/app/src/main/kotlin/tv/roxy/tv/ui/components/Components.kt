@@ -111,7 +111,8 @@ fun RoxyImage(url: String?, title: String, modifier: Modifier = Modifier, placeh
     // drain on a TV's processor with thirty cards in view, so the TV shows a plain tile.
     val context = androidx.compose.ui.platform.LocalContext.current
     val onTv = remember { isTelevision(context) }
-    Box(modifier = modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
+    // The grey tile is drawn only until the picture covers it: one fill per card, not two.
+    Box(modifier = if (loaded) modifier else modifier.background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
         // The skeleton shimmer while the picture is on its way (the same as the page skeletons).
         if (!onTv && url != null && !failed && !loaded) Box(modifier = Modifier.matchParentSize().background(shimmerBrush()))
         if (url == null || failed) ArtFallback(title, placeholderTextSize)

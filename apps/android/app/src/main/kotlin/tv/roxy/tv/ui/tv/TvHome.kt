@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -23,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,8 +106,9 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
         is HomeUiState.Ready -> {
             val hero = s.heroes.firstOrNull() ?: s.hero?.let { HeroPick(it, it) }
             val pin = with(LocalDensity.current) { RowPin.roundToPx() }
-            var focusedRow by remember { mutableStateOf(-1) }
-            LaunchedEffect(focusedRow) { if (focusedRow >= 0) listState.animateScrollToItem(focusedRow, -pin) }
+            // The focused row drives the page scroll through a flow: no recomposition per focus change.
+            val focusedRow = remember { mutableStateOf(-1) }
+            LaunchedEffect(listState) { snapshotFlow { focusedRow.value }.collect { if (it >= 0) listState.animateScrollToItem(it, -pin) } }
             val rows = remember(s.rows) { tvRows(s.rows) }
             RestoreFocus(memory, listState, rows, pin, fallback = "hero/play")
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
@@ -114,13 +117,13 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         pick = hero, api = app.api, memory = memory,
                         onPlay = { play -> if (play.isEpisode || play.isMovie) scope.launch { playItem(context, play).onFailure { Timber.w(it, "play failed") } } else open(play) },
                         onInfo = { title -> open(title) },
-                        onFocused = { focusedRow = 0 },
+                        onFocused = { focusedRow.value = 0 },
                     )
                 }
                 itemsIndexed(rows, key = { _, r -> r.key }) { i, row ->
                     TvRow(
                         title = row.title, rowKey = row.key, items = row.items, api = app.api, memory = memory,
-                        onClick = ::open, onRowFocused = { focusedRow = i + 1 }, thumbs = row.key == "continue",
+                        onClick = ::open, onRowFocused = { focusedRow.value = i + 1 }, thumbs = row.key == "continue",
                     )
                 }
                 item(key = "footer") {
@@ -199,8 +202,9 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
         val art = api.imageUrl(title, "backdrop", widthPx(960.dp)) ?: api.imageUrl(play, "thumb", widthPx(960.dp))
         RoxyImage(art, "", modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
         // Dark under the copy (left) and into the page (bottom); near-black under the rail.
-        Box(modifier = Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.95f), 0.08f to RoxyColors.background.copy(alpha = 0.85f), 0.55f to Color.Transparent)))
-        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to RoxyColors.background)))
+        // Each scrim covers only the strip it tints (left 55 %, bottom 45 %): fill rate is the TV's budget.
+        Box(modifier = Modifier.fillMaxWidth(0.55f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.95f), 0.145f to RoxyColors.background.copy(alpha = 0.85f), 1f to Color.Transparent)))
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.45f).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to RoxyColors.background)))
 
         Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 112.dp).widthIn(max = 460.dp)) {
             val tag = if ((play.userData?.positionMs ?: 0L) > 0) "Continue Watching" else "Newly Added"
@@ -223,12 +227,11 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
             Row {
                 val started = (play.userData?.positionMs ?: 0L) > 0
                 val label = if (play.isEpisode && (started || (play.indexAired ?: 1) > 1)) "Continue: ${episodeShort(play)}" else if (started) "Continue" else "Start watching"
-                TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play"))
+                // Focus on either button pins the page to the top.
+                TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play"), onFocused = onFocused)
                 Spacer(Modifier.width(18.dp))
-                TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info"))
+                TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info"), onFocused = onFocused)
             }
         }
-        // The buttons sit at the bottom of the block; focus on either pins the page to the top.
-        LaunchedEffect(memory.key) { if (memory.key?.startsWith("hero/") == true) onFocused() }
     }
 }

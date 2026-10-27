@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.GridView
@@ -47,7 +48,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.tv.material3.Text
+import tv.roxy.tv.data.UpdateState
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.nav.Route
@@ -87,9 +94,56 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
             if (!railHasFocus) return@LaunchedEffect
         }
     }
+    val app = RoxyApp.get(androidx.compose.ui.platform.LocalContext.current)
+    val update by app.updates.state.collectAsStateWithLifecycle()
     Box(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize().focusRequester(pageFocus).focusGroup()) { content() }
         if (current != null) Rail(current, onSelect, onSwitchProfile, onFocus = { railHasFocus = it }, onExit = enterPage)
+        if (current != null && update !is UpdateState.None) {
+            TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomEnd))
+        }
+    }
+}
+
+/**
+ * "Roxy 0.3.2 is available": a newer build published on the server, with Update (download
+ * and hand to Android's installer) and Not now. Sits over the page's bottom-right corner
+ * until one is pressed; Down from the page's last row reaches it.
+ */
+@Composable
+private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    val update = when (state) {
+        is UpdateState.Available -> state.update
+        is UpdateState.Downloading -> state.update
+        is UpdateState.Ready -> state.update
+        is UpdateState.Failed -> state.update
+        UpdateState.None -> return
+    }
+    val title = when (state) {
+        is UpdateState.Downloading -> "Downloading Roxy ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
+        is UpdateState.Ready -> "Roxy ${update.versionName} is ready to install"
+        is UpdateState.Failed -> "Update failed  ·  ${state.message}"
+        else -> "Roxy ${update.versionName} is available"
+    }
+    Row(
+        modifier = modifier.padding(end = 40.dp, bottom = 28.dp).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.SystemUpdate, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
+        Column(modifier = Modifier.padding(start = 14.dp, end = 18.dp).widthIn(max = 420.dp)) {
+            Text(title, color = RoxyColors.onBackground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (update.notes.isNotBlank() && state !is UpdateState.Downloading) Text(update.notes, color = RoxyColors.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (state !is UpdateState.Downloading) {
+            val label = when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Retry"; else -> "Update" }
+            TvFocusable(onClick = onInstall, shape = RoundedCornerShape(17.dp), background = RoxyColors.accent, focusedBackground = Color.White) { _ ->
+                Text(label, color = OnAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(17.dp), focusedBackground = Color(0x33FFFFFF)) { focused ->
+                Text("Not now", color = if (focused) Color.White else RoxyColors.muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
+            }
+        }
     }
 }
 
@@ -110,7 +164,7 @@ private fun Rail(current: RailPage, onSelect: (RailPage) -> Unit, onSwitchProfil
         modifier = Modifier
             .width(width)
             .fillMaxHeight()
-            .background(if (expanded) RoxyColors.surface else Color.Transparent)
+            .then(if (expanded) Modifier.background(RoxyColors.surface) else Modifier)
             .onFocusChanged { expanded = it.hasFocus; onFocus(it.hasFocus) }
             // Right (or Back) leaves the rail for the page; the D-pad would otherwise stay inside the group.
             .onPreviewKeyEvent { ev ->

@@ -49,6 +49,7 @@ import androidx.compose.material.icons.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Dns
@@ -252,6 +253,9 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
 
         GroupCard("About") {
             SettingRow(Icons.Outlined.Info, "Version", "${BuildConfig.VERSION_NAME}  ·  ${BuildConfig.APPLICATION_ID}", trailing = null) {}
+            Divider()
+            val checkNote by app.updates.checkNote.collectAsStateWithLifecycle()
+            SettingRow(Icons.Outlined.SystemUpdate, "Check for updates", checkNote ?: "Newer builds published on your server install from here") { app.updates.checkNow() }
             Divider()
             SettingRow(Icons.Outlined.Description, "Terms of Use", if (session.acceptedTerms.isNotEmpty()) "Accepted  ·  version ${session.acceptedTerms}" else "Read the terms") { onOpenLegal("terms") }
             Divider()

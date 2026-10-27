@@ -28,7 +28,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,9 +54,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.ClickableSurfaceDefaults
-import androidx.tv.material3.Surface
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.NativeKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.tv.material3.Text
+import tv.roxy.tv.ui.components.tapClick
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.ProgressBar
@@ -137,7 +148,9 @@ fun Modifier.focusKey(memory: FocusMemory, key: String): Modifier =
 
 /**
  * A focusable, clickable box with no look of its own: the caller draws from [focused].
- * tv-material's Surface fires on D-pad OK and reports focus through the interaction source.
+ * A plain focusable with a key handler, not tv-material's Surface: its indication, scale,
+ * glow and border machinery on every card was most of the composition cost on a TV's
+ * processor. OK / Enter fire [onClick] once per press (repeats while held are ignored).
  */
 @Composable
 fun TvFocusable(
@@ -150,23 +163,19 @@ fun TvFocusable(
     onFocused: (() -> Unit)? = null,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
+    var focused by remember { mutableStateOf(false) }
     if (onFocused != null) LaunchedEffect(focused) { if (focused) onFocused() }
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        interactionSource = interaction,
-        shape = ClickableSurfaceDefaults.shape(shape),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = background, focusedContainerColor = focusedBackground, pressedContainerColor = focusedBackground,
-            contentColor = RoxyColors.onBackground, focusedContentColor = OnAccent, pressedContentColor = OnAccent,
-            disabledContainerColor = background, disabledContentColor = RoxyColors.muted,
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f, pressedScale = 1f),
-        border = ClickableSurfaceDefaults.border(),
-        glow = ClickableSurfaceDefaults.glow(),
-        modifier = modifier,
+    Box(
+        modifier = modifier
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { ev ->
+                val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
+                if (enabled && ok && ev.type == KeyEventType.KeyDown && (ev.nativeKeyEvent as NativeKeyEvent).repeatCount == 0) { onClick(); true } else false
+            }
+            .focusable(enabled)
+            .clip(shape)
+            .background(if (focused) focusedBackground else background)
+            .tapClick(onClick),
     ) { content(focused) }
 }
 
@@ -222,13 +231,12 @@ fun CaptionTitle(text: String, lines: Int, fontSize: androidx.compose.ui.unit.Te
     Text(text, color = color, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.SemiBold, minLines = lines, maxLines = lines, overflow = TextOverflow.Ellipsis)
 }
 
-/** The "23m left" badge in the picture's corner, readable on any art. */
+/** The "23m left" badge in the picture's corner: a dark pill (a blurred shadow is dear on a TV's GPU). */
 @Composable
 fun MinutesBadge(text: String, modifier: Modifier = Modifier) {
     Text(
         text, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-        style = TextStyle(shadow = Shadow(Color.Black, blurRadius = 6f)),
-        modifier = modifier.padding(end = 8.dp, bottom = 8.dp),
+        modifier = modifier.padding(end = 8.dp, bottom = 8.dp).background(Color(0xB3000000), RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
     )
 }
 
@@ -297,20 +305,24 @@ fun ThumbCard(
  * 16:9 cards with "CONTINUE: E2", the rest posters. The focused card is kept at the row's
  * left edge, as Crunchyroll does, and the cards register with [memory] under "[rowKey]/[item id]".
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TvRow(
     title: String, rowKey: String, items: List<Item>, api: RoxyApi, memory: FocusMemory,
     onClick: (Item) -> Unit, onRowFocused: () -> Unit, modifier: Modifier = Modifier, thumbs: Boolean = false,
 ) {
-    val rowState = rememberLazyListState()
-    var pivot by remember { mutableStateOf(-1) }
-    LaunchedEffect(pivot) { if (pivot >= 0) rowState.animateScrollToItem(pivot) }
+    // Three cards of a row about to scroll into view are composed ahead of it.
+    val rowState = rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 3) })
+    // The focused card's index drives the scroll through a flow, so a focus change does
+    // not recompose the row.
+    val pivot = remember { mutableStateOf(-1) }
+    LaunchedEffect(rowState) { snapshotFlow { pivot.value }.collect { if (it >= 0) rowState.animateScrollToItem(it) } }
     Column(modifier = modifier.fillMaxWidth().padding(top = 10.dp)) {
         Text(title, color = RoxyColors.muted, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TvDims.ContentStart))
         LazyRow(state = rowState, contentPadding = PaddingValues(start = TvDims.CardStart, end = TvDims.CardStart)) {
             itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
                 val focusMod = Modifier.focusKey(memory, "$rowKey/${item.id}")
-                val focused = { pivot = i; onRowFocused() }
+                val focused = { pivot.value = i; onRowFocused() }
                 if (thumbs || item.isEpisode) {
                     ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = { onClick(item) }, modifier = focusMod, onFocused = focused)
                 } else {
@@ -363,8 +375,8 @@ fun TvListRow(
  * (START WATCHING with its play triangle, MORE INFO).
  */
 @Composable
-fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, play: Boolean = false) {
-    TvFocusable(onClick = onClick, modifier = modifier, focusedBackground = RoxyColors.accent) { focused ->
+fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, play: Boolean = false, onFocused: (() -> Unit)? = null) {
+    TvFocusable(onClick = onClick, modifier = modifier, focusedBackground = RoxyColors.accent, onFocused = onFocused) { focused ->
         val color = if (focused) OnAccent else Color.White
         Row(
             modifier = Modifier.height(TvDims.HeroButtonHeight).border(2.dp, if (focused) RoxyColors.accent else Color.White).padding(horizontal = 32.dp),
@@ -381,9 +393,18 @@ fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, p
 
 /** One tab of a title page's strip: the selected one sits in a dark box, the focused one on the accent. */
 @Composable
-fun TvTab(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null) {
+fun TvTab(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onDown: (() -> Unit)? = null, onUp: (() -> Unit)? = null) {
     TvFocusable(
-        onClick = onClick, modifier = modifier, focusedBackground = RoxyColors.accent,
+        onClick = onClick,
+        modifier = modifier.onPreviewKeyEvent { ev ->
+            if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (ev.key) {
+                Key.DirectionDown -> { onDown?.invoke(); onDown != null }
+                Key.DirectionUp -> { onUp?.invoke(); onUp != null }
+                else -> false
+            }
+        },
+        focusedBackground = RoxyColors.accent,
         background = if (selected) RoxyColors.surfaceHigh else Color.Transparent, onFocused = onFocused,
     ) { focused ->
         Box(modifier = Modifier.height(TvDims.TabHeight).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {

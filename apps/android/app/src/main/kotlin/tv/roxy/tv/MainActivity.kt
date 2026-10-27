@@ -30,6 +30,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import androidx.tv.material3.Surface
+import androidx.tv.material3.SurfaceDefaults
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.api.ApiException
@@ -155,11 +156,16 @@ class MainActivity : ComponentActivity() {
         if (!tv) enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         setContent {
             RoxyTheme {
-                Surface(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
+                // The Surface paints the page colour itself; a second background modifier
+                // would be another full-screen fill on every frame.
+                Surface(modifier = Modifier.fillMaxSize(), colors = SurfaceDefaults.colors(containerColor = RoxyColors.background)) {
                     AppRoot(tv)
                 }
             }
         }
+        // The content is opaque, so the window's own background is one more full-screen
+        // fill the GPU can skip (a TV's fill rate is the frame budget's bottleneck).
+        window.setBackgroundDrawable(null)
     }
 }
 
@@ -239,9 +245,12 @@ private fun AppRoot(tv: Boolean) {
     val pendingPlay = activity?.pendingPlayId
     LaunchedEffect(pendingPlay) {
         if (activity == null || pendingPlay == null) return@LaunchedEffect
+        // Clearing the id restarts this effect, so the play runs on the app's scope, not here.
         activity.pendingPlayId = null
-        val item = app.items[pendingPlay] ?: runCatching { app.api.item(pendingPlay) }.getOrNull() ?: return@LaunchedEffect
-        playItem(activity, item).onFailure { Timber.w(it, "watch next play failed") }
+        app.scope.launch {
+            val item = app.items[pendingPlay] ?: runCatching { app.api.item(pendingPlay) }.getOrNull() ?: return@launch
+            playItem(activity, item).onFailure { Timber.w(it, "watch next play failed") }
+        }
     }
     // Keyed by profile so every screen's ViewModel starts fresh after a switch.
     key(session.profileId) {

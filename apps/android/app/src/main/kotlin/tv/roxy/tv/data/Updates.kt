@@ -51,6 +51,33 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
 
     private var checkedAt = 0L
 
+    /** What the last check from Settings found, for its row: "Checking…", "Up to date · 0.3.1", or why it failed. */
+    private val _checkNote = MutableStateFlow<String?>(null)
+    val checkNote: StateFlow<String?> get() = _checkNote
+
+    /**
+     * A check the person asked for in Settings: always asks the server, says so when the
+     * app is current, and offers a build they dismissed earlier again.
+     */
+    fun checkNow() {
+        _checkNote.value = "Checking…"
+        checkedAt = System.currentTimeMillis()
+        scope.launch {
+            val result = runCatching { api.latestAppBuild(BuildConfig.APPLICATION_ID) }
+            val err = result.exceptionOrNull()
+            val u = result.getOrNull()
+            when {
+                err != null && !(err is ApiException && err.isNotFound) -> _checkNote.value = "Couldn't reach the server"
+                u == null || u.versionCode <= BuildConfig.VERSION_CODE -> _checkNote.value = "Up to date  ·  ${BuildConfig.VERSION_NAME}"
+                else -> {
+                    _checkNote.value = "Roxy ${u.versionName} is available"
+                    prefs.setDismissedUpdate(0)
+                    _state.value = UpdateState.Available(u)
+                }
+            }
+        }
+    }
+
     /** Ask the server; no-op within [MIN_INTERVAL_MS] of the last check. Never throws. */
     fun check(force: Boolean = false) {
         val now = System.currentTimeMillis()

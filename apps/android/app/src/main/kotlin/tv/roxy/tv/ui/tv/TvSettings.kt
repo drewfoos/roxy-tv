@@ -65,7 +65,7 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
     val langs = remember { Languages.all.take(16) }
     val langOptions = remember(langs) { langs.map { it.iso3 to it.name } }
     val passthroughFound = remember { AudioPassthrough.detect(context) }
-    val quality = remember { listOf(QualityOption.Original.key to QualityOption.Original.label) + QualityOption.Presets.map { it.key to it.label } }
+    val quality = remember { QualityOption.Presets.map { it.key to it.label } }
 
     val preferences = listOf(
         Setting("audio", "Audio Language", langOptions, settings.audioLangs.firstOrNull() ?: "eng") { save(settings.copy(audioLangs = listOf(it))) },
@@ -102,7 +102,17 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
             items(preferences, key = { it.key }) { s -> SettingRow(s, selected == s.key, memory) { selected = s.key } }
             item(key = "h2") { GroupHeading("ADVANCED") }
             items(advanced, key = { it.key }) { s -> SettingRow(s, selected == s.key, memory) { selected = s.key } }
-            item(key = "h3") { GroupHeading("ACCOUNT") }
+            item(key = "h3") { GroupHeading("APP") }
+            item(key = "update") {
+                val note by app.updates.checkNote.collectAsStateWithLifecycle()
+                TvFocusable(onClick = { app.updates.checkNow() }, modifier = Modifier.fillMaxWidth().focusKey(memory, "update"), focusedBackground = RoxyColors.accent) { focused ->
+                    Column(modifier = Modifier.fillMaxWidth().padding(start = 40.dp, end = 16.dp, top = 9.dp, bottom = 9.dp)) {
+                        Text("Check for updates", color = if (focused) OnAccent else RoxyColors.muted, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(note ?: "Newer builds on your server install from here", color = if (focused) OnAccent.copy(alpha = 0.8f) else RoxyColors.muted, fontSize = 13.sp, maxLines = 1)
+                    }
+                }
+            }
+            item(key = "h4") { GroupHeading("ACCOUNT") }
             item(key = "logout") {
                 TvListRow(
                     label = "Log Out", height = 44.dp, startPadding = 40.dp, fontSize = 18.sp,
