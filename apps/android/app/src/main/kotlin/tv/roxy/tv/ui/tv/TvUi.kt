@@ -80,7 +80,7 @@ import tv.roxy.tv.ui.components.RoxyImage
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.phone.ageLabel
 import tv.roxy.tv.ui.phone.audioBadge
-import tv.roxy.tv.ui.phone.WatchedCheck
+import androidx.compose.material.icons.filled.Replay
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /*
@@ -254,6 +254,14 @@ fun continueLabel(item: Item): String {
     return if (code.isEmpty()) verb else "$verb: $code"
 }
 
+/** A watched episode's mark, as on the phone: a replay arrow in a dark disc over the dimmed still. */
+@Composable
+fun ReplayBadge(size: Dp, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.size(size).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+        Icon(Icons.Filled.Replay, contentDescription = "Watch again", tint = Color.White, modifier = Modifier.size(size * 0.6f))
+    }
+}
+
 /** "23m left" part-way through, "23m" for a fresh episode; null when the runtime is unknown. */
 fun minutesLabel(item: Item): String? {
     val len = item.runtimeMs ?: item.primarySource?.durationMs ?: return null
@@ -329,12 +337,15 @@ fun ThumbCard(
     TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused) {
         Column(modifier = Modifier.width(width)) {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
-                RoxyImage(url, cardTitle(item), modifier = Modifier.fillMaxSize())
-                if (badge != null) MinutesBadge(badge, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 3.dp))
-                if (item.userData?.played == true && (item.isEpisode || item.isMovie)) {
-                    ProgressBar(1f, modifier = Modifier.align(Alignment.BottomCenter))
-                    WatchedCheck(size = 20.dp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).background(Color(0x99000000), androidx.compose.foundation.shape.CircleShape))
-                } else if (progress != null && progress < 1f) ProgressBar(progress, modifier = Modifier.align(Alignment.BottomCenter))
+                val watched = item.userData?.played == true && (item.isEpisode || item.isMovie)
+                RoxyImage(url, cardTitle(item), modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f))
+                if (watched) {
+                    ReplayBadge(size = 48.dp, modifier = Modifier.align(Alignment.Center))
+                    MinutesBadge("Watched", modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 3.dp))
+                } else {
+                    if (badge != null) MinutesBadge(badge, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 3.dp))
+                    if (progress != null && progress < 1f) ProgressBar(progress, modifier = Modifier.align(Alignment.BottomCenter))
+                }
             }
             Column(modifier = Modifier.fillMaxWidth().height(captionHeight).background(RoxyColors.surface).padding(horizontal = 12.dp, vertical = 12.dp)) {
                 CaptionTitle(cardTitle(item), lines = titleLines, fontSize = 16.sp, lineHeight = 20.sp)

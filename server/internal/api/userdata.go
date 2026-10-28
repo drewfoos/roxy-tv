@@ -98,7 +98,7 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	}
 	played := it.RuntimeMs != nil && *it.RuntimeMs > 0 && float64(body.PositionMs) >= float64(*it.RuntimeMs)*playedThreshold
 	if played {
-		err = s.store.MarkPlayed(r.Context(), p.ScopeID, it.GUID, true)
+		err = s.store.FinishPlay(r.Context(), p.ScopeID, it.GUID)
 		slog.Info("playback finished", "user", p.User.Name, "item", it.Title, "positionMs", body.PositionMs)
 	} else {
 		err = s.store.SetProgress(r.Context(), p.ScopeID, it.GUID, body.PositionMs, body.AudioIndex, body.SubtitleIndex)

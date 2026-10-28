@@ -55,6 +55,20 @@ func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs
 	return err
 }
 
+// FinishPlay records reaching the end of an item during playback. A player keeps
+// reporting its position after the played threshold (every pause, every few seconds,
+// the credits), so only the first report of a viewing counts as a play: one already
+// marked played and back at position 0 is left alone.
+func (s *Store) FinishPlay(ctx context.Context, userID, guid string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
+		VALUES (?, ?, 0, 1, 1, ?)
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
+			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 AND user_item_data.position_ms = 0 THEN 0 ELSE 1 END,
+			position_ms = 0, played = 1, last_played_at = excluded.last_played_at`,
+		userID, guid, Now())
+	return err
+}
+
 // MarkPlayed sets played (incrementing play count) or unplayed (resetting position).
 func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool) error {
 	if played {
