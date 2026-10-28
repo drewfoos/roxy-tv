@@ -56,7 +56,7 @@ data class PlayerSettings(
      * "foreign" = dialogue subs on foreign audio only; "full" = the dialogue track
      * always; "none" = off. "smart" is an older stored spelling of "signs".
      */
-    val subMode: String = "signs",
+    val subMode: String = "full",
     val showStats: Boolean = false,
     /** Play the next episode when one ends. Always on; kept as a field for the queue logic. */
     val autoplay: Boolean = true,
@@ -311,7 +311,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_HWDEC = stringPreferencesKey("hwdec")
         val KEY_VO = stringPreferencesKey("vo")
         val KEY_ALANG = stringPreferencesKey("audio_langs")
-        val KEY_SUBMODE = stringPreferencesKey("sub_mode")
+        // "_v2": full subtitles became the default on 2026-10-28; the old key held the previous default.
+        val KEY_SUBMODE = stringPreferencesKey("sub_mode_v2")
         val KEY_SLANG = stringPreferencesKey("sub_lang")
         val KEY_STATS = booleanPreferencesKey("show_stats")
         val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")

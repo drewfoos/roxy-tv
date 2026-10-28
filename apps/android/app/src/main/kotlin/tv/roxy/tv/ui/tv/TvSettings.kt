@@ -28,6 +28,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -47,14 +51,11 @@ import tv.roxy.tv.data.UpdateState
 import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.player.AudioPassthrough
 import tv.roxy.tv.player.QualityOption
-import tv.roxy.tv.ui.components.widthPx
-import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
 import android.os.Build
 
 /*
- * Settings, as Crunchyroll's TV app lays them out: a dark left panel with the profile
- * (avatar, name, "Switch Profile") over a tinted header, then the settings in groups as
+ * Settings, as Crunchyroll's TV app lays them out: a dark left panel with the settings in groups as
  * single lines with the current value at the right; the chosen setting's title, its
  * explanation and its options at the right, the current option ticked. Picking an option
  * saves it at once. Under the options, what this build and this TV are.
@@ -109,24 +110,7 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
     Row(modifier = Modifier.fillMaxSize()) {
         Spacer(Modifier.width(PanelStart))
         LazyColumn(modifier = Modifier.width(PanelWidth).fillMaxHeight().background(RoxyColors.surface), contentPadding = PaddingValues(bottom = 24.dp)) {
-            item(key = "profile") {
-                // The profile over a tinted header: avatar, name, "Switch Profile".
-                TvFocusable(onClick = onSwitchProfile, modifier = Modifier.fillMaxWidth().focusKey(memory, "profile"), focusedBackground = RoxyColors.accent) { focused ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(150.dp)
-                            .then(if (focused) Modifier else Modifier.background(Brush.verticalGradient(0f to Color(0xFF16304D), 1f to RoxyColors.surface)))
-                            .padding(start = RowStart, end = 20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val avatarUrl = if (session.profileHasAvatar && session.profileId != null) app.api.profileAvatarUrl(session.profileId!!, widthPx(56.dp) * 2, session.profileAvatarKey) else null
-                        AvatarCircle(name = who, imageUrl = avatarUrl, size = 56.dp)
-                        Column(modifier = Modifier.padding(start = 16.dp)) {
-                            Text(who, color = if (focused) OnAccent else RoxyColors.onBackground, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Switch Profile", color = if (focused) OnAccent else RoxyColors.muted, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
+            item(key = "top") { Spacer(Modifier.height(36.dp)) }
             item(key = "h1") { GroupHeading("${who.uppercase()}'S PREFERENCES") }
             items(preferences, key = { it.key }) { s -> SettingRow(s, selected == s.key, memory) { selected = s.key } }
             item(key = "h2") { GroupHeading("ADVANCED") }
@@ -141,10 +125,13 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
                     UpdateState.None -> updateNote?.substringBefore("  ·  ") ?: BuildConfig.VERSION_NAME
                 }
                 PanelRow(
-                    label = "Check for updates", value = value, selected = selected == "update", memory = memory, key = "update",
+                    label = "Check for updates", value = value, selected = selected == "update", memory = memory, key = "update", right = "opt/update/btn",
                     onFocused = { selected = "update" },
                     onClick = { if (updateState is UpdateState.None) app.updates.checkNow() else app.updates.install() },
                 )
+            }
+            item(key = "about") {
+                PanelRow(label = "About", value = BuildConfig.VERSION_NAME, selected = selected == "about", memory = memory, key = "about", onFocused = { selected = "about" }, onClick = { selected = "about" })
             }
             item(key = "h4") { GroupHeading("ACCOUNT") }
             item(key = "logout") {
@@ -168,14 +155,23 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
                     Text(current.label, color = RoxyColors.onBackground, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text(current.hint ?: "", color = RoxyColors.muted, fontSize = 14.sp, lineHeight = 19.sp, minLines = 2, maxLines = 3, modifier = Modifier.padding(top = 6.dp).widthIn(max = 560.dp))
                     Spacer(Modifier.height(22.dp))
-                    LazyColumn(modifier = Modifier.weight(1f).width(440.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-                        items(current.options, key = { it.first }) { (value, label) ->
-                            OptionRow(label, chosen = value == current.value, onClick = { current.apply(value) }, modifier = Modifier.focusKey(memory, "opt/${current.key}/$value"))
+                    // A plain column, not a lazy one: every option exists, so Right from the
+                    // panel can land on the ticked one wherever it is in the list.
+                    Column(modifier = Modifier.weight(1f).width(440.dp).verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
+                        current.options.forEach { (value, label) ->
+                            OptionRow(
+                                label, chosen = value == current.value, onClick = { current.apply(value) },
+                                modifier = Modifier.focusKey(memory, "opt/${current.key}/$value").focusProperties { left = memory.requester("set/${current.key}") },
+                            )
                         }
                     }
                 }
                 selected == "update" -> {
                     UpdatePane(updateState, updateNote, onInstall = { app.updates.install() }, onCheck = { app.updates.checkNow() }, memory = memory)
+                    Spacer(Modifier.weight(1f))
+                }
+                selected == "about" -> {
+                    AboutPane(session.userName, session.serverUrl, context)
                     Spacer(Modifier.weight(1f))
                 }
                 else -> {
@@ -184,7 +180,6 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
                     Spacer(Modifier.weight(1f))
                 }
             }
-            AboutBlock(session.userName, session.serverUrl, context)
         }
     }
 }
@@ -215,34 +210,38 @@ private fun UpdatePane(state: UpdateState, note: String?, onInstall: () -> Unit,
     Spacer(Modifier.height(22.dp))
     Row {
         when (state) {
-            UpdateState.None -> OptionRow("Check now", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onCheck, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/check"))
-            is UpdateState.Downloading -> OptionRow("Downloading…", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = {}, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/wait"))
-            is UpdateState.Ready -> OptionRow("Install", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/install"))
-            is UpdateState.Failed -> OptionRow("Retry", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/retry"))
-            is UpdateState.Available -> OptionRow("Update to ${update!!.versionName}", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/go"))
+            UpdateState.None -> OptionRow("Check now", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onCheck, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
+            is UpdateState.Downloading -> OptionRow("Downloading…", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = {}, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
+            is UpdateState.Ready -> OptionRow("Install", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
+            is UpdateState.Failed -> OptionRow("Retry", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
+            is UpdateState.Available -> OptionRow("Update to ${update!!.versionName}", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
         }
     }
 }
 
-/** This build, where it is signed in, and the TV it runs on, as labelled lines. */
+/** Settings > About: this build, the server it is signed in to, and the TV it runs on. */
 @Composable
-private fun AboutBlock(user: String, server: String, context: android.content.Context) {
-    val device = remember { "${Build.MANUFACTURER} ${Build.MODEL}  ·  Android ${Build.VERSION.RELEASE}  ·  " + (if (Build.VERSION.SDK_INT >= 31) "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}" else Build.HARDWARE) }
-    val display = remember { DeviceReport.display(context).removePrefix("display: ").substringBefore(" modes=") + "  ·  " + DeviceReport.display(context).substringAfter("hdr=[").substringBefore("]").replace(",", ", ").ifEmpty { "no HDR" } }
-    Row(modifier = Modifier.padding(bottom = 28.dp)) {
-        AboutColumn("ROXY TV", "${BuildConfig.VERSION_NAME}  ·  build ${BuildConfig.VERSION_CODE}")
-        Spacer(Modifier.width(40.dp))
-        AboutColumn("SIGNED IN", "$user  ·  ${server.removePrefix("http://").removePrefix("https://")}")
-        Spacer(Modifier.width(40.dp))
-        AboutColumn("THIS TV", "$device\n$display")
-    }
+private fun AboutPane(user: String, server: String, context: android.content.Context) {
+    val display = remember { DeviceReport.display(context) }
+    val resolution = display.removePrefix("display: ").substringBefore(" modes=")
+    val hdr = display.substringAfter("hdr=[", "").substringBefore("]").replace(",", ", ").ifEmpty { "None" }
+    Text("About", color = RoxyColors.onBackground, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(22.dp))
+    AboutLine("Version", "Roxy TV ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})")
+    AboutLine("Signed in as", user)
+    AboutLine("Server", server.removePrefix("http://").removePrefix("https://"))
+    AboutLine("TV", "${Build.MANUFACTURER} ${Build.MODEL}")
+    AboutLine("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+    if (Build.VERSION.SDK_INT >= 31) AboutLine("Chip", "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}")
+    AboutLine("Screen", resolution)
+    AboutLine("HDR", hdr)
 }
 
 @Composable
-private fun AboutColumn(heading: String, body: String) {
-    Column {
-        Text(heading, color = RoxyColors.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-        Text(body, color = RoxyColors.muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp).widthIn(max = 420.dp))
+private fun AboutLine(label: String, value: String) {
+    Row(modifier = Modifier.width(560.dp).padding(vertical = 7.dp)) {
+        Text(label, color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.width(160.dp))
+        Text(value, color = RoxyColors.onBackground, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -255,13 +254,16 @@ private fun GroupHeading(text: String) {
 @Composable
 private fun SettingRow(s: Setting, selected: Boolean, memory: FocusMemory, onSelect: () -> Unit) {
     val valueLabel = s.options.firstOrNull { it.first == s.value }?.second ?: s.value
-    PanelRow(label = s.label, value = valueLabel.substringBefore(" ("), selected = selected, memory = memory, key = "set/${s.key}", onFocused = onSelect, onClick = onSelect)
+    val chosen = s.options.firstOrNull { it.first == s.value }?.first ?: s.options.first().first
+    PanelRow(label = s.label, value = valueLabel.substringBefore(" ("), selected = selected, memory = memory, key = "set/${s.key}", right = "opt/${s.key}/$chosen", onFocused = onSelect, onClick = onSelect)
 }
 
 /** One line of the panel: the label at the left, the value (muted, or dark on the accent) at the right. */
 @Composable
-private fun PanelRow(label: String, value: String?, selected: Boolean, memory: FocusMemory, key: String, onFocused: () -> Unit, onClick: () -> Unit) {
-    TvFocusable(onClick = onClick, modifier = Modifier.fillMaxWidth().focusKey(memory, key), focusedBackground = RoxyColors.accent, onFocused = onFocused) { focused ->
+private fun PanelRow(label: String, value: String?, selected: Boolean, memory: FocusMemory, key: String, onFocused: () -> Unit, onClick: () -> Unit, right: String? = null) {
+    // Right is explicit: the 2D search lost focus between the panel and the options.
+    val mod = Modifier.fillMaxWidth().focusKey(memory, key).focusProperties { this.right = if (right != null) memory.requester(right) else FocusRequester.Cancel }
+    TvFocusable(onClick = onClick, modifier = mod, focusedBackground = RoxyColors.accent, onFocused = onFocused) { focused ->
         Row(modifier = Modifier.fillMaxWidth().height(RowHeight).padding(start = RowStart, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(label, color = if (focused) OnAccent else if (selected) RoxyColors.onBackground else RoxyColors.muted, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (value != null) Text(value, color = if (focused) OnAccent.copy(alpha = 0.85f) else RoxyColors.muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp).widthIn(max = 110.dp))
