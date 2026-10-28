@@ -8,6 +8,9 @@ testdata/hold/
 *.webm
 *.ts
 *.sup
+# ...but TypeScript source is code, not MPEG-TS video
+!apps/web/src/**/*.ts
+!apps/web/*.ts
 
 # downloaded fonts (fetched by scripts; licences listed in apps/android/FONTS.md)
 testdata/fonts/*.otf
