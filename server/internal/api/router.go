@@ -41,6 +41,7 @@ type Server struct {
 	hooks      *arrhook.Service
 	transcoder *transcode.Detector
 	hub        *sessions.Hub // "Play on": connected players and their command queues
+	links      *linkStore    // TV sign-in codes waiting for a phone's approval
 	start      time.Time
 }
 
@@ -48,6 +49,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 	s.hooks = arrhook.New(st, lib)
 	s.hub = sessions.New()
+	s.links = newLinkStore()
 	s.transcoder = transcode.NewDetector(ff.FFmpeg, cfg.HWAccel, cfg.VAAPIDevice)
 	go func() { // probe the GPU now, not on the first play; a saved choice beats ROXY_HWACCEL
 		s.loadTranscodingSetting()
@@ -73,6 +75,10 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/system/info", s.systemInfo)
 		r.Post("/auth/login", s.login)
+		// Signing a TV in from a phone (link.go): the TV's side is public, the approval needs a user.
+		r.Post("/link/start", s.linkStart)
+		r.Get("/link/{code}/qr.png", s.linkQR)
+		r.Get("/link/{code}/wait", s.linkWait)
 		r.Get("/setup", s.setupStatus)
 		r.Post("/setup/admin", s.setupAdmin)
 		r.Get("/legal/terms", s.legalDoc)
@@ -81,6 +87,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.Middleware(true)) // Bearer token, or ?api_key= for player-fetched media
 			r.Get("/auth/me", s.me)
+			r.Get("/link/{code}", s.linkInfo)
+			r.Post("/link/{code}/approve", s.linkApprove)
 			r.Get("/legal/status", s.legalStatus)
 			r.Post("/legal/accept", s.legalAccept)
 			r.Post("/auth/logout", s.logout)

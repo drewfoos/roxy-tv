@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import tv.roxy.tv.ui.phone.WitchHat
+import tv.roxy.tv.api.LinkStart
 import tv.roxy.tv.isTelevision
 import tv.roxy.tv.ui.phone.PlayButton
 import tv.roxy.tv.ui.phone.OnBrand
@@ -97,6 +98,10 @@ import tv.roxy.tv.ui.theme.RoxyColors
 data class LoginUiState(
     val busy: Boolean = false,
     val error: String? = null,
+    /** TV: the sign-in code a phone can approve (null while none is live), and its server. */
+    val link: LinkStart? = null,
+    val linkServer: String = "",
+    val linkError: String? = null,
     /** Servers found on the network so far, in the order they answered. */
     val servers: List<FoundServer> = emptyList(),
     val scanning: Boolean = false,
@@ -118,6 +123,46 @@ class LoginViewModel(private val app: RoxyApp) : ViewModel() {
                 .catch { Timber.w(it, "server scan") }
                 .collect { found -> _state.update { it.copy(servers = it.servers + found) } }
             _state.update { it.copy(scanning = false) }
+        }
+    }
+
+    private var linkJob: Job? = null
+
+    /**
+     * TV: ask [serverUrl] for a link code and wait for a phone to approve it; a code that
+     * runs out is replaced. Nothing happens for a server that is not set up yet or that
+     * cannot be reached (the form is still there).
+     */
+    fun startLink(serverUrl: String) {
+        val url = normalise(serverUrl) ?: return
+        if (_state.value.linkServer == url && _state.value.link != null) return
+        linkJob?.cancel()
+        _state.update { it.copy(link = null, linkServer = url, linkError = null) }
+        linkJob = viewModelScope.launch {
+            val deviceId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
+            while (true) {
+                val link = runCatching { app.api.linkStart(url, device = "${Build.MANUFACTURER} ${Build.MODEL}", deviceId = deviceId, version = BuildConfig.VERSION_NAME) }
+                    .onFailure { Timber.i("link start: %s", it.message) }.getOrNull()
+                if (link == null) {
+                    // Not reachable, or an older server: say so, and try again in a while.
+                    _state.update { it.copy(link = null, linkError = "This server cannot sign in by phone yet.") }
+                    kotlinx.coroutines.delay(15_000)
+                    continue
+                }
+                _state.update { it.copy(link = link, linkError = null) }
+                val until = System.currentTimeMillis() + (link.expiresIn - 15) * 1000L
+                while (System.currentTimeMillis() < until) {
+                    val r = runCatching { app.api.linkWait(url, link) }.getOrNull()
+                    if (r == null) { kotlinx.coroutines.delay(3000); continue }
+                    if (r.status == "done" && r.token != null && r.user != null) {
+                        Timber.i("Linked to %s as %s", url, r.user.name)
+                        val version = runCatching { app.api.legalAt(url, "terms").version }.getOrDefault("")
+                        app.prefs.saveSession(Session(serverUrl = url, token = r.token, userName = r.user.name, isAdmin = r.user.isAdmin, acceptedTerms = version))
+                        return@launch
+                    }
+                }
+                // Expired: a fresh code.
+            }
         }
     }
 
@@ -197,6 +242,12 @@ fun LoginScreen() {
     }
 
     if (isTelevision(context)) {
+        // A code for the server in the field (once typing pauses), unless it still needs setting up.
+        LaunchedEffect(serverUrl, needsSetup) {
+            if (needsSetup) return@LaunchedEffect
+            kotlinx.coroutines.delay(600)
+            vm.startLink(serverUrl)
+        }
         TvLogin(
             state = state,
             serverUrl = serverUrl, onServerUrl = { serverUrl = it },

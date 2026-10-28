@@ -344,6 +344,22 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun legal(doc: String): LegalDoc = get("/v1/legal/$doc")
 
     /** The same, from a server URL typed on the login screen (no session yet). */
+    // ---- signing a TV in from a phone (server link.go) ----
+
+    /** Asks [serverUrl] for a link code; the TV shows it as a QR and as text. */
+    suspend fun linkStart(serverUrl: String, device: String, deviceId: String, version: String): LinkStart = withContext(Dispatchers.IO) {
+        val body = LinkStartRequest(client = "Roxy TV", device = device, deviceId = deviceId, version = version)
+        execute<LinkStart>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/link/start").post(json.encodeToString(LinkStartRequest.serializer(), body).toRequestBody(JSON_TYPE)).build())
+    }
+
+    /** Where the QR picture for a code is. */
+    fun linkQrUrl(serverUrl: String, link: LinkStart): String = serverUrl.trimEnd('/') + "/v1/link/${link.code}/qr.png?secret=${link.secret}"
+
+    /** Waits (up to the server's 25 s) for the phone's approval; `status` is "pending" or "done". */
+    suspend fun linkWait(serverUrl: String, link: LinkStart): LinkResult = withContext(Dispatchers.IO) {
+        execute<LinkResult>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/link/${link.code}/wait?secret=${link.secret}").get().build())
+    }
+
     suspend fun legalAt(serverUrl: String, doc: String): LegalDoc = withContext(Dispatchers.IO) {
         execute<LegalDoc>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/legal/$doc").get().build())
     }
@@ -539,6 +555,16 @@ data class LoginRequest(
 
 @Serializable
 data class LoginResponse(val token: String, val user: User)
+
+@Serializable
+private data class LinkStartRequest(val client: String, val device: String, val deviceId: String, val version: String)
+
+/** A TV sign-in code: what the TV shows, the secret it polls with, the link the QR carries. */
+@Serializable
+data class LinkStart(val code: String, val secret: String, val url: String, val expiresIn: Int = 600)
+
+@Serializable
+data class LinkResult(val status: String, val token: String? = null, val user: User? = null, val deviceId: String? = null)
 
 @Serializable
 data class User(val id: String, val name: String, val isAdmin: Boolean = false)

@@ -98,6 +98,16 @@ func (s *Service) Login(ctx context.Context, username, password string, client C
 			}
 		}
 	}
+	d, token, err := s.IssueToken(ctx, u, client)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return u, d, token, nil
+}
+
+// IssueToken creates a device row and its token for a user already proven to be
+// present: after a password check, or when a signed-in phone approves a TV's link code.
+func (s *Service) IssueToken(ctx context.Context, u *model.User, client ClientInfo) (*model.Device, string, error) {
 	token := NewToken()
 	d := &model.Device{
 		ID:            newID(),
@@ -109,9 +119,9 @@ func (s *Service) Login(ctx context.Context, username, password string, client C
 		TokenHash:     HashToken(token),
 	}
 	if err := s.store.CreateDevice(ctx, d); err != nil {
-		return nil, nil, "", err
+		return nil, "", err
 	}
-	return u, d, token, nil
+	return d, token, nil
 }
 
 // CreateAPIKey mints an integration key (request app, Sonarr, Radarr).

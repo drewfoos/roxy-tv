@@ -33,6 +33,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import coil3.compose.AsyncImage
+import androidx.compose.ui.platform.LocalContext
+import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.FoundServer
 import tv.roxy.tv.ui.phone.OnBrand
 import tv.roxy.tv.ui.phone.WitchHat
@@ -57,15 +60,36 @@ fun TvLogin(
     needsSetup: Boolean, setupAllowed: Boolean, setupName: String?, onOpenSetup: () -> Unit,
     onRescan: () -> Unit, onShowTerms: () -> Unit,
 ) {
+    val api = RoxyApp.get(LocalContext.current).api
     Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
         Box(modifier = Modifier.size(600.dp).align(Alignment.CenterStart).background(Brush.radialGradient(listOf(RoxyColors.accent.copy(alpha = 0.18f), Color.Transparent), radius = 700f)))
         Row(modifier = Modifier.fillMaxSize().padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.width(320.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                WitchHat(size = 72.dp)
-                Text("Roxy TV", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.5.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 14.dp))
-                Text("Sign in to your server", fontSize = 15.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp))
-                Text(
-                    "Your server's address is where Roxy Server runs, like http://192.168.1.10:8096 or your Tailscale name.",
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    WitchHat(size = 56.dp)
+                    Column(modifier = Modifier.padding(start = 14.dp)) {
+                        Text("Roxy TV", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.5.sp, color = RoxyColors.onBackground)
+                        Text("Sign in to your server", fontSize = 14.sp, color = RoxyColors.muted)
+                    }
+                }
+                val link = state.link
+                if (link != null && !needsSetup) {
+                    // The quick way: scan with a phone that is signed in to Roxy, or type the code at the link.
+                    Row(modifier = Modifier.padding(top = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(132.dp).background(Color.White, RoundedCornerShape(8.dp)).padding(6.dp)) {
+                            AsyncImage(model = api.linkQrUrl(state.linkServer, link), contentDescription = "Sign-in QR code", modifier = Modifier.fillMaxSize())
+                        }
+                        Column(modifier = Modifier.padding(start = 16.dp)) {
+                            Text("Scan with your phone", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground)
+                            Text("or open", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp))
+                            Text(link.url.removePrefix("http://").removePrefix("https://").substringBeforeLast("/"), fontSize = 12.sp, color = RoxyColors.onBackground, maxLines = 1)
+                            Text("and enter", fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp))
+                            Text(link.code.chunked(3).joinToString(" "), fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 3.sp, color = RoxyColors.accent)
+                        }
+                    }
+                    Text("Signed in on the phone? Approve there and this TV signs in by itself. Or use the form.", color = RoxyColors.muted.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 14.dp, end = 24.dp))
+                } else Text(
+                    state.linkError ?: "Your server's address is where Roxy Server runs, like http://192.168.1.10:8096 or your Tailscale name.",
                     color = RoxyColors.muted.copy(alpha = 0.8f), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 28.dp, end = 24.dp),
                 )
                 if (needsSetup && !setupAllowed) Text(

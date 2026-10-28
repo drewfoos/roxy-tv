@@ -11,6 +11,7 @@ import { Series } from '../pages/Series'
 import { Movie } from '../pages/Movie'
 import { Watch } from '../pages/Watch'
 import { Legal } from '../pages/Legal'
+import { LinkEnter, LinkTv } from '../pages/LinkTv'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { Spinner } from '../components/Skeleton'
@@ -42,7 +43,8 @@ export default function App() {
 
   if (!s) return <Login />
   if (cookieFor !== s.token) return <Spinner />
-  if (!s.profileId && loc.pathname !== '/profiles') return <Navigate to="/profiles" replace />
+  // A TV's sign-in link works without a profile picked: the TV picks its own.
+  if (!s.profileId && loc.pathname !== '/profiles' && !loc.pathname.startsWith('/link')) return <Navigate to="/profiles" replace />
 
   return (
     <Routes>
@@ -56,6 +58,8 @@ export default function App() {
       <Route path="/movie/:id" element={<Movie />} />
       <Route path="/watch/:id" element={<Watch />} />
       <Route path="/legal/:doc" element={<Legal />} />
+      <Route path="/link" element={<LinkEnter />} />
+      <Route path="/link/:code" element={<LinkTv />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
