@@ -63,6 +63,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -248,10 +250,17 @@ fun PlayerControls(
             }
         }
     }
-    // Skip button lives outside the auto-hidden layer so it is there when you need it.
+    // Skip button lives outside the auto-hidden layer so it is there when you need it. On
+    // the TV it sits top-right, just left of the clock (where it stays when the bar hides).
+    val tv = !cr && !compact
+    val clockWidth = remember { mutableStateOf(TvClockWidth) }
     state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
-            SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (cr) 56.dp else if (visible) 118.dp else 40.dp))
+            if (tv) SkipButton(
+                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, align = Alignment.TopEnd,
+                modifier = Modifier.fillMaxSize().padding(end = TvBarSide + clockWidth.value + 24.dp, top = TvBarTop),
+            )
+            else SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (cr) 56.dp else if (visible) 118.dp else 40.dp))
         }
     }
     if (!visible) return
@@ -259,14 +268,14 @@ fun PlayerControls(
     LaunchedEffect(visible, sheet) { if (sheet == Sheet.None) runCatching { playFocus.requestFocus() } }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
-        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 100.dp else 200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
+        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else if (tv) 190.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
+        Box(modifier = Modifier.fillMaxWidth().height(if (compact) 100.dp else if (tv) 260.dp else 200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
 
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = if (compact) 8.dp else if (cr) 16.dp else 24.dp, vertical = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else TvBarTop - 6.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
             // No arrow in the page's fullscreen: the system back gesture drops to the mini player.
             if (state.fullscreen != true) {
-                IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact)
+                IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact, large = tv)
                 Spacer(Modifier.width(if (compact) 6.dp else 12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -282,8 +291,8 @@ fun PlayerControls(
                     // The TV: the series over "E3 - Title", on at most 60 % of the width so the clock keeps its room.
                     else -> {
                         val (series, code) = splitSubtitle(state.subtitle)
-                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
-                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" \u2014 "), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
+                        if (series.isNotEmpty()) Text(series, color = Muted, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.5f))
+                        Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" \u2014 "), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.5f))
                     }
                 }
             }
@@ -297,10 +306,11 @@ fun PlayerControls(
                 else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
             } else {
                 Spacer(Modifier.width(16.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(clockNow(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                val density = LocalDensity.current
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.onSizeChanged { with(density) { clockWidth.value = it.width.toDp() } }) {
+                    Text(clockNow(), color = Color.White, fontSize = if (tv) 22.sp else 16.sp, fontWeight = FontWeight.SemiBold)
                     val remaining = (state.durationSec - state.positionSec) / state.speed.coerceAtLeast(0.25)
-                    if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = 13.sp)
+                    if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = if (tv) 16.sp else 13.sp)
                 }
             }
         }
@@ -328,20 +338,20 @@ fun PlayerControls(
         // The TV (this host serves only TVs now): Crunchyroll's web player's bar. The blue
         // seek bar, then -10 / play / +10, volume and "elapsed / total" at the left; next
         // episode, subtitles, the speed and settings at the right. Focus starts on play.
-        else Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
-            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction)
+        else Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = TvBarSide - 10.dp, vertical = 16.dp)) {
+            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(Icons.Filled.Replay10, "Back 10 seconds", onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction)
-                IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus)
-                IconButton(Icons.Filled.Forward10, "Forward 10 seconds", onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction)
-                IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction)
-                Spacer(Modifier.width(8.dp))
-                Text(fmtTime(state.positionSec) + " / " + fmtTime(state.durationSec), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                IconButton(Icons.Filled.Replay10, "Back 10 seconds", onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction, large = true)
+                IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus, large = true)
+                IconButton(Icons.Filled.Forward10, "Forward 10 seconds", onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction, large = true)
+                IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction, large = true)
+                Spacer(Modifier.width(12.dp))
+                Text(fmtTime(state.positionSec) + " / " + fmtTime(state.durationSec), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
-                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction)
-                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { onSheet(if (sheet == Sheet.Subtitles) Sheet.None else Sheet.Subtitles) }, onFocus = onInteraction)
-                SpeedButton(state.speed, onClick = { onSheet(if (sheet == Sheet.Speed) Sheet.None else Sheet.Speed) }, onFocus = onInteraction)
-                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction)
+                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, large = true)
+                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { onSheet(if (sheet == Sheet.Subtitles) Sheet.None else Sheet.Subtitles) }, onFocus = onInteraction, large = true)
+                SpeedButton(state.speed, onClick = { onSheet(if (sheet == Sheet.Speed) Sheet.None else Sheet.Speed) }, onFocus = onInteraction, large = true)
+                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, large = true)
             }
         }
 
@@ -349,7 +359,7 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 64.dp)) {
+            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.BottomEnd).padding(end = TvBarSide, bottom = 96.dp)) {
                 CompositionLocalProvider(LocalCompactMenu provides compact) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
@@ -410,9 +420,9 @@ private val LocalCompactMenu = compositionLocalOf { false }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
-private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false) {
+private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd) {
     var focused by remember { mutableStateOf(false) }
-    Box(modifier = modifier, contentAlignment = Alignment.BottomEnd) {
+    Box(modifier = modifier, contentAlignment = align) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -423,10 +433,10 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, c
                 .background(if (focused) Color.White else Color(0xE6202020))
                 .border(BorderStroke(1.dp, Color(0x99FFFFFF)), RoundedCornerShape(4.dp))
                 .tapClick(onClick)
-                .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 6.dp else 12.dp),
+                .padding(horizontal = if (compact) 12.dp else if (large) 22.dp else 18.dp, vertical = if (compact) 6.dp else 12.dp),
         ) {
-            Text(label, color = if (focused) Color.Black else Color.White, fontSize = if (compact) 12.sp else 15.sp, fontWeight = FontWeight.SemiBold)
-            Icon(Icons.Filled.SkipNext, contentDescription = null, tint = if (focused) Color.Black else Color.White, modifier = Modifier.padding(start = 4.dp).size(if (compact) 16.dp else 20.dp))
+            Text(label, color = if (focused) Color.Black else Color.White, fontSize = if (compact) 12.sp else if (large) 19.sp else 15.sp, fontWeight = FontWeight.SemiBold)
+            Icon(Icons.Filled.SkipNext, contentDescription = null, tint = if (focused) Color.Black else Color.White, modifier = Modifier.padding(start = 4.dp).size(if (compact) 16.dp else if (large) 26.dp else 20.dp))
         }
     }
 }
@@ -540,12 +550,12 @@ private fun TrickplayTile(trickplay: TrickplayPreview, positionSec: Double, modi
 
 /** Flat icon button for the bottom row: white icon, white focus ring, optional red underline. */
 @Composable
-private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false, tint: Color = Color.White, focusRequester: FocusRequester? = null) {
+private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, onFocus: () -> Unit, underline: Boolean = false, compact: Boolean = false, tint: Color = Color.White, focusRequester: FocusRequester? = null, large: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(if (compact) 42.dp else 44.dp)
+            .size(if (compact) 42.dp else if (large) 60.dp else 44.dp)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
@@ -555,22 +565,22 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
             .tapClick(onClick),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 28.dp else 26.dp))
-            Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else 18.dp).height(2.dp).background(if (underline) Bar else Color.Transparent))
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 28.dp else if (large) 36.dp else 26.dp))
+            Box(modifier = Modifier.padding(top = 2.dp).width(if (compact) 14.dp else if (large) 24.dp else 18.dp).height(2.dp).background(if (underline) Bar else Color.Transparent))
         }
     }
 }
 
 /** "1x" / "1.5x": the playback speed as a pill, like the web player's. */
 @Composable
-private fun SpeedButton(speed: Double, onClick: () -> Unit, onFocus: () -> Unit) {
+private fun SpeedButton(speed: Double, onClick: () -> Unit, onFocus: () -> Unit, large: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     val label = if (speed == 1.0) "1x" else speed.toString().trimEnd('0').trimEnd('.') + "x"
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .height(44.dp)
-            .widthIn(min = 44.dp)
+            .height(if (large) 60.dp else 44.dp)
+            .widthIn(min = if (large) 60.dp else 44.dp)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
             .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
@@ -579,9 +589,14 @@ private fun SpeedButton(speed: Double, onClick: () -> Unit, onFocus: () -> Unit)
             .tapClick(onClick)
             .padding(horizontal = 8.dp),
     ) {
-        Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = Color.White, fontSize = if (large) 20.sp else 15.sp, fontWeight = FontWeight.Bold)
     }
 }
+
+/** The TV player's insets and the clock's starting width (measured once it lays out). */
+private val TvBarSide = 40.dp
+private val TvBarTop = 28.dp
+private val TvClockWidth = 160.dp
 
 /** Big round centre button. */
 @Composable

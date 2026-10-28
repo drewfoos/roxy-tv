@@ -57,7 +57,10 @@ export const session = {
     try {
       let id = localStorage.getItem(DEVICE_KEY)
       if (!id) {
-        id = 'web-' + crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+        // crypto.randomUUID only exists on HTTPS or localhost; a LAN address (http://192.168.x.x) has getRandomValues.
+        const bytes = new Uint8Array(8)
+        crypto.getRandomValues(bytes)
+        id = 'web-' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
         localStorage.setItem(DEVICE_KEY, id)
       }
       return id

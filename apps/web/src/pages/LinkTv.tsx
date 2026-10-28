@@ -44,14 +44,14 @@ export function LinkTv() {
   const pretty = code.toUpperCase().replace(/(.{3})(.{3})/, '$1 $2')
   return (
     <div className="login">
-      <div className="login__box link">
+      <div className="login__box linktv">
         <div className="login__brand">
           <WitchHat size={40} />
           <span>Roxy</span>
         </div>
         {done ? (
           <>
-            <h2 className="link__title">Done</h2>
+            <h2 className="linktv__title">Done</h2>
             <p className="muted">
               {info?.device ?? 'The TV'} is signing in as <b>{s?.userName}</b>. Pick a profile on the TV.
             </p>
@@ -61,7 +61,7 @@ export function LinkTv() {
           </>
         ) : error ? (
           <>
-            <h2 className="link__title">Sign in a TV</h2>
+            <h2 className="linktv__title">Sign in a TV</h2>
             <p className="error">{error}</p>
             <Link className="btn btn--grey btn--pill" to="/">
               Back to Roxy
@@ -69,8 +69,8 @@ export function LinkTv() {
           </>
         ) : (
           <>
-            <h2 className="link__title">Sign in a TV</h2>
-            <div className="link__code">{pretty}</div>
+            <h2 className="linktv__title">Sign in a TV</h2>
+            <div className="linktv__code">{pretty}</div>
             <p className="muted">
               {info ? (
                 <>
@@ -84,7 +84,7 @@ export function LinkTv() {
             <button className="btn btn--brand btn--pill" type="button" onClick={approve} disabled={busy || !info || info.approved}>
               {busy ? 'Signing in…' : info?.approved ? 'Already approved' : 'Sign in this TV'}
             </button>
-            <Link className="muted link__cancel" to="/">
+            <Link className="muted linktv__cancel" to="/">
               Not now
             </Link>
           </>
@@ -105,12 +105,12 @@ export function LinkEnter() {
   }
   return (
     <div className="login">
-      <form className="login__box link" onSubmit={submit}>
+      <form className="login__box linktv" onSubmit={submit}>
         <div className="login__brand">
           <WitchHat size={40} />
           <span>Roxy</span>
         </div>
-        <h2 className="link__title">Sign in a TV</h2>
+        <h2 className="linktv__title">Sign in a TV</h2>
         <p className="muted">Enter the code on the TV's sign-in screen.</p>
         <div className="field">
           <label htmlFor="code">Code</label>

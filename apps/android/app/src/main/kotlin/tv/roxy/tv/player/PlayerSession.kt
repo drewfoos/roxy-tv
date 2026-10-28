@@ -148,6 +148,14 @@ class PlayerSession(
     private var sourceDurationSec: Double? = null
     /** Where a restarted stream will begin; shown as the position until it plays. */
     @Volatile private var reloadTarget: Double? = null
+
+    /**
+     * Where a newly loaded file is meant to start, until mpv's clock gets there. mpv reports
+     * 0 (or nothing) for a moment before the resume seek lands, and an intro marked from
+     * 0:00 then flashed its Skip button on every resume; meanwhile the position shown is
+     * the start and no segment is offered.
+     */
+    @Volatile private var pendingStart: Double? = null
     private var lastReportedMs = -1L
     @Volatile private var serverDownUntil = 0L
     @Volatile var destroyed = false; private set
@@ -331,6 +339,7 @@ class PlayerSession(
 
     private fun prepareAndPlay(url: String, sourceId: String?, local: Boolean, start: Int) {
         directUrl = url
+        pendingStart = start.toDouble()
         sourceHeight = 0
         sourceDurationSec = null
         reloadTarget = null
@@ -468,13 +477,15 @@ class PlayerSession(
         val wasPaused = ui.paused
         val timePos = player.timePosSeconds()
         if (timePos != null && !switching) reloadTarget = null
+        pendingStart?.let { want -> if (timePos != null && !switching && timePos >= want - 3.0) pendingStart = null }
+        val settling = pendingStart != null
         // A download plays from the phone; while the server is reachable the lower qualities
         // stream a transcode from it, and the top entry goes back to the file here.
         val offline = sourceId == null || !app.prefs.session.value.isLoggedIn
         ui = PlayerUiState(
             title = title,
             subtitle = subtitleLine,
-            positionSec = reloadTarget ?: timePos ?: 0.0,
+            positionSec = reloadTarget ?: pendingStart ?: timePos ?: 0.0,
             // A transcode stream has no length of its own; the source knows it.
             durationSec = (if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec ?: 0.0,
             qualityOptions = QualityOption.forSource(sourceHeight).let { if (offline) it.take(1) else it },
@@ -493,7 +504,7 @@ class PlayerSession(
             hasNext = next != null,
             nextCardShown = nextCard != null,
             advisory = if (advisoryUp) advisory else null,
-            segments = segments,
+            segments = if (settling) emptyList() else segments,
             autoSkip = autoSkip,
             skipWindowSec = skipWindowSec,
             subtitleTracks = tracks.filter { it.type == "sub" },
