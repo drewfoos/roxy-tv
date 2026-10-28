@@ -75,6 +75,10 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.DiscoverItem
+import tv.roxy.tv.api.DiscoverDetail
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Info
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.ItemDetails
 import tv.roxy.tv.api.RoxyApi
@@ -114,7 +118,7 @@ private class TitleAction(val key: String, val label: String, val icon: ImageVec
 
 /** Series: episodes by season, details, and the franchise's films plus similar titles. */
 @Composable
-fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpenDiscover: (type: String, tmdbId: Int) -> Unit = { _, _ -> }) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: SeriesViewModel = viewModel(key = "series:$seriesId") { SeriesViewModel(app.api, seriesId, initial = app.items[seriesId]) }
@@ -156,14 +160,14 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
                 episodes = state.episodes, loading = state.episodesLoading, api = app.api, onPlay = ::play, first = first,
             )
             1 -> DetailsTab(series, app.api, first)
-            else -> MoreLikeThisTab(series, app.api, related = state.related.mapNotNull { if (it.inLibrary) it.item else null }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, first = first)
+            else -> MoreLikeThisTab(series, app.api, related = state.related.mapNotNull { if (it.inLibrary) it.item else null }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, onOpenDiscover = onOpenDiscover, first = first)
         }
     }
 }
 
 /** Movie: the film itself under its tab, details, and the series it belongs to plus similar titles. */
 @Composable
-fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpenDiscover: (type: String, tmdbId: Int) -> Unit = { _, _ -> }) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: MovieViewModel = viewModel(key = "movie:$movieId") { MovieViewModel(app.api, movieId, initial = app.items[movieId]) }
@@ -195,7 +199,7 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
                 }
             }
             1 -> DetailsTab(movie, app.api, first)
-            else -> MoreLikeThisTab(movie, app.api, related = state.partOf, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, first = first)
+            else -> MoreLikeThisTab(movie, app.api, related = state.partOf, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, onOpenDiscover = onOpenDiscover, first = first)
         }
     }
 }
@@ -217,6 +221,7 @@ private fun watchlistAction(app: RoxyApp, item: Item, scope: kotlinx.coroutines.
 @Composable
 private fun TitlePage(
     title: Item, play: Item?, api: RoxyApi, actions: List<TitleAction>, tabs: List<String>, tab: Int, onTab: (Int) -> Unit,
+    backdropUrl: String? = null, logoUrl: String? = null,
     content: @Composable (first: FocusRequester) -> Unit,
 ) {
     val memory = rememberFocusMemory()
@@ -243,21 +248,23 @@ private fun TitlePage(
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxWidth().height(topHeight).clipToBounds().focusProperties { canFocus = !folded }) {
             Box(modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height(TopBlockHeight)) {
-                val art = api.imageUrl(title, "backdrop", widthPx(960.dp)) ?: play?.let { api.imageUrl(it, "thumb", widthPx(960.dp)) }
+                val art = backdropUrl ?: api.imageUrl(title, "backdrop", widthPx(960.dp)) ?: play?.let { api.imageUrl(it, "thumb", widthPx(960.dp)) }
                 RoxyImage(art, "", modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
-                // Scrims sized to the strips they tint (left half, bottom 40 %), not the whole block.
-                Box(modifier = Modifier.fillMaxWidth(0.5f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.92f), 1f to Color.Transparent)))
+                // Scrims sized to the strips they tint (the copy's column, bottom 40 %), not the
+                // whole block; the left one stays near-solid under the text so the facts and
+                // synopsis read over bright art.
+                Box(modifier = Modifier.fillMaxWidth(0.62f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.97f), 0.55f to RoxyColors.background.copy(alpha = 0.85f), 1f to Color.Transparent)))
                 Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.4f).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to RoxyColors.background)))
                 Column(modifier = Modifier.padding(start = PageStart, top = 45.dp)) {
                     Box(modifier = Modifier.height(125.dp).widthIn(max = 480.dp), contentAlignment = Alignment.BottomStart) {
-                        val logo = api.imageUrl(title, "logo", widthPx(480.dp))
+                        val logo = logoUrl ?: api.imageUrl(title, "logo", widthPx(480.dp))
                         if (logo != null) AsyncImage(model = logo, contentDescription = title.title, contentScale = ContentScale.Fit, alignment = Alignment.BottomStart, modifier = Modifier.width(240.dp).heightIn(max = 125.dp))
                         else Text(title.title, fontSize = 34.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(12.dp))
                     FactsLine(title, play, fontSize = 16.sp)
                     Spacer(Modifier.height(14.dp))
-                    Text(title.overview.orEmpty(), color = TvSubtle, fontSize = 16.sp, lineHeight = 20.sp, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 440.dp))
+                    Text(title.overview.orEmpty(), color = TvCopy, fontSize = 16.sp, lineHeight = 20.sp, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, style = TvShadowed, modifier = Modifier.widthIn(max = 440.dp))
                     Spacer(Modifier.height(47.dp))
                     actions.forEach { a ->
                         TvListRow(
@@ -370,9 +377,9 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, 
 
 /** Facts about the title: the full synopsis, genres, year, studio, status, audio, cast. Focusable so it can be scrolled up to. */
 @Composable
-private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester) {
+private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester, loadDetails: suspend () -> ItemDetails? = { api.itemDetails(item.id) }) {
     var details by remember(item.id) { mutableStateOf<ItemDetails?>(null) }
-    LaunchedEffect(item.id) { details = runCatching { api.itemDetails(item.id) }.getOrNull() }
+    LaunchedEffect(item.id) { details = runCatching { loadDetails() }.getOrNull() }
     val facts = buildList {
         item.genres.takeIf { it.isNotEmpty() }?.let { add("Genres" to it.joinToString(", ")) }
         (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.let { add("Year" to it.toString()) }
@@ -400,10 +407,11 @@ private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester) {
 
 /**
  * The franchise's other titles in the library ([related]: a series' films, a film's
- * series), then TMDB's similar titles; those not in the library are dimmed and inert.
+ * series), then TMDB's similar titles; those not in the library are dimmed and open the
+ * Discover page (synopsis, facts, a request).
  */
 @Composable
-private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, first: FocusRequester) {
+private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpenDiscover: (type: String, tmdbId: Int) -> Unit, first: FocusRequester) {
     var similar by remember(item.id) { mutableStateOf<List<DiscoverItem>?>(null) }
     LaunchedEffect(item.id) { similar = runCatching { api.similar(item.id) }.getOrDefault(emptyList()) }
     val cards: List<Any> = related + similar.orEmpty().filter { s -> related.none { it.id == s.libraryItemId } }
@@ -420,9 +428,64 @@ private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpe
                 is DiscoverItem -> UrlPosterCard(
                     title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, dim = !c.inLibrary, modifier = firstMod,
                     note = if (c.inLibrary) null else "Not in library",
-                    onClick = { c.libraryItemId?.let { id -> val stub = Item(id = id, type = c.type.let { t -> if (t == "movie") "movie" else "series" }, title = c.title); if (stub.isMovie) onOpenMovie(stub) else onOpenSeries(stub) } },
+                    onClick = {
+                        val id = c.libraryItemId
+                        if (id != null) { val stub = Item(id = id, type = if (c.type == "movie") "movie" else "series", title = c.title); if (stub.isMovie) onOpenMovie(stub) else onOpenSeries(stub) }
+                        else onOpenDiscover(c.type, c.tmdbId)
+                    },
                 )
             }
         }
+    }
+}
+
+
+/**
+ * A title the library does not hold (from More like this): TMDB's art and copy in the
+ * same frame as a library title, with Open in library when it does exist, Request when
+ * requests are on, or the request's status; Details under the strip.
+ */
+@Composable
+fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    var detail by remember(type, tmdbId) { mutableStateOf<DiscoverDetail?>(null) }
+    var error by remember(type, tmdbId) { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    suspend fun load() { runCatching { app.api.discoverDetail(type, tmdbId) }.onSuccess { detail = it; error = null }.onFailure { error = it.message ?: "Could not load this title" } }
+    LaunchedEffect(type, tmdbId) { load() }
+    val d = detail
+    if (d == null) {
+        if (error != null) PageMessage(error!!, color = RoxyColors.error) else Box(Modifier.fillMaxSize())
+        return
+    }
+    val stub = Item(
+        id = "tmdb:$type:$tmdbId", type = if (d.isMovie) "movie" else "series", title = d.title, year = d.year, overview = d.overview,
+        tagline = d.tagline, genres = d.genres, officialRating = d.officialRating, status = d.status, seasonCount = d.seasonCount.takeIf { it > 0 },
+        communityRating = d.rating, hasMedia = false,
+    )
+    val request = d.request
+    val actions = buildList {
+        val libraryId = d.libraryItemId
+        when {
+            libraryId != null -> add(TitleAction(key = "play", label = "Open in library", icon = Icons.Outlined.PlayArrow, onClick = {
+                val lib = Item(id = libraryId, type = stub.type, title = d.title)
+                if (lib.isMovie) onOpenMovie(lib) else onOpenSeries(lib)
+            }))
+            request != null -> add(TitleAction(key = "play", label = "Requested  \u00b7  " + request.status.replaceFirstChar { it.uppercase() }, icon = Icons.Outlined.Check, enabled = false, onClick = {}))
+            d.requestsEnabled -> add(TitleAction(key = "play", label = if (busy) "Requesting\u2026" else "Request", icon = Icons.Outlined.Add, enabled = !busy, onClick = {
+                scope.launch {
+                    busy = true
+                    runCatching { app.api.discoverRequest(d.type, d.tmdbId, d.missingSeasons.map { it.number }) }.onFailure { error = it.message }
+                    load()
+                    busy = false
+                }
+            }))
+            else -> add(TitleAction(key = "play", label = "Not in the library", icon = Icons.Outlined.Info, enabled = false, onClick = {}))
+        }
+    }
+    var tab by rememberSaveable(type, tmdbId) { mutableStateOf(0) }
+    TitlePage(title = stub, play = null, api = app.api, actions = actions, tabs = listOf("Details"), tab = tab, onTab = { tab = it }, backdropUrl = d.backdrop ?: d.poster, logoUrl = d.logo) { first ->
+        DetailsTab(stub, app.api, first, loadDetails = { app.api.discoverMoreDetails(d.type, d.tmdbId) })
     }
 }

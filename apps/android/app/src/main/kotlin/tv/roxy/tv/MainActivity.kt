@@ -37,6 +37,7 @@ import timber.log.Timber
 import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.ui.tv.TvMovie
+import tv.roxy.tv.ui.tv.TvDiscoverTitle
 import tv.roxy.tv.ui.tv.TvSeries
 import tv.roxy.tv.ui.tv.TvWatchlist
 import tv.roxy.tv.ui.tv.TvHistory
@@ -283,16 +284,21 @@ private fun TvRoot(onUnauthorized: () -> Unit) {
     }
     val openSeries = { it: Item -> nav.navigate(Route.Series(it.id, it.title)) }
     val openMovie = { it: Item -> nav.navigate(Route.Movie(it.id, it.title)) }
+    val openDiscover = { type: String, tmdbId: Int -> nav.navigate(Route.DiscoverDetail(type, tmdbId)) }
     TvShell(current = page, onSelect = ::go, onSwitchProfile = { scope.launch { app.prefs.clearProfile() } }) {
         NavHost(nav, startDestination = Route.Home) {
             composable<Route.Home> { TvHome(onOpenSeries = openSeries, onOpenMovie = openMovie, onUnauthorized = onUnauthorized, refreshTick = homeTick) }
             composable<Route.Series> { entry ->
                 val r = entry.toRoute<Route.Series>()
-                TvSeries(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie)
+                TvSeries(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie, onOpenDiscover = openDiscover)
             }
             composable<Route.Movie> { entry ->
                 val r = entry.toRoute<Route.Movie>()
-                TvMovie(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie)
+                TvMovie(r.id, r.title, onOpenSeries = openSeries, onOpenMovie = openMovie, onOpenDiscover = openDiscover)
+            }
+            composable<Route.DiscoverDetail> { entry ->
+                val r = entry.toRoute<Route.DiscoverDetail>()
+                TvDiscoverTitle(r.type, r.tmdbId, onOpenSeries = openSeries, onOpenMovie = openMovie)
             }
             composable<Route.Watchlist> { TvWatchlist(onOpenSeries = openSeries, onOpenMovie = openMovie) }
             composable<Route.History> { TvHistory() }

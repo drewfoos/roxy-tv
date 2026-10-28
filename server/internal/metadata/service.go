@@ -196,7 +196,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 	if !j.force {
 		// .nfo files or artwork added or changed next to the media since the last lookup
 		// count as a reason to look again, so "Scan for new files" picks them up.
-		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval && !s.localChangedSince(ctx, it, *it.MetadataRefreshedAt) {
+		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval && !s.localChangedSince(ctx, it, *it.MetadataRefreshedAt) && !s.bannerBackdrop(ctx, it) {
 			if it.Type != model.TypeSeries {
 				return nil
 			}
@@ -334,6 +334,12 @@ func merge(a, b *Result) *Result {
 	for k, v := range a.Images {
 		out.Images[k] = v
 	}
+	// AniList's banner is a 1900x400 strip; TMDB's backdrop is real 16:9 key art, which
+	// the TV's hero and title pages fill the screen with. Take TMDB's whichever side it
+	// came from, and keep the banner only when there is nothing else.
+	if v := tmdbBackdrop(a, b); v != "" {
+		out.Images["backdrop"] = v
+	}
 	if out.Overview == "" {
 		out.Overview = b.Overview
 	}
@@ -375,6 +381,29 @@ func merge(a, b *Result) *Result {
 }
 
 // mergeAdvisories unions two descriptor lists in a fixed, readable order.
+// bannerBackdrop reports a title whose backdrop is still AniList's banner strip although
+// TMDB knows it: a reason to look again, so the 16:9 art replaces the strip.
+func (s *Service) bannerBackdrop(ctx context.Context, it *model.Item) bool {
+	if it.ProviderIDs["tmdb"] == "" {
+		return false
+	}
+	img, err := s.store.GetItemImage(ctx, it.ID, "backdrop")
+	if err != nil || img == nil || img.Locked {
+		return false
+	}
+	return strings.Contains(img.SourceURL, "anilistcdn/media/anime/banner")
+}
+
+// tmdbBackdrop returns the first TMDB backdrop among the results, or "".
+func tmdbBackdrop(rs ...*Result) string {
+	for _, r := range rs {
+		if r != nil && r.Provider == "tmdb" && r.Images["backdrop"] != "" {
+			return r.Images["backdrop"]
+		}
+	}
+	return ""
+}
+
 func mergeAdvisories(a, b []string) []string {
 	seen := map[string]bool{}
 	for _, x := range append(append([]string{}, a...), b...) {

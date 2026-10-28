@@ -122,6 +122,10 @@ val OnAccent = Color(0xFF07182B)
 /** The lighter grey of secondary copy (facts lines, captions' second line). */
 val TvSubtle = Color(0xFFC8C8CE)
 
+/** Copy drawn over key art (synopsis, facts): near white, with a crisp one-pixel shadow. */
+val TvCopy = Color(0xFFEDEDF1)
+val TvShadowed = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color(0xD9000000), androidx.compose.ui.geometry.Offset(0f, 2f), 0f))
+
 /**
  * Which element of a page last had focus, by key, so coming back from a title page (or
  * from the rail) lands on the same card instead of the first one. Survives the page's
@@ -493,8 +497,8 @@ fun FactsLine(title: Item, play: Item?, modifier: Modifier = Modifier, fontSize:
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (age != null) AgePill(age)
         parts.forEach { part ->
-            if (age != null || part !== parts.first()) Text("  ◆  ", color = RoxyColors.muted, fontSize = 11.sp)
-            Text(part, color = TvSubtle, fontSize = fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (age != null || part !== parts.first()) Text("  ◆  ", color = TvSubtle, fontSize = 11.sp, style = TvShadowed)
+            Text(part, color = TvCopy, fontSize = fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TvShadowed)
         }
     }
 }

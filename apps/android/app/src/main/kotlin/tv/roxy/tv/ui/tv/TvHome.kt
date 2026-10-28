@@ -228,7 +228,8 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
         RoxyImage(art, "", modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
         // Dark under the copy (left) and into the page (bottom); near-black under the rail.
         // Each scrim covers only the strip it tints (left 55 %, bottom 45 %): fill rate is the TV's budget.
-        Box(modifier = Modifier.fillMaxWidth(0.55f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.95f), 0.145f to RoxyColors.background.copy(alpha = 0.85f), 1f to Color.Transparent)))
+        // Near-solid under the copy's column so the facts and synopsis read over bright art.
+        Box(modifier = Modifier.fillMaxWidth(0.62f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background.copy(alpha = 0.97f), 0.5f to RoxyColors.background.copy(alpha = 0.85f), 1f to Color.Transparent)))
         Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.45f).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to RoxyColors.background)))
 
         Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 112.dp).widthIn(max = 460.dp)) {
@@ -247,7 +248,7 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
             FactsLine(title, play)
             Spacer(Modifier.height(10.dp))
             val synopsis = title.overview?.takeIf { it.isNotBlank() } ?: play.overview.orEmpty()
-            Text(synopsis, color = RoxyColors.onBackground, fontSize = 17.sp, lineHeight = 20.sp, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(synopsis, color = TvCopy, fontSize = 17.sp, lineHeight = 20.sp, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, style = TvShadowed)
             Spacer(Modifier.height(24.dp))
             Row {
                 val started = (play.userData?.positionMs ?: 0L) > 0
