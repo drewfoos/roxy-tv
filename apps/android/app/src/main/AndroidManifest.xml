@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Sign in a TV: scanning the TV's QR code. TVs have no camera, so it is optional. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Android TV: rows in the launcher's Watch Next ("Continue watching") store. -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -65,12 +68,6 @@
                 <data android:pathPattern="/link/..*" />
             </intent-filter>
         </activity>
-
-        <!-- ZXing's scanner (Account > Sign in a TV), turned with the phone instead of locked to landscape. -->
-        <activity
-            android:name="com.journeyapps.barcodescanner.CaptureActivity"
-            android:screenOrientation="fullSensor"
-            tools:replace="android:screenOrientation" />
 
         <!-- Exported so tools/spike-*.ps1 can launch it with extras over adb (diagnostics). -->
         <activity
