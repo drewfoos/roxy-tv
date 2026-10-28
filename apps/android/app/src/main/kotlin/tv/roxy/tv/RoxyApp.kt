@@ -65,12 +65,14 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         Timber.plant(Timber.DebugTree())
+        tv.roxy.tv.diagnostics.CrashReports.install(this)
         fontsDir = Fonts.install(this)
         prefs = Prefs(this, scope)
         api = RoxyApi(prefs)
         downloads = Downloads(this, prefs, scope)
         updates = Updates(this, api, prefs, scope)
         remote = RemotePlay(this, api, prefs, scope)
+        if (prefs.session.value.isLoggedIn) tv.roxy.tv.diagnostics.CrashReports.sendPending(this, api, scope)
         Timber.i("Roxy TV started. server=%s user=%s fontsDir=%s", prefs.session.value.serverUrl, prefs.session.value.userName, fontsDir)
     }
 

@@ -352,6 +352,9 @@ class RoxyApi(private val prefs: Prefs) {
         execute<LinkStart>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/link/start").post(json.encodeToString(LinkStartRequest.serializer(), body).toRequestBody(JSON_TYPE)).build())
     }
 
+    /** A crash saved by an earlier run (diagnostics/CrashReports); the server logs it. */
+    suspend fun reportCrash(text: String) = postNoBody("/v1/diagnostics/crash", json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.JsonObject(mapOf("report" to kotlinx.serialization.json.JsonPrimitive(text)))))
+
     /** Phone side: which device a code belongs to (needs a signed-in user). */
     suspend fun linkInfo(code: String): LinkInfo = get("/v1/link/$code")
 

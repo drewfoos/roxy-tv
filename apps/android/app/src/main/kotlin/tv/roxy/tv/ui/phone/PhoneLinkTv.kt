@@ -70,7 +70,7 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
     }
     LaunchedEffect(initialCode) { if (initialCode.isNotEmpty()) lookUp() }
 
-    fun scan() {
+    fun scan() = runCatching {
         val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
         GmsBarcodeScanning.getClient(context, options).startScan()
             .addOnSuccessListener { barcode ->
@@ -79,8 +79,8 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
                 val found = raw.substringAfterLast("/link/", raw).substringBefore('?').uppercase().filter { it.isLetterOrDigit() }
                 if (found.length >= 6) { code = found; scope.launch { lookUp() } } else error = "That is not a Roxy sign-in code."
             }
-            .addOnFailureListener { t -> Timber.w(t, "scan failed"); error = "The scanner could not open. Type the code instead." }
-    }
+            .addOnFailureListener { t -> Timber.w(t, "scan failed"); error = "The scanner could not open (${t.message}). Type the code instead, or scan the TV with the phone's camera app." }
+    }.onFailure { t -> Timber.w(t, "scan failed to start"); error = "The scanner could not open (${t.message}). Type the code instead, or scan the TV with the phone's camera app." }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -122,7 +122,7 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
                         "Open Roxy on the TV. Its sign-in screen shows a QR code and a six-letter code. Scan the QR here, or type the code, and the TV signs in as you.",
                         fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted,
                     )
-                    PlayButton("Scan the TV's code", icon = Icons.Outlined.QrCodeScanner, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), onClick = ::scan)
+                    PlayButton("Scan the TV's code", icon = Icons.Outlined.QrCodeScanner, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), onClick = { scan() })
                     RoxyTextField(code, { code = it.uppercase(); error = null }, label = "Or type the code", keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done)
                     PlayButton(
                         if (busy) "Checking…" else "Continue", icon = Icons.Filled.Check, pill = true,

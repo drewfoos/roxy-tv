@@ -87,6 +87,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 		r.Group(func(r chi.Router) {
 			r.Use(authSvc.Middleware(true)) // Bearer token, or ?api_key= for player-fetched media
 			r.Get("/auth/me", s.me)
+			r.Post("/diagnostics/crash", s.clientCrash)
 			r.Get("/link/{code}", s.linkInfo)
 			r.Post("/link/{code}/approve", s.linkApprove)
 			r.Get("/legal/status", s.legalStatus)
