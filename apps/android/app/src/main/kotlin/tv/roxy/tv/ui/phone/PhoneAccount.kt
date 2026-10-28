@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.FastForward
@@ -108,7 +109,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}, onOpenRequests: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}, onOpenRequests: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -249,6 +250,10 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onOpenArrSet
                 Divider()
                 SettingRow(Icons.Outlined.Webhook, "Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
             }
+        }
+
+        GroupCard("TV") {
+            SettingRow(Icons.Outlined.Tv, "Sign in a TV", "Scan the code on the TV's sign-in screen") { onLinkTv() }
         }
 
         GroupCard("About") {

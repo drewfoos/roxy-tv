@@ -20,6 +20,8 @@ sealed interface Route {
     // Admin: Library (scan / refresh, unmatched titles), Identify and Edit details for one title.
     @Serializable data object LibrarySettings : Route
     @Serializable data object ChangePassword : Route
+    // Phone: approve a TV's sign-in code (scanned, typed, or from an opened link).
+    @Serializable data class LinkTv(val code: String = "") : Route
     @Serializable data object Users : Route
     @Serializable data object AdminRequests : Route
     @Serializable data object LibraryRefreshPick : Route

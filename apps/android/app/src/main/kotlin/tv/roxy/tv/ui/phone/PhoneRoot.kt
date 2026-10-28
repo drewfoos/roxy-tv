@@ -64,6 +64,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.toRoute
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.ui.components.widthPx
@@ -111,6 +112,14 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val session by app.prefs.session.collectAsStateWithLifecycle()
     val nav = rememberNavController()
+    // A TV's sign-in link opened in the app goes to Account > Sign in a TV with its code filled in.
+    val linkActivity = LocalContext.current as? tv.roxy.tv.MainActivity
+    val pendingLink = linkActivity?.pendingLinkCode
+    LaunchedEffect(pendingLink) {
+        val c = pendingLink ?: return@LaunchedEffect
+        linkActivity.pendingLinkCode = null
+        nav.navigate(Route.LinkTv(c))
+    }
     val entry by nav.currentBackStackEntryAsState()
     val dest = entry?.destination
     val currentTab = when {
@@ -245,7 +254,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Account> {
                     Page {
-                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) }, onOpenUsers = { nav.navigate(Route.Users) }, onOpenRequests = { nav.navigate(Route.AdminRequests) })
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onLinkTv = { nav.navigate(Route.LinkTv()) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) }, onOpenUsers = { nav.navigate(Route.Users) }, onOpenRequests = { nav.navigate(Route.AdminRequests) })
                     }
                 }
                 composable<Route.ArrSettings> {
@@ -273,6 +282,10 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.ChangePassword> {
                     Page { PhoneChangePassword(onBack = { nav.popBackStack() }) }
+                }
+                composable<Route.LinkTv> { entry ->
+                    val r = entry.toRoute<Route.LinkTv>()
+                    Page { PhoneLinkTv(onBack = { nav.popBackStack() }, initialCode = r.code) }
                 }
                 composable<Route.AddMediaFolder> {
                     Page { PhoneAddFolder(onBack = { nav.popBackStack() }) }

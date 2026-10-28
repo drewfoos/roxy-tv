@@ -26,8 +26,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.3.2"
+        versionCode = 6
+        versionName = "0.3.3"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -77,6 +77,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core)
+    implementation(libs.play.services.code.scanner)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.compose.foundation)

@@ -211,8 +211,11 @@ fun LoginScreen() {
 
     val savedUrl = app.prefs.session.value.serverUrl
     var serverUrl by rememberSaveable { mutableStateOf(savedUrl.ifEmpty { BuildConfig.DEFAULT_SERVER_URL }) }
-    var username by rememberSaveable { mutableStateOf(BuildConfig.DEFAULT_USERNAME) }
-    var password by rememberSaveable { mutableStateOf(BuildConfig.DEFAULT_PASSWORD) }
+    // Dev defaults (spike.properties) prefill the phone's form in debug builds only; a TV
+    // never shows someone else's name and password on a shared screen.
+    val onTv = isTelevision(context)
+    var username by rememberSaveable { mutableStateOf(if (onTv) "" else BuildConfig.DEFAULT_USERNAME) }
+    var password by rememberSaveable { mutableStateOf(if (onTv) "" else BuildConfig.DEFAULT_PASSWORD) }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     // Signing in means agreeing to the terms. The text lives on the server, so the link
     // fetches it from the URL typed above; acceptance is recorded once logged in.

@@ -139,9 +139,19 @@ class MainActivity : ComponentActivity() {
     /** An item the launcher's Watch Next card asked for (roxytv://play/<id>); played once the app is signed in. */
     var pendingPlayId by mutableStateOf<String?>(null)
 
+    /** A TV's sign-in link (http://server/link/CODE) opened in the app: approved from Account once signed in. */
+    var pendingLinkCode by mutableStateOf<String?>(null)
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         WatchNext.itemIdFrom(intent.data)?.let { pendingPlayId = it }
+        linkCodeFrom(intent.data)?.let { pendingLinkCode = it }
+    }
+
+    private fun linkCodeFrom(uri: android.net.Uri?): String? {
+        val segs = uri?.pathSegments ?: return null
+        if (segs.size < 2 || segs[segs.size - 2] != "link") return null
+        return segs.last().uppercase().filter { it.isLetterOrDigit() }.takeIf { it.length >= 6 }
     }
 
     override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true) }
@@ -152,6 +162,7 @@ class MainActivity : ComponentActivity() {
         Timber.i("Device report:\n%s", DeviceReport.full(this))
         val tv = isTelevision(this)
         WatchNext.itemIdFrom(intent?.data)?.let { pendingPlayId = it }
+        linkCodeFrom(intent?.data)?.let { pendingLinkCode = it }
         // The TV UI is a landscape, D-pad layout; the phone browses in portrait like Netflix
         // (the player is landscape on both, set in the manifest).
         requestedOrientation = if (tv) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

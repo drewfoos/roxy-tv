@@ -352,6 +352,12 @@ class RoxyApi(private val prefs: Prefs) {
         execute<LinkStart>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/link/start").post(json.encodeToString(LinkStartRequest.serializer(), body).toRequestBody(JSON_TYPE)).build())
     }
 
+    /** Phone side: which device a code belongs to (needs a signed-in user). */
+    suspend fun linkInfo(code: String): LinkInfo = get("/v1/link/$code")
+
+    /** Phone side: sign that device in as this user. */
+    suspend fun linkApprove(code: String) = postNoBody("/v1/link/$code/approve", "")
+
     /** Where the QR picture for a code is. */
     fun linkQrUrl(serverUrl: String, link: LinkStart): String = serverUrl.trimEnd('/') + "/v1/link/${link.code}/qr.png?secret=${link.secret}"
 
@@ -562,6 +568,9 @@ private data class LinkStartRequest(val client: String, val device: String, val 
 /** A TV sign-in code: what the TV shows, the secret it polls with, the link the QR carries. */
 @Serializable
 data class LinkStart(val code: String, val secret: String, val url: String, val expiresIn: Int = 600)
+
+@Serializable
+data class LinkInfo(val code: String, val client: String = "", val device: String = "", val expiresIn: Int = 0, val approved: Boolean = false)
 
 @Serializable
 data class LinkResult(val status: String, val token: String? = null, val user: User? = null, val deviceId: String? = null)

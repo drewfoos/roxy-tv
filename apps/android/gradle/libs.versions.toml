@@ -40,6 +40,7 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 libmpv = { group = "dev.jdtech.mpv", name = "libmpv", version.ref = "libmpv" }
 timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
+play-services-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version = "16.1.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "android-plugin" }
