@@ -92,6 +92,7 @@ import tv.roxy.tv.ui.phone.audioBadge
 import tv.roxy.tv.ui.phone.languageName
 import tv.roxy.tv.ui.phone.setWatchlist
 import tv.roxy.tv.ui.playItem
+import tv.roxy.tv.ui.phone.WatchedCheck
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /*
@@ -364,7 +365,11 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, 
             Box(modifier = Modifier.width(EpisodeThumbWidth).aspectRatio(16f / 9f)) {
                 RoxyImage(api.imageUrl(ep, imageType, widthPx(EpisodeThumbWidth)), code.ifEmpty { ep.title }, modifier = Modifier.fillMaxSize())
                 minutesLabel(ep)?.let { MinutesBadge(it, modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 3.dp)) }
-                ep.progressFraction?.takeIf { it < 1f }?.let { ProgressBar(it, modifier = Modifier.align(Alignment.BottomCenter)) }
+                // Watched: a full bar and a check, as on the phone; part-way: the bar so far.
+                if (ep.userData?.played == true) {
+                    ProgressBar(1f, modifier = Modifier.align(Alignment.BottomCenter))
+                    WatchedCheck(size = 22.dp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).background(Color(0x99000000), androidx.compose.foundation.shape.CircleShape))
+                } else ep.progressFraction?.takeIf { it < 1f }?.let { ProgressBar(it, modifier = Modifier.align(Alignment.BottomCenter)) }
             }
             Column(modifier = Modifier.padding(start = 12.dp, top = 10.dp)) {
                 Text(name, color = RoxyColors.onBackground, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)

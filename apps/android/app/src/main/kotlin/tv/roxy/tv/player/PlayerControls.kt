@@ -63,8 +63,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -251,28 +250,31 @@ fun PlayerControls(
         }
     }
     // Skip button lives outside the auto-hidden layer so it is there when you need it. On
-    // the TV it sits top-right, just left of the clock (where it stays when the bar hides).
+    // the TV it sits bottom-right at one height, clear of the bar, so it doesn't slide when
+    // the bar comes and goes; it takes focus when it appears so OK skips.
     val tv = !cr && !compact
-    val clockWidth = remember { mutableStateOf(TvClockWidth) }
+    val skipFocus = remember { FocusRequester() }
+    val skipSeg = state.skippableSegment?.takeIf { !state.autoSkip && !state.nextCardShown }
+    LaunchedEffect(skipSeg?.type, skipSeg?.startSec) { if (tv && skipSeg != null && sheet == Sheet.None) { withFrameNanos { }; runCatching { skipFocus.requestFocus() } } }
     state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
             if (tv) SkipButton(
-                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, align = Alignment.TopEnd,
-                modifier = Modifier.fillMaxSize().padding(end = TvBarSide + clockWidth.value + 24.dp, top = TvBarTop),
+                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, focusRequester = skipFocus,
+                modifier = Modifier.fillMaxSize().padding(end = TvBarSide, bottom = TvSkipBottom),
             )
             else SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (cr) 56.dp else if (visible) 118.dp else 40.dp))
         }
     }
     if (!visible) return
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(visible, sheet) { if (sheet == Sheet.None) runCatching { playFocus.requestFocus() } }
+    LaunchedEffect(visible, sheet) { if (sheet == Sheet.None && !(tv && skipSeg != null)) runCatching { playFocus.requestFocus() } }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else if (tv) 190.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 100.dp else if (tv) 260.dp else 200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
 
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else TvBarTop - 6.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
             // No arrow in the page's fullscreen: the system back gesture drops to the mini player.
             if (state.fullscreen != true) {
                 IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact, large = tv)
@@ -306,8 +308,11 @@ fun PlayerControls(
                 else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
             } else {
                 Spacer(Modifier.width(16.dp))
-                val density = LocalDensity.current
-                Column(horizontalAlignment = Alignment.End, modifier = Modifier.onSizeChanged { with(density) { clockWidth.value = it.width.toDp() } }) {
+                if (tv && state.hasNext) {
+                    NextEpisodeButton(onClick = { actions.next() }, onFocus = onInteraction)
+                    Spacer(Modifier.width(24.dp))
+                }
+                Column(horizontalAlignment = Alignment.End) {
                     Text(clockNow(), color = Color.White, fontSize = if (tv) 22.sp else 16.sp, fontWeight = FontWeight.SemiBold)
                     val remaining = (state.durationSec - state.positionSec) / state.speed.coerceAtLeast(0.25)
                     if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = if (tv) 16.sp else 13.sp)
@@ -348,7 +353,6 @@ fun PlayerControls(
                 Spacer(Modifier.width(12.dp))
                 Text(fmtTime(state.positionSec) + " / " + fmtTime(state.durationSec), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
-                if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, large = true)
                 IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { onSheet(if (sheet == Sheet.Subtitles) Sheet.None else Sheet.Subtitles) }, onFocus = onInteraction, large = true)
                 SpeedButton(state.speed, onClick = { onSheet(if (sheet == Sheet.Speed) Sheet.None else Sheet.Speed) }, onFocus = onInteraction, large = true)
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, large = true)
@@ -420,12 +424,13 @@ private val LocalCompactMenu = compositionLocalOf { false }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
-private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd) {
+private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd, focusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     Box(modifier = modifier, contentAlignment = align) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .onFocusChanged { focused = it.isFocused }
                 .focusable()
                 .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
@@ -593,10 +598,29 @@ private fun SpeedButton(speed: Double, onClick: () -> Unit, onFocus: () -> Unit,
     }
 }
 
-/** The TV player's insets and the clock's starting width (measured once it lays out). */
+/** The TV player's side inset, and where Skip sits: above the bar whether it shows or not. */
 private val TvBarSide = 40.dp
-private val TvBarTop = 28.dp
-private val TvClockWidth = 160.dp
+private val TvSkipBottom = 150.dp
+
+/** The TV's "Next episode" pill in the top bar, left of the clock. */
+@Composable
+private fun NextEpisodeButton(onClick: () -> Unit, onFocus: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+            .focusable()
+            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
+            .clip(RoundedCornerShape(24.dp))
+            .background(if (focused) Color.White else Color(0x33FFFFFF))
+            .tapClick(onClick)
+            .padding(start = 18.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
+    ) {
+        Text("Next episode", color = if (focused) Color.Black else Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Icon(Icons.Filled.SkipNext, contentDescription = null, tint = if (focused) Color.Black else Color.White, modifier = Modifier.padding(start = 6.dp).size(26.dp))
+    }
+}
 
 /** Big round centre button. */
 @Composable
