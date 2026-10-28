@@ -33,7 +33,7 @@ data class FoundServer(val id: String, val name: String, val url: String, val ve
  *
  * 1. a UDP broadcast of "who is roxy?" that the server's beacon answers (instant, but
  *    broadcasts do not cross Docker's bridge network or some Wi-Fi isolation), and
- * 2. an HTTP sweep of every address in the phone's subnet on the default port, reading
+ * 2. an HTTP sweep of every address in the phone's subnet on 8096 and 8097, reading
  *    `/v1/system/info` and keeping the ones that say they are Roxy (slower, a second or
  *    two for a /24, but it works wherever the server itself is reachable).
  *
@@ -42,6 +42,8 @@ data class FoundServer(val id: String, val name: String, val url: String, val ve
  */
 object ServerFinder {
     const val PORT = 8096
+    /** Ports the sweep tries: Roxy's default, then 8097 for a Roxy that sits beside Jellyfin (which keeps 8096). */
+    private val SWEEP_PORTS = listOf(PORT, 8097)
     private const val PROBE = "who is roxy?"
 
     @Serializable
@@ -118,8 +120,11 @@ object ServerFinder {
         hosts.map { ip ->
             launch {
                 gate.withPermit {
-                    val r = probeHttp("http://$ip:$PORT") ?: return@withPermit
-                    emit(FoundServer(r.id, r.name.ifBlank { "Roxy Server" }, "http://$ip:$PORT", r.version))
+                    for (port in SWEEP_PORTS) {
+                        val r = probeHttp("http://$ip:$port") ?: continue
+                        emit(FoundServer(r.id, r.name.ifBlank { "Roxy Server" }, "http://$ip:$port", r.version))
+                        break
+                    }
                 }
             }
         }.forEach { it.join() }
