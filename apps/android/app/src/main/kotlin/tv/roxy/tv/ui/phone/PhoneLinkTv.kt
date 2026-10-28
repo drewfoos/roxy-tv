@@ -14,7 +14,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Tv
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
+import com.google.zxing.client.android.Intents
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,11 +34,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
-import com.google.android.gms.common.moduleinstall.ModuleInstall
-import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -45,8 +44,8 @@ import tv.roxy.tv.ui.components.RoxyTextField
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /**
- * Account > Sign in a TV: scan the QR on the TV's sign-in screen (Google's code scanner,
- * no camera permission of our own) or type its code, see which TV asks, and approve it;
+ * Account > Sign in a TV: scan the QR on the TV's sign-in screen (ZXing, which asks for
+ * the camera itself) or type its code, see which TV asks, and approve it;
  * the TV then signs in as this account. [initialCode] comes from a scanned link opened
  * in the app (http://server/link/CODE).
  */
@@ -72,41 +71,33 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
     }
     LaunchedEffect(initialCode) { if (initialCode.isNotEmpty()) lookUp() }
 
-    // Google's scanner screen is a Play services module fetched on first use; ask for it as
-    // soon as this page opens, so the first tap on Scan finds it installed.
-    val scannerOptions = remember { GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build() }
-    var scannerReady by remember { mutableStateOf<Boolean?>(null) } // null = checking / downloading
-    LaunchedEffect(Unit) {
-        runCatching {
-            val modules = ModuleInstall.getClient(context)
-            val scanner = GmsBarcodeScanning.getClient(context, scannerOptions)
-            modules.areModulesAvailable(scanner)
-                .addOnSuccessListener { r ->
-                    if (r.areModulesAvailable()) scannerReady = true
-                    else modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build())
-                        .addOnSuccessListener { scannerReady = true }
-                        .addOnFailureListener { t -> Timber.w(t, "scanner install"); scannerReady = false }
-                }
-                .addOnFailureListener { t -> Timber.w(t, "scanner check"); scannerReady = false }
-        }.onFailure { t -> Timber.w(t, "scanner check"); scannerReady = false }
+    // The in-app scanner (ZXing): it asks for the camera itself and needs nothing from Play
+    // services. Problems are also sent to the server's log so they can be diagnosed there.
+    fun report(what: String) { scope.launch { runCatching { app.api.reportCrash("scan: $what") } } }
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val raw = result.contents
+        if (raw == null) {
+            // Cancelled, or the camera was refused.
+            if (result.originalIntent?.hasExtra(Intents.Scan.MISSING_CAMERA_PERMISSION) == true) {
+                error = "Roxy needs the camera to scan. Allow it in the phone's settings, or type the code."
+                report("camera permission refused")
+            }
+            return@rememberLauncherForActivityResult
+        }
+        // The QR carries http://server/link/CODE; a bare code works too.
+        val found = raw.substringAfterLast("/link/", raw).substringBefore('?').uppercase().filter { it.isLetterOrDigit() }
+        if (found.length >= 6) { code = found; scope.launch { lookUp() } } else { error = "That is not a Roxy sign-in code."; report("not a code: ${raw.take(80)}") }
     }
-
-    fun scan() = runCatching {
-        if (scannerReady == null) { error = "The scanner is still downloading from Google Play services. Try again in a few seconds."; return@runCatching }
+    fun scan() {
         error = null
-        GmsBarcodeScanning.getClient(context, scannerOptions).startScan()
-            .addOnSuccessListener { barcode ->
-                val raw = barcode.rawValue.orEmpty()
-                // The QR carries http://server/link/CODE; a bare code works too.
-                val found = raw.substringAfterLast("/link/", raw).substringBefore('?').uppercase().filter { it.isLetterOrDigit() }
-                if (found.length >= 6) { code = found; scope.launch { lookUp() } } else error = "That is not a Roxy sign-in code."
-            }
-            .addOnFailureListener { t ->
-                Timber.w(t, "scan failed")
-                error = if (t.message.orEmpty().contains("download", ignoreCase = true)) "The scanner is still downloading from Google Play services. Try again in a few seconds."
-                else "The scanner could not open (${t.message}). Type the code instead, or scan the TV with the phone's camera app."
-            }
-    }.onFailure { t -> Timber.w(t, "scan failed to start"); error = "The scanner could not open (${t.message}). Type the code instead, or scan the TV with the phone's camera app." }
+        runCatching {
+            scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Point at the code on the TV").setBeepEnabled(false).setOrientationLocked(false))
+        }.onFailure { t ->
+            Timber.w(t, "scan failed to start")
+            error = "The scanner could not open (${t.message}). Type the code instead."
+            report(t.stackTraceToString().take(4000))
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -148,7 +139,7 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
                         "Open Roxy on the TV. Its sign-in screen shows a QR code and a six-letter code. Scan the QR here, or type the code, and the TV signs in as you.",
                         fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted,
                     )
-                    PlayButton(if (scannerReady == null) "Getting the scanner ready…" else "Scan the TV's code", icon = Icons.Outlined.QrCodeScanner, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), onClick = { scan() })
+                    PlayButton("Scan the TV's code", icon = Icons.Outlined.QrCodeScanner, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.fillMaxWidth(), onClick = { scan() })
                     RoxyTextField(code, { code = it.uppercase(); error = null }, label = "Or type the code", keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done)
                     PlayButton(
                         if (busy) "Checking…" else "Continue", icon = Icons.Filled.Check, pill = true,

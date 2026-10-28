@@ -66,6 +66,12 @@
             </intent-filter>
         </activity>
 
+        <!-- ZXing's scanner (Account > Sign in a TV), turned with the phone instead of locked to landscape. -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="fullSensor"
+            tools:replace="android:screenOrientation" />
+
         <!-- Exported so tools/spike-*.ps1 can launch it with extras over adb (diagnostics). -->
         <activity
             android:name=".player.PlayerActivity"
