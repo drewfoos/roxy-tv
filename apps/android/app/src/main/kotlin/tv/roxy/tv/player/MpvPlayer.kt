@@ -26,6 +26,18 @@ class MpvPlayer(
     displayRefreshRate: Float,
 ) : SurfaceHolder.Callback, MPVLib.EventObserver, MPVLib.LogObserver {
 
+    companion object {
+        /** Passthrough codecs that hung the audio output in this run; decoded locally from then on. */
+        val brokenSpdif: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+        private const val BROKEN_KEY = "passthroughFailed"
+
+        /** Forget the codecs passthrough failed on (the sound output changed). */
+        fun resetPassthroughMemory(context: Context) {
+            brokenSpdif.clear()
+            context.getSharedPreferences("audio", Context.MODE_PRIVATE).edit().remove(BROKEN_KEY).apply()
+        }
+    }
+
     data class Options(
         /** "mediacodec-copy" | "mediacodec" | "no" */
         val hwdec: String = "mediacodec-copy",
@@ -103,6 +115,19 @@ class MpvPlayer(
         "duration" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
     )
 
+    /**
+     * Passthrough codecs for this player: the setting's list minus any that already hung
+     * this TV in this run (see [watchPassthrough]); `adb shell setprop debug.roxy.spdif
+     * ac3,eac3` (or `none`) overrides it for bench tests.
+     */
+    private val audioPrefs = context.getSharedPreferences("audio", Context.MODE_PRIVATE)
+    private var spdif: List<String> = sysprop("debug.roxy.spdif")?.let { if (it == "none") emptyList() else it.split(',') }
+        ?: options.spdif.filter { it !in brokenSpdif && it !in (audioPrefs.getStringSet(BROKEN_KEY, emptySet()) ?: emptySet()) }
+
+    private fun sysprop(name: String): String? = runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, name) as String
+    }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
     init {
         fun opt(name: String, value: String) {
             val rc = mpv.setOptionString(name, value)
@@ -122,7 +147,9 @@ class MpvPlayer(
         opt("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
         opt("ao", options.ao)
         opt("audio-set-media-role", "yes")
-        if (options.spdif.isNotEmpty()) opt("audio-spdif", options.spdif.joinToString(","))
+        if (spdif.isNotEmpty()) opt("audio-spdif", spdif.joinToString(","))
+        // Bench switch for audio work on a device: `adb shell setprop debug.roxy.af <filters>`.
+        sysprop("debug.roxy.af")?.let { opt("af", it) }
 
         opt("video-sync", "audio")
         opt("display-fps-override", "%.3f".format(displayRefreshRate))
@@ -162,7 +189,7 @@ class MpvPlayer(
         mpv.addLogObserver(this)
 
         for ((name, fmt) in observed) mpv.observeProperty(name, fmt)
-        Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s spdif=%s", options.hwdec, options.vo, options.ao, options.spdif)
+        Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s spdif=%s af=%s", options.hwdec, options.vo, options.ao, spdif, sysprop("debug.roxy.af"))
     }
 
     // ---- playback control ----
@@ -185,9 +212,14 @@ class MpvPlayer(
         if (surfaceReady) loadPending()
     }
 
+    private var lastUrl: String? = null
+    private var lastTranscoded = false
+
     private fun loadPending() {
         val url = pendingUrl ?: return
         pendingUrl = null
+        lastUrl = url
+        lastTranscoded = pendingTranscode
         Timber.i("loadfile %s start=%ds transcoded=%s", url.substringBefore("?"), startSeconds, pendingTranscode)
         // `start` is a file-local option: set it as a property right before the load.
         mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
@@ -490,9 +522,46 @@ class MpvPlayer(
                 }
                 applyTrackPolicy()
                 listener?.onFileLoaded()
+                if (spdif.isNotEmpty()) watchPassthrough()
             }
             MPVLib.MpvEvent.MPV_EVENT_END_FILE -> listener?.onEndFile()
         }
+    }
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var watchdog: Runnable? = null
+
+    /**
+     * Safety net: some TVs never finish opening a passthrough audio output for a format
+     * (the TCL with a soundbar on E-AC3). mpv then waits on the audio clock and the picture
+     * stays black. If the position hasn't moved a few seconds after the file loaded, that
+     * codec is decoded here for the rest of the run and the file reopens where it was.
+     */
+    private fun watchPassthrough() {
+        watchdog?.let { main.removeCallbacks(it) }
+        val codec = str("current-tracks/audio/codec")?.lowercase()
+        if (codec == null || codec !in spdif) return
+        val startPos = dbl("time-pos") ?: 0.0
+        var checks = 0
+        val r = object : Runnable {
+            override fun run() {
+                checks++
+                val pos = dbl("time-pos")
+                if (pos != null && pos > startPos + 0.5) return
+                val waiting = bool("paused-for-cache") == true || bool("pause") == true
+                if (waiting && checks < 4) { main.postDelayed(this, 5000); return }
+                Timber.w("passthrough of %s did not start (pos %s); decoding it on the TV instead", codec, pos)
+                brokenSpdif += codec
+                // Remembered on this device (with the sound output it was seen on), so later plays decode it at once.
+                audioPrefs.edit().putStringSet(BROKEN_KEY, (audioPrefs.getStringSet(BROKEN_KEY, emptySet()).orEmpty() + codec)).apply()
+                spdif = spdif - codec
+                mpv.setPropertyString("audio-spdif", spdif.joinToString(","))
+                val url = lastUrl ?: return
+                play(url, (pos ?: startPos).toInt(), lastTranscoded)
+            }
+        }
+        watchdog = r
+        main.postDelayed(r, 6000)
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {
@@ -502,7 +571,7 @@ class MpvPlayer(
             line.contains("fontselect") || line.contains("font provider") ||
             line.contains("Glyph") || line.contains("attachment", ignoreCase = true) ||
             line.contains("hwdec", ignoreCase = true) || line.contains("Using hardware decoding") ||
-            line.contains("Could not open", ignoreCase = true)
+            line.contains("Could not open", ignoreCase = true) || prefix.startsWith("ao") || prefix.startsWith("af")
         if (interesting) {
             synchronized(fontLog) {
                 fontLog.addLast("[$prefix] $line")
@@ -520,6 +589,7 @@ class MpvPlayer(
         private set
 
     fun destroy() {
+        watchdog?.let { main.removeCallbacks(it) }
         destroyed = true
         listener = null
         runCatching { mpv.removeLogObserver(this) }

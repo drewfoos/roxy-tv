@@ -39,12 +39,19 @@ object AudioPassthrough {
         val am = context.getSystemService(AudioManager::class.java) ?: return emptyList()
         val hdmi = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.type in hdmiTypes }
         if (hdmi.isEmpty()) return emptyList()
-        // A device's encoding list is what its EDID advertises; an empty list means "not
-        // reported", so ask the audio system about direct playback as well.
+        // A device's encoding list is what the soundbar's EDID advertises, and when it gives
+        // one it is the truth: the TCL also answers "direct playback supported" for E-AC3,
+        // which its soundbar does not take, and the picture then waits on audio that never
+        // starts. Only an empty list ("not reported") falls back to asking the audio system.
         val advertised = hdmi.flatMap { it.encodings.toList() }.toSet()
+        if (advertised.isNotEmpty()) {
+            val found = candidates.filter { it.encoding in advertised }
+            Timber.i("audio passthrough: hdmi=%s advertised=%s -> %s", hdmi.map { it.type }, advertised, found.map { it.mpv })
+            return found
+        }
         val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build()
         val found = candidates.filter { f ->
-            f.encoding in advertised || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && runCatching {
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && runCatching {
                 AudioTrack.isDirectPlaybackSupported(
                     AudioFormat.Builder().setEncoding(f.encoding).setSampleRate(48_000).setChannelMask(f.channelMask).build(),
                     attrs,
