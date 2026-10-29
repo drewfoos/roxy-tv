@@ -235,7 +235,7 @@ private fun TitlePage(
     var pendingFocus by remember { mutableStateOf<FocusRequester?>(null) }
     LaunchedEffect(pendingFocus) {
         val target = pendingFocus ?: return@LaunchedEffect
-        repeat(10) { withFrameNanos { }; if (runCatching { target.requestFocus() }.isSuccess) { pendingFocus = null; return@LaunchedEffect } }
+        repeat(10) { withFrameNanos { }; if (runCatching { target.requestFocus() }.getOrDefault(false)) { pendingFocus = null; return@LaunchedEffect } }
         pendingFocus = null
     }
     val topHeight by animateDpAsState(if (folded) 0.dp else TopBlockHeight, Fold, label = "fold")

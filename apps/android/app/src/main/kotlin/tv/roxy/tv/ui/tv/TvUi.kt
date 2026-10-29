@@ -145,7 +145,8 @@ class FocusMemory(private val saved: androidx.compose.runtime.MutableState<Strin
     fun restore(fallback: String? = null): Boolean {
         for (k in listOfNotNull(key, fallback)) {
             val r = requesters[k] ?: continue
-            if (runCatching { r.requestFocus() }.isSuccess) return true
+            val ok = runCatching { r.requestFocus() }.getOrDefault(false)
+            if (ok) return true
         }
         return false
     }
@@ -173,7 +174,9 @@ val LocalPageOwner = compositionLocalOf<Any?> { null }
 fun RegisterPageEntry(enter: () -> Boolean) {
     val entry = LocalPageEntry.current
     val owner = LocalPageOwner.current
-    DisposableEffect(entry, enter) {
+    // Keyed on the owner too: the first composition runs before navigation knows the page,
+    // and a page that registered then (owner null) would never be handed focus back.
+    DisposableEffect(entry, enter, owner) {
         entry?.enter = enter
         entry?.owner = owner
         onDispose { if (entry?.enter === enter) { entry.enter = { false }; entry.owner = null } }

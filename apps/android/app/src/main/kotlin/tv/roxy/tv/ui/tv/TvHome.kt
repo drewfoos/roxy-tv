@@ -145,6 +145,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         onInfo = { title -> open(title) },
                         onFocused = { focusedRow.value = 0 },
                         downKey = lastKey(0),
+                        upNext = hero != null && rows.firstOrNull { it.key == "continue" }?.items?.any { it.id == hero.play.id } == true,
                     )
                 }
                 itemsIndexed(rows, key = { _, r -> r.key }) { i, row ->
@@ -217,7 +218,7 @@ private fun HomeSkeleton() {
  * START WATCHING / CONTINUE and MORE INFO.
  */
 @Composable
-private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: String?) {
+private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: String?, upNext: Boolean = false) {
     Box(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
         if (pick == null) {
             Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 160.dp)) {
@@ -237,7 +238,8 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
         Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.45f).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to RoxyColors.background)))
 
         Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 112.dp).widthIn(max = 460.dp)) {
-            val tag = if ((play.userData?.positionMs ?: 0L) > 0) "Continue Watching" else "Newly Added"
+            // Part-way through, or the next episode of a show in Continue Watching.
+            val tag = if ((play.userData?.positionMs ?: 0L) > 0 || upNext) "Continue Watching" else "Newly Added"
             Text(tag, color = RoxyColors.onBackground, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Box(modifier = Modifier.height(90.dp).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {

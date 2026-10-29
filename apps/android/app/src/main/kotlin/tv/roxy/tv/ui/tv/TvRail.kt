@@ -177,7 +177,7 @@ private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit,
     // Opening lands focus on the page's own item.
     LaunchedEffect(open) {
         if (!open) return@LaunchedEffect
-        repeat(6) { withFrameNanos { }; if (runCatching { requesters.getValue(current).requestFocus() }.isSuccess) return@LaunchedEffect }
+        repeat(6) { withFrameNanos { }; if (runCatching { requesters.getValue(current).requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
     }
     // Focus leaving the rail for good (the page took it) closes it. A move between two of
     // its items reports no focus for an instant, so the loss has to last a couple of frames,
