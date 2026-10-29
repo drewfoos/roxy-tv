@@ -130,7 +130,11 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
             // Each row remembers its last focused card, so Up / Down between rows (and Down
             // from the hero) land there instead of on whatever card happens to be nearest.
             val lastInRow = remember { mutableStateMapOf<String, String>() }
-            fun lastKey(i: Int): String? = rows.getOrNull(i)?.let { r -> lastInRow[r.key] ?: r.items.firstOrNull()?.let { "${r.key}/${it.id}" } }
+            // A remembered card that has since left its row (a show finished and dropped out
+            // of Continue Watching) would point Up / Down at nothing: fall back to the first card.
+            fun lastKey(i: Int): String? = rows.getOrNull(i)?.let { r ->
+                lastInRow[r.key]?.takeIf { k -> r.items.any { "${r.key}/${it.id}" == k } } ?: r.items.firstOrNull()?.let { "${r.key}/${it.id}" }
+            }
             RestoreFocus(memory, listState, rows, pin, fallback = "hero/play")
             CompositionLocalProvider(LocalBringIntoViewSpec provides NoBringIntoView) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
