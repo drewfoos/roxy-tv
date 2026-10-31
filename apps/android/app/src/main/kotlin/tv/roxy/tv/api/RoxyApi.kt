@@ -435,7 +435,8 @@ class RoxyApi(private val prefs: Prefs) {
     }
 
     /** The cached media token, for places that cannot wait (fetched when playback started). */
-    fun cachedMediaToken(sourceId: String): String? = mediaTokens[sourceId]?.first
+    fun cachedMediaToken(sourceId: String): String? =
+        mediaTokens[sourceId]?.takeIf { (_, exp) -> exp - System.currentTimeMillis() > 60_000L }?.first
 
     fun streamUrl(sourceId: String, mediaToken: String): String = "$baseUrl/v1/stream/$sourceId?mt=$mediaToken"
 

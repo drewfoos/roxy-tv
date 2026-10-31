@@ -295,9 +295,16 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 				http.Error(w, `{"Message":"auth lookup failed"}`, http.StatusInternalServerError)
 				return
 			}
-			// A media token (?mt=) opens one source's stream and what plays with it, nothing else.
+			// A media token opens one source's stream and what plays with it, nothing else. It
+			// comes as ?mt= (the browser's <video> cannot send headers) or as the
+			// X-Roxy-Media-Token header (the TV player: it keeps the token out of URLs, which
+			// libmpv writes to the device log).
 			if p == nil {
-				if mt := r.URL.Query().Get("mt"); mt != "" {
+				mt := r.Header.Get(MediaTokenHeader)
+				if mt == "" {
+					mt = r.URL.Query().Get("mt")
+				}
+				if mt != "" {
 					if src, uid, err := s.verifyMediaToken(r.Context(), mt); err == nil && mediaPathFor(r.URL.Path, src) {
 						if u, err := s.store.GetUser(r.Context(), uid); err == nil && u != nil && !u.IsDisabled {
 							p = &model.Principal{UserID: u.ID, User: u, MediaSource: src}
@@ -326,6 +333,9 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// MediaTokenHeader carries a media token in place of the ?mt= query parameter.
+const MediaTokenHeader = "X-Roxy-Media-Token"
 
 func newID() string {
 	b := make([]byte, 16)

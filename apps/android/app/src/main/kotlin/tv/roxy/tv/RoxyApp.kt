@@ -64,7 +64,9 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
-        Timber.plant(Timber.DebugTree())
+        // DebugTree builds a stack trace per call to name the tag; fine while debugging, too
+        // costly on a TV for the player's logging. Other builds log info and above under one tag.
+        if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree()) else Timber.plant(InfoTree)
         tv.roxy.tv.diagnostics.CrashReports.install(this)
         fontsDir = Fonts.install(this)
         prefs = Prefs(this, scope)
@@ -106,5 +108,14 @@ object Fonts {
             Timber.i("Installed font %s (%d bytes)", name, target.length())
         }
         return dir
+    }
+}
+
+/** Release / perf logging: info and above, one fixed tag, no stack walk per line. */
+private object InfoTree : Timber.Tree() {
+    override fun isLoggable(tag: String?, priority: Int): Boolean = priority >= android.util.Log.INFO
+    override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+        android.util.Log.println(priority, "Roxy", message)
+        if (t != null) android.util.Log.println(priority, "Roxy", android.util.Log.getStackTraceString(t))
     }
 }

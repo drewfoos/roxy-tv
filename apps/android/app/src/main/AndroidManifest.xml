@@ -72,7 +72,7 @@
         <!-- Exported so tools/spike-*.ps1 can launch it with extras over adb (diagnostics). -->
         <activity
             android:name=".player.PlayerActivity"
-            android:exported="true"
+            android:exported="false"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"

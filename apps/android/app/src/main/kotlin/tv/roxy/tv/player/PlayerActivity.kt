@@ -79,6 +79,8 @@ class PlayerActivity : ComponentActivity() {
 
     private lateinit var app: RoxyApp
     private lateinit var session: PlayerSession
+    /** The session the content draws; replaced when a new play request arrives (see onNewIntent). */
+    private val shown = androidx.compose.runtime.mutableStateOf<PlayerSession?>(null)
     private val isTv: Boolean by lazy {
         (getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager).currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
@@ -96,9 +98,37 @@ class PlayerActivity : ComponentActivity() {
         }
 
         app = RoxyApp.get(this)
-        val settings = app.prefs.settings.value
+        if (!startSession(intent)) { finish(); return }
+        setContent {
+            // A new session gets a new SurfaceView: the old one's holder belongs to the old player.
+            shown.value?.let { s -> androidx.compose.runtime.key(s) { PlayerSurface(s, modifier = Modifier.fillMaxSize()) } }
+        }
+    }
 
-        val url = intent.getStringExtra(EXTRA_URL) ?: run { finish(); return }
+    /**
+     * Another title while the player is open (or stopped in the background): a Watch Next
+     * card, "Play on" from the phone, a new pick in the app. singleTask brings this instance
+     * back, so the request arrives here; without this the old episode would carry on.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val url = intent.getStringExtra(EXTRA_URL) ?: return
+        val same = ::session.isInitialized && intent.getStringExtra(EXTRA_ITEM_ID)?.let { it == session.itemId } == true
+        if (same) {
+            Timber.i("play request for the item already playing: resume it")
+            session.playPause(play = true)
+            return
+        }
+        Timber.i("new play request: %s", url.substringBefore('?'))
+        setIntent(intent)
+        if (::session.isInitialized) { session.reportProgress("stop"); session.destroy() }
+        if (!startSession(intent)) finish()
+    }
+
+    /** Build a session from [intent]'s extras; false when it names nothing to play. */
+    private fun startSession(intent: Intent): Boolean {
+        val settings = app.prefs.settings.value
+        val url = intent.getStringExtra(EXTRA_URL) ?: return false
         val audioLangs = intent.getStringExtra(EXTRA_ALANG)
             ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }
             ?.let { settings.copy(audioLangs = it).mpvAudioLangs }
@@ -128,8 +158,8 @@ class PlayerActivity : ComponentActivity() {
             override fun playingChanged(playing: Boolean) = updatePipParams(playing)
         }
         session = PlayerSession(this, app, params, lifecycleScope, host)
-
-        setContent { PlayerSurface(session, modifier = Modifier.fillMaxSize()) }
+        shown.value = session
+        return true
     }
 
     private fun pipParams(autoEnter: Boolean): android.app.PictureInPictureParams {
@@ -174,13 +204,18 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (!::session.isInitialized) return super.onKeyDown(keyCode, event)
-        val player = session.player
         // Media keys and the diagnostics shortcuts work regardless of the control layer.
+        // PLAY and PAUSE are explicit (HDMI-CEC, Bluetooth remotes and Assistant send them):
+        // "pause" on a paused video must not start it.
         when (keyCode) {
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
-            KeyEvent.KEYCODE_SPACE -> { player.togglePause(); session.showControls(); return true }
-            KeyEvent.KEYCODE_MEDIA_REWIND -> { session.actions.seekBy(-10); session.showControls(); return true }
-            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { session.actions.seekBy(10); session.showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_SPACE -> { session.playPause(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { session.playPause(play = true); return true }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> { session.playPause(play = false); return true }
+            KeyEvent.KEYCODE_MEDIA_STOP -> { session.reportProgress("stop"); finish(); return true }
+            KeyEvent.KEYCODE_MEDIA_NEXT -> { session.actions.next(); session.showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { session.actions.seekTo(0.0); session.showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { session.scrub(-1, event.repeatCount); return true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { session.scrub(1, event.repeatCount); return true }
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_I -> { session.toggleStats(); return true }
             KeyEvent.KEYCODE_CAPTIONS -> { session.openSheet(Sheet.Subtitles); return true }
             KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK, KeyEvent.KEYCODE_A -> { session.openSheet(Sheet.Audio); return true }
@@ -192,10 +227,11 @@ class PlayerActivity : ComponentActivity() {
         }
         if (!session.controlsVisible) {
             // Hidden: the first D-pad press reveals the controls (YouTube on TV); Left/Right
-            // also seek straight away so a quick skip does not need two presses.
+            // also start a scrub, and the controls open with focus on the seek bar, so the
+            // following presses keep scrubbing instead of walking the buttons.
             when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> { session.actions.seekBy(-10); session.showControls(); return true }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> { session.actions.seekBy(10); session.showControls(); return true }
+                KeyEvent.KEYCODE_DPAD_LEFT -> { session.scrub(-1, event.repeatCount); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { session.scrub(1, event.repeatCount); return true }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { session.showControls(); return true }
             }
         } else {

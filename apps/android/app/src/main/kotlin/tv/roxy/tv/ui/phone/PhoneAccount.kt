@@ -197,16 +197,19 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: ()
             Divider()
             SwitchRow(Icons.Outlined.SkipNext, "Next-episode countdown card", settings.nextCard) { save(settings.copy(nextCard = it)) }
             Divider()
-            SettingRow(Icons.Outlined.Tune, "Advanced", if (advanced) "Hide decoder and debug options" else "Decoder, video output, stats overlay", trailing = if (advanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore) { advanced = !advanced }
+            SettingRow(Icons.Outlined.Tune, "Advanced", if (advanced) "Hide decoder and debug options" else "Decoder, motion, HDR, stats overlay", trailing = if (advanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore) { advanced = !advanced }
             if (advanced) {
                 Divider()
-                SettingRow(null, "Hardware decoding", settings.hwdec) {
-                    pick = Pick("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
+                SettingRow(null, "Hardware decoding", PlayerSettings.hwdecLabel(settings.hwdec)) {
+                    val labels = PlayerSettings.hwdecChoices.map { it to PlayerSettings.hwdecLabel(it) }
+                    pick = Pick("Hardware decoding", labels.map { it.second }, PlayerSettings.hwdecLabel(settings.hwdec)) { picked ->
+                        labels.firstOrNull { it.second == picked }?.let { save(settings.copy(hwdec = it.first)) }
+                    }
                 }
                 Divider()
-                SettingRow(null, "Video output", settings.vo) {
-                    pick = Pick("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
-                }
+                SwitchRow(null, "Smooth motion", settings.smoothMotion) { save(settings.copy(smoothMotion = it)) }
+                Divider()
+                SwitchRow(null, "Native HDR (no styled subtitles)", settings.hdrNative) { save(settings.copy(hdrNative = it)) }
                 Divider()
                 val found = remember { AudioPassthrough.detect(context) }
                 val passLabels = listOf("auto" to AudioPassthrough.autoLabel(found), "off" to "Off (always decode here)")

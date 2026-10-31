@@ -20,12 +20,13 @@ object AudioPassthrough {
     /** [mpv] is the name `audio-spdif` takes. */
     data class Format(val mpv: String, val label: String, val encoding: Int, val channelMask: Int)
 
+    // Only what mpv's audiotrack output can actually pass through: it wraps every format as
+    // IEC 61937 on a stereo channel mask at the output's native rate (ao_audiotrack.c in mpv
+    // 0.41). E-AC3 needs a 192 kHz carrier and TrueHD / DTS-HD MA an 8-channel HBR link, so
+    // those hang or stay silent (the TCL's black screen on E-AC3); they are decoded here.
     private val candidates = listOf(
         Format("ac3", "Dolby Digital", AudioFormat.ENCODING_AC3, AudioFormat.CHANNEL_OUT_5POINT1),
-        Format("eac3", "Dolby Digital Plus", AudioFormat.ENCODING_E_AC3, AudioFormat.CHANNEL_OUT_5POINT1),
         Format("dts", "DTS", AudioFormat.ENCODING_DTS, AudioFormat.CHANNEL_OUT_5POINT1),
-        Format("dts-hd", "DTS-HD", AudioFormat.ENCODING_DTS_HD, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND),
-        Format("truehd", "Dolby TrueHD", AudioFormat.ENCODING_DOLBY_TRUEHD, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND),
     )
 
     private val hdmiTypes: Set<Int> = buildSet {
@@ -60,6 +61,16 @@ object AudioPassthrough {
         }
         Timber.i("audio passthrough: hdmi=%s advertised=%s -> %s", hdmi.map { it.type }, advertised, found.map { it.mpv })
         return found
+    }
+
+    /**
+     * Which sound output this is (the HDMI devices' names and advertised encodings): a
+     * passthrough failure is remembered per output, so a new soundbar starts clean.
+     */
+    fun outputKey(context: Context): String {
+        val am = context.getSystemService(AudioManager::class.java) ?: return ""
+        return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.type in hdmiTypes }
+            .joinToString(";") { d -> "${d.type}:${d.productName}:${d.encodings.sorted().joinToString(",")}" }
     }
 
     /** The formats to pass through for a [setting] ("auto" | "off"). */

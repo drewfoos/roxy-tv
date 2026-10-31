@@ -46,12 +46,30 @@ object DeviceReport {
         return "display: ${mode.physicalWidth}x${mode.physicalHeight}@${"%.2f".format(mode.refreshRate)} modes=[$modes] hdr=[${hdr ?: "none"}]"
     }
 
-    fun refreshRate(context: Context): Float {
-        @Suppress("DEPRECATION")
+    fun isTelevision(context: Context): Boolean = tv.roxy.tv.isTelevision(context)
+
+    /** The screen takes HDR10 or HLG (the TV's own HDR mode, not a tone-mapped picture). */
+    @Suppress("DEPRECATION")
+    fun hdrDisplay(context: Context): Boolean = runCatching {
         val display: Display? = if (Build.VERSION.SDK_INT >= 30) context.display
         else (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
-        return display?.mode?.refreshRate ?: 60f
-    }
+        val types = display?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
+        Display.HdrCapabilities.HDR_TYPE_HDR10 in types || Display.HdrCapabilities.HDR_TYPE_HLG in types
+    }.getOrDefault(false)
+
+    /** Under 3 GB of RAM (the TCL has 2.4 GB with about 200 MB free): the player keeps smaller buffers. */
+    fun lowRam(context: Context): Boolean = runCatching {
+        val am = context.getSystemService(android.app.ActivityManager::class.java)
+        val info = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        am.isLowRamDevice || info.totalMem < 3L * 1024 * 1024 * 1024
+    }.getOrDefault(false)
+
+    @Suppress("DEPRECATION")
+    fun refreshRate(context: Context): Float = runCatching {
+        val display: Display? = if (Build.VERSION.SDK_INT >= 30) context.display
+        else (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
+        display?.mode?.refreshRate
+    }.getOrNull() ?: 60f
 
     private fun hdrName(type: Int): String = when (type) {
         Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "DV"

@@ -104,6 +104,10 @@ data class PlayerUiState(
     val durationSec: Double = 0.0,
     val bufferedSec: Double = 0.0,
     val paused: Boolean = false,
+    /** Waiting on the network, a seek or a (re)load while meant to be playing: the spinner. */
+    val buffering: Boolean = false,
+    /** Where a D-pad scrub will seek to (the seek bar previews it), or null. */
+    val scrubSec: Double? = null,
     val muted: Boolean = false,
     val speed: Double = 1.0,
     val subtitleTracks: List<MpvPlayer.Track> = emptyList(),
@@ -187,6 +191,10 @@ interface PlayerActions {
     fun togglePause()
     fun seekTo(seconds: Double)
     fun seekBy(seconds: Int)
+    /** D-pad scrub: move the preview one step (bigger while the key is held); one seek when it settles. */
+    fun scrub(direction: Int, repeat: Int) { seekBy(direction * 10) }
+    /** Seek to the scrubbed position now (OK on the bar); false when not scrubbing. */
+    fun commitScrub(): Boolean = false
     fun selectSubtitle(id: Int)
     fun selectAudio(id: Int)
     fun setSpeed(speed: Double)
@@ -267,7 +275,10 @@ fun PlayerControls(
     }
     if (!visible) return
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(visible, sheet) { if (sheet == Sheet.None && !(tv && skipSeg != null)) runCatching { playFocus.requestFocus() } }
+    // The TV opens on the seek bar (YouTube / Netflix): Left/Right scrub the timeline, Down
+    // reaches the buttons. A phone (touch, or a keyboard) starts on play/pause.
+    val seekFocus = remember { FocusRequester() }
+    LaunchedEffect(visible, sheet) { if (sheet == Sheet.None && !(tv && skipSeg != null)) runCatching { (if (tv) seekFocus else playFocus).requestFocus() } }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else if (tv) 190.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
@@ -338,13 +349,13 @@ fun PlayerControls(
                 Spacer(Modifier.weight(1f))
                 Text(fmtTime(state.durationSec), color = Color.White, fontSize = if (compact) 11.sp else 13.sp)
             }
-            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction, color = RoxyColors.accent, flush = true)
+            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, actions = actions, onFocus = onInteraction, color = RoxyColors.accent, flush = true)
         }
         // The TV (this host serves only TVs now): Crunchyroll's web player's bar. The blue
         // seek bar, then -10 / play / +10, volume and "elapsed / total" at the left; next
-        // episode, subtitles, the speed and settings at the right. Focus starts on play.
+        // episode, subtitles, the speed and settings at the right. Focus starts on the bar.
         else Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = TvBarSide - 10.dp, vertical = 16.dp)) {
-            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp), onSeek = { actions.seekTo(it); onInteraction() }, onStep = { actions.seekBy(it); onInteraction() }, onFocus = onInteraction)
+            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp), onSeek = { actions.seekTo(it); onInteraction() }, actions = actions, onFocus = onInteraction, focusRequester = seekFocus)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 IconButton(Icons.Filled.Replay10, "Back 10 seconds", onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction, large = true)
                 IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus, large = true)
@@ -450,21 +461,20 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, c
  * Seek bar drawn by hand (Material's slider insets the track for its thumb, which left
  * an un-red gap at the start and a bar narrower than the button row). YouTube red,
  * round thumb that grows on focus/drag, buffered range in lighter grey. Dragging shows
- * the trickplay tile for the hovered time and seeks on release; Left/Right steps 10 s.
+ * the trickplay tile for the hovered time and seeks on release. Left/Right scrub: the
+ * thumb and the tile move at once, the step grows while the key is held, and one seek
+ * follows when the presses stop (or on OK; OK on a resting bar is play/pause).
  */
 @Composable
-private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier: Modifier, onSeek: (Double) -> Unit, onStep: (Int) -> Unit, onFocus: () -> Unit, color: Color = Bar, flush: Boolean = false) {
+private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier: Modifier, onSeek: (Double) -> Unit, actions: PlayerActions, onFocus: () -> Unit, color: Color = Bar, flush: Boolean = false, focusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     val dur = state.durationSec.takeIf { it > 0 } ?: 1.0
     var dragFraction by remember { mutableStateOf<Float?>(null) }
-    var stepPreviewSec by remember { mutableStateOf<Double?>(null) }
-    var stepToken by remember { mutableStateOf(0) }
-    LaunchedEffect(stepToken) { if (stepPreviewSec != null) { kotlinx.coroutines.delay(1500); stepPreviewSec = null } }
     val dragging = dragFraction != null
     LaunchedEffect(dragging) { while (dragging) { onFocus(); kotlinx.coroutines.delay(1500) } }
 
-    val previewSec: Double? = dragFraction?.let { it * dur } ?: stepPreviewSec
-    val shownFraction = dragFraction ?: (state.positionSec / dur).toFloat().coerceIn(0f, 1f)
+    val previewSec: Double? = dragFraction?.let { it * dur } ?: state.scrubSec
+    val shownFraction = dragFraction ?: ((state.scrubSec ?: state.positionSec) / dur).toFloat().coerceIn(0f, 1f)
     val bufferedFraction = (state.bufferedSec / dur).toFloat().coerceIn(0f, 1f)
     val big = focused || dragging
 
@@ -494,16 +504,24 @@ private fun SeekBar(state: PlayerUiState, trickplay: TrickplayPreview?, modifier
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .focusable()
                 .onKeyEvent { ev ->
                     if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
-                    val step = when (ev.key) { Key.DirectionLeft -> -10; Key.DirectionRight -> 10; else -> return@onKeyEvent false }
-                    val target = ((stepPreviewSec ?: state.positionSec) + step).coerceIn(0.0, dur)
-                    onStep(step)
-                    stepPreviewSec = target
-                    stepToken++
-                    true
+                    when (ev.key) {
+                        Key.DirectionLeft, Key.DirectionRight -> {
+                            actions.scrub(if (ev.key == Key.DirectionLeft) -1 else 1, ev.nativeKeyEvent.repeatCount)
+                            onFocus()
+                            true
+                        }
+                        Key.DirectionCenter, Key.Enter -> {
+                            if (ev.nativeKeyEvent.repeatCount == 0 && !actions.commitScrub()) actions.togglePause()
+                            onFocus()
+                            true
+                        }
+                        else -> false
+                    }
                 }
                 .pointerInput(dur) {
                     detectTapGestures { pos -> onSeek((pos.x / size.width).toDouble().coerceIn(0.0, 1.0) * dur) }

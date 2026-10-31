@@ -54,8 +54,9 @@ fun SettingsScreen(onLoggedOut: () -> Unit) {
         Text("${session.userName} @ ${session.serverUrl}", color = RoxyColors.muted, fontSize = 13.sp, modifier = Modifier.padding(bottom = 12.dp))
 
         Text("Player", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
-        ChoiceRow("Hardware decoding", PlayerSettings.hwdecChoices, settings.hwdec) { save(settings.copy(hwdec = it)) }
-        ChoiceRow("Video output", PlayerSettings.voChoices, settings.vo) { save(settings.copy(vo = it)) }
+        ChoiceRow("Hardware decoding", PlayerSettings.hwdecChoices.map { PlayerSettings.hwdecLabel(it) }, PlayerSettings.hwdecLabel(settings.hwdec)) { picked ->
+            PlayerSettings.hwdecChoices.firstOrNull { PlayerSettings.hwdecLabel(it) == picked }?.let { save(settings.copy(hwdec = it)) }
+        }
         // The TV cycles through the common languages with the D-pad; the phone has the full searchable list.
         val tvLangs = Languages.all.take(12)
         ChoiceRow("Audio language", tvLangs.map { it.name }, Languages.name(settings.audioLangs.firstOrNull() ?: "eng")) { picked ->

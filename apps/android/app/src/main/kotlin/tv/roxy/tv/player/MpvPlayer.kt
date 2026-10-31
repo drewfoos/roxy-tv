@@ -1,6 +1,10 @@
 ﻿package tv.roxy.tv.player
 
 import android.content.Context
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.Surface
 import android.view.SurfaceHolder
 import dev.jdtech.mpv.MPVLib
 import timber.log.Timber
@@ -9,15 +13,19 @@ import java.io.File
 import java.util.ArrayDeque
 
 /**
- * Thin wrapper over libmpv (dev.jdtech.mpv:libmpv); grew out of the Phase 1a player spike.
+ * Thin wrapper over libmpv (dev.jdtech.mpv:libmpv 1.0.0 = mpv 0.41.0, libplacebo 7.360.1);
+ * grew out of the Phase 1a player spike.
  *
- * Wiring follows Findroid's MPVPlayer and mpv-android's BaseMPVView:
- *  - options are set before init(), surface is attached in surfaceCreated and the vo is
- *    (re)enabled there, surfaceDestroyed sets vo=null and detaches.
+ * Wiring follows mpv-android's BaseMPVView and Findroid's MPVPlayer:
+ *  - options are set before init(); the surface is attached in surfaceCreated and the vo is
+ *    (re)enabled there; surfaceDestroyed sets vo=null and detaches.
  *  - the file is loaded only once a surface exists.
+ *  - libmpv calls back on its own event thread while holding a lock: nothing here blocks
+ *    in a callback, and every [Listener] call is posted to the main thread.
  *
  * Font setup (fonts.conf + FONTCONFIG_FILE, aliases, colour-emoji rejection) and the
  * track policy were validated on real hardware; change them only with the test matrix.
+ * The 2026-10-31 audit (docs/research/tv-player-audit-2026-10-31.md) explains the rest.
  */
 class MpvPlayer(
     private val context: Context,
@@ -27,24 +35,31 @@ class MpvPlayer(
 ) : SurfaceHolder.Callback, MPVLib.EventObserver, MPVLib.LogObserver {
 
     companion object {
-        /** Passthrough codecs that hung the audio output in this run; decoded locally from then on. */
-        val brokenSpdif: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+        /** "<output>|<codec>" pairs whose passthrough hung the audio output in this run. */
+        private val brokenSpdif: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
         private const val BROKEN_KEY = "passthroughFailed"
 
-        /** Forget the codecs passthrough failed on (the sound output changed). */
+        /** Forget the codecs passthrough failed on, for every sound output (the setting was touched). */
         fun resetPassthroughMemory(context: Context) {
             brokenSpdif.clear()
-            context.getSharedPreferences("audio", Context.MODE_PRIVATE).edit().remove(BROKEN_KEY).apply()
+            val prefs = context.getSharedPreferences("audio", Context.MODE_PRIVATE)
+            prefs.edit().apply { prefs.all.keys.filter { it.startsWith(BROKEN_KEY) }.forEach { remove(it) } }.apply()
+        }
+
+        /** The mpv `hwdec` value for a setting: "auto" = zero-copy MediaCodec, copy mode as the fallback. */
+        fun mpvHwdec(setting: String): String = when (setting) {
+            "auto", "" -> "mediacodec,mediacodec-copy"
+            else -> setting
         }
     }
 
     data class Options(
-        /** "mediacodec-copy" | "mediacodec" | "no" */
-        val hwdec: String = "mediacodec-copy",
-        /** "gpu" | "gpu-next" */
+        /** "auto" (mediacodec, then mediacodec-copy) | "mediacodec" | "mediacodec-copy" | "no" */
+        val hwdec: String = "auto",
+        /** "gpu"; "gpu-next" only from the adb bench extra (its libplacebo leaks GL syncs, see the audit). */
         val vo: String = "gpu",
-        /** "audiotrack" | "aaudio" */
-        val ao: String = "audiotrack",
+        /** mpv `ao` list. aaudio freezes video after seeks with libmpv 1.0.0 (Findroid #1246). */
+        val ao: String = "audiotrack,opensles",
         /** Start position in seconds (skip intros when checking subtitle rendering). */
         val startSeconds: Int = 0,
         /** Preferred audio languages, first wins. Owner default: English dub, else Japanese. */
@@ -57,13 +72,26 @@ class MpvPlayer(
          * Which subtitle track to pick among the preferred language: "full" = the dialogue
          * track whatever the audio, "signs" = signs & songs over an anime dub, "foreign" =
          * subtitles only on foreign audio, "none" = off. See [chooseSubtitle].
-         * The real app derives this from the chosen audio and the user's profile.
          */
         val subMode: String = "full",
-        /** Explicit subtitle track id (mpv numbering); overrides the policy when > 0. */
+        /** Explicit subtitle track id (mpv numbering) for the first file only; overrides the policy when > 0. */
         val forceSid: Int = 0,
         /** mpv `audio-spdif` codecs sent untouched to a soundbar (empty = decode everything here). */
         val spdif: List<String> = emptyList(),
+        /** Which HDMI sound output [spdif] was detected on; a passthrough failure is remembered per output. */
+        val outputKey: String = "",
+        /** Frame interpolation (display-resample + oversample): smooths 24 fps on a 60 Hz panel, costs GPU. */
+        val smoothMotion: Boolean = false,
+        /** HDR video goes to the screen as HDR (decoder straight to the surface) at the cost of styled subtitles. */
+        val hdrNative: Boolean = false,
+        /** The display takes HDR10/HLG; [hdrNative] only applies when it does. */
+        val hdrDisplay: Boolean = false,
+        /** A TV: frame-rate hints may switch the display mode (a short blank), which a TV wants. */
+        val tv: Boolean = false,
+        /** Little RAM (under 3 GB): smaller demuxer buffers. */
+        val lowRam: Boolean = false,
+        /** mpv logs at verbose level (the stats overlay's decoder log); otherwise warnings only. */
+        val verboseLog: Boolean = false,
     )
 
     /**
@@ -76,16 +104,28 @@ class MpvPlayer(
     /** One entry of mpv's track-list. */
     data class Track(val id: Int, val type: String, val lang: String, val title: String, val codec: String, val isDefault: Boolean, val isForced: Boolean)
 
+    /** Every call arrives on the main thread. */
     interface Listener {
         fun onFileLoaded() {}
-        /** The file finished or was replaced (also fires when the next episode loads over it). */
+        /** The loaded file finished or was replaced (also when the next episode loads over it). */
         fun onEndFile() {}
-        /** Playback ran to the natural end of the file (keep-open holds the last frame). */
+        /** The newest file could not be opened (server down, 404, unreadable). */
+        fun onLoadFailed() {}
+        /** Playback ran to the end of what mpv could read (keep-open holds the last frame). */
         fun onEofReached() {}
         fun onPauseChanged(paused: Boolean) {}
+        /** Waiting on the network, a seek, or a (re)load; the controls show a spinner. */
+        fun onBufferingChanged(buffering: Boolean) {}
+        /** Native HDR output switched on (true) for this file: styled subtitles are not drawn. */
+        fun onHdrNative(active: Boolean) {}
     }
 
     var listener: Listener? = null
+
+    private val main = Handler(Looper.getMainLooper())
+
+    /** Runs [block] on the main thread unless the player is gone by then. */
+    private fun post(block: () -> Unit) { main.post { if (!destroyed) block() } }
 
     private val configDir = File(context.filesDir, "mpv").apply { mkdirs() }
     private val cacheDir = File(context.cacheDir, "mpv").apply { mkdirs() }
@@ -98,35 +138,55 @@ class MpvPlayer(
         val conf = writeFontsConf(configDir, cacheDir)
         android.system.Os.setenv("FONTCONFIG_FILE", conf.path, true)
         android.system.Os.setenv("FONTCONFIG_PATH", conf.parent, true)
-        MPVLib.create(context) ?: error("MPVLib.create returned null")
+        MPVLib.create(context.applicationContext) ?: error("MPVLib.create returned null")
     }
     private var surfaceReady = false
+    private var surface: Surface? = null
     private var pendingUrl: String? = null
 
-    /** Last libass / font related log lines, newest last. */
+    /** Last libass / decoder / audio log lines, newest last (the stats overlay). */
     private val fontLog = ArrayDeque<String>()
     private val fontLogMax = 40
+
+    // Observed state. libmpv sends each property once at observe time and then on change
+    // (compared in the requested format), so these mirror mpv without a JNI read.
+    @Volatile private var pausedFlag = false
+    @Volatile private var cacheFlag = false
+    @Volatile private var seekingFlag = false
+    @Volatile private var idleFlag = true
+    @Volatile private var lastBuffering = false
 
     private val observed = listOf(
         "pause" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
         "paused-for-cache" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
+        "seeking" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
+        "core-idle" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
         "eof-reached" to MPVLib.MpvFormat.MPV_FORMAT_FLAG,
-        "time-pos" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
-        "duration" to MPVLib.MpvFormat.MPV_FORMAT_DOUBLE,
+        "track-list" to MPVLib.MpvFormat.MPV_FORMAT_NONE,
+        "video-params/gamma" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
     )
+
+    private val audioPrefs = context.getSharedPreferences("audio", Context.MODE_PRIVATE)
+    private val brokenKey = BROKEN_KEY + (if (options.outputKey.isNotEmpty()) "|" + options.outputKey else "")
+
+    private fun isBroken(codec: String): Boolean =
+        "${options.outputKey}|$codec" in brokenSpdif || codec in (audioPrefs.getStringSet(brokenKey, emptySet()) ?: emptySet())
 
     /**
      * Passthrough codecs for this player: the setting's list minus any that already hung
-     * this TV in this run (see [watchPassthrough]); `adb shell setprop debug.roxy.spdif
-     * ac3,eac3` (or `none`) overrides it for bench tests.
+     * this sound output (see [watchPassthrough]); `adb shell setprop debug.roxy.spdif
+     * ac3,dts` (or `none`) overrides it for bench tests.
      */
-    private val audioPrefs = context.getSharedPreferences("audio", Context.MODE_PRIVATE)
     private var spdif: List<String> = sysprop("debug.roxy.spdif")?.let { if (it == "none") emptyList() else it.split(',') }
-        ?: options.spdif.filter { it !in brokenSpdif && it !in (audioPrefs.getStringSet(BROKEN_KEY, emptySet()) ?: emptySet()) }
+        ?: options.spdif.filter { !isBroken(it) }
 
     private fun sysprop(name: String): String? = runCatching {
         Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, name) as String
     }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** The vo in use: [Options.vo], or mediacodec_embed while a file plays as native HDR. */
+    @Volatile private var activeVo: String = options.vo
+    @Volatile private var hdrActive = false
 
     init {
         fun opt(name: String, value: String) {
@@ -143,32 +203,44 @@ class MpvPlayer(
         opt("vo", options.vo)
         opt("gpu-context", "android")
         opt("opengl-es", "yes")
-        opt("hwdec", options.hwdec)
+        // "auto" lists the zero-copy path first: frames stay on the GPU (AImageReader interop)
+        // and libass still draws over them. Copy mode cannot carry 10-bit frames on many SoCs.
+        // mpv's own hwdec=auto would never pick it (auto-safe since 0.40).
+        opt("hwdec", mpvHwdec(options.hwdec))
         opt("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
-        opt("ao", options.ao)
+        // gpu-next's film grain shader flips planes on GLES with this libplacebo (Findroid #1322).
+        if (options.vo == "gpu-next") opt("vd-lavc-film-grain", "cpu")
+        opt("ao", sysprop("debug.roxy.ao") ?: options.ao)
         opt("audio-set-media-role", "yes")
         if (spdif.isNotEmpty()) opt("audio-spdif", spdif.joinToString(","))
         // Bench switch for audio work on a device: `adb shell setprop debug.roxy.af <filters>`.
         sysprop("debug.roxy.af")?.let { opt("af", it) }
 
-        opt("video-sync", "audio")
-        opt("display-fps-override", "%.3f".format(displayRefreshRate))
+        if (options.smoothMotion) {
+            // Blends frames to the display's rate: 24 fps on a 60 Hz panel without 3:2 judder.
+            opt("video-sync", "display-resample")
+            opt("interpolation", "yes")
+            opt("tscale", "oversample")
+        } else {
+            opt("video-sync", "audio")
+        }
+        // mpv cannot read the refresh rate on Android; the session updates it after a mode switch.
+        opt("display-fps-override", "%.3f".format(java.util.Locale.ROOT, displayRefreshRate))
 
-        opt("tls-verify", "no")
         opt("cache", "yes")
         opt("cache-pause-initial", "yes")
-        opt("demuxer-max-bytes", "64MiB")
-        opt("demuxer-max-back-bytes", "32MiB")
+        opt("demuxer-max-bytes", if (options.lowRam) "32MiB" else "64MiB")
+        opt("demuxer-max-back-bytes", if (options.lowRam) "16MiB" else "32MiB")
+        // mpv already turns on ffmpeg's HTTP reconnect; this covers resets and timeouts too.
+        opt("stream-lavf-o", "reconnect_on_network_error=1")
 
         // Subtitles: render ASS exactly as authored, never override styles; fonts from our dir.
         opt("sub-fonts-dir", fontsDir.path)
         opt("sub-ass-override", "no")
         // mpv's default sid=auto only picks a track that is flagged default/forced or
         // matches slang; fansub MKVs often flag nothing, so prefer English subs explicitly.
-        // Audio: English dub first (owner's preference), Japanese otherwise. With English
-        // audio the right subtitle companion is the "Signs/Songs" track, which dual-audio
-        // releases usually flag default; with Japanese audio it must be the full dialogue
-        // track instead. The real app derives the sub choice from the chosen audio.
+        // Audio: English dub first (owner's preference), Japanese otherwise. The subtitle
+        // choice is derived from the chosen audio in [applyTrackPolicy].
         opt("slang", options.subLangs.joinToString(","))
         opt("alang", options.audioLangs.joinToString(","))
         if (options.startSeconds > 0) opt("start", options.startSeconds.toString())
@@ -182,15 +254,22 @@ class MpvPlayer(
         opt("save-position-on-quit", "no")
         opt("ytdl", "no")
         opt("input-default-bindings", "no")
-        opt("msg-level", "all=v,ass/libass=v,sub=v")
+        // Verbose logs cost a JNI call and a logcat line each, and mpv's own lines carry the
+        // stream URL with its media token; only the stats overlay asks for them.
+        opt("msg-level", logLevel(options.verboseLog))
 
         mpv.init()
         mpv.addObserver(this)
         mpv.addLogObserver(this)
 
         for ((name, fmt) in observed) mpv.observeProperty(name, fmt)
-        Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s spdif=%s af=%s", options.hwdec, options.vo, options.ao, spdif, sysprop("debug.roxy.af"))
+        Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s spdif=%s smooth=%s lowRam=%s", mpvHwdec(options.hwdec), options.vo, options.ao, spdif, options.smoothMotion, options.lowRam)
     }
+
+    private fun logLevel(verbose: Boolean) = if (verbose) "all=v,ass/libass=v,sub=v" else "all=warn,vd=info,ad=info,ao=info,sub=info"
+
+    /** Verbose mpv logging while the stats overlay is up. */
+    fun setVerboseLog(on: Boolean) = setStr("msg-level", logLevel(on))
 
     // ---- playback control ----
 
@@ -206,6 +285,7 @@ class MpvPlayer(
      * and carries the original file's timestamps; mpv must not rebase them to 0.
      */
     fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false) {
+        if (destroyed) return
         startSeconds = if (transcoded) 0 else start
         pendingTranscode = transcoded
         pendingUrl = url
@@ -215,65 +295,93 @@ class MpvPlayer(
     private var lastUrl: String? = null
     private var lastTranscoded = false
 
+    // Load bookkeeping: each loadfile is followed by START_FILE for it (after the END_FILE
+    // of whatever it replaces). An END_FILE between START_FILE and FILE_LOADED with no newer
+    // load queued means the newest file failed to open.
+    private val queuedLoads = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var loading = false
+
+    /**
+     * The media token travels as a header (X-Roxy-Media-Token), not in the URL: libmpv's
+     * binding writes every URL it opens to the device log. A server from before 2026-10-31
+     * only reads ?mt=, so one failed open falls back to the URL form for this player.
+     */
+    @Volatile private var tokenInHeader = true
+    @Volatile private var lastLoadUsedHeader = false
+
     private fun loadPending() {
         val url = pendingUrl ?: return
         pendingUrl = null
         lastUrl = url
         lastTranscoded = pendingTranscode
         Timber.i("loadfile %s start=%ds transcoded=%s", url.substringBefore("?"), startSeconds, pendingTranscode)
+        val query = url.substringAfter('?', "").split('&').filter { it.isNotEmpty() }
+        val token = if (tokenInHeader && url.startsWith("http")) query.firstOrNull { it.startsWith("mt=") }?.removePrefix("mt=") else null
+        val loadUrl = if (token == null) url else {
+            val rest = query.filterNot { it.startsWith("mt=") }
+            url.substringBefore('?') + (if (rest.isEmpty()) "" else "?" + rest.joinToString("&"))
+        }
+        lastLoadUsedHeader = token != null
+        mpv.setPropertyString("http-header-fields", if (token != null) "X-Roxy-Media-Token: $token" else "")
         // `start` is a file-local option: set it as a property right before the load.
         mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
         // A transcode started mid-file has its first frame at e.g. 300 s; keep that clock so
         // the position, subtitles and skip segments line up with the original file.
         mpv.setPropertyString("rebase-start-time", if (pendingTranscode) "no" else "yes")
-        mpv.command(arrayOf("loadfile", url, "replace"))
+        queuedLoads.incrementAndGet()
+        mpv.command(arrayOf("loadfile", loadUrl, "replace"))
         mpv.setPropertyBoolean("pause", false)
     }
 
-    fun togglePause() {
-        val paused = mpv.getPropertyBoolean("pause") ?: false
-        mpv.setPropertyBoolean("pause", !paused)
-    }
+    fun togglePause() = setPaused(!pausedFlag)
 
-    fun seekRelative(seconds: Int) = mpv.command(arrayOf("seek", seconds.toString(), "relative"))
+    /** Exact relative seek (the default for relative seeks lands on a keyframe, 7 or 13 s for a "10"). */
+    fun seekRelative(seconds: Int) = cmd("seek", seconds.toString(), "relative+exact")
 
-    fun cycleSubtitle() = mpv.command(arrayOf("cycle", "sub"))
+    fun cycleSubtitle() = cmd("cycle", "sub")
 
-    fun cycleAudio() = mpv.command(arrayOf("cycle", "audio"))
+    fun cycleAudio() = cmd("cycle", "audio")
 
     // ---- direct control (used by the on-screen controls) ----
 
-    fun setPaused(paused: Boolean) = mpv.setPropertyBoolean("pause", paused)
+    fun setPaused(paused: Boolean) { if (!destroyed) mpv.setPropertyBoolean("pause", paused) }
 
-    fun seekTo(seconds: Double) = mpv.command(arrayOf("seek", "%.3f".format(java.util.Locale.ROOT, seconds), "absolute"))
+    fun seekTo(seconds: Double) = cmd("seek", "%.3f".format(java.util.Locale.ROOT, seconds), "absolute")
+
+    /** Fast seek to the keyframe before [seconds]: the picture follows a scrub without decoding every frame. */
+    fun seekToKeyframe(seconds: Double) = cmd("seek", "%.3f".format(java.util.Locale.ROOT, seconds), "absolute+keyframes")
 
     /** mpv subtitle id (1-based) or 0 for off. */
     fun setSubtitleTrack(id: Int) {
+        if (destroyed) return
         if (id <= 0) mpv.setPropertyString("sid", "no") else mpv.setPropertyInt("sid", id)
     }
 
     fun setAudioTrack(id: Int) {
+        if (destroyed) return
         if (id <= 0) mpv.setPropertyString("aid", "no") else mpv.setPropertyInt("aid", id)
         // Subtitles follow the audio: switching to the Japanese track brings the dialogue
         // subs in, switching back to the dub drops to signs & songs (or off).
         if (options.subMode != "none") {
-            val overrides = subtitleLanguageOverrides
-            val all = tracks().map { t -> val o = overrides[t.id]; if (t.type == "sub" && o != null && o != t.lang) t.copy(lang = o) else t }
+            val all = tracksWithOverrides()
             val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.lang.orEmpty()
             val sub = chooseSubtitle(all, options.subMode, options.subLangs, lang, options.anime)
-            if (sub == null) mpv.setPropertyString("sid", "no") else mpv.setPropertyInt("sid", sub.id)
+            setSubtitleTrack(sub?.id ?: 0)
             Timber.i("subtitle policy after audio change (%s) -> %s", lang, sub?.id ?: "off")
         }
     }
 
-    fun setSpeed(speed: Double) = mpv.setPropertyDouble("speed", speed)
+    fun setSpeed(speed: Double) { if (!destroyed) mpv.setPropertyDouble("speed", speed) }
 
     fun isMuted(): Boolean = bool("mute") ?: false
 
-    fun setMuted(muted: Boolean) = mpv.setPropertyBoolean("mute", muted)
+    fun setMuted(muted: Boolean) { if (!destroyed) mpv.setPropertyBoolean("mute", muted) }
+
+    /** 0..100; audio focus ducking uses it. */
+    fun setVolume(percent: Int) { if (!destroyed) mpv.setPropertyInt("volume", percent) }
 
     /** Crop-to-fill (panscan 1) vs letterbox (0): the "fullscreen" button on phones. */
-    fun setFill(fill: Boolean) = mpv.setPropertyDouble("panscan", if (fill) 1.0 else 0.0)
+    fun setFill(fill: Boolean) { if (!destroyed) mpv.setPropertyDouble("panscan", if (fill) 1.0 else 0.0) }
 
     fun isFill(): Boolean = (dbl("panscan") ?: 0.0) > 0.5
 
@@ -282,6 +390,7 @@ class MpvPlayer(
      * the scaled video size. Reset with (1, 0, 0).
      */
     fun setZoom(factor: Double, panX: Double, panY: Double) {
+        if (destroyed) return
         mpv.setPropertyDouble("video-zoom", kotlin.math.log2(factor.coerceIn(1.0, 8.0)))
         mpv.setPropertyDouble("video-pan-x", panX)
         mpv.setPropertyDouble("video-pan-y", panY)
@@ -298,19 +407,42 @@ class MpvPlayer(
     /** Demuxer cache end in seconds (how far ahead playback can go without buffering). */
     fun cacheEndSeconds(): Double? = dbl("demuxer-cache-time")
 
+    /** The file's frame rate (container), for the display's frame-rate hint. */
+    fun containerFps(): Double? = dbl("container-fps")?.takeIf { it > 1.0 }
+
+    /** Tell mpv the display's refresh rate (it cannot read it on Android). */
+    fun setDisplayFps(fps: Float) = setStr("display-fps-override", "%.3f".format(java.util.Locale.ROOT, fps))
+
+    private var summaryCache: Pair<Long, String>? = null
+
+    /** "1080p H264 · hardware"; re-read at most every 3 s (four JNI reads). */
     fun videoSummary(): String {
-        val w = int("video-params/w") ?: return ""
-        val h = int("video-params/h") ?: return ""
-        val codec = str("video-format") ?: ""
-        val hw = str("hwdec-current")?.takeIf { it != "no" && it.isNotEmpty() }
-        return "${h}p ${codec.uppercase()}" + (if (hw != null) " · hardware" else " · software")
+        val now = android.os.SystemClock.elapsedRealtime()
+        summaryCache?.let { (at, s) -> if (now - at < 3000 && s.isNotEmpty()) return s }
+        val w = int("video-params/w")
+        val h = int("video-params/h")
+        val s = if (w == null || h == null) "" else {
+            val codec = str("video-format") ?: ""
+            val hw = str("hwdec-current")?.takeIf { it != "no" && it.isNotEmpty() }
+            "${h}p ${codec.uppercase()}" + (if (hw != null) " · hardware" else " · software")
+        }
+        summaryCache = now to s
+        return s
     }
 
     // ---- track selection ----
 
+    // track-list is observed with no value: a change only drops the cache, and the next
+    // read builds it again (about seven JNI reads per track, so not twice a second).
+    @Volatile private var trackCache: List<Track>? = null
+    private val trackGen = java.util.concurrent.atomic.AtomicInteger(0)
+
     fun tracks(): List<Track> {
+        if (destroyed) return emptyList()
+        trackCache?.let { return it }
+        val gen = trackGen.get()
         val n = mpv.getPropertyInt("track-list/count") ?: 0
-        return (0 until n).mapNotNull { i ->
+        val list = (0 until n).mapNotNull { i ->
             val p = "track-list/$i"
             val type = str("$p/type") ?: return@mapNotNull null
             Track(
@@ -323,10 +455,28 @@ class MpvPlayer(
                 isForced = bool("$p/forced") ?: false,
             )
         }
+        if (trackGen.get() == gen) trackCache = list
+        return list
+    }
+
+    /** [tracks] with the server's sniffed subtitle languages in place of the container tags. */
+    fun tracksWithOverrides(): List<Track> {
+        val overrides = subtitleLanguageOverrides
+        return tracks().map { t ->
+            val o = overrides[t.id]
+            if (t.type == "sub" && o != null && o != t.lang) t.copy(lang = o) else t
+        }
     }
 
     private val signsRegex = Regex("""(?i)\b(signs?|songs?|s&s|signs/songs|forced)\b""")
     private val fullRegex = Regex("""(?i)\b(full|dialog(ue)?|complete)\b""")
+
+    /** "signs" / "full" / "" from a subtitle track's title: carries a viewer's pick to the next episode. */
+    fun subtitleClass(t: Track): String = when {
+        signsRegex.containsMatchIn(t.title) || t.isForced -> "signs"
+        fullRegex.containsMatchIn(t.title) -> "full"
+        else -> ""
+    }
 
     private fun sameLang(a: String, b: String): Boolean = a.isNotEmpty() && b.isNotEmpty() && Languages.canonical(a) == Languages.canonical(b)
 
@@ -379,27 +529,22 @@ class MpvPlayer(
         return tracks().firstOrNull { it.type == "audio" && it.id == aid }?.lang.orEmpty()
     }
 
+    /** The adb/diagnostics subtitle override; used for the first file only. */
+    private var forceSid = options.forceSid
+
     private fun applyTrackPolicy() {
-        val overrides = subtitleLanguageOverrides
-        val all = tracks().map { t ->
-            val o = overrides[t.id]
-            if (t.type == "sub" && o != null && o != t.lang) t.copy(lang = o) else t
-        }
+        val all = tracksWithOverrides()
         all.forEach { Timber.i("track %s id=%d lang=%s codec=%s default=%s title=%s", it.type, it.id, it.lang, it.codec, it.isDefault, it.title) }
-        if (options.forceSid > 0) {
-            mpv.setPropertyInt("sid", options.forceSid)
-            Timber.i("subtitle forced -> sid=%d", options.forceSid)
+        if (forceSid > 0) {
+            setSubtitleTrack(forceSid)
+            Timber.i("subtitle forced -> sid=%d", forceSid)
+            forceSid = 0
             return
         }
         val audioLang = currentAudioLang()
         val sub = chooseSubtitle(all, options.subMode, options.subLangs, audioLang, options.anime)
         Timber.i("subtitle policy %s: audio=%s anime=%s -> %s", options.subMode, audioLang.ifEmpty { "?" }, options.anime, sub?.let { "sid=${it.id} '${it.title}' (${it.lang}/${it.codec})" } ?: "off")
-        if (sub == null) {
-            mpv.setPropertyString("sid", "no")
-        } else {
-            mpv.setPropertyInt("sid", sub.id)
-            Timber.i("subtitle policy %s -> sid=%d '%s' (%s/%s)", options.subMode, sub.id, sub.title, sub.lang, sub.codec)
-        }
+        setSubtitleTrack(sub?.id ?: 0)
     }
 
     // ---- playback state (for progress reporting / OSD) ----
@@ -408,7 +553,10 @@ class MpvPlayer(
 
     fun durationSeconds(): Double? = dbl("duration")
 
-    fun isPaused(): Boolean = bool("pause") ?: false
+    fun isPaused(): Boolean = pausedFlag
+
+    /** Waiting on the network, a seek or a load (not a pause the viewer asked for). */
+    fun isBuffering(): Boolean = lastBuffering
 
     /** ffmpeg stream index of the selected track of [type] ("audio" | "sub"); matches Roxy's stream `index`. */
     fun currentStreamIndex(type: String): Int? = int("current-tracks/$type/ff-index")
@@ -450,10 +598,13 @@ class MpvPlayer(
         fontLog = synchronized(fontLog) { fontLog.toList() },
     )
 
-    private fun str(p: String) = mpv.getPropertyString(p)
-    private fun int(p: String) = mpv.getPropertyInt(p)
-    private fun dbl(p: String) = mpv.getPropertyDouble(p)
-    private fun bool(p: String) = mpv.getPropertyBoolean(p)
+    // Every read and command checks [destroyed] first: after destroy() the native handle is gone.
+    private fun str(p: String) = if (destroyed) null else mpv.getPropertyString(p)
+    private fun int(p: String) = if (destroyed) null else mpv.getPropertyInt(p)
+    private fun dbl(p: String) = if (destroyed) null else mpv.getPropertyDouble(p)
+    private fun bool(p: String) = if (destroyed) null else mpv.getPropertyBoolean(p)
+    private fun setStr(p: String, v: String) { if (!destroyed) mpv.setPropertyString(p, v) }
+    private fun cmd(vararg args: String) { if (!destroyed) mpv.command(arrayOf(*args)) }
 
     // ---- surface ----
     //
@@ -464,28 +615,41 @@ class MpvPlayer(
     // rather than resize it mid-flight.
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        if (destroyed) return
         Timber.d("surfaceCreated")
         // The size goes in before the vo comes up: the vo lays the picture out for the size
         // it sees at creation, and after a page/app switch that was the previous surface's.
         val frame = holder.surfaceFrame
         if (frame.width() > 0 && frame.height() > 0) applySurfaceSize(frame.width(), frame.height())
+        surface = holder.surface
         mpv.attachSurface(holder.surface)
         mpv.setPropertyString("force-window", "yes")
         surfaceReady = true
-        if (pendingUrl != null) loadPending() else mpv.setPropertyString("vo", options.vo)
+        // Always bring the vo back: surfaceDestroyed set it to null, and a file loaded while
+        // the surface was away (a reload, the next episode) would otherwise play with no picture.
+        mpv.setPropertyString("vo", activeVo)
+        applyFrameRate()
+        loadPending()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (destroyed) return
         Timber.d("surfaceChanged %dx%d", width, height)
         applySurfaceSize(width, height)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        if (destroyed || !surfaceReady) return
         Timber.d("surfaceDestroyed")
+        releaseSurface()
+    }
+
+    private fun releaseSurface() {
         surfaceReady = false
         mpv.setPropertyString("vo", "null")
         mpv.setPropertyString("force-window", "no")
         mpv.detachSurface()
+        surface = null
     }
 
     private var lastSurface: Pair<Int, Int>? = null
@@ -498,62 +662,163 @@ class MpvPlayer(
         lastSurface = width to height
     }
 
-    // ---- events ----
+    // ---- display frame rate ----
 
-    override fun eventProperty(property: String) {}
+    private var frameRate = 0f
+
+    /**
+     * Ask the display for a mode that fits [fps] (24p on a TV that has it, a 120 Hz phone
+     * dropping to 120 = 5 x 24). 0 clears the request. TVs may switch modes (a moment of
+     * black, as every TV app does); phones only switch when it is seamless.
+     */
+    fun hintFrameRate(fps: Float) {
+        frameRate = fps
+        applyFrameRate()
+    }
+
+    private fun applyFrameRate() {
+        if (Build.VERSION.SDK_INT < 30) return
+        val s = surface?.takeIf { it.isValid } ?: return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 31) {
+                s.setFrameRate(frameRate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                    if (options.tv) Surface.CHANGE_FRAME_RATE_ALWAYS else Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
+            } else {
+                s.setFrameRate(frameRate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+            }
+        }.onFailure { Timber.w(it, "setFrameRate %.3f", frameRate) }
+    }
+
+    // ---- native HDR ----
+
+    /**
+     * HDR10/HLG straight to the screen: hardware decoding into the surface with
+     * mediacodec_embed, so the TV's own HDR pipeline shows it. libass cannot draw there,
+     * so this is opt-in (settings) and the controls say subtitles are off.
+     */
+    private fun maybeNativeHdr(gamma: String) {
+        if (!options.hdrNative || !options.hdrDisplay || hdrActive) return
+        if (gamma != "pq" && gamma != "hlg") return
+        Timber.i("native HDR output for %s video", gamma)
+        hdrActive = true
+        activeVo = "mediacodec_embed"
+        mpv.setPropertyString("hwdec", "mediacodec")
+        if (surfaceReady) mpv.setPropertyString("vo", activeVo)
+        listener?.onHdrNative(true)
+    }
+
+    /** A new file starts from the normal (tone-mapped, subtitled) output. */
+    private fun leaveNativeHdr() {
+        if (!hdrActive) return
+        hdrActive = false
+        activeVo = options.vo
+        mpv.setPropertyString("hwdec", mpvHwdec(options.hwdec))
+        if (surfaceReady) mpv.setPropertyString("vo", activeVo)
+        listener?.onHdrNative(false)
+    }
+
+    // ---- events (libmpv's event thread: record, then post) ----
+
+    override fun eventProperty(property: String) {
+        if (property == "track-list") { trackGen.incrementAndGet(); trackCache = null }
+    }
     override fun eventProperty(property: String, value: Long) {}
     override fun eventProperty(property: String, value: Double) {}
-    override fun eventProperty(property: String, value: String) {}
+    override fun eventProperty(property: String, value: String) {
+        if (property == "video-params/gamma") post { maybeNativeHdr(value) }
+    }
     override fun eventProperty(property: String, value: Boolean) {
         when (property) {
-            "pause" -> listener?.onPauseChanged(value)
-            "eof-reached" -> if (value) listener?.onEofReached()
+            "pause" -> { pausedFlag = value; post { listener?.onPauseChanged(value) } }
+            "paused-for-cache" -> cacheFlag = value
+            "seeking" -> seekingFlag = value
+            "core-idle" -> idleFlag = value
+            "eof-reached" -> { ended = value; if (value) post { listener?.onEofReached() } }
+        }
+        // core-idle is also true at the end of a file (keep-open holds it): not buffering.
+        val buffering = cacheFlag || seekingFlag || (idleFlag && !pausedFlag && !ended)
+        if (buffering != lastBuffering) {
+            lastBuffering = buffering
+            post { listener?.onBufferingChanged(buffering) }
         }
     }
+
+    /** eof-reached: the file has played out (keep-open holds the last frame). */
+    @Volatile private var ended = false
 
     override fun event(eventId: Int) {
         when (eventId) {
-            MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
-                Timber.i("file loaded: codec=%s hwdec=%s start-opt=%s time-pos=%s", str("video-codec"), str("hwdec-current"), str("start"), str("time-pos"))
-                // Belt and braces: the `start` option is set before init, but seek anyway if
-                // the file came up at 0 (seen on the refactored player; cheap to be sure).
-                if (startSeconds > 0 && (dbl("time-pos") ?: 0.0) < startSeconds - 2.0) {
-                    seekTo(startSeconds.toDouble())
-                }
-                applyTrackPolicy()
-                listener?.onFileLoaded()
-                if (spdif.isNotEmpty()) watchPassthrough()
+            MPVLib.MpvEvent.MPV_EVENT_START_FILE -> {
+                queuedLoads.updateAndGet { (it - 1).coerceAtLeast(0) }
+                loading = true
+                ended = false
+                post { leaveNativeHdr() }
             }
-            MPVLib.MpvEvent.MPV_EVENT_END_FILE -> listener?.onEndFile()
+            MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
+                loading = false
+                post { onFileLoaded() }
+            }
+            MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
+                val failed = loading && queuedLoads.get() == 0
+                loading = false
+                if (failed && lastLoadUsedHeader && tokenInHeader) {
+                    // An older server: it only takes the token in the URL.
+                    Timber.w("open with the token header failed; retrying with it in the URL")
+                    tokenInHeader = false
+                    post { if (pendingUrl == null) { pendingUrl = lastUrl; if (surfaceReady) loadPending() } }
+                } else if (failed) {
+                    Timber.w("the file failed to open: %s", lastUrl?.substringBefore("?"))
+                    post { listener?.onLoadFailed() }
+                } else {
+                    post { listener?.onEndFile() }
+                }
+            }
         }
     }
 
-    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Main thread. */
+    private fun onFileLoaded() {
+        Timber.i("file loaded: codec=%s hwdec=%s start-opt=%s time-pos=%s", str("video-codec"), str("hwdec-current"), str("start"), str("time-pos"))
+        summaryCache = null
+        // Belt and braces: the `start` property is set before the load, but seek anyway if
+        // the file came up at 0 (seen on the refactored player; cheap to be sure).
+        if (startSeconds > 0 && (dbl("time-pos") ?: 0.0) < startSeconds - 2.0) {
+            seekTo(startSeconds.toDouble())
+        }
+        applyTrackPolicy()
+        listener?.onFileLoaded()
+        if (spdif.isNotEmpty()) watchPassthrough()
+    }
+
     private var watchdog: Runnable? = null
 
     /**
      * Safety net: some TVs never finish opening a passthrough audio output for a format
      * (the TCL with a soundbar on E-AC3). mpv then waits on the audio clock and the picture
-     * stays black. If the position hasn't moved a few seconds after the file loaded, that
-     * codec is decoded here for the rest of the run and the file reopens where it was.
+     * stays black. If the position hasn't moved after 6 s of the player actually trying
+     * to play (time paused by the viewer, buffering or seeking does not count), that codec
+     * is decoded here from then on, for this sound output, and the file reopens where it was.
      */
     private fun watchPassthrough() {
         watchdog?.let { main.removeCallbacks(it) }
         val codec = str("current-tracks/audio/codec")?.lowercase()
         if (codec == null || codec !in spdif) return
         val startPos = dbl("time-pos") ?: 0.0
-        var checks = 0
+        var tryingMs = 0L
+        var polls = 0
         val r = object : Runnable {
             override fun run() {
-                checks++
+                if (destroyed) return
+                polls++
                 val pos = dbl("time-pos")
-                if (pos != null && pos > startPos + 0.5) return
-                val waiting = bool("paused-for-cache") == true || bool("pause") == true
-                if (waiting && checks < 4) { main.postDelayed(this, 5000); return }
+                if (pos != null && pos > startPos + 0.5) return // the audio clock runs
+                val held = pausedFlag || cacheFlag || seekingFlag
+                if (!held) tryingMs += 1500
+                if (tryingMs < 6000) { if (polls < 400) main.postDelayed(this, 1500); return }
                 Timber.w("passthrough of %s did not start (pos %s); decoding it on the TV instead", codec, pos)
-                brokenSpdif += codec
-                // Remembered on this device (with the sound output it was seen on), so later plays decode it at once.
-                audioPrefs.edit().putStringSet(BROKEN_KEY, (audioPrefs.getStringSet(BROKEN_KEY, emptySet()).orEmpty() + codec)).apply()
+                brokenSpdif += "${options.outputKey}|$codec"
+                // Remembered for this sound output, so later plays decode it at once.
+                audioPrefs.edit().putStringSet(brokenKey, (audioPrefs.getStringSet(brokenKey, emptySet()).orEmpty() + codec)).apply()
                 spdif = spdif - codec
                 mpv.setPropertyString("audio-spdif", spdif.joinToString(","))
                 val url = lastUrl ?: return
@@ -561,7 +826,7 @@ class MpvPlayer(
             }
         }
         watchdog = r
-        main.postDelayed(r, 6000)
+        main.postDelayed(r, 1500)
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {
@@ -578,25 +843,40 @@ class MpvPlayer(
                 while (fontLog.size > fontLogMax) fontLog.removeFirst()
             }
         }
+        // Only warnings and errors reach logcat (mpv prints its own copy when verbose).
         if (level <= MPVLib.MpvLogLevel.MPV_LOG_LEVEL_WARN) Timber.w("mpv[%s] %s", prefix, line)
-        else Timber.v("mpv[%s] %s", prefix, line)
     }
 
     // ---- lifecycle ----
 
-    /** True once [destroy] ran; every property read after that would throw in MPVLib. */
+    /** True once [destroy] ran; every property read after that returns null. */
     @Volatile var destroyed = false
         private set
 
+    /**
+     * Tear down. The surface is let go here on the main thread (while the window still has
+     * it); mpv itself is destroyed on a background thread, because mpv_terminate_destroy
+     * waits for its demuxer and a read stuck on a dead server would freeze the UI (ANR).
+     */
     fun destroy() {
+        if (destroyed) return
         watchdog?.let { main.removeCallbacks(it) }
+        if (surfaceReady) runCatching {
+            if (frameRate != 0f) { frameRate = 0f; applyFrameRate() }
+            releaseSurface()
+        }
         destroyed = true
         listener = null
-        runCatching { mpv.removeLogObserver(this) }
-        runCatching { mpv.removeObserver(this) }
-        runCatching { mpv.command(arrayOf("stop")) }
-        mpv.destroy()
-        Timber.i("mpv destroyed")
+        main.removeCallbacksAndMessages(null)
+        val m = mpv
+        val self = this
+        Thread({
+            runCatching { m.removeLogObserver(self) }
+            runCatching { m.removeObserver(self) }
+            runCatching { m.command(arrayOf("stop")) }
+            runCatching { m.destroy() }.onFailure { Timber.w(it, "mpv destroy") }
+            Timber.i("mpv destroyed")
+        }, "mpv-destroy").start()
     }
 
     /** fontconfig fallback so libass can also find fonts via fontconfig if sub-fonts-dir is ignored. */

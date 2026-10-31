@@ -43,10 +43,18 @@ data class Session(
 
 /** Player preferences (Settings screen). Persisted. */
 data class PlayerSettings(
-    /** "mediacodec" | "mediacodec-copy" | "no" */
-    val hwdec: String = "mediacodec-copy",
-    /** "gpu" | "gpu-next" */
+    /** "auto" (zero-copy MediaCodec, copy mode as fallback) | "mediacodec" | "mediacodec-copy" | "no" */
+    val hwdec: String = "auto",
+    /**
+     * Always "gpu" now: gpu-next with the bundled libplacebo 7.360.1 leaks GL sync objects
+     * (purple or frozen picture after 15-20 min) and flips AV1 film grain on GLES. Kept as a
+     * field for the adb bench extra; a stored "gpu-next" reads back as "gpu".
+     */
     val vo: String = "gpu",
+    /** Frame interpolation: smooth 24 fps on a 60 Hz screen (judder-free pans) at some GPU cost. */
+    val smoothMotion: Boolean = false,
+    /** HDR files go to the screen as HDR (no styled subtitles) instead of tone-mapped SDR. */
+    val hdrNative: Boolean = false,
     /** Preferred audio languages in order, ISO 639-2 codes; the file's default track when none match. */
     val audioLangs: List<String> = listOf("eng"),
     /** Preferred subtitle language, ISO 639-2. */
@@ -92,8 +100,14 @@ data class PlayerSettings(
         get() = Languages.mpvCodes(subLang)
 
     companion object {
-        val hwdecChoices = listOf("mediacodec", "mediacodec-copy", "no")
-        val voChoices = listOf("gpu", "gpu-next")
+        val hwdecChoices = listOf("auto", "mediacodec", "mediacodec-copy", "no")
+        fun hwdecLabel(v: String): String = when (v) {
+            "auto" -> "Auto (recommended)"
+            "mediacodec" -> "Hardware, zero-copy"
+            "mediacodec-copy" -> "Hardware, copy"
+            "no" -> "Software only"
+            else -> v
+        }
         /** One explicit behaviour per choice; "smart" is an older stored name for "signs". */
         val subModeChoices = listOf("signs", "foreign", "full", "none")
         /** Seconds the Skip button stays; 0 = for the whole intro/outro. */
@@ -247,6 +261,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         ds.edit {
             it[KEY_HWDEC] = s.hwdec
             it[KEY_VO] = s.vo
+            it[KEY_SMOOTH] = s.smoothMotion
+            it[KEY_HDR_NATIVE] = s.hdrNative
             it[KEY_ALANG] = s.audioLangs.joinToString(",")
             it[KEY_SUBMODE] = s.subMode
             it[KEY_SLANG] = s.subLang
@@ -280,7 +296,9 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val d = PlayerSettings()
         return PlayerSettings(
             hwdec = this[KEY_HWDEC] ?: d.hwdec,
-            vo = this[KEY_VO] ?: d.vo,
+            vo = (this[KEY_VO] ?: d.vo).let { if (it == "gpu-next") "gpu" else it },
+            smoothMotion = this[KEY_SMOOTH] ?: d.smoothMotion,
+            hdrNative = this[KEY_HDR_NATIVE] ?: d.hdrNative,
             audioLangs = this[KEY_ALANG]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: d.audioLangs,
             subMode = this[KEY_SUBMODE] ?: d.subMode,
             subLang = this[KEY_SLANG] ?: d.subLang,
@@ -308,7 +326,11 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_TERMS = stringPreferencesKey("accepted_terms")
         val KEY_SETUP = booleanPreferencesKey("setup_in_progress")
         val KEY_LAST_PROFILE = stringPreferencesKey("last_profile_id")
-        val KEY_HWDEC = stringPreferencesKey("hwdec")
+        // "_v2": "auto" (zero-copy first) became the default on 2026-10-31; the old key held
+        // the previous default, mediacodec-copy, for everyone who ever saved a setting.
+        val KEY_HWDEC = stringPreferencesKey("hwdec_v2")
+        val KEY_SMOOTH = booleanPreferencesKey("smooth_motion")
+        val KEY_HDR_NATIVE = booleanPreferencesKey("hdr_native")
         val KEY_VO = stringPreferencesKey("vo")
         val KEY_ALANG = stringPreferencesKey("audio_langs")
         // "_v2": full subtitles became the default on 2026-10-28; the old key held the previous default.

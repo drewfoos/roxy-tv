@@ -1,6 +1,7 @@
 package tv.roxy.tv.player
 
 import android.content.Context
+import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
@@ -27,6 +28,8 @@ import tv.roxy.tv.ui.nextEpisode
  * video is drawn. [PlayerActivity] hosts a session full-screen; the phone's episode page
  * hosts the same session in a 16:9 box that fills the screen when the phone turns. The
  * session is the one player; the hosts only differ in how they answer [Host].
+ *
+ * Runs on the main thread: [MpvPlayer] posts its listener calls there.
  */
 class PlayerSession(
     private val context: Context,
@@ -87,15 +90,21 @@ class PlayerSession(
         private const val PROGRESS_INTERVAL_MS = 10_000L
         /** Seconds the next-episode card counts down before it plays (Netflix uses about this). */
         private const val NEXT_COUNTDOWN_S = 10
+        /** A scrub commits this long after the last Left/Right press. */
+        private const val SCRUB_COMMIT_MS = 650L
+        /** Waits between reconnect attempts after the stream drops (then it gives up). */
+        private val RECONNECT_DELAYS_MS = longArrayOf(0, 2_000, 4_000, 8_000, 15_000, 30_000)
     }
 
     val player: MpvPlayer
     private val cpu = CpuSampler()
     private val main = Handler(Looper.getMainLooper())
+    private val settings = app.prefs.settings.value
+    private val isTv = DeviceReport.isTelevision(context)
 
     var statsLines by mutableStateOf<List<String>>(emptyList()); private set
     var fontLog by mutableStateOf<List<String>>(emptyList()); private set
-    var showStats by mutableStateOf(params.showStats)
+    var showStats by mutableStateOf(params.showStats); private set
     var osd by mutableStateOf<String?>(null); private set
     private var osdJob: Job? = null
     var ui by mutableStateOf(PlayerUiState()); private set
@@ -126,7 +135,9 @@ class PlayerSession(
     private var lastSid = 0
     private var autoSkip = false
     private var segments: List<MediaSegment> = emptyList()
-    private val skipped = HashSet<String>() // segment types auto-skipped this playback
+    /** Segments auto-skipped this playback, by type and start (an episode can have two of a type). */
+    private val skipped = HashSet<String>()
+    private fun segKey(s: MediaSegment) = "${s.type}@${s.startSec}"
     var title = params.title; private set
     var subtitleLine = params.subtitleLine; private set
     val hwdec = params.hwdec
@@ -171,51 +182,126 @@ class PlayerSession(
     private var countdownJob: Job? = null
     /** True from "load the next file" until it has loaded, so the old file's end events are ignored. */
     @Volatile private var switching = false
+    /** This file's end was reported (EOF and END_FILE both arrive at the end). */
+    private var endReported = false
     // The age rating card: what it says, and whether it is up (a few seconds per title).
     private var advisory: Advisory? = null
     private var advisoryUp = false
     private var advisoryJob: kotlinx.coroutines.Job? = null
 
+    // Lost connection: the stream ended (or would not open) well before the end of the file.
+    private var reconnectAttempts = 0
+    private var reconnecting = false
+    private var reconnectJob: Job? = null
+
+    // D-pad scrubbing: Left/Right move a preview position (trickplay), one seek on release.
+    private var scrubTarget: Double? = null
+    private var scrubJob: Job? = null
+
+    /**
+     * The viewer's own track picks, carried to the next episode by language and kind (the
+     * same mpv id can be a different track there). Null = the policy decides.
+     */
+    private data class TrackPick(val off: Boolean, val lang: String, val kind: String, val title: String)
+    private var subPick: TrackPick? = null
+    private var audioPick: TrackPick? = null
+
+    private val glue: PlaybackGlue
+    private var lastGlueUpdate = 0L
+    private val displayManager = context.getSystemService(DisplayManager::class.java)
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        // A frame-rate hint switched the TV's mode (or the user did): tell mpv the new rate.
+        override fun onDisplayChanged(displayId: Int) {
+            if (destroyed) return
+            val fps = DeviceReport.refreshRate(context)
+            Timber.i("display now %.3f Hz", fps)
+            player.setDisplayFps(fps)
+        }
+    }
+
     val actions: PlayerActions
 
     init {
-        val settings = app.prefs.settings.value
         autoSkip = settings.autoSkip
         autoplay = settings.autoplay
         skipWindowSec = settings.skipWindowSec
         nextCardEnabled = settings.nextCard
+        val passthrough = AudioPassthrough.forSetting(context, settings.passthrough)
         player = MpvPlayer(
             context = context,
             options = MpvPlayer.Options(
                 hwdec = params.hwdec, vo = params.vo, startSeconds = params.startSeconds, subMode = params.subMode, forceSid = params.forceSid,
                 audioLangs = params.audioLangs, subLangs = params.subLangs, anime = params.anime,
-                spdif = AudioPassthrough.forSetting(context, settings.passthrough).map { it.mpv },
+                spdif = passthrough.map { it.mpv },
+                outputKey = if (passthrough.isEmpty()) "" else AudioPassthrough.outputKey(context),
+                smoothMotion = settings.smoothMotion,
+                hdrNative = settings.hdrNative,
+                hdrDisplay = DeviceReport.hdrDisplay(context),
+                tv = isTv,
+                lowRam = DeviceReport.lowRam(context),
+                verboseLog = params.showStats,
             ),
             fontsDir = app.fontsDir,
             displayRefreshRate = DeviceReport.refreshRate(context),
         )
         player.listener = object : MpvPlayer.Listener {
-            override fun onFileLoaded() { switching = false; itemId?.let { app.remote.reportState(it, title, 0, false) } } // the remote bar shows it at once
+            override fun onFileLoaded() {
+                switching = false
+                endReported = false
+                if (reconnecting) { reconnecting = false; flashOsd(null) }
+                reconnectAttempts = 0
+                applyTrackPicks()
+                // Ask the display for the film's rate (24p on a TV that has it).
+                player.containerFps()?.let { player.hintFrameRate(it.toFloat()) }
+                itemId?.let { app.remote.reportState(it, title, 0, false) } // the remote bar shows it at once
+                refreshUi(forceGlue = true)
+            }
 
             override fun onEndFile() {
-                if (switching) return // the old file giving way to the next episode
+                if (switching || endReported) return // the old file giving way to the next one
                 Timber.i("end of file")
+                endReported = true
                 reportProgress("end")
+            }
+
+            override fun onLoadFailed() {
+                if (local) { switching = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
+                val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
+                reconnect(at)
             }
 
             override fun onEofReached() {
                 if (switching) return
-                Timber.i("reached the end")
-                reportProgress("end")
-                // Ran out while the card was up (or with no outro marker): go on now.
-                if (autoplay && next != null) main.post { if (!destroyed) playNext() }
+                handleEof()
             }
 
             override fun onPauseChanged(paused: Boolean) {
-                main.post { if (player.destroyed || destroyed) return@post; refreshUi(); if (paused) showControls() else scheduleHide() }
+                refreshUi(forceGlue = true)
+                if (paused) showControls() else scheduleHide()
+                // keep-open pauses at the end of the file: that is the end, not a pause.
+                if (paused && atEnd()) return
                 reportProgress(if (paused) "pause" else "resume")
             }
+
+            override fun onBufferingChanged(buffering: Boolean) = refreshUi(forceGlue = true)
+
+            override fun onHdrNative(active: Boolean) {
+                if (active) flashOsd("Native HDR: styled subtitles are off for this video", 5000)
+            }
         }
+        glue = PlaybackGlue(context, object : PlaybackGlue.Controls {
+            override fun play() { player.setPaused(false); refreshUi(forceGlue = true) }
+            override fun pause() { player.setPaused(true); refreshUi(forceGlue = true) }
+            override fun seekTo(seconds: Double) = actions.seekTo(seconds)
+            override fun seekBy(seconds: Int) = actions.seekBy(seconds)
+            override fun next() = playNext()
+            override fun stop() { reportProgress("stop"); host.back() }
+            override fun duck(on: Boolean) = player.setVolume(if (on) 40 else 100)
+            override fun isPlaying(): Boolean = !player.isPaused()
+        })
+        runCatching { displayManager?.registerDisplayListener(displayListener, main) }
         quality = QualityOption.byKey(if (onMeteredNetwork()) settings.qualityMobile else settings.qualityWifi)
         prepareAndPlay(params.url, params.sourceId, params.local, params.startSeconds)
         showAdvisory(params.itemId)
@@ -224,23 +310,35 @@ class PlayerSession(
         actions = object : PlayerActions {
             override fun togglePause() = player.togglePause()
             override fun seekTo(seconds: Double) {
+                cancelScrub()
                 // A manual seek backwards into a segment re-arms its auto-skip.
-                segments.filter { seconds < it.startSec }.forEach { skipped.remove(it.type) }
-                seek(seconds); refreshUi()
+                segments.filter { seconds < it.startSec }.forEach { skipped.remove(segKey(it)) }
+                seek(seconds); refreshUi(forceGlue = true)
             }
-            override fun seekBy(seconds: Int) { seekRelative(seconds); refreshUi() }
+            override fun seekBy(seconds: Int) { cancelScrub(); seekRelative(seconds); refreshUi(forceGlue = true) }
+            override fun scrub(direction: Int, repeat: Int) = this@PlayerSession.scrub(direction, repeat)
+            override fun commitScrub(): Boolean = this@PlayerSession.commitScrub()
             override fun setQuality(key: String) { changeQuality(QualityOption.byKey(key)) }
-            override fun selectSubtitle(id: Int) { if (id > 0) lastSid = id; player.setSubtitleTrack(id); refreshUi() }
-            override fun selectAudio(id: Int) { player.setAudioTrack(id); refreshUi() }
-            override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi() }
+            override fun selectSubtitle(id: Int) {
+                if (id > 0) lastSid = id
+                player.setSubtitleTrack(id)
+                subPick = pickOf(id, "sub")
+                refreshUi()
+            }
+            override fun selectAudio(id: Int) {
+                player.setAudioTrack(id)
+                audioPick = pickOf(id, "audio")
+                subPick = null // the subtitles follow the audio again (the policy just re-ran)
+                refreshUi()
+            }
+            override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi(forceGlue = true) }
             override fun toggleMute() { player.setMuted(!player.isMuted()); refreshUi() }
             override fun toggleCaptions() {
                 // CC button: off <-> the last chosen track (or the first one).
                 val current = player.currentTrackId("sub")
-                if (current > 0) { lastSid = current; player.setSubtitleTrack(0) } else {
-                    val target = lastSid.takeIf { it > 0 } ?: ui.subtitleTracks.firstOrNull()?.id ?: 0
-                    player.setSubtitleTrack(target)
-                }
+                val target = if (current > 0) { lastSid = current; 0 } else lastSid.takeIf { it > 0 } ?: ui.subtitleTracks.firstOrNull()?.id ?: 0
+                player.setSubtitleTrack(target)
+                subPick = pickOf(target, "sub")
                 refreshUi()
             }
             override fun toggleAutoSkip() {
@@ -257,8 +355,8 @@ class PlayerSession(
         }
         scheduleHide()
 
-        // Controls state (fast), stats sampling (cheap; only rendered when the overlay is on)
-        // and periodic progress.
+        // Controls state (cheap now: tracks are cached until mpv says they changed), the
+        // stats overlay (only while it is on) and periodic progress.
         scope.launch {
             var tick = 0
             while (!destroyed) {
@@ -266,11 +364,14 @@ class PlayerSession(
                 tick++
                 refreshUi()
                 if (tick % 2 != 0) continue
-                val cores = Runtime.getRuntime().availableProcessors()
-                val snap = runCatching { player.snapshot() }.getOrNull() ?: continue
-                statsLines = snap.lines(cpu.sample(), cores)
-                fontLog = snap.fontLog
-                if ((tick / 2) % (PROGRESS_INTERVAL_MS / 1000).toInt() == 0 && snap.paused != true) reportProgress("tick")
+                if (showStats) {
+                    val cores = Runtime.getRuntime().availableProcessors()
+                    runCatching { player.snapshot() }.getOrNull()?.let { snap ->
+                        statsLines = snap.lines(cpu.sample(), cores)
+                        fontLog = snap.fontLog
+                    }
+                }
+                if ((tick / 2) % (PROGRESS_INTERVAL_MS / 1000).toInt() == 0 && !player.isPaused()) reportProgress("tick")
             }
         }
     }
@@ -280,8 +381,7 @@ class PlayerSession(
     fun onTap() { if (controlsVisible && sheet == Sheet.None) hideControls() else showControls() }
 
     fun onDoubleTap(back: Boolean) {
-        seekRelative(if (back) -10 else 10)
-        refreshUi()
+        actions.seekBy(if (back) -10 else 10)
         doubleTapFlash = if (back) -10 else 10
         flashJob?.cancel()
         flashJob = scope.launch { delay(700); doubleTapFlash = 0 }
@@ -300,13 +400,43 @@ class PlayerSession(
 
     fun openSheet(s: Sheet) { sheet = s; showControls() }
 
-    fun toggleStats() { showStats = !showStats }
+    /** The stats overlay; mpv logs verbosely only while it is up. */
+    fun toggleStats() {
+        showStats = !showStats
+        player.setVerboseLog(showStats)
+    }
+
+    // ---- scrubbing (TV remote) ----
 
     /**
-     * Fetch what the server knows about the source (segments, sniffed subtitle languages,
-     * trickplay) and start the file. For a download the snapshot answers instead, so
-     * playback never waits on the network. Then resolve the episode after this one.
+     * Move the preview position [direction] (-1 / +1) one step; the step grows while the key
+     * is held ([repeat] = the key's repeat count): 10 s, then 30 s, then 60 s. The seek
+     * happens once, [SCRUB_COMMIT_MS] after the last press, or on OK.
      */
+    fun scrub(direction: Int, repeat: Int) {
+        val step = when { repeat < 6 -> 10.0; repeat < 20 -> 30.0; else -> 60.0 }
+        val dur = ui.durationSec
+        val from = scrubTarget ?: ui.positionSec
+        var t = (from + direction * step).coerceAtLeast(0.0)
+        if (dur > 0) t = t.coerceAtMost((dur - 1.0).coerceAtLeast(0.0))
+        scrubTarget = t
+        showControls()
+        refreshUi()
+        scrubJob?.cancel()
+        scrubJob = scope.launch { delay(SCRUB_COMMIT_MS); commitScrub() }
+    }
+
+    /** Seek to the scrubbed position now; false when nothing was being scrubbed. */
+    fun commitScrub(): Boolean {
+        val t = scrubTarget ?: return false
+        scrubJob?.cancel()
+        scrubTarget = null
+        actions.seekTo(t)
+        return true
+    }
+
+    private fun cancelScrub() { scrubJob?.cancel(); scrubTarget = null }
+
     /**
      * Flash the title's age rating and content descriptors for a few seconds once it
      * plays. Episodes take the show's (they carry none); a download uses its snapshot.
@@ -337,6 +467,11 @@ class PlayerSession(
         }
     }
 
+    /**
+     * Fetch what the server knows about the source (segments, sniffed subtitle languages,
+     * trickplay) and start the file. For a download the snapshot answers instead, so
+     * playback never waits on the network. Then resolve the episode after this one.
+     */
     private fun prepareAndPlay(url: String, sourceId: String?, local: Boolean, start: Int) {
         directUrl = url
         pendingStart = start.toDouble()
@@ -412,11 +547,12 @@ class PlayerSession(
     fun playNext() {
         val req = next ?: return
         if (switching) return
+        cancelScrub()
         countdownJob?.cancel()
         nextCard = null
         nextCardDismissed = false
         // Moving on counts as finishing this one (Netflix): report the last position and mark it watched.
-        reportProgress("end")
+        if (!endReported) reportProgress("end")
         itemId?.let { finished -> markWatched(finished) }
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
         switching = true
@@ -433,7 +569,7 @@ class PlayerSession(
         flashOsd(null)
         prepareAndPlay(req.url, req.sourceId, req.local, req.startSeconds)
         showAdvisory(req.item.id)
-        refreshUi()
+        refreshUi(forceGlue = true)
         host.nowPlaying(req)
     }
 
@@ -443,6 +579,104 @@ class PlayerSession(
         app.scope.launch {
             val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
             if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
+        }
+    }
+
+    // ---- the end, and connections that end early ----
+
+    /** The length the file really has: the server's for a transcode (the stream has none of its own). */
+    private fun knownDuration(): Double? =
+        ((if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec)?.takeIf { it > 0 }
+
+    private fun atEnd(): Boolean {
+        val d = knownDuration() ?: return false
+        val p = player.timePosSeconds() ?: return false
+        return p >= d - 2.0
+    }
+
+    /**
+     * mpv ran out of data. Near the end that is the end of the episode. Well before it, the
+     * server went away (restart, Wi-Fi drop) after ffmpeg's own reconnects gave up: do not
+     * mark the episode watched or jump to the next one; reopen where it stopped.
+     */
+    private fun handleEof() {
+        val pos = player.timePosSeconds() ?: 0.0
+        val dur = knownDuration()
+        if (!local && dur != null && pos < dur - 10.0) {
+            Timber.w("stream ended at %.1f of %.1f s: reconnecting", pos, dur)
+            reconnect(pos)
+            return
+        }
+        Timber.i("reached the end")
+        if (!endReported) { endReported = true; reportProgress("end") }
+        // Ran out while the card was up (or with no outro marker): go on now.
+        if (autoplay && next != null) playNext()
+    }
+
+    /** Reopen the stream at [at] after a short wait, a few times, then say so and stop. */
+    private fun reconnect(at: Double) {
+        reconnectJob?.cancel()
+        if (reconnectAttempts >= RECONNECT_DELAYS_MS.size) {
+            Timber.w("giving up reconnecting at %.1f s", at)
+            reconnecting = false
+            switching = false
+            reloadTarget = null
+            reconnectAttempts = 0
+            flashOsd("Lost the connection to the server. Press play to try again.", 0)
+            player.setPaused(true)
+            showControls()
+            return
+        }
+        val wait = RECONNECT_DELAYS_MS[reconnectAttempts++]
+        reconnecting = true
+        switching = true // the dropped stream's end events are not the end of the episode
+        reloadTarget = at
+        flashOsd("Reconnecting…", 0)
+        refreshUi(forceGlue = true)
+        reconnectJob = scope.launch {
+            delay(wait)
+            if (destroyed) return@launch
+            Timber.i("reconnect %d at %.1f s", reconnectAttempts, at)
+            if (transcoding) { restartTranscode(at); return@launch }
+            // A fresh media token: a long session can outlive the one in the old URL.
+            val sid = sourceId
+            val url = if (sid != null && !local) runCatching { app.api.streamUrl(sid, app.api.mediaToken(sid)) }.getOrNull() ?: directUrl else directUrl
+            directUrl = url
+            player.play(url, at.toInt())
+        }
+    }
+
+    /** "Press play to try again" after the reconnects gave up. */
+    private fun retryAfterGivingUp(): Boolean {
+        if (reconnecting || osd?.startsWith("Lost the connection") != true) return false
+        flashOsd(null)
+        reconnect(ui.positionSec)
+        return true
+    }
+
+    // ---- the viewer's track picks, across episodes ----
+
+    private fun pickOf(id: Int, type: String): TrackPick? {
+        if (id <= 0) return if (type == "sub") TrackPick(off = true, lang = "", kind = "", title = "") else null
+        val t = player.tracksWithOverrides().firstOrNull { it.type == type && it.id == id } ?: return null
+        return TrackPick(off = false, lang = t.lang, kind = if (type == "sub") player.subtitleClass(t) else "", title = t.title)
+    }
+
+    /** On a new file: the viewer's earlier picks, matched by language and kind (title first). */
+    private fun applyTrackPicks() {
+        val tracks = player.tracksWithOverrides()
+        audioPick?.let { p ->
+            val audio = tracks.filter { it.type == "audio" && it.lang == p.lang }
+            val t = audio.firstOrNull { it.title == p.title } ?: audio.firstOrNull()
+            if (t != null && t.id != player.currentTrackId("audio")) { Timber.i("audio pick carried over -> %d", t.id); player.setAudioTrack(t.id) }
+        }
+        subPick?.let { p ->
+            if (p.off) { player.setSubtitleTrack(0); return }
+            val subs = tracks.filter { it.type == "sub" && it.lang == p.lang && player.subtitleClass(it) == p.kind }
+            val t = subs.firstOrNull { it.title == p.title } ?: subs.firstOrNull() ?: return
+            Timber.i("subtitle pick carried over -> %d", t.id)
+            player.setSubtitleTrack(t.id)
+            lastSid = t.id
         }
     }
 
@@ -470,7 +704,7 @@ class PlayerSession(
     fun dismissNextCard() { countdownJob?.cancel(); nextCard = null; nextCardDismissed = true }
 
     /** Pulls position, tracks and state from mpv into the controls' state. */
-    fun refreshUi() {
+    fun refreshUi(forceGlue: Boolean = false) {
         // Callbacks posted by mpv (e.g. the pause from onStop) can land after destroy.
         if (player.destroyed || destroyed) return
         val tracks = runCatching { player.tracks() }.getOrDefault(emptyList())
@@ -497,6 +731,8 @@ class PlayerSession(
             },
             bufferedSec = player.cacheEndSeconds() ?: 0.0,
             paused = player.isPaused(),
+            buffering = (player.isBuffering() || reconnecting || (switching && reloadTarget != null)) && !player.isPaused(),
+            scrubSec = scrubTarget,
             muted = player.isMuted(),
             speed = player.speed(),
             fillScreen = player.isFill(),
@@ -515,10 +751,16 @@ class PlayerSession(
             fullscreen = host.fullscreen,
         )
         if (wasPaused != ui.paused) host.playingChanged(!ui.paused)
+        // The system's now-playing state: on changes, and every few seconds to keep it honest.
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (forceGlue || wasPaused != ui.paused || now - lastGlueUpdate > 5_000) {
+            lastGlueUpdate = now
+            glue.update(title, subtitleLine, ui.durationSec, ui.positionSec, !ui.paused, ui.buffering, ui.speed, ui.hasNext)
+        }
         // Auto-skip: jump to the end of a segment the first time the playhead enters it.
         if (autoSkip && !ui.paused) {
             ui.activeSegment?.let { seg ->
-                if (skipped.add(seg.type)) {
+                if (skipped.add(segKey(seg))) {
                     Timber.i("auto-skip %s -> %.1f s", seg.type, seg.endSec)
                     seek(seg.endSec)
                     flashOsd("Skipped ${seg.type}")
@@ -564,7 +806,7 @@ class PlayerSession(
 
     /**
      * Whether mpv can reach [t] in what it holds: ahead up to the end of the cache, behind
-     * a little (the back buffer is 32 MiB, about half a minute of an 8 Mb/s transcode).
+     * a little (the back buffer is 16-32 MiB, about half a minute of an 8 Mb/s transcode).
      */
     private fun buffered(t: Double): Boolean {
         if (reloadTarget != null) return false
@@ -598,7 +840,7 @@ class PlayerSession(
     private fun watchReload(at: Double) {
         scope.launch {
             delay(20_000)
-            if (!destroyed && switching && reloadTarget == at) {
+            if (!destroyed && switching && !reconnecting && reloadTarget == at) {
                 Timber.w("reload at %.1f s did not start", at)
                 switching = false
                 reloadTarget = null
@@ -650,6 +892,12 @@ class PlayerSession(
         return if (src.size > 0 && ms > 0) src.size * 8.0 / (ms / 1000.0) / 1000.0 else 0.0
     }
 
+    /** Play/pause from a key or button; after the reconnects gave up, it tries again instead. */
+    fun playPause(play: Boolean? = null) {
+        if (retryAfterGivingUp()) return
+        if (play == null) player.togglePause() else player.setPaused(!play)
+        showControls()
+    }
 
     fun showControls() {
         if (host.inPip) return
@@ -668,7 +916,7 @@ class PlayerSession(
         hideJob?.cancel()
         hideJob = scope.launch {
             delay(AUTO_HIDE_MS)
-            if (!ui.paused && sheet == Sheet.None) controlsVisible = false
+            if (!ui.paused && sheet == Sheet.None && scrubTarget == null) controlsVisible = false
         }
     }
 
@@ -716,13 +964,14 @@ class PlayerSession(
 
     /** The host went to the background: report and pause so audio does not keep playing. */
     fun onStop() {
+        commitScrub()
         reportProgress("stop")
         if (!host.inPip) player.setPaused(true)
     }
 
     // ---- driven from another device ("Play on") ----
-    fun remotePause(paused: Boolean) { main.post { if (!destroyed) { player.setPaused(paused); refreshUi() } } }
-    fun remoteToggle() { main.post { if (!destroyed) { player.togglePause(); refreshUi() } } }
+    fun remotePause(paused: Boolean) { main.post { if (!destroyed) { player.setPaused(paused); refreshUi(forceGlue = true) } } }
+    fun remoteToggle() { main.post { if (!destroyed) { player.togglePause(); refreshUi(forceGlue = true) } } }
     fun remoteSeekTo(seconds: Int) { main.post { if (!destroyed) actions.seekTo(seconds.toDouble()) } }
     fun remoteSeekBy(seconds: Int) { main.post { if (!destroyed) actions.seekBy(seconds) } }
     fun remoteNext() { main.post { if (!destroyed) playNext() } }
@@ -733,7 +982,9 @@ class PlayerSession(
         if (destroyed) return
         destroyed = true
         if (app.remote.activePlayer === this) { app.remote.activePlayer = null; app.remote.reportState(null, "", 0, false) }
-        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); zoomHudJob?.cancel()
+        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); zoomHudJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel()
+        runCatching { displayManager?.unregisterDisplayListener(displayListener) }
+        glue.release()
         player.listener = null
         player.destroy()
     }

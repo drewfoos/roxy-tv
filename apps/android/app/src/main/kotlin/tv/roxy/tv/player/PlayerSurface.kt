@@ -13,6 +13,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -91,6 +98,7 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
             }
         }
         if (session.host.inPip) return@Box
+        BufferingSpinner(session.ui.buffering, compact = session.ui.fullscreen == false)
         PlayerControls(
             state = session.ui,
             visible = session.controlsVisible,
@@ -141,5 +149,27 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
                 session.fontLog.takeLast(12).forEach { Text(it, color = Color(0xFFBDC1C6), fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1) }
             }
         }
+    }
+}
+
+/**
+ * The spinner over the picture while mpv waits on the network, a seek or a (re)load. It
+ * appears only after a short grace period, so a quick seek inside the cache shows nothing.
+ */
+@Composable
+private fun BufferingSpinner(buffering: Boolean, compact: Boolean) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(buffering) {
+        if (!buffering) { shown = false; return@LaunchedEffect }
+        kotlinx.coroutines.delay(400)
+        shown = true
+    }
+    if (!shown) return
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(
+            color = Color.White,
+            strokeWidth = if (compact) 3.dp else 4.dp,
+            modifier = Modifier.size(if (compact) 36.dp else 56.dp),
+        )
     }
 }

@@ -96,7 +96,19 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
     }
 
     // (Re)load on every return to the foreground so progress made in the player shows up.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(silent = state is HomeUiState.Ready) }
+    var resumedAt by remember { mutableStateOf(0L) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        resumedAt = android.os.SystemClock.elapsedRealtime()
+        vm.load(silent = state is HomeUiState.Ready)
+    }
+    // Back from the player the window comes back with nothing focused, and the reload that
+    // follows can swap the hero (Newly Added -> Continue Watching) under the button. Put focus
+    // back on what had it (the button that started playback) once now and after the reload.
+    val heroId = (state as? HomeUiState.Ready)?.let { r -> (r.heroes.firstOrNull()?.play ?: r.hero)?.id }
+    LaunchedEffect(resumedAt, heroId) {
+        if (resumedAt == 0L || android.os.SystemClock.elapsedRealtime() - resumedAt > 8_000) return@LaunchedEffect
+        repeat(10) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
+    }
     OnUserDataChanged { vm.load(silent = true) }
 
     fun open(item: Item) {

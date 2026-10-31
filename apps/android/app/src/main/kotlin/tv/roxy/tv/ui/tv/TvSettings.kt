@@ -95,8 +95,9 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
     )
     val advanced = listOf(
         Setting("passthrough", "Soundbar Passthrough", listOf("auto" to AudioPassthrough.autoLabel(passthroughFound), "off" to "Off (decode on the TV)"), settings.passthrough, hint = "Sends Dolby and DTS audio untouched over HDMI ARC for the soundbar to decode. A format the TV can't pass through is decoded here automatically; picking an option here tries them all again.") { tv.roxy.tv.player.MpvPlayer.resetPassthroughMemory(context); save(settings.copy(passthrough = it)) },
-        Setting("hwdec", "Hardware Decoding", PlayerSettings.hwdecChoices.map { it to it }, settings.hwdec, hint = "mediacodec-copy is the safe default on Android TV; change it only if video stutters or shows wrong colours.") { save(settings.copy(hwdec = it)) },
-        Setting("vo", "Video Output", PlayerSettings.voChoices.map { it to it }, settings.vo, hint = "How frames reach the screen. gpu works everywhere.") { save(settings.copy(vo = it)) },
+        Setting("hwdec", "Hardware Decoding", PlayerSettings.hwdecChoices.map { it to PlayerSettings.hwdecLabel(it) }, settings.hwdec, hint = "Auto keeps frames on the graphics chip and falls back to copying them. Try \"Hardware, copy\" only if video freezes or shows wrong colours.") { save(settings.copy(hwdec = it)) },
+        Setting("smooth", "Smooth Motion", listOf("off" to "Off", "on" to "On"), if (settings.smoothMotion) "on" else "off", hint = "Blends frames so 24 fps films pan smoothly on a 60 Hz screen. Uses more of the graphics chip; turn it off if video stutters.") { save(settings.copy(smoothMotion = it == "on")) },
+        Setting("hdr", "HDR Video", listOf("tonemap" to "Tone-map (keeps subtitles)", "native" to "Native HDR (no styled subtitles)"), if (settings.hdrNative) "native" else "tonemap", hint = "Native sends HDR files to the TV as HDR, but styled subtitles cannot be drawn over them.") { save(settings.copy(hdrNative = it == "native")) },
         Setting("stats", "Stats Overlay", listOf("on" to "On", "off" to "Off"), if (settings.showStats) "on" else "off", hint = "Shows the decoder, frame drops and bitrate over the picture. Also toggled in the player with Up or Menu.") { save(settings.copy(showStats = it == "on")) },
     )
     val all = preferences + advanced
