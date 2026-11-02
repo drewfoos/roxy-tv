@@ -96,6 +96,26 @@ func (s *Store) ProviderID(ctx context.Context, itemID, provider string) (string
 	return v, err
 }
 
+// ShowcasePosters picks up to limit random series and movies that have a poster (the
+// sign-in page's poster wall).
+func (s *Store) ShowcasePosters(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id FROM items i JOIN item_images im ON im.item_id = i.id AND im.type = 'poster'
+		WHERE i.type IN ('series', 'movie') AND i.is_virtual = 0 ORDER BY random() LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // ItemImage is one cached image file for an item.
 type ItemImage struct {
 	ItemID    string

@@ -20,6 +20,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 	"github.com/roxy-media/roxy/server/internal/stills"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 // GET /v1/items/{id}/images/{type}[?w=<px>]: a cached poster/backdrop/logo/thumb as
@@ -46,6 +47,11 @@ func (s *Server) getItemImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "no image")
 		return
 	}
+	s.writeImage(w, r, img, typ)
+}
+
+// writeImage serves a cached image file, resized when ?w= asks for a smaller one.
+func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, img *store.ItemImage, typ string) {
 	path := img.Path
 	if width, _ := strconv.Atoi(r.URL.Query().Get("w")); width > 0 {
 		if width < 16 {

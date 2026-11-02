@@ -369,8 +369,19 @@ img { display: block; }
 .auth__muted { color: var(--muted); }
 .auth__brand { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; gap: 40px; padding: 48px 120px 48px 56px;
   background: linear-gradient(160deg, #0d2340 0%, #0a1526 45%, #07090f 100%); }
-.auth__brand > *:not(.auth__art):not(.auth__wave) { position: relative; z-index: 1; }
-.auth__art { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.auth__brand > *:not(.auth__wall):not(.auth__wave) { position: relative; z-index: 1; }
+/* Poster wall: tilted columns drifting up and down under a shade dark enough for the text. */
+.auth__wall { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.auth__wall--empty { background: radial-gradient(60% 50% at 78% 12%, rgba(62,166,255,0.40), transparent 70%); }
+.auth__wall-grid { position: absolute; inset: -30% -12% -30% -18%; display: flex; gap: 16px; transform: rotate(-9deg); }
+.auth__wall-col { flex: 1; display: flex; flex-direction: column; gap: 16px; animation: auth-drift 80s linear infinite; will-change: transform; }
+.auth__wall-col img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 10px; background: #141823; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+.auth__wall-shade { position: absolute; inset: 0;
+  background:
+    radial-gradient(60% 45% at 80% 8%, rgba(62,166,255,0.28), transparent 70%),
+    linear-gradient(90deg, rgba(7,10,18,0.94) 0%, rgba(7,10,18,0.86) 40%, rgba(7,10,18,0.55) 100%),
+    linear-gradient(180deg, rgba(7,10,18,0.55) 0%, rgba(7,10,18,0.15) 35%, rgba(7,10,18,0.25) 65%, rgba(7,10,18,0.9) 100%); }
+@keyframes auth-drift { from { transform: translateY(0); } to { transform: translateY(-50%); } }
 /* The wavy edge: the right panel's colour cut into the brand panel along a gentle curve. */
 .auth__wave { position: absolute; top: 0; right: -1px; width: 96px; height: 100%; fill: var(--bg); pointer-events: none; z-index: 2; }
 .auth__logo, .auth__mobile-logo { position: relative; display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 600; letter-spacing: -0.3px; }
@@ -431,7 +442,7 @@ img { display: block; }
   .auth__mobile-logo { display: flex; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .auth__spinner, .auth__qr-wait { animation: none; }
+  .auth__spinner, .auth__qr-wait, .auth__wall-col { animation: none; }
 }
 /* /link/:code — approving a TV's sign-in from a phone. */
 .linktv__title { font-size: 20px; font-weight: 700; margin: 0; }
@@ -449,6 +460,9 @@ img { display: block; }
 .profiles__one:hover { color: #fff; }
 .profiles__one .avatar { width: 120px; height: 120px; font-size: 44px; border: 3px solid transparent; }
 .profiles__one:hover .avatar { border-color: #fff; }
+.profiles__actions { display: flex; align-items: center; justify-content: center; gap: 24px; }
+.profiles__manage { padding: 9px 22px; border-radius: 20px; border: 1.5px solid rgba(255,255,255,0.25); color: var(--fg); font-size: 14px; font-weight: 600; }
+.profiles__manage:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- account ---------- */
 .account { max-width: 760px; padding: 0 var(--gutter); display: flex; flex-direction: column; gap: 16px; }
@@ -629,7 +643,7 @@ img { display: block; }
 @media (max-width: 600px) {
   .desk-only { display: none !important; }
   :root { --bnav-h: calc(56px + env(safe-area-inset-bottom, 0px)); --sat: env(safe-area-inset-top, 0px); }
-  body { font-family: Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { font-family: var(--font); }
   .topbar--desk { display: none; }
   .page--phone { padding-top: 0; padding-bottom: calc(var(--bnav-h) + 16px); }
   .page--phone .footer { display: none; }

@@ -34,6 +34,7 @@ type Server struct {
 	lib        *library.Library
 	ff         *ffmpeg.FFmpeg
 	authSvc    *auth.Service
+	show       showcase          // the sign-in page's poster wall (showcase.go)
 	meta       *metadata.Service // may be nil (scan-only runs)
 	trick      *trickplay.Service
 	segs       *segments.Service // may be nil (scan-only runs)
@@ -74,6 +75,9 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	// Native API: what Roxy's own clients speak (docs/api/native.md).
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/system/info", s.systemInfo)
+		// The sign-in page's poster wall: posters by position only (showcase.go).
+		r.Get("/showcase", s.showcaseCount)
+		r.Get("/showcase/{n}", s.showcasePoster)
 		r.Post("/auth/login", s.login)
 		// Signing a TV in from a phone (link.go): the TV's side is public, the approval needs a user.
 		r.Post("/link/start", s.linkStart)

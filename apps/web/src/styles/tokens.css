@@ -19,7 +19,8 @@
   --skeleton-a: #1c1c24;
   --skeleton-b: #2a2a34;
 
-  --font: Inter, "Segoe UI", Roboto, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  /* Bundled with the app (@fontsource-variable), so every browser shows the same type. */
+  --font: "Figtree Variable", Figtree, "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
 
   --radius-poster: 8px;
   --radius-thumb: 6px;

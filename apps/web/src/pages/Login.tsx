@@ -29,7 +29,7 @@ export function Login() {
   return (
     <div className="auth">
       <aside className="auth__brand" aria-label="Roxy TV">
-        <BrandArt />
+        <PosterWall />
         <div className="auth__logo">
           <WitchHat size={36} />
           <span>
@@ -81,37 +81,43 @@ export function Login() {
   )
 }
 
-/** Flowing bands of light in Roxy's azure, echoing the wavy edge. Pure decoration. */
-function BrandArt() {
+/**
+ * The poster wall (Netflix, Crunchyroll and Plex sign in over their own catalogue): slowly
+ * drifting, tilted columns of this server's posters under a dark shade, so the text stays
+ * readable. The server hands out posters by position only (no titles). With too few
+ * posters, just Roxy's azure glow.
+ */
+function PosterWall() {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    fetch('/v1/showcase')
+      .then((r) => (r.ok ? r.json() : { count: 0 }))
+      .then((d: { count?: number }) => setCount(d.count ?? 0))
+      .catch(() => setCount(0))
+  }, [])
+  if (count < 4) return <div className="auth__wall auth__wall--empty" aria-hidden="true" />
+  const columns = 4
+  const all = Array.from({ length: count }, (_, i) => i)
+  // A big library splits its posters between the columns; a small one runs every poster
+  // down every column, each column starting further along so neighbours don't line up.
+  const cols =
+    count >= 24
+      ? Array.from({ length: columns }, (_, c) => all.filter((i) => i % columns === c))
+      : Array.from({ length: columns }, (_, c) => all.map((_, i) => all[(i + c * 3) % count]))
   return (
-    <svg className="auth__art" viewBox="0 0 800 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs>
-        <linearGradient id="auth-band-a" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#3ea6ff" stopOpacity="0.55" />
-          <stop offset="1" stopColor="#3ea6ff" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id="auth-band-b" x1="1" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#7cc4ff" stopOpacity="0.35" />
-          <stop offset="1" stopColor="#1f6fd1" stopOpacity="0" />
-        </linearGradient>
-        <radialGradient id="auth-glow" cx="0.78" cy="0.12" r="0.6">
-          <stop offset="0" stopColor="#3ea6ff" stopOpacity="0.45" />
-          <stop offset="1" stopColor="#3ea6ff" stopOpacity="0" />
-        </radialGradient>
-        <filter id="auth-soft" x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="18" />
-        </filter>
-      </defs>
-      <rect width="800" height="900" fill="url(#auth-glow)" />
-      <g transform="translate(0 150)">
-      <g filter="url(#auth-soft)">
-        <path d="M-60 640 C140 520 300 760 520 600 S820 470 900 560 L900 700 C760 640 640 800 470 760 S120 700 -60 800 Z" fill="url(#auth-band-a)" />
-        <path d="M-80 760 C120 690 260 860 460 790 S760 650 900 720 L900 820 C720 790 600 930 420 880 S80 840 -80 900 Z" fill="url(#auth-band-b)" />
-      </g>
-      <path d="M-40 590 C160 470 320 720 540 560 S830 440 900 520" fill="none" stroke="#7cc4ff" strokeOpacity="0.35" strokeWidth="1.5" />
-      <path d="M-40 650 C170 560 330 780 560 640 S840 520 900 600" fill="none" stroke="#3ea6ff" strokeOpacity="0.25" strokeWidth="1" />
-      </g>
-    </svg>
+    <div className="auth__wall" aria-hidden="true">
+      <div className="auth__wall-grid">
+        {cols.map((col, c) => (
+          <div key={c} className="auth__wall-col" style={{ animationDuration: `${70 + c * 12}s`, animationDirection: c % 2 ? 'reverse' : 'normal' }}>
+            {/* Twice over, so the drift loops without a seam. */}
+            {[...col, ...col].map((i, k) => (
+              <img key={k} src={`/v1/showcase/${i}`} alt="" loading="lazy" decoding="async" />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="auth__wall-shade" />
+    </div>
   )
 }
 
