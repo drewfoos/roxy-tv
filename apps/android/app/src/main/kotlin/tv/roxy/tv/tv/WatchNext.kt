@@ -50,7 +50,9 @@ object WatchNext {
     /** Insert or update the row for [item] at [positionMs] of [durationMs]. Call off the main thread. */
     suspend fun publish(app: RoxyApp, item: Item, positionMs: Long, durationMs: Long) {
         if (!supported(app) || positionMs <= 0) return
-        if (durationMs > 0 && positionMs >= durationMs * 0.97) { remove(app, item.id); return }
+        // The server counts 90 % as watched (and resets the position to 0); a row kept past
+        // that would offer "Continue" on a finished episode and then start it over.
+        if (durationMs > 0 && positionMs >= durationMs * 0.90) { remove(app, item.id); return }
         withContext(Dispatchers.IO) {
             lock.withLock {
                 runCatching {

@@ -22,7 +22,25 @@ data class SeriesUiState(
     val related: List<RelatedEntry> = emptyList(),
     /** The "Movies & OVAs" tab is selected instead of a season. */
     val showRelated: Boolean = false,
+    /** What Play plays, across all seasons (null until the episode list is in). */
+    val upNext: Item? = null,
 )
+
+/**
+ * The episode the title page's Play button means, across every season: one in progress
+ * (the latest in order, rewatches included), else the first unwatched one after the last
+ * watched, else the first unwatched, else the first (watch again). Specials only count
+ * when the show has nothing else.
+ */
+fun upNextOf(episodes: List<Item>): Item? {
+    val playable = episodes.filter { it.isPlayable }
+    val regular = playable.filter { (it.seasonAired ?: 1) != 0 }.ifEmpty { playable }
+    val ordered = regular.sortedWith(compareBy({ it.seasonAired ?: 1 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
+    ordered.lastOrNull { (it.userData?.positionMs ?: 0) > 0 }?.let { return it }
+    val lastWatched = ordered.indexOfLast { it.userData?.played == true }
+    ordered.drop(lastWatched + 1).firstOrNull { it.userData?.played != true }?.let { return it }
+    return ordered.firstOrNull { it.userData?.played != true } ?: ordered.firstOrNull()
+}
 
 class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, initial: Item? = null) : ViewModel() {
     // Seeded from the list that opened the page, so the header paints at once and only the
@@ -43,12 +61,35 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 // A reload (after marking watched, say) keeps the episodes and related rows on
                 // screen until the fresh ones land, so the list doesn't empty and jump to the top.
                 _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep)
-                if (seasons.isNotEmpty()) loadEpisodes(seasons[keep].id)
-                else loadEpisodes(seriesId, recursive = true) // flat series without season folders
+                if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
+                else if (seasons.isEmpty()) loadEpisodes(seriesId, recursive = true) // flat series without season folders
+                loadUpNext(seasons)
                 loadRelated()
             }.onFailure { t ->
                 Timber.e(t, "series load failed")
                 _state.value = SeriesUiState(loading = false, error = t.message)
+            }
+        }
+    }
+
+    private var firstLoad = true
+
+    /**
+     * Every episode of the show, for [SeriesUiState.upNext]. On the first load the page then
+     * opens on that episode's season (Crunchyroll), so Play and the list agree.
+     */
+    private fun loadUpNext(seasons: List<Item>) {
+        val opening = firstLoad
+        firstLoad = false
+        viewModelScope.launch {
+            val all = runCatching { api.items(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
+                .onFailure { Timber.w(it, "episodes for up next") }.getOrNull()
+            val next = all?.let { upNextOf(it) }
+            _state.value = _state.value.copy(upNext = next)
+            if (opening && seasons.isNotEmpty()) {
+                val at = next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
+                _state.value = _state.value.copy(selectedSeason = at)
+                loadEpisodes(seasons[at].id)
             }
         }
     }

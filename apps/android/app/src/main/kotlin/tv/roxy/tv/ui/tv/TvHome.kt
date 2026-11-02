@@ -141,7 +141,9 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
             val rows = remember(s.rows) { tvRows(s.rows) }
             // Each row remembers its last focused card, so Up / Down between rows (and Down
             // from the hero) land there instead of on whatever card happens to be nearest.
-            val lastInRow = remember { mutableStateMapOf<String, String>() }
+            // A plain map, read only when the remote moves between rows (see TvRow): a state
+            // map read in composition made every card focus recompose every row.
+            val lastInRow = remember { HashMap<String, String>() }
             // A remembered card that has since left its row (a show finished and dropped out
             // of Continue Watching) would point Up / Down at nothing: fall back to the first card.
             fun lastKey(i: Int): String? = rows.getOrNull(i)?.let { r ->
@@ -156,7 +158,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         onPlay = { play -> if (play.isEpisode || play.isMovie) scope.launch { playItem(context, play).onFailure { Timber.w(it, "play failed") } } else open(play) },
                         onInfo = { title -> open(title) },
                         onFocused = { focusedRow.value = 0 },
-                        downKey = lastKey(0),
+                        downKey = { lastKey(0) },
                         upNext = hero != null && rows.firstOrNull { it.key == "continue" }?.items?.any { it.id == hero.play.id } == true,
                     )
                 }
@@ -164,7 +166,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                     TvRow(
                         title = row.title, rowKey = row.key, items = row.items, api = app.api, memory = memory,
                         onClick = ::open, onRowFocused = { key -> lastInRow[row.key] = key; focusedRow.value = i + 1 }, thumbs = row.key == "continue",
-                        upKey = if (i == 0) "hero/play" else lastKey(i - 1), downKey = lastKey(i + 1),
+                        upKey = { if (i == 0) "hero/play" else lastKey(i - 1) }, downKey = { lastKey(i + 1) },
                     )
                 }
                 item(key = "footer") {
@@ -230,7 +232,7 @@ private fun HomeSkeleton() {
  * START WATCHING / CONTINUE and MORE INFO.
  */
 @Composable
-private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: String?, upNext: Boolean = false) {
+private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: () -> String?, upNext: Boolean = false) {
     Box(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
         if (pick == null) {
             Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 160.dp)) {
@@ -272,7 +274,7 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
                 val started = (play.userData?.positionMs ?: 0L) > 0
                 val label = if (play.isEpisode && (started || (play.indexAired ?: 1) > 1)) "Continue: ${episodeShort(play)}" else if (started) "Continue" else "Start watching"
                 // Focus on either button pins the page to the top.
-                val down = Modifier.focusProperties { if (downKey != null) down = memory.requester(downKey) }
+                val down = Modifier.focusProperties { downKey()?.let { down = memory.requester(it) } }
                 TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play").then(down), onFocused = onFocused)
                 Spacer(Modifier.width(18.dp))
                 TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info").then(down), onFocused = onFocused)

@@ -1,0 +1,7 @@
+# Baseline profile: compile all of Roxy's own code ahead of time. The app is sideloaded
+# (adb, the in-app updater), so the Play Store never compiles it; without this the TV runs
+# it interpreted/JIT until its idle maintenance gets to it, and a fresh install measured
+# visibly slower than the same build compiled. ProfileInstaller applies it on first launch.
+# Compose, Coil and the other AndroidX libraries ship their own profiles.
+HSPLtv/roxy/tv/**->**(**)**
+Ltv/roxy/tv/**;

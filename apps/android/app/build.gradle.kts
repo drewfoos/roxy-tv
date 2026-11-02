@@ -14,6 +14,10 @@ val devProps = Properties().apply {
 }
 fun devProp(key: String): String = devProps.getProperty(key) ?: ""
 
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("app/compose-stability.conf"))
+}
+
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(17) }
 }
@@ -26,8 +30,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.5.0"
+        versionCode = 21
+        versionName = "0.5.1"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -69,6 +73,12 @@ android {
         compose = true
     }
 
+    // Fonts stay uncompressed in the APK: libmpv's fonts are copied out at first start, and
+    // a stored asset copies without inflating.
+    androidResources {
+        noCompress += listOf("ttf", "otf", "ttc")
+    }
+
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
         jniLibs { useLegacyPackaging = false }
@@ -77,6 +87,8 @@ android {
 
 dependencies {
     implementation(libs.androidx.core)
+    // Installs src/main/baseline-prof.txt on sideloaded installs (no Play Store to do it).
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // Sign in a TV: the phone's QR scanner (CameraX + ML Kit's bundled barcode model).
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

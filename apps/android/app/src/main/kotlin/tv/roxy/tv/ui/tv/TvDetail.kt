@@ -135,7 +135,8 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
 
     val playable = state.episodes.filter { it.isPlayable }
-    val next = playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
+    // Across all seasons (the list below shows one); the season's own pick until it is known.
+    val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
         ?: playable.firstOrNull { it.userData?.played != true }
         ?: playable.firstOrNull()
     val actions = listOf(

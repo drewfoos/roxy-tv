@@ -88,3 +88,40 @@ carries anilist=137537 (the 2024 anime spin-off; consider no AniList outside ani
 Measure on the perf build, force-compiled first (`cmd package compile -f -m speed-profile`):
 gfxinfo framestats for Right along a row, Down between rows, open/Back a title, rail, fold;
 `am start -W` for cold start before and after item 5.
+
+## Edge-case bugs (second pass, each confirmed with live rows or a reproduction)
+
+KonoSuba's S1 OVA is filed in the library as `Specials/S00E03` ("Gods Blessings On This
+Wonderful Choker!"), not S01E11.
+
+1. **AniList attaches a later season's Crunchyroll episode list to an earlier entry.** KonoSuba
+   S1 has a virtual S01E11 titled with S3's finale and an S3 thumbnail; all 23 Mushoku Tensei S1
+   episodes carry S2's titles and stills, plus a fake S01E24. `anilist.go:414` raises the count
+   to the list's length; the duplicate-list guard only catches a list repeated on a later season.
+   Fix: reject lists that do not fit the entry; prefer TMDB titles. (server)
+2. **Title-page Play looks only at the selected season** (TvDetail/PhoneSeries). Fixed in the
+   app: `upNextOf` over all episodes; the page opens on that season.
+3. **A rewatch drops out of Continue Watching** (`store/userdata.go:132` requires played=0;
+   `continue.go:90` next-up only unplayed). (server)
+4. **TVDB-numbered files get TMDB's metadata** (KonoSuba S00E03/E04 named after other specials,
+   JJK 0 stored as "New Year's Special", 15 SpongeBob episodes). Match by the filename's title
+   within the season, or TMDB's TVDB-order episode group. (server)
+5. **Placeholders from AniList's sequel chain make fake seasons** (Yu-Gi-Oh! virtual S2 = GX,
+   180 eps; S3 = 5D's, 154): `createPlaceholders` uses AniList as `src`. Use TMDB only. (server)
+6. **Mark season watched also marks placeholders**, so episodes arriving later are already
+   watched (`store/userdata.go:90-95`: add `is_virtual = 0`). (server)
+7. **Absolute-numbered files share a GUID across seasons** (`library.go:429` `abs%04d`): two
+   seasons' episode 1 become one item. No live case yet. (server)
+8. **Absolute mapping ignores the season folder** (InuYasha: The Final Act S7 shows S1 titles;
+   `service.go:~515`). (server)
+9. **Multi-episode files leave fake missing episodes** (57 files, e.g. SpongeBob S01E01-E03:
+   `EpisodeEnd` parsed but unused). (server)
+10. **Signs & songs not recognised** ("[FOR DUB]", "ForcedNarrative"), and untagged dual-audio
+    tracks defeat the dub pairing. Fixed in the app: wider regex; language from the title.
+11. **TV Watch Next row for a finished episode restarts it** (row kept until 97 %, server marks
+    watched at 90 % and resets). Fixed in the app: removed at 90 %. Still open: publish the next
+    episode's row, one row per series.
+
+Unconfirmed: unaired-today shown as "Missing" (UTC date compare, `availability.go:13`);
+`isAnime` from an AniList tag rather than the library's anime mode (`home.go:126`); autoplay
+after a finale goes to a special; "Show - 12.5" sorts first.

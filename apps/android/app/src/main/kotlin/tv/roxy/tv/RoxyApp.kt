@@ -91,10 +91,19 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     }
 }
 
-/** Copies every font in the assets fonts folder into filesDir/fonts once, so libmpv can read them from disk. */
+/**
+ * Copies every font in the assets fonts folder into filesDir/fonts once per app version, so
+ * libmpv can read them from disk. A stamp file holds the version that copied them: an
+ * unchanged install skips the whole folder (51 fonts, about 39 MB, used to be inflated and
+ * rewritten on the main thread at every cold start because the size check never matched
+ * compressed assets).
+ */
 object Fonts {
     fun install(context: Context): File {
         val dir = File(context.filesDir, "fonts").apply { mkdirs() }
+        val stamp = File(dir, ".installed")
+        val version = BuildConfig.VERSION_CODE.toString()
+        if (runCatching { stamp.readText() }.getOrNull() == version) return dir
         val assets = context.assets
         val names = runCatching { assets.list("fonts")?.toList().orEmpty() }.getOrDefault(emptyList())
         for (name in names) {
@@ -107,6 +116,7 @@ object Fonts {
             }
             Timber.i("Installed font %s (%d bytes)", name, target.length())
         }
+        runCatching { stamp.writeText(version) }
         return dir
     }
 }

@@ -159,7 +159,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Timber.i("Device report:\n%s", DeviceReport.full(this))
+        // MediaCodecList and display queries take a few hundred ms on a TV's SoC: not on the main thread.
+        val ctx = this
+        Thread({ runCatching { Timber.i("Device report:\n%s", DeviceReport.full(ctx)) } }, "device-report").start()
         val tv = isTelevision(this)
         WatchNext.itemIdFrom(intent?.data)?.let { pendingPlayId = it }
         linkCodeFrom(intent?.data)?.let { pendingLinkCode = it }
@@ -297,7 +299,15 @@ private fun TvRoot(onUnauthorized: () -> Unit) {
     val openMovie = { it: Item -> nav.navigate(Route.Movie(it.id, it.title)) }
     val openDiscover = { type: String, tmdbId: Int -> nav.navigate(Route.DiscoverDetail(type, tmdbId)) }
     TvShell(current = page, onSelect = ::go, onSwitchProfile = { scope.launch { app.prefs.clearProfile() } }) {
-        NavHost(nav, startDestination = Route.Home) {
+        // No page transitions on the TV: navigation-compose's default is a 700 ms crossfade,
+        // two full pages blended for ~40 frames on every page change (measured: p90 40 ms).
+        NavHost(
+            nav, startDestination = Route.Home,
+            enterTransition = { androidx.compose.animation.EnterTransition.None },
+            exitTransition = { androidx.compose.animation.ExitTransition.None },
+            popEnterTransition = { androidx.compose.animation.EnterTransition.None },
+            popExitTransition = { androidx.compose.animation.ExitTransition.None },
+        ) {
             composable<Route.Home> { TvHome(onOpenSeries = openSeries, onOpenMovie = openMovie, onUnauthorized = onUnauthorized, refreshTick = homeTick) }
             composable<Route.Series> { entry ->
                 val r = entry.toRoute<Route.Series>()

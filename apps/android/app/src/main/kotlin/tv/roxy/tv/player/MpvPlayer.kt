@@ -364,7 +364,7 @@ class MpvPlayer(
         // subs in, switching back to the dub drops to signs & songs (or off).
         if (options.subMode != "none") {
             val all = tracksWithOverrides()
-            val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.lang.orEmpty()
+            val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.let { audioLangOf(it) }.orEmpty()
             val sub = chooseSubtitle(all, options.subMode, options.subLangs, lang, options.anime)
             setSubtitleTrack(sub?.id ?: 0)
             Timber.i("subtitle policy after audio change (%s) -> %s", lang, sub?.id ?: "off")
@@ -468,7 +468,9 @@ class MpvPlayer(
         }
     }
 
-    private val signsRegex = Regex("""(?i)\b(signs?|songs?|s&s|signs/songs|forced)\b""")
+    // Signs & songs tracks go by many names: "Signs/Songs", "Forced", "[FOR DUB]" (FMA:B),
+    // "English [ForcedNarrative]" (Netflix rips), "Dubtitles".
+    private val signsRegex = Regex("""(?i)\b(signs?|songs?|s&s|signs/songs|forced\w*|for dub|dubtitles?)\b""")
     private val fullRegex = Regex("""(?i)\b(full|dialog(ue)?|complete)\b""")
 
     /** "signs" / "full" / "" from a subtitle track's title: carries a viewer's pick to the next episode. */
@@ -526,7 +528,16 @@ class MpvPlayer(
     /** The language mpv ended up playing, from the current audio track. */
     private fun currentAudioLang(): String {
         val aid = currentTrackId("audio")
-        return tracks().firstOrNull { it.type == "audio" && it.id == aid }?.lang.orEmpty()
+        return tracks().firstOrNull { it.type == "audio" && it.id == aid }?.let { audioLangOf(it) }.orEmpty()
+    }
+
+    /**
+     * An audio track's language: its tag, or, untagged (common on fansub dual-audio
+     * releases), a language named in its title ("English 5.1", "Japanese").
+     */
+    fun audioLangOf(t: Track): String {
+        if (t.lang.isNotEmpty() && t.lang != "und") return t.lang
+        return Languages.all.firstOrNull { l -> Regex("""(?i)\b${Regex.escape(l.name)}\b""").containsMatchIn(t.title) }?.iso3.orEmpty()
     }
 
     /** The adb/diagnostics subtitle override; used for the first file only. */

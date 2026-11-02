@@ -41,6 +41,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -138,8 +143,14 @@ class FocusMemory(private val saved: androidx.compose.runtime.MutableState<Strin
         set(value) { saved.value = value }
 
     private val requesters = HashMap<String, FocusRequester>()
+    private val modifiers = HashMap<String, Modifier>()
 
     fun requester(key: String): FocusRequester = requesters.getOrPut(key) { FocusRequester() }
+
+    /** [focusKey]'s modifier, built once per key: an equal modifier lets a card skip recomposition. */
+    fun modifier(key: String): Modifier = modifiers.getOrPut(key) {
+        Modifier.focusRequester(requester(key)).onFocusChanged { if (it.isFocused) this.key = key }
+    }
 
     /** Focus the remembered element, or [fallback]; false when neither is on screen yet. */
     fun restore(fallback: String? = null): Boolean {
@@ -190,8 +201,7 @@ fun rememberFocusMemory(): FocusMemory {
 }
 
 /** Registers this element with [memory] under [key]: focus on it is remembered and restorable. */
-fun Modifier.focusKey(memory: FocusMemory, key: String): Modifier =
-    this.focusRequester(memory.requester(key)).onFocusChanged { if (it.isFocused) memory.key = key }
+fun Modifier.focusKey(memory: FocusMemory, key: String): Modifier = this.then(memory.modifier(key))
 
 /**
  * A focusable, clickable box with no look of its own: the caller draws from [focused].
@@ -211,10 +221,12 @@ fun TvFocusable(
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    if (onFocused != null) LaunchedEffect(focused) { if (focused) onFocused() }
+    // Called straight from the focus change, not from an effect a frame later: the row and
+    // page scrolls it starts then begin in the same frame as the focus move.
+    val onFocusedNow by rememberUpdatedState(onFocused)
     Box(
         modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged { val f = it.isFocused; if (f && !focused) onFocusedNow?.invoke(); focused = f }
             .onKeyEvent { ev ->
                 val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
                 if (enabled && ok && ev.type == KeyEventType.KeyDown && (ev.nativeKeyEvent as NativeKeyEvent).repeatCount == 0) { onClick(); true } else false
@@ -233,13 +245,28 @@ fun TvFocusable(
  */
 @Composable
 fun TvCard(onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
-    TvFocusable(onClick = onClick, modifier = modifier, onFocused = onFocused) { focused ->
-        Box(
-            modifier = Modifier
-                .border(TvDims.FocusBorder, if (focused) RoxyColors.accent else Color.Transparent)
-                .padding(TvDims.FocusBorder),
-        ) { content() }
-    }
+    // Focus only changes what is drawn, so it is read in the draw phase: moving focus along
+    // a row redraws two frames and recomposes nothing. No touch handler: a remote drives it.
+    val focused = remember { mutableStateOf(false) }
+    val onFocusedNow by rememberUpdatedState(onFocused)
+    val onClickNow by rememberUpdatedState(onClick)
+    Box(
+        modifier = modifier
+            .onFocusChanged { val f = it.isFocused; if (f && !focused.value) onFocusedNow?.invoke(); focused.value = f }
+            .onKeyEvent { ev ->
+                val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
+                if (ok && ev.type == KeyEventType.KeyDown && (ev.nativeKeyEvent as NativeKeyEvent).repeatCount == 0) { onClickNow(); true } else false
+            }
+            .focusable()
+            .drawWithContent {
+                drawContent()
+                if (focused.value) {
+                    val w = TvDims.FocusBorder.toPx()
+                    drawRect(RoxyColors.accent, topLeft = Offset(w / 2, w / 2), size = Size(size.width - w, size.height - w), style = Stroke(w))
+                }
+            }
+            .padding(TvDims.FocusBorder),
+    ) { content() }
 }
 
 /** Crunchyroll's episode code: "E2" in the first season, "S2 E1" after it; "" when unknown. */
@@ -371,8 +398,15 @@ fun ThumbCard(
 fun TvRow(
     title: String, rowKey: String, items: List<Item>, api: RoxyApi, memory: FocusMemory,
     onClick: (Item) -> Unit, onRowFocused: (itemKey: String) -> Unit, modifier: Modifier = Modifier, thumbs: Boolean = false,
-    upKey: String? = null, downKey: String? = null,
+    upKey: () -> String? = { null }, downKey: () -> String? = { null },
 ) {
+    // Up / Down targets are resolved when the remote moves focus, not in composition: the
+    // rows above and below remember their last card in a plain map, and a focus move in one
+    // row then recomposes no other row.
+    val upTarget by rememberUpdatedState(upKey)
+    val downTarget by rememberUpdatedState(downKey)
+    val click by rememberUpdatedState(onClick)
+    val rowFocused by rememberUpdatedState(onRowFocused)
     // Three cards of a row about to scroll into view are composed ahead of it.
     val rowState = rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 3) })
     // The focused card's index drives the scroll through a flow, so a focus change does
@@ -387,17 +421,20 @@ fun TvRow(
         Text(title, color = RoxyColors.muted, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TvDims.ContentStart))
         CompositionLocalProvider(LocalBringIntoViewSpec provides NoBringIntoView) {
         LazyRow(state = rowState, modifier = Modifier.padding(start = TvDims.RowClip), contentPadding = PaddingValues(start = TvDims.CardStart - TvDims.RowClip, end = TvDims.CardStart)) {
-            itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
+            itemsIndexed(items, key = { _, it -> it.id }, contentType = { _, it -> if (thumbs || it.isEpisode) 1 else 0 }) { i, item ->
                 val key = "$rowKey/${item.id}"
-                val focusMod = Modifier.focusKey(memory, key).focusProperties {
-                    if (upKey != null) up = memory.requester(upKey)
-                    if (downKey != null) down = memory.requester(downKey)
+                val focusMod = remember(key) {
+                    Modifier.focusKey(memory, key).focusProperties {
+                        upTarget()?.let { up = memory.requester(it) }
+                        downTarget()?.let { down = memory.requester(it) }
+                    }
                 }
-                val focused = { pivot.value = i to pivot.value.second + 1; onRowFocused(key) }
+                val focused = remember(key, i) { { pivot.value = i to pivot.value.second + 1; rowFocused(key) } }
+                val clicked = remember(item) { { click(item) } }
                 if (thumbs || item.isEpisode) {
-                    ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = { onClick(item) }, modifier = focusMod, onFocused = focused)
+                    ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = clicked, modifier = focusMod, onFocused = focused)
                 } else {
-                    PosterCard(item, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = { onClick(item) }, modifier = focusMod, onFocused = focused)
+                    PosterCard(item, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = clicked, modifier = focusMod, onFocused = focused)
                 }
             }
         }
