@@ -647,6 +647,18 @@ class MpvPlayer(
         if (destroyed) return
         Timber.d("surfaceChanged %dx%d", width, height)
         applySurfaceSize(width, height)
+        // mpv draws its first frame at a new size into a buffer that is still the old size
+        // (the buffer was taken before the size changed). Playing, the next frame replaces it;
+        // paused, it stayed: after a rotation the picture was a zoomed-in corner, or squeezed
+        // into part of the screen. Once the resize has settled, draw the frame again.
+        main.removeCallbacks(redrawAfterResize)
+        main.postDelayed(redrawAfterResize, 150)
+    }
+
+    /** Setting the size again makes mpv lay out and draw the current frame once more. */
+    private val redrawAfterResize = Runnable {
+        val (w, h) = lastSurface ?: return@Runnable
+        if (!destroyed && surfaceReady) mpv.setPropertyString("android-surface-size", "${w}x$h")
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -656,6 +668,7 @@ class MpvPlayer(
     }
 
     private fun releaseSurface() {
+        main.removeCallbacks(redrawAfterResize)
         surfaceReady = false
         mpv.setPropertyString("vo", "null")
         mpv.setPropertyString("force-window", "no")
