@@ -126,13 +126,13 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
                     UpdateState.None -> updateNote?.substringBefore("  ·  ") ?: BuildConfig.VERSION_NAME
                 }
                 PanelRow(
-                    label = "Check for updates", value = value, selected = selected == "update", memory = memory, key = "update", right = "opt/update/btn",
+                    label = "Check for updates", value = value.takeIf { updateState !is UpdateState.None }, selected = selected == "update", memory = memory, key = "update", right = "opt/update/btn",
                     onFocused = { selected = "update" },
                     onClick = { if (updateState is UpdateState.None) app.updates.checkNow() else app.updates.install() },
                 )
             }
             item(key = "about") {
-                PanelRow(label = "About", value = BuildConfig.VERSION_NAME, selected = selected == "about", memory = memory, key = "about", onFocused = { selected = "about" }, onClick = { selected = "about" })
+                PanelRow(label = "About", value = null, selected = selected == "about", memory = memory, key = "about", onFocused = { selected = "about" }, onClick = { selected = "about" })
             }
             item(key = "h4") { GroupHeading("ACCOUNT") }
             item(key = "logout") {
@@ -251,12 +251,14 @@ private fun GroupHeading(text: String) {
     Text(text, color = RoxyColors.onBackground, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.padding(start = RowStart, top = 26.dp, bottom = 4.dp))
 }
 
-/** A setting in the panel: focus shows its options at the right; the current value reads at the right of the line. */
+/**
+ * A setting in the panel: just its name. Focus shows its options at the right with the
+ * current one ticked, so the value is not repeated here (it squeezed the names: "Subtitle/CC Langu...").
+ */
 @Composable
 private fun SettingRow(s: Setting, selected: Boolean, memory: FocusMemory, onSelect: () -> Unit) {
-    val valueLabel = s.options.firstOrNull { it.first == s.value }?.second ?: s.value
     val chosen = s.options.firstOrNull { it.first == s.value }?.first ?: s.options.first().first
-    PanelRow(label = s.label, value = valueLabel.substringBefore(" ("), selected = selected, memory = memory, key = "set/${s.key}", right = "opt/${s.key}/$chosen", onFocused = onSelect, onClick = onSelect)
+    PanelRow(label = s.label, value = null, selected = selected, memory = memory, key = "set/${s.key}", right = "opt/${s.key}/$chosen", onFocused = onSelect, onClick = onSelect)
 }
 
 /** One line of the panel: the label at the left, the value (muted, or dark on the accent) at the right. */

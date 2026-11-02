@@ -38,6 +38,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -292,7 +295,14 @@ private fun TvPickerRow(
                 repeat(2) { Box(Modifier.size(tile).clip(CircleShape).background(RoxyColors.surfaceHigh)) }
             }
             else -> Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-                profiles.forEach { p -> TvProfileTile(p, api, tile, managing = managing, current = p.id == lastId, onClick = { onPick(p) }) }
+                // The picker opens with the last profile used focused (or the first): it used to
+                // open with nothing focused, so the first press of a key only found the row.
+                val start = remember { FocusRequester() }
+                val startId = profiles.firstOrNull { it.id == lastId }?.id ?: profiles.firstOrNull()?.id
+                LaunchedEffect(startId) { repeat(6) { withFrameNanos { }; if (runCatching { start.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+                profiles.forEach { p ->
+                    TvProfileTile(p, api, tile, managing = managing, current = p.id == lastId, onClick = { onPick(p) }, modifier = if (p.id == startId) Modifier.focusRequester(start) else Modifier)
+                }
                 if (profiles.size < 6) TvAddTile(tile, onAdd)
             }
         }
@@ -307,8 +317,8 @@ private fun TvPickerRow(
 
 /** One avatar for the TV row: the ring space is reserved so the names line up, focus is a white ring. */
 @Composable
-private fun TvProfileTile(p: Profile, api: RoxyApi, tile: Dp, managing: Boolean, current: Boolean, onClick: () -> Unit) {
-    TvFocusable(onClick = onClick) { focused ->
+private fun TvProfileTile(p: Profile, api: RoxyApi, tile: Dp, managing: Boolean, current: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TvFocusable(onClick = onClick, modifier = modifier) { focused ->
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 6.dp)) {
             Box(modifier = Modifier.size(tile + 16.dp), contentAlignment = Alignment.Center) {
                 val ring = if (focused) Color.White else if (current) RoxyColors.accent else Color.Transparent
@@ -449,6 +459,11 @@ fun AvatarCircle(name: String, imageUrl: String?, size: Dp, modifier: Modifier =
  */
 @Composable
 private fun ProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit, onDeleted: () -> Unit, onCancel: () -> Unit) {
+    // The TV gets its own editor: big focusable avatars and wired D-pad moves (this one is for touch).
+    if (isTelevision(LocalContext.current)) {
+        tv.roxy.tv.ui.tv.TvProfileEditor(api, profile, onSaved, onDeleted, onCancel)
+        return
+    }
     val scope = rememberCoroutineScope()
     var name by rememberSaveable { mutableStateOf(profile?.name ?: "") }
     var picked by remember { mutableStateOf<Character?>(null) } // new choice; null = keep
