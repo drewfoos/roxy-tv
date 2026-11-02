@@ -209,6 +209,9 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 	// Public: the login screen's network sweep reads this to tell a Roxy server from
 	// whatever else answers on the port (Jellyfin shares 8096).
 	id, _ := s.store.ServerID(r.Context())
+	// Any page may read this (no credentials involved): the web sign-in's "Change server"
+	// checks an address is a Roxy server before sending the browser there.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"product": "roxy",
 		"id":      id,
