@@ -60,6 +60,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	// Discover is set up even before a TMDB key exists; it switches on when one is entered.
 	if meta != nil {
 		s.discover = discover.New(st, cfg, meta.TMDBProvider())
+		s.discover.SetImportHook(s.hooks.IngestArrFiles)
 		s.discover.Start(context.Background())
 		s.startCharacterWorker(context.Background())
 	}

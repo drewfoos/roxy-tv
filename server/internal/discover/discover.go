@@ -108,15 +108,17 @@ type PathMapping struct {
 const settingsKey = "arr"
 
 type Service struct {
-	store   *store.Store
-	cfg     *config.Config
-	tmdb    *metadata.TMDB
-	sonarr  *arr.Client
-	radarr  *arr.Client
-	arrCfg  ArrSettings
-	browse  *ttlCache[*BrowseResult]
-	people  *ttlCache[*Person]
-	similar *ttlCache[[]Item]
+	store  *store.Store
+	cfg    *config.Config
+	tmdb   *metadata.TMDB
+	sonarr *arr.Client
+	radarr *arr.Client
+	arrCfg ArrSettings
+	// importHook adds files an arr app imported to the library (see SetImportHook).
+	importHook func(ctx context.Context, arrPaths []string) int
+	browse     *ttlCache[*BrowseResult]
+	people     *ttlCache[*Person]
+	similar    *ttlCache[[]Item]
 
 	mu     sync.Mutex
 	genres map[string]map[int]string // "tv"/"movie" -> id -> name

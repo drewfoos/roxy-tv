@@ -13,6 +13,7 @@ func TestFinishPlayCountsOncePerViewing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { s.Close() }) // Windows cannot delete an open database
 	ctx := context.Background()
 	// The scope and item rows don't matter here; only the counting does.
 	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {

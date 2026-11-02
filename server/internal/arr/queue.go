@@ -129,6 +129,26 @@ type Movie struct {
 	DigitalRelease  *time.Time `json:"digitalRelease"`
 	PhysicalRelease *time.Time `json:"physicalRelease"`
 	LastSearchTime  *time.Time `json:"lastSearchTime"`
+	MovieFile       *struct {
+		Path string `json:"path"`
+	} `json:"movieFile"`
+}
+
+// EpisodeFilePaths: where Sonarr keeps a series' episode files (its own paths).
+func (c *Client) EpisodeFilePaths(ctx context.Context, seriesID int) ([]string, error) {
+	var files []struct {
+		Path string `json:"path"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/episodefile", url.Values{"seriesId": {strconv.Itoa(seriesID)}}, nil, &files); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if f.Path != "" {
+			out = append(out, f.Path)
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) Movie(ctx context.Context, movieID int) (*Movie, error) {

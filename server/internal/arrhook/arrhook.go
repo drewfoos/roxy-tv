@@ -263,6 +263,28 @@ func (s *Service) mappingsAndRoots(ctx context.Context) (settings, []string, boo
 	return cfg, roots, true
 }
 
+// IngestArrFiles adds files an arr app reports having (its own paths) that the library
+// does not have yet. The download tracker calls it when a request's file count goes up,
+// so an import shows up in seconds even without a webhook set up. Returns how many were added.
+func (s *Service) IngestArrFiles(ctx context.Context, paths []string) int {
+	n := 0
+	for _, p := range paths {
+		local, ok := s.resolve(ctx, p)
+		if !ok {
+			continue
+		}
+		if part, err := s.store.GetPartByPath(ctx, local); err == nil && part != nil {
+			continue // already in the library
+		}
+		if err := s.lib.IngestPath(ctx, local); err != nil {
+			slog.Warn("import: ingest", "path", local, "err", err)
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 // removePath drops the source whose first part is at path. True when one was there.
 func (s *Service) removePath(ctx context.Context, path string) bool {
 	part, err := s.store.GetPartByPath(ctx, path)

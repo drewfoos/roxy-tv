@@ -229,6 +229,12 @@ func (s *Service) trackOnce(ctx context.Context) time.Duration {
 		if prev == nil || prev.State != d.State {
 			slog.Info("downloads: status", "title", r.Title, "state", d.State, "have", d.Have, "wanted", d.Wanted, "msg", d.Message)
 		}
+		// The arr app has more files than last time: an import finished. Add them to the
+		// library now rather than waiting for a webhook or a scan. (After a restart there
+		// is no "last time"; the startup scan covers that.)
+		if prev != nil && d.Have > prev.Have && s.importHook != nil {
+			s.ingestImported(ctx, c, r)
+		}
 		s.dl.mu.Lock()
 		s.dl.status[r.ID] = d
 		s.dl.mu.Unlock()
@@ -247,6 +253,34 @@ func (s *Service) trackOnce(ctx context.Context) time.Duration {
 		return 10 * time.Second
 	}
 	return 2 * time.Minute
+}
+
+// SetImportHook: how the tracker adds newly imported files to the library (the arr
+// app's paths in, how many were added out). Set before Start.
+func (s *Service) SetImportHook(f func(ctx context.Context, arrPaths []string) int) { s.importHook = f }
+
+// ingestImported hands the title's files, as the arr app names them, to the import hook.
+func (s *Service) ingestImported(ctx context.Context, c *arr.Client, r *store.Request) {
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var paths []string
+	if c.Name == "radarr" {
+		m, err := c.Movie(cctx, r.ArrID)
+		if err != nil || m.MovieFile == nil {
+			return
+		}
+		paths = []string{m.MovieFile.Path}
+	} else {
+		p, err := c.EpisodeFilePaths(cctx, r.ArrID)
+		if err != nil {
+			slog.Debug("downloads: episode files", "title", r.Title, "err", err)
+			return
+		}
+		paths = p
+	}
+	if n := s.importHook(cctx, paths); n > 0 {
+		slog.Info("downloads: added to the library", "title", r.Title, "files", n)
+	}
 }
 
 // refreshClient asks the arr app to poll its download client (at most every 30 s, and
