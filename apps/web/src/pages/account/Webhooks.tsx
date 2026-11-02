@@ -85,7 +85,7 @@ export function WebhooksPage() {
             }
           />
         ))}
-        {keys.data && keys.data.keys.length === 0 && <Notice>No keys yet.</Notice>}
+        {keys.data && !keys.data.keys?.length && <Notice>No keys yet.</Notice>}
       </div>
       <div className="acc-actions">
         <ActionButton onClick={() => make('Sonarr')}>New key for Sonarr</ActionButton>
@@ -109,7 +109,7 @@ export function WebhooksPage() {
             }
           />
         ))}
-        {events.data && events.data.events.length === 0 && <Notice>Nothing has arrived yet.</Notice>}
+        {events.data && !events.data.events?.length && <Notice>Nothing has arrived yet.</Notice>}
       </div>
     </section>
   )

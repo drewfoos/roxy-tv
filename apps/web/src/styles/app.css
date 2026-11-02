@@ -1002,3 +1002,8 @@ img { display: block; }
   .browse__head span { font-size: 12px; }
   .browse__grid { padding: 0 16px; gap: 14px 8px; grid-template-columns: repeat(3, 1fr); }
 }
+
+/* A page that crashed (PageErrorBoundary). */
+.page-error { max-width: 640px; margin: 120px auto 0; padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }
+.page-error h1 { font-size: 24px; }
+.page-error__actions { display: flex; gap: 12px; }

@@ -74,7 +74,7 @@ export function LibraryPage() {
               {editing?.id === f.id && <FolderEditor folder={f} onDone={() => setEditing(null)} run={run} />}
             </div>
           ))}
-          {folders.data && folders.data.libraries.length === 0 && <Notice>No folders yet. Add the one your downloads land in.</Notice>}
+          {folders.data && !folders.data.libraries?.length && <Notice>No folders yet. Add the one your downloads land in.</Notice>}
         </div>
       )}
       {adding ? (

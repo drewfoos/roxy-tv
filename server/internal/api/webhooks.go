@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/auth"
+	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 // Sonarr / Radarr webhooks (docs/api/arr-webhooks.md). The arr app is configured with a
@@ -71,6 +73,9 @@ func (s *Server) webhookEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	if events == nil {
+		events = []store.WebhookEvent{} // [] not null: clients read .length
+	}
 	writeJSON(w, 200, map[string]any{"events": events})
 }
 
@@ -85,6 +90,9 @@ func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	if keys == nil {
+		keys = []model.APIKey{}
 	}
 	writeJSON(w, 200, map[string]any{"keys": keys})
 }
