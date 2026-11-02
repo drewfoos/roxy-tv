@@ -220,7 +220,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     tokenRef.current = ''
     const subs = createSubtitleRenderer(v)
     subsRef.current = subs
-    const start = item.userData?.played ? 0 : (item.userData?.positionMs ?? 0) / 1000
+    // A watched episode with a position is a rewatch under way: resume it, as the apps do.
+    const start = (item.userData?.positionMs ?? 0) / 1000
     load(start > 5 ? start : 0, audioIndex).catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
     const sub = subTracks.find((s) => s.index === subIndex) ?? null
     if (sub) subs.setTrack(source.id, sub).catch(() => undefined)

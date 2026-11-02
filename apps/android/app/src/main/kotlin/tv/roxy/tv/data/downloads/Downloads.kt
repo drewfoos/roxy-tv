@@ -277,7 +277,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
         for (p in mine) {
-            val ok = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs) }.isSuccess
+            val ok = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs, at = p.at) }.isSuccess
             if (!ok) return
             _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
             Timber.i("synced offline progress item=%s pos=%dms", p.itemId, p.positionMs)

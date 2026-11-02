@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/auth"
@@ -79,6 +80,9 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		PositionMs    int64  `json:"positionMs"`
 		AudioIndex    *int   `json:"audioIndex"`
 		SubtitleIndex *int   `json:"subtitleIndex"`
+		// When the position was reached (Unix ms), sent by a phone replaying reports it
+		// made offline. Live reports leave it out.
+		At int64 `json:"at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ItemID == "" {
 		writeError(w, 400, "invalid request body")
@@ -96,6 +100,18 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "item not found")
 		return
 	}
+	if body.At > 0 {
+		cur, err := s.store.GetUserItemData(r.Context(), p.ScopeID, it.GUID)
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		if cur != nil && staleReport(body.At, cur.LastPlayedAt) {
+			slog.Info("progress: older than the item's latest activity, ignored", "item", it.Title, "positionMs", body.PositionMs)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
 	played := it.RuntimeMs != nil && *it.RuntimeMs > 0 && float64(body.PositionMs) >= float64(*it.RuntimeMs)*playedThreshold
 	if played {
 		err = s.store.FinishPlay(r.Context(), p.ScopeID, it.GUID)
@@ -108,6 +124,13 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// staleReport: a replayed offline position from before the item's latest activity
+// (finished or watched further on another device since) would wind it back, and on a
+// watched episode leave it watched and part-way at once. Such a report is dropped.
+func staleReport(atMs int64, lastPlayed time.Time) bool {
+	return atMs > 0 && !lastPlayed.IsZero() && time.UnixMilli(atMs).Before(lastPlayed)
 }
 
 // POST|DELETE /v1/me/played/{itemId}

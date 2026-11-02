@@ -412,8 +412,9 @@ class RoxyApi(private val prefs: Prefs) {
     /** What this profile played, newest first (My Lists > History). */
     suspend fun history(limit: Int = 100): ItemsResponse = get("/v1/me/history?limit=$limit")
 
-    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null) {
-        val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex)
+    /** [at]: when an offline report was made (Unix ms), so the server can drop it if it is out of date. */
+    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null) {
+        val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at)
         postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body))
     }
 
@@ -1289,7 +1290,7 @@ data class WebhookEvent(val id: Long = 0, val at: String = "", val source: Strin
 data class WebhookEventsResponse(val events: List<WebhookEvent> = emptyList())
 
 @Serializable
-private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null)
+private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null, val at: Long? = null)
 
 /**
  * Subtitle tracks as mpv will number them (1..N in container order; embedded first,
