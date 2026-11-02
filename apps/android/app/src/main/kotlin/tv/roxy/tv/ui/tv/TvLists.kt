@@ -72,7 +72,9 @@ fun TvMyLists(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
         Row(modifier = Modifier.padding(start = TvDims.FocusBorder, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Watchlist", "History").forEachIndexed { i, label ->
                 TvTab(
-                    label, selected = i == tab, onClick = { tab = i }, onFocused = { tab = i },
+                    // Not while the rail is closing: focus drops on the first tab then, and
+                    // switching to it threw away the list (and the card) being returned to.
+                    label, selected = i == tab, onClick = { tab = i }, onFocused = { if (!FocusMemory.muted()) tab = i },
                     modifier = Modifier.focusKey(memory, tabKey(i)).focusProperties { firstCard.value[i]?.let { down = memory.requester(it) } },
                 )
             }

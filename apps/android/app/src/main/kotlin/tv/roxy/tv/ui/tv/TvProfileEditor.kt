@@ -99,7 +99,12 @@ fun TvProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit,
     val nameFocus = remember { FocusRequester() }
     val saveFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
-    val firstTile = remember { FocusRequester() }
+    // One requester per avatar shown, so Down from the search field can aim at one that is on
+    // screen (a fixed "first avatar" was a dead end once the grid had scrolled).
+    val tileFocus = remember { HashMap<Int, FocusRequester>() }
+    fun tile(id: Int) = tileFocus.getOrPut(id) { FocusRequester() }
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    fun firstVisibleTile(): FocusRequester? = (gridState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? Int)?.let { tile(it) }
     LaunchedEffect(Unit) { repeat(6) { withFrameNanos { }; if (runCatching { nameFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
 
     fun save() {
@@ -156,7 +161,7 @@ fun TvProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit,
         Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 32.dp)) {
             TvTextField(
                 query, { query = it }, placeholder = "Search any anime character, e.g. Roxy Migurdia", icon = Icons.Outlined.Search, imeAction = ImeAction.Search,
-                modifier = Modifier.fillMaxWidth().padding(end = 16.dp).focusRequester(searchFocus).focusProperties { left = nameFocus; if (!shown.isNullOrEmpty()) down = firstTile },
+                modifier = Modifier.fillMaxWidth().padding(end = 16.dp).focusRequester(searchFocus).focusProperties { left = nameFocus; firstVisibleTile()?.let { down = it } },
             )
             Text(
                 if (results != null) "RESULTS" else "FROM YOUR LIBRARY", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium,
@@ -173,6 +178,7 @@ fun TvProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit,
                 )
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(AvatarColumns),
+                    state = gridState,
                     contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp, end = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(20.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -182,7 +188,7 @@ fun TvProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit,
                         AvatarTile(
                             c, chosen = picked?.id == c.id, onClick = { picked = c },
                             modifier = Modifier
-                                .then(if (i == 0) Modifier.focusRequester(firstTile) else Modifier)
+                                .focusRequester(tile(c.id))
                                 .focusProperties {
                                     if (i < AvatarColumns) up = searchFocus
                                     if (i % AvatarColumns == 0) left = saveFocus

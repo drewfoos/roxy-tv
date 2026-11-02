@@ -129,8 +129,8 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
                 TvUpdateNotice(update, modifier = Modifier.align(Alignment.BottomCenter))
             }
             if (current != null) Rail(
-                current, open = railOpen, onSelect = { p -> railOpen = false; onSelect(p); enterTick++ }, onSwitchProfile = onSwitchProfile,
-                onClosed = { railOpen = false; enterTick++ },
+                current, open = railOpen, onSelect = { p -> FocusMemory.muteBriefly(); railOpen = false; onSelect(p); enterTick++ }, onSwitchProfile = onSwitchProfile,
+                onClosed = { FocusMemory.muteBriefly(); railOpen = false; enterTick++ },
             )
             // Back on a rail page opens the rail, also when nothing on the page has focus (a
             // card that went away). Registered after the page so it comes before NavHost's own

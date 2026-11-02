@@ -112,13 +112,21 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
         onDispose { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
     }
     // A fullscreen/exit button locks the orientation to get there. The lock is released
-    // only once the phone is physically held that way (YouTube's rule), so the button's
-    // choice sticks until the phone is turned, and turning it then works again.
+    // only once the phone is physically held the way the button asked AND the screen has
+    // got there (YouTube's rule), and only with auto-rotate on. Two bugs before: the check
+    // compared the sensor with the screen as it was, so pressing Fullscreen with the phone
+    // upright (or flat on a table, the sensor flapping) "matched" at once and undid the
+    // press; and with rotation lock on, releasing meant going back to portrait mid-video.
     val physical = rememberPhysicalOrientation()
     LaunchedEffect(landscape, physical) {
-        if (physical == null) return@LaunchedEffect
-        val locked = activity?.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_FULL_USER
-        if (locked && physical == landscape) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+        val a = activity ?: return@LaunchedEffect
+        val target = when (a.requestedOrientation) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE -> true
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT -> false
+            else -> return@LaunchedEffect // not locked
+        }
+        val autoRotate = android.provider.Settings.System.getInt(a.contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+        if (autoRotate && physical == target && landscape == target) a.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
     }
     // System bars go with the orientation: hidden over the fullscreen video.
     LaunchedEffect(landscape) {

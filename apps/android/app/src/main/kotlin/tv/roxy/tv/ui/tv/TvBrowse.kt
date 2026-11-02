@@ -58,6 +58,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 private val CategoryWidth = 230.dp
 private val CategoryStart = TvDims.RailWidth + 15.dp
 private const val BrowseColumns = 5
+private const val SearchColumns = 6
 
 /** A way of slicing the library: a label, an icon for the fixed ones, and the rule. */
 private class Category(val key: String, val label: String, val icon: ImageVector? = null, val pick: (List<Item>) -> List<Item>)
@@ -158,7 +159,22 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     val (all, error) = rememberLibrary()
     val memory = rememberFocusMemory()
     var query by rememberSaveable { mutableStateOf("") }
-    RegisterPageEntry { memory.restore("search/field") }
+    val gridState = rememberLazyGridState()
+    val lastCard = remember { arrayOfNulls<String>(1) }
+    // Down from the field: the card last focused when it is on screen, else the first card
+    // showing. A fixed "first result" was a dead end once the grid had scrolled.
+    fun gridTarget(): String? {
+        val onScreen = gridState.layoutInfo.visibleItemsInfo.map { "search/${it.key}" }
+        return lastCard[0]?.takeIf { it in onScreen } ?: onScreen.firstOrNull()
+    }
+    // Back from the rail: the card that had focus when it is on screen, else the field.
+    // Back from the rail: the card last focused when it is on screen, else the field. (Not
+    // "whatever had focus": closing the rail drops focus on the field first, so that would
+    // always be the field.)
+    RegisterPageEntry {
+        val k = lastCard[0]?.takeIf { it == gridTarget() }
+        if (k != null) runCatching { memory.requester(k).requestFocus() }.getOrDefault(false) else memory.restore("search/field")
+    }
     // Lower-cased once per library load, not on every keystroke.
     val index = remember(all) {
         all.orEmpty().sortedByDescending { it.dateCreated.orEmpty() }.map { it to (it.title + "\n" + it.genres.joinToString("\n")).lowercase() }
@@ -171,11 +187,18 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     }
     Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.RailWidth)) {
         Spacer(Modifier.height(40.dp))
-        TvTextField(query, { query = it }, placeholder = "Search series, movies, genres", imeAction = ImeAction.Search, modifier = Modifier.padding(start = 15.dp, end = 85.dp).width(520.dp).focusKey(memory, "search/field").focusProperties { down = memory.requester("search/first") })
+        TvTextField(query, { query = it }, placeholder = "Search series, movies, genres", imeAction = ImeAction.Search, modifier = Modifier.padding(start = 15.dp, end = 85.dp).width(520.dp).focusKey(memory, "search/field").focusProperties { gridTarget()?.let { down = memory.requester(it) } })
         Spacer(Modifier.height(24.dp))
         if (all == null && error != null) { PageMessage(error, color = RoxyColors.error); return@Column }
         if (all != null && shown.isEmpty()) { PageMessage("No matches for \"${query.trim()}\"."); return@Column }
-        PosterGrid(shown, memory, key = "search", onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, startPadding = 15.dp - TvDims.FocusBorder)
+        // Six posters across at full card size: the Browse grid's five narrow posters sit beside
+        // its category list; here the cells were wider than the posters and the focus frame
+        // stood out past them.
+        PosterGrid(
+            shown, memory, key = "search", onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, startPadding = 15.dp - TvDims.FocusBorder,
+            state = gridState, lastCard = lastCard, columns = SearchColumns, cardWidth = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption,
+            upTarget = { memory.requester("search/field") },
+        )
     }
 }
 
@@ -186,13 +209,16 @@ private fun PosterGrid(
     startPadding: androidx.compose.ui.unit.Dp = 20.dp, resetKey: Any? = null,
     state: LazyGridState = rememberLazyGridState(), lastCard: Array<String?>? = null,
     leftTarget: (() -> androidx.compose.ui.focus.FocusRequester)? = null,
+    columns: Int = BrowseColumns, cardWidth: androidx.compose.ui.unit.Dp = TvDims.BrowseCardWidth, captionHeight: androidx.compose.ui.unit.Dp = TvDims.BrowseCaption,
+    upTarget: (() -> androidx.compose.ui.focus.FocusRequester)? = null,
+    onCardFocused: () -> Unit = {},
 ) {
     val app = RoxyApp.get(LocalContext.current)
     // A new category starts at the top (a lazy grid otherwise keeps the old first card in
     // view by key, which can be anywhere in the new order).
     LaunchedEffect(resetKey) { if (resetKey != null) state.scrollToItem(0) }
     LazyVerticalGrid(
-        columns = GridCells.Fixed(BrowseColumns),
+        columns = GridCells.Fixed(columns),
         state = state,
         contentPadding = PaddingValues(start = startPadding, end = 40.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -200,11 +226,12 @@ private fun PosterGrid(
     ) {
         itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
             PosterCard(
-                item, app.api, width = TvDims.BrowseCardWidth, captionHeight = TvDims.BrowseCaption,
+                item, app.api, width = cardWidth, captionHeight = captionHeight,
                 onClick = { if (item.isMovie) onOpenMovie(item) else onOpenSeries(item) },
                 modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i == 0) Modifier.focusRequester(memory.requester("$key/first")) else Modifier)
-                    .then(if (lastCard != null) Modifier.onFocusChanged { if (it.isFocused) lastCard[0] = "$key/${item.id}" } else Modifier)
-                    .then(if (leftTarget != null && i % BrowseColumns == 0) Modifier.focusProperties { left = leftTarget() } else Modifier),
+                    .then(if (lastCard != null) Modifier.onFocusChanged { if (it.isFocused) { lastCard[0] = "$key/${item.id}"; onCardFocused() } } else Modifier)
+                    .then(if (leftTarget != null && i % columns == 0) Modifier.focusProperties { left = leftTarget() } else Modifier)
+                    .then(if (upTarget != null && i < columns) Modifier.focusProperties { up = upTarget() } else Modifier),
             )
         }
     }

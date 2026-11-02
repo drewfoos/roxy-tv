@@ -160,7 +160,19 @@ class FocusMemory(private val saved: androidx.compose.runtime.MutableState<Strin
 
     /** [focusKey]'s modifier, built once per key: an equal modifier lets a card skip recomposition. */
     fun modifier(key: String): Modifier = modifiers.getOrPut(key) {
-        Modifier.focusRequester(requester(key)).onFocusChanged { if (it.isFocused) this.key = key }
+        Modifier.focusRequester(requester(key)).onFocusChanged { if (it.isFocused && android.os.SystemClock.uptimeMillis() > muteUntil) this.key = key }
+    }
+
+    companion object {
+        /**
+         * Closing the rail drops focus on a page's first element before the page's own entry
+         * puts it back; remembered as "last focused", that sent every page back to its top
+         * (Home's hero, the search field). The shell mutes the remembering for that moment.
+         */
+        @Volatile var muteUntil = 0L
+        fun muteBriefly() { muteUntil = android.os.SystemClock.uptimeMillis() + 400 }
+        /** True during that moment: focus landing somewhere now is not the user's doing. */
+        fun muted(): Boolean = android.os.SystemClock.uptimeMillis() <= muteUntil
     }
 
     /** Focus the remembered element, or [fallback]; false when neither is on screen yet. */
