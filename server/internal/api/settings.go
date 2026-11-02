@@ -52,12 +52,15 @@ func (s *Server) arrSettingsPut(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
 		return
 	}
-	var body discover.ArrSettings
+	// Decoded over the saved settings: a field the client does not send keeps its value.
+	// An older app that has never heard of a setting (the older-anime profile, say) must
+	// not wipe it on every save. Clearing a value means sending it empty or 0.
+	cur := s.discover.ArrSettings()
+	body := cur
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeError(w, 400, "bad body: "+err.Error())
 		return
 	}
-	cur := s.discover.ArrSettings()
 	if body.Sonarr.APIKey == maskedKey {
 		body.Sonarr.APIKey = cur.Sonarr.APIKey
 	}

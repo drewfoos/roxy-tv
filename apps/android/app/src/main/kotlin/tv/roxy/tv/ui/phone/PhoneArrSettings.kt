@@ -151,10 +151,12 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
             Picker("Root folder (where $name saves downloads)", p.rootFolders.map { it.path to it.path + (it.freeSpace.takeIf { f -> f > 0 }?.let { f -> "  ·  ${formatBytes(f)} free" } ?: "") }, cfg.rootFolder) { onChange(cfg.copy(rootFolder = it)) }
             RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.rootFolder } ?: p.rootFolders.firstOrNull(), name)
             Picker("Quality profile", p.qualityProfiles.map { it.id.toString() to it.name }, cfg.qualityProfileId.toString()) { onChange(cfg.copy(qualityProfileId = it.toIntOrNull() ?: 0)) }
+            // Anime goes to its own folder and profile on both (Radarr: an "Anime Movies" folder).
+            Picker(if (isSonarr) "Anime root folder" else "Anime movies root folder", listOf("" to "Same as above") + p.rootFolders.map { it.path to it.path }, cfg.animeRootFolder) { onChange(cfg.copy(animeRootFolder = it)) }
+            if (cfg.animeRootFolder.isNotEmpty()) RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.animeRootFolder }, name)
+            Picker(if (isSonarr) "Anime quality profile" else "Anime movies quality profile", listOf("0" to "Same as above") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.animeQualityProfileId.toString()) { onChange(cfg.copy(animeQualityProfileId = it.toIntOrNull() ?: 0)) }
             if (isSonarr) {
-                Picker("Anime root folder", listOf("" to "Same as above") + p.rootFolders.map { it.path to it.path }, cfg.animeRootFolder) { onChange(cfg.copy(animeRootFolder = it)) }
-                if (cfg.animeRootFolder.isNotEmpty()) RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.animeRootFolder }, name)
-                Picker("Anime quality profile", listOf("0" to "Same as above") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.animeQualityProfileId.toString()) { onChange(cfg.copy(animeQualityProfileId = it.toIntOrNull() ?: 0)) }
+                Picker("Older anime quality profile (before 2010, ended)", listOf("0" to "Same as anime") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.oldAnimeQualityProfileId.toString()) { onChange(cfg.copy(oldAnimeQualityProfileId = it.toIntOrNull() ?: 0)) }
                 Picker("Anime series type", listOf("standard" to "Standard (recommended)", "anime" to "Anime (absolute numbering)"), if (cfg.animeSeriesType == "anime") "anime" else "standard") { onChange(cfg.copy(animeSeriesType = it)) }
                 if (p.tags.isNotEmpty()) {
                     TagPicker("Tags", p.tags, cfg.tags) { onChange(cfg.copy(tags = it)) }

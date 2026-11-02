@@ -121,13 +121,13 @@ export function ArrPage() {
             <Select value={cfg.rootFolder ?? ''} options={[{ id: '', label: 'Choose…' }, ...folderOptions]} onChange={(v) => patch({ rootFolder: v })} />
           </Field>
           <Field label="Quality profile">
-            <Select value={cfg.qualityProfileId ?? 0} options={[{ id: 0, label: 'Choose…' }, ...profileOptions]} onChange={(v) => patch({ qualityProfileId: v || null })} />
+            <Select value={cfg.qualityProfileId ?? 0} options={[{ id: 0, label: 'Choose…' }, ...profileOptions]} onChange={(v) => patch({ qualityProfileId: v || 0 })} />
           </Field>
           <Field label={kind === 'sonarr' ? 'Anime root folder' : 'Anime movies root folder'} hint={cfg.animeRootFolder ? rootHint(cfg.animeRootFolder) : undefined}>
             <Select value={cfg.animeRootFolder ?? ''} options={[{ id: '', label: 'Same as above' }, ...folderOptions]} onChange={(v) => patch({ animeRootFolder: v })} />
           </Field>
           <Field label={kind === 'sonarr' ? 'Anime quality profile' : 'Anime movies quality profile'}>
-            <Select value={cfg.animeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as above' }, ...profileOptions]} onChange={(v) => patch({ animeQualityProfileId: v || null })} />
+            <Select value={cfg.animeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as above' }, ...profileOptions]} onChange={(v) => patch({ animeQualityProfileId: v || 0 })} />
           </Field>
           {kind === 'sonarr' && (
             <>
@@ -135,7 +135,7 @@ export function ArrPage() {
                 label="Older anime quality profile"
                 hint="For anime that first aired before 2010 and has ended, which often exists only as DVD or 480p releases. Shows still airing (One Piece) keep the anime profile."
               >
-                <Select value={cfg.oldAnimeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as anime' }, ...profileOptions]} onChange={(v) => patch({ oldAnimeQualityProfileId: v || null })} />
+                <Select value={cfg.oldAnimeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as anime' }, ...profileOptions]} onChange={(v) => patch({ oldAnimeQualityProfileId: v || 0 })} />
               </Field>
               <Field
                 label="Anime series type"
