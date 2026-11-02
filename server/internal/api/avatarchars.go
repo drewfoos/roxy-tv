@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -97,6 +98,13 @@ func (s *Server) lookupCharacters(ctx context.Context, seriesID string) ([]store
 			out = append(out, store.SeriesCharacter{Source: "anilist", ID: c.ID, Name: c.Name, Image: c.Image, Series: c.Series})
 		}
 		return out, nil
+	}
+	// TMDB's cast is people: right for live action, wrong for a cartoon (the voice actors'
+	// faces). Animation without an AniList entry gets no suggestions; search still finds them.
+	for _, g := range it.Genres {
+		if strings.EqualFold(g, "Animation") {
+			return nil, nil
+		}
 	}
 	tmdb, _ := s.store.ProviderID(ctx, seriesID, "tmdb")
 	t := s.meta.TMDB()

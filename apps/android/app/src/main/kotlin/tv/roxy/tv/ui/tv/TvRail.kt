@@ -134,7 +134,7 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
             // is in Rail.
             BackHandler(enabled = current != null && !railOpen) { railOpen = true }
             if (current != null && update !is UpdateState.None) {
-                TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomCenter))
+                TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss(); enterTick++ }, modifier = Modifier.align(Alignment.BottomCenter))
             }
         }
     }
@@ -167,6 +167,14 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
     }
     // A card centred at the bottom of the screen (it sat in the corner, small and off-centre):
     // the icon, what the update is, and two full buttons like the rest of the TV app.
+    // A new version takes focus once, on Update: with the remote, the card was hard to reach
+    // (only Down from a page's last row got there). Not now hands focus back to the page.
+    val updateFocus = remember { FocusRequester() }
+    val offered = state is UpdateState.Available || state is UpdateState.Ready
+    LaunchedEffect(update.versionCode, offered) {
+        if (!offered) return@LaunchedEffect
+        repeat(10) { withFrameNanos { }; if (runCatching { updateFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
+    }
     val shape = RoundedCornerShape(16.dp)
     Row(
         modifier = modifier.padding(bottom = 28.dp).width(680.dp).clip(shape).background(RoxyColors.surface.copy(alpha = 0.97f))
@@ -187,7 +195,7 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
         }
         if (state !is UpdateState.Downloading) {
             val label = when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Try again"; else -> "Update" }
-            BannerButton(label, primary = true, onClick = onInstall)
+            BannerButton(label, primary = true, onClick = onInstall, modifier = Modifier.focusRequester(updateFocus))
             Spacer(Modifier.width(10.dp))
             BannerButton("Not now", primary = false, onClick = onDismiss)
         }
@@ -196,9 +204,9 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
 
 /** The banner's buttons: the accent pill (white ring when focused) and an outlined one (accent when focused). */
 @Composable
-private fun BannerButton(text: String, primary: Boolean, onClick: () -> Unit) {
+private fun BannerButton(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(22.dp)
-    TvFocusable(onClick = onClick, shape = shape) { focused ->
+    TvFocusable(onClick = onClick, shape = shape, modifier = modifier) { focused ->
         val bg = if (primary || focused) RoxyColors.accent else Color.Transparent
         val ring = when {
             primary && focused -> Color.White

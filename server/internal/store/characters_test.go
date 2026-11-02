@@ -71,3 +71,26 @@ func TestCleanCharacterName(t *testing.T) {
 		}
 	}
 }
+
+// TMDB cast saved for an animated show (voice actors) is left out of the suggestions.
+func TestSuggestedSkipsAnimatedTMDB(t *testing.T) {
+	s, lib, ctx := openTest(t)
+	it := &model.Item{ID: "toon", GUID: "g:toon", LibraryID: lib.ID, Type: model.TypeSeries, Title: "Toon", Genres: []string{"Animation", "Comedy"}}
+	if err := s.UpsertItem(ctx, it); err != nil {
+		t.Fatal(err)
+	}
+	// Genres arrive with metadata, not with the scan.
+	if _, err := s.db.ExecContext(ctx, `UPDATE items SET genres = ? WHERE id = ?`, `["Animation","Comedy"]`, "toon"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveSeriesCharacters(ctx, "toon", []SeriesCharacter{{Source: "tmdb", ID: -5, Name: "Voice", Image: "x"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SuggestedCharacters(ctx, 6, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("voice actors suggested: %+v", got)
+	}
+}

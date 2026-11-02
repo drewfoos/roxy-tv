@@ -82,6 +82,8 @@ func (s *Store) SuggestedCharacters(ctx context.Context, perSeries, max int) ([]
 	rows, err := s.db.QueryContext(ctx, `SELECT c.source, c.char_id, c.name, c.image, c.series_title FROM series_characters c
 		JOIN items i ON i.id = c.series_id
 		WHERE c.pos < ?
+		  -- Saved before animated shows were skipped: those are voice actors, not characters.
+		  AND NOT (c.source = 'tmdb' AND COALESCE(i.genres, '') LIKE '%"Animation"%')
 		ORDER BY i.date_created DESC, c.series_id, c.pos LIMIT ?`, perSeries, max*2)
 	if err != nil {
 		return nil, err
