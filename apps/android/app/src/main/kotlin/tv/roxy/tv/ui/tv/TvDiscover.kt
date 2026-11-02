@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -108,11 +109,26 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
     }
     // Each row remembers its last focused card, so Up / Down land there (as on Home).
     val lastInRow = remember { HashMap<String, String>() }
+    // The cards that exist right now (a lazy row or column drops what scrolled away). Every
+    // Up / Down aims at one of these: aiming at a card that had scrolled off was a dead end,
+    // and focus was lost (Down from the search box once the rows had scrolled, say).
+    val composed = remember { HashSet<String>() }
     fun rowTarget(i: Int): String? = rows.getOrNull(i)?.let { r ->
-        lastInRow[r.key]?.takeIf { k -> r.items.any { cardKey(r.key, it) == k } } ?: r.items.firstOrNull()?.let { cardKey(r.key, it) }
+        lastInRow[r.key]?.takeIf { it in composed } ?: r.items.asSequence().map { cardKey(r.key, it) }.firstOrNull { it in composed }
     }
+    val listState = rememberLazyListState()
+    val focusedRow = remember { mutableStateOf(-1) }
+    // Down from the search box: the row last used if it is on screen, else the first row showing.
+    fun belowSearch(): String? = rowTarget(focusedRow.value.coerceAtLeast(0))
+        ?: rowTarget(listState.firstVisibleItemIndex) ?: rowTarget(listState.firstVisibleItemIndex + 1)
     val searching = state.results != null || state.query.isNotBlank()
-    RegisterPageEntry { memory.restore(if (searching) "discover/search" else rowTarget(0) ?: "discover/search") }
+    // Back from the rail: the card that had focus if it is still there, else the first card
+    // showing in its row (or the row showing), the search box only when there are no rows.
+    RegisterPageEntry {
+        if (searching) return@RegisterPageEntry memory.restore("discover/search")
+        val k = memory.key?.takeIf { it in composed } ?: rowTarget(focusedRow.value.coerceAtLeast(0)) ?: belowSearch()
+        if (k != null) runCatching { memory.requester(k).requestFocus() }.getOrDefault(false) else memory.restore("discover/search")
+    }
 
     fun open(c: DiscoverItem) {
         val id = c.libraryItemId
@@ -127,7 +143,7 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
         TvTextField(
             state.query, vm::search, placeholder = "Search TMDB for a series or movie", icon = Icons.Outlined.Search, imeAction = ImeAction.Search,
             modifier = Modifier.padding(start = 15.dp).width(560.dp).focusKey(memory, "discover/search")
-                .focusProperties { down = memory.requester(if (searching) "discover/result/first" else rowTarget(0) ?: "discover/search") },
+                .focusProperties { if (searching) down = memory.requester("discover/result/first") else belowSearch()?.let { down = memory.requester(it) } },
         )
         Spacer(Modifier.height(16.dp))
         when {
@@ -154,11 +170,9 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
             }
             state.rows == null && state.error != null -> PageMessage(state.error ?: "Could not load Discover", color = RoxyColors.error)
             else -> {
-                val listState = rememberLazyListState()
                 val pin = with(LocalDensity.current) { DiscoverPin.roundToPx() }
                 // The focused row goes to the top with the row above peeking in (so Up has a
                 // card to land on); the rows themselves scroll their cards as usual.
-                val focusedRow = remember { mutableStateOf(-1) }
                 LaunchedEffect(listState) { snapshotFlow { focusedRow.value }.collectLatest { if (it == 0) listState.animateScrollToItem(0) else if (it > 0) listState.animateScrollToItem(it, -pin) } }
                 val rowSpec = LocalBringIntoViewSpec.current
                 CompositionLocalProvider(LocalBringIntoViewSpec provides NoBringIntoView) {
@@ -173,6 +187,7 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
                                     LazyRow(contentPadding = PaddingValues(start = 15.dp - TvDims.FocusBorder, end = 40.dp)) {
                                         itemsIndexed(row.items, key = { _, c -> cardKey(row.key, c) }) { _, c ->
                                             val key = cardKey(row.key, c)
+                                            DisposableEffect(key) { composed += key; onDispose { composed -= key } }
                                             DiscoverCard(
                                                 c, onClick = { open(c) },
                                                 modifier = Modifier.focusKey(memory, key)

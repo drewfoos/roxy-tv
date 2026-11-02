@@ -283,9 +283,28 @@ private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit,
             }
         }
         Spacer(Modifier.height(39.dp))
+        val update by app.updates.state.collectAsStateWithLifecycle()
         RailPage.entries.forEach { page ->
             // Settings stands apart at the bottom, as far from the others as Search is from the profile.
-            if (page == RailPage.Settings) Spacer(Modifier.height(39.dp))
+            if (page == RailPage.Settings) {
+                Spacer(Modifier.height(39.dp))
+                // An update waiting: a way to it that always works (Back opens the rail). The
+                // card at the bottom floats over the page, where the D-pad could not reach it.
+                if (update !is UpdateState.None) {
+                    val label = when (val u = update) {
+                        is UpdateState.Downloading -> "Updating ${(u.fraction * 100).toInt()}%"
+                        is UpdateState.Ready -> "Install update"
+                        is UpdateState.Failed -> "Retry update"
+                        else -> "Update Roxy TV"
+                    }
+                    TvListRow(
+                        label = if (expanded) label else "", icon = Icons.Outlined.SystemUpdate, selected = true,
+                        height = TvDims.RailRow, startPadding = iconStart, fontSize = 20.sp,
+                        onClick = { if (update !is UpdateState.Downloading) app.updates.install() },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
             TvListRow(
                 label = if (expanded) page.label else "",
                 icon = page.icon,
