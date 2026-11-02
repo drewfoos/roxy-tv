@@ -152,10 +152,10 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
         UpdateState.None -> return
     }
     val title = when (state) {
-        is UpdateState.Downloading -> "Downloading Roxy ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
-        is UpdateState.Ready -> "Roxy ${update.versionName} is ready to install"
+        is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
+        is UpdateState.Ready -> "Roxy TV ${update.versionName} is ready to install"
         is UpdateState.Failed -> "Update failed  ·  ${state.message}"
-        else -> "Roxy ${update.versionName} is available"
+        else -> "Roxy TV ${update.versionName} is available"
     }
     Row(
         modifier = modifier.padding(end = 40.dp, bottom = 28.dp).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),

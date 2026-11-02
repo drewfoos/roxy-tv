@@ -56,7 +56,9 @@ export function Profiles() {
           <ProfileEditor
             profile={editing === 'new' ? null : editing}
             onDone={(changed) => {
+              // Save or Cancel: back to the picker, out of Manage profiles (as on the phone and TV).
               setEditing(null)
+              setManaging(false)
               if (changed) {
                 clearAsyncCache()
                 reload()

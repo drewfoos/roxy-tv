@@ -71,8 +71,8 @@ import tv.roxy.tv.ui.theme.RoxyColors
  * a tick. Every move between the two sides is wired, so focus never drops.
  */
 
-private const val AvatarColumns = 5
-private val AvatarSize = 100.dp
+private const val AvatarColumns = 4
+private val AvatarSize = 96.dp
 private val LeftWidth = 300.dp
 
 @Composable
@@ -174,7 +174,8 @@ fun TvProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit,
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(AvatarColumns),
                     contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp, end = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(shown, key = { _, c -> c.id }) { i, c ->
@@ -200,12 +201,11 @@ private fun AvatarTile(c: Character, chosen: Boolean, onClick: () -> Unit, modif
     TvFocusable(onClick = onClick, modifier = modifier) { focused ->
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
             Box(modifier = Modifier.size(AvatarSize + 12.dp).scale(if (focused) 1.08f else 1f), contentAlignment = Alignment.Center) {
-                val ring = when {
-                    focused -> Color.White
-                    chosen -> RoxyColors.accent
-                    else -> Color.Transparent
+                // Focus is the blue ring (and a little larger); the chosen one keeps a thin white ring and the tick.
+                when {
+                    focused -> Box(modifier = Modifier.size(AvatarSize + 12.dp).border(4.dp, RoxyColors.accent, CircleShape))
+                    chosen -> Box(modifier = Modifier.size(AvatarSize + 12.dp).border(2.dp, Color.White, CircleShape))
                 }
-                Box(modifier = Modifier.size(AvatarSize + 12.dp).border(4.dp, ring, CircleShape))
                 AsyncImage(
                     model = c.image, contentDescription = c.name, contentScale = ContentScale.Crop,
                     modifier = Modifier.size(AvatarSize).clip(CircleShape).background(RoxyColors.surfaceHigh),
@@ -217,7 +217,7 @@ private fun AvatarTile(c: Character, chosen: Boolean, onClick: () -> Unit, modif
                 }
             }
             Text(
-                c.name, color = if (focused) Color.White else if (chosen) RoxyColors.accent else RoxyColors.muted,
+                c.name, color = if (focused || chosen) Color.White else RoxyColors.muted,
                 fontSize = 14.sp, fontWeight = if (focused || chosen) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 2, lineHeight = 17.sp, textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 8.dp, start = 4.dp, end = 4.dp),

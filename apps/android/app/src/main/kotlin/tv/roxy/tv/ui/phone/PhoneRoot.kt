@@ -417,10 +417,10 @@ private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -
             Icon(Icons.Outlined.SystemUpdate, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp, end = 16.dp)) {
                 val title = when (state) {
-                    is UpdateState.Downloading -> "Downloading Roxy ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
-                    is UpdateState.Ready -> "Roxy ${update.versionName} is ready to install"
+                    is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
+                    is UpdateState.Ready -> "Roxy TV ${update.versionName} is ready to install"
                     is UpdateState.Failed -> "Update failed  ·  ${state.message}"
-                    else -> "Roxy ${update.versionName} is available"
+                    else -> "Roxy TV ${update.versionName} is available"
                 }
                 Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val sub = listOfNotNull(update.notes.takeIf { it.isNotBlank() }, update.size.takeIf { it > 0 }?.let { formatBytes(it) }).joinToString("  ·  ")

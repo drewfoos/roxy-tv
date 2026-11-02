@@ -23,7 +23,7 @@ object CrashReports {
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             runCatching {
                 file(context).writeText(
-                    "Roxy ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.APPLICATION_ID}\n" +
+                    "Roxy TV ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.APPLICATION_ID}\n" +
                         "${Build.MANUFACTURER} ${Build.MODEL} Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n" +
                         "thread ${thread.name}\n\n" + error.stackTraceToString().take(60_000),
                 )

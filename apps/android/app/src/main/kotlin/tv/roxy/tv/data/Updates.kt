@@ -70,7 +70,7 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
                 err != null && !(err is ApiException && err.isNotFound) -> _checkNote.value = "Couldn't reach the server"
                 u == null || u.versionCode <= BuildConfig.VERSION_CODE -> _checkNote.value = "Up to date  ·  ${BuildConfig.VERSION_NAME}"
                 else -> {
-                    _checkNote.value = "Roxy ${u.versionName} is available"
+                    _checkNote.value = "Roxy TV ${u.versionName} is available"
                     prefs.setDismissedUpdate(0)
                     _state.value = UpdateState.Available(u)
                 }

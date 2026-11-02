@@ -515,8 +515,10 @@ img { display: block; }
 .profiles__list { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; max-width: 1100px; }
 .profiles__one { width: calc(var(--tile) + 24px); display: flex; flex-direction: column; align-items: center; padding-top: 10px; color: var(--muted); font-size: 16px; }
 .profiles__ring { position: relative; display: grid; place-items: center; width: calc(var(--tile) + 16px); height: calc(var(--tile) + 16px); border-radius: 50%; border: 3px solid transparent; }
-.profiles__one--last .profiles__ring { border-color: var(--accent); }
-.profiles__one:hover .profiles__ring, .profiles__one:focus-visible .profiles__ring { border: 4px solid #fff; }
+/* Desktop (the TV's look): the cat marks the last profile used; the one ring is the blue
+   highlight, so a "last used" ring and a highlight ring never compete. */
+.profiles__ring { transition: transform 120ms; }
+.profiles__one:hover .profiles__ring, .profiles__one:focus-visible .profiles__ring { border: 4px solid var(--accent); transform: scale(1.06); }
 .profiles__one:focus-visible { outline: 0; }
 .profiles__name { max-width: 100%; margin-top: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profiles__one:hover .profiles__name, .profiles__one:focus-visible .profiles__name { color: var(--fg); font-weight: 600; }
@@ -870,8 +872,9 @@ img { display: block; }
   .profiles__list { gap: 0 20px; max-width: 360px; }
   .profiles__one { width: calc(var(--tile) + 16px); margin-bottom: 20px; font-size: 15px; color: var(--fg); }
   .profiles__ring { width: calc(var(--tile) + 14px); height: calc(var(--tile) + 14px); }
-  .profiles__one:hover .profiles__ring { border: 3px solid transparent; }
-  .profiles__one--last:hover .profiles__ring { border-color: var(--accent); }
+  /* Phone (the phone app's look): the last profile wears the blue ring with the cat; no hover. */
+  .profiles__one--last .profiles__ring, .profiles__one--last:hover .profiles__ring { border: 3px solid var(--accent); transform: none; }
+  .profiles__one:not(.profiles__one--last):hover .profiles__ring { border: 3px solid transparent; transform: none; }
   .profiles__name { margin-top: 10px; }
   .profiles__one:hover .profiles__name { font-weight: 400; }
   .profiles__actions { position: fixed; left: 0; right: 0; bottom: 24px; flex-direction: column; gap: 10px; margin: 0; }

@@ -82,6 +82,9 @@ fun TvTextField(
     val interaction = remember { MutableInteractionSource() }
     val wrapperFocused by interaction.collectIsFocusedAsState()
     var editing by remember { mutableStateOf(false) }
+    // Typing starts on an OK press that began here. The release of the press that opened the
+    // page (OK on a profile, on the rail) used to land on a field focused at once and pop the keyboard.
+    var okDownHere by remember { mutableStateOf(false) }
     LaunchedEffect(editing) { if (editing) { runCatching { fieldFocus.requestFocus() }; keyboard?.show() } }
     val ring = if (wrapperFocused || editing) RoxyColors.accent else Color.Transparent
     Row(
@@ -93,7 +96,12 @@ fun TvTextField(
             .border(if (editing) 3.dp else 2.dp, ring, shape)
             .onKeyEvent { ev ->
                 val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
-                if (!editing && ok && ev.type == KeyEventType.KeyUp) { editing = true; true } else false
+                when {
+                    editing || !ok -> false
+                    ev.type == KeyEventType.KeyDown -> { okDownHere = true; true }
+                    ev.type == KeyEventType.KeyUp && okDownHere -> { okDownHere = false; editing = true; true }
+                    else -> true // a release whose press happened elsewhere
+                }
             }
             // Seen before the text field itself, which would otherwise swallow Up / Down as
             // cursor moves: while typing (keyboard already closed), Up / Down leave the

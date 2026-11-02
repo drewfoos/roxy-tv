@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.getValue
@@ -140,18 +141,19 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
                             // Keep the session in step when the active profile was edited.
                             if (app.prefs.session.value.profileId == saved.id) app.prefs.selectProfile(saved.id, saved.name, saved.hasAvatar, saved.avatarKey)
                             reload()
-                            creating = false; editing = null
+                            // Saved: back to the picker, out of Manage profiles.
+                            creating = false; editing = null; managing = false
                             if (editOnly != null) onDone()
                         }
                     },
                     onDeleted = {
                         scope.launch {
                             if (app.prefs.session.value.profileId == editing?.id) app.prefs.clearProfile()
-                            reload(); creating = false; editing = null
+                            reload(); creating = false; editing = null; managing = false
                             if (editOnly != null) onDone()
                         }
                     },
-                    onCancel = { creating = false; editing = null; if (editOnly != null) onDone() },
+                    onCancel = { creating = false; editing = null; managing = false; if (editOnly != null) onDone() },
                 )
                 isTelevision(LocalContext.current) -> TvPickerRow(
                     api = app.api, profiles = profiles, error = error, managing = managing, lastId = last?.id,
@@ -319,16 +321,18 @@ private fun TvPickerRow(
 @Composable
 private fun TvProfileTile(p: Profile, api: RoxyApi, tile: Dp, managing: Boolean, current: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     TvFocusable(onClick = onClick, modifier = modifier) { focused ->
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 6.dp)) {
-            Box(modifier = Modifier.size(tile + 16.dp), contentAlignment = Alignment.Center) {
-                val ring = if (focused) Color.White else if (current) RoxyColors.accent else Color.Transparent
-                Box(Modifier.size(tile + 16.dp).clip(CircleShape).border(if (focused) 4.dp else 3.dp, ring, CircleShape))
+        // As on the phone, the last-used profile is the one the cat sits on; the only ring is
+        // focus (blue, and the tile grows), so two rings never compete for "selected".
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 22.dp)) {
+            Box(modifier = Modifier.size(tile + 16.dp).scale(if (focused) 1.08f else 1f), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(tile + 16.dp).clip(CircleShape).border(4.dp, if (focused) RoxyColors.accent else Color.Transparent, CircleShape))
                 ProfileAvatar(p, api, size = tile)
                 if (managing) {
                     Box(modifier = Modifier.size(tile).clip(CircleShape).background(Color(0x88000000)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White, modifier = Modifier.size(36.dp))
                     }
                 }
+                if (current && !managing) CatOnRing(modifier = Modifier.align(Alignment.TopCenter).offset(y = (-18).dp), width = 46.dp)
             }
             Text(p.name, color = if (focused) RoxyColors.onBackground else RoxyColors.muted, fontSize = 16.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 12.dp))
         }
@@ -338,9 +342,10 @@ private fun TvProfileTile(p: Profile, api: RoxyApi, tile: Dp, managing: Boolean,
 @Composable
 private fun TvAddTile(tile: Dp, onAdd: () -> Unit) {
     TvFocusable(onClick = onAdd) { focused ->
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 6.dp)) {
-            Box(modifier = Modifier.size(tile + 16.dp), contentAlignment = Alignment.Center) {
-                if (focused) Box(Modifier.size(tile + 16.dp).clip(CircleShape).border(4.dp, Color.White, CircleShape))
+        // Same top room as the profiles (space for the cat), so the circles line up.
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(tile + 24.dp).padding(top = 22.dp)) {
+            Box(modifier = Modifier.size(tile + 16.dp).scale(if (focused) 1.08f else 1f), contentAlignment = Alignment.Center) {
+                if (focused) Box(Modifier.size(tile + 16.dp).clip(CircleShape).border(4.dp, RoxyColors.accent, CircleShape))
                 Box(modifier = Modifier.size(tile).clip(CircleShape).border(2.dp, RoxyColors.muted, CircleShape), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Add, contentDescription = "Add profile", tint = RoxyColors.muted, modifier = Modifier.size(44.dp))
                 }

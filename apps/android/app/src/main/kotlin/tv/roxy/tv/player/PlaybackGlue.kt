@@ -43,7 +43,7 @@ class PlaybackGlue(context: Context, private val controls: Controls) {
     private val audio = app.getSystemService(AudioManager::class.java)
     private var released = false
 
-    private val media = MediaSession(app, "Roxy").apply {
+    private val media = MediaSession(app, "Roxy TV").apply {
         setCallback(object : MediaSession.Callback() {
             override fun onPlay() = controls.play()
             override fun onPause() = controls.pause()
