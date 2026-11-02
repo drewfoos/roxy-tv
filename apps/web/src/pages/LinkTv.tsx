@@ -35,13 +35,15 @@ export function LinkTv() {
       await api.linkApprove(code)
       setDone(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not sign the TV in')
+      setError(e instanceof Error ? e.message : 'Could not sign the device in')
     } finally {
       setBusy(false)
     }
   }
 
   const pretty = code.toUpperCase().replace(/(.{3})(.{3})/, '$1 $2')
+  // The same flow signs in a TV or a web browser; say which one is asking.
+  const kind = info?.client === 'roxy-web' ? 'browser' : 'TV'
   return (
     <div className="login">
       <div className="login__box linktv">
@@ -53,7 +55,7 @@ export function LinkTv() {
           <>
             <h2 className="linktv__title">Done</h2>
             <p className="muted">
-              {info?.device ?? 'The TV'} is signing in as <b>{s?.userName}</b>. Pick a profile on the TV.
+              {info?.device ?? `The ${kind}`} is signing in as <b>{s?.userName}</b>. Pick a profile on the {kind}.
             </p>
             <Link className="btn btn--grey btn--pill" to="/">
               Back to Roxy
@@ -61,7 +63,7 @@ export function LinkTv() {
           </>
         ) : error ? (
           <>
-            <h2 className="linktv__title">Sign in a TV</h2>
+            <h2 className="linktv__title">Sign in a {kind}</h2>
             <p className="error">{error}</p>
             <Link className="btn btn--grey btn--pill" to="/">
               Back to Roxy
@@ -69,7 +71,7 @@ export function LinkTv() {
           </>
         ) : (
           <>
-            <h2 className="linktv__title">Sign in a TV</h2>
+            <h2 className="linktv__title">Sign in a {kind}</h2>
             <div className="linktv__code">{pretty}</div>
             <p className="muted">
               {info ? (
@@ -82,7 +84,7 @@ export function LinkTv() {
               )}
             </p>
             <button className="btn btn--brand btn--pill" type="button" onClick={approve} disabled={busy || !info || info.approved}>
-              {busy ? 'Signing in…' : info?.approved ? 'Already approved' : 'Sign in this TV'}
+              {busy ? 'Signing in…' : info?.approved ? 'Already approved' : `Sign in this ${kind}`}
             </button>
             <Link className="muted linktv__cancel" to="/">
               Not now
@@ -110,8 +112,8 @@ export function LinkEnter() {
           <WitchHat size={40} />
           <span>Roxy</span>
         </div>
-        <h2 className="linktv__title">Sign in a TV</h2>
-        <p className="muted">Enter the code on the TV's sign-in screen.</p>
+        <h2 className="linktv__title">Sign in a TV or browser</h2>
+        <p className="muted">Enter the code shown on its sign-in screen.</p>
         <div className="field">
           <label htmlFor="code">Code</label>
           <input id="code" value={code} onChange={(e) => setCode(e.target.value)} autoCapitalize="characters" autoComplete="off" spellCheck={false} maxLength={7} autoFocus required />

@@ -108,7 +108,7 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             BackCircle(onBack)
-            Text("Sign in a TV", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp))
+            Text("Sign in a TV or browser", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 12.dp))
         }
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = PhonePad).padding(bottom = 32.dp),
@@ -234,13 +234,13 @@ private fun ApproveCard(info: LinkInfo, code: String, userName: String, busy: Bo
             code.chunked(3).joinToString("  "), fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 4.sp, color = RoxyColors.accent,
             modifier = Modifier.padding(top = 18.dp).clip(RoundedCornerShape(12.dp)).background(RoxyColors.background).padding(horizontal = 20.dp, vertical = 8.dp),
         )
-        Text("Make sure this matches the code on the TV.", fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
+        Text("Make sure this matches the code on its screen.", fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
         PlayButton(
             when { busy -> "Signing in…"; info.approved -> "Already approved"; else -> "Sign in this TV" }, icon = Icons.Filled.Check, height = 52.dp, pill = true,
             container = if (busy || info.approved) RoxyColors.surfaceHigh else RoxyColors.accent, content = if (busy || info.approved) RoxyColors.muted else OnBrand,
             modifier = Modifier.fillMaxWidth(), onClick = onApprove,
         )
-        Text("Not this TV", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted, modifier = Modifier.padding(top = 14.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onCancel).padding(horizontal = 12.dp, vertical = 6.dp))
+        Text("Not this device", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted, modifier = Modifier.padding(top = 14.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onCancel).padding(horizontal = 12.dp, vertical = 6.dp))
     }
 }
 
@@ -253,6 +253,6 @@ private fun DoneCard(device: String, userName: String) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(64.dp))
         Text("You're all set", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 12.dp))
         Spacer(Modifier.height(6.dp))
-        Text("$device is signing in as $userName. Pick a profile on the TV.", fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center)
+        Text("$device is signing in as $userName. Pick a profile there.", fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center)
     }
 }

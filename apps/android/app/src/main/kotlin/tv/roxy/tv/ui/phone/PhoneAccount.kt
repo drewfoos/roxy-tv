@@ -256,7 +256,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: ()
         }
 
         GroupCard("TV") {
-            SettingRow(Icons.Outlined.Tv, "Sign in a TV", "Scan the code on the TV's sign-in screen") { onLinkTv() }
+            SettingRow(Icons.Outlined.Tv, "Sign in a TV or browser", "Scan the code on its sign-in screen") { onLinkTv() }
         }
 
         GroupCard("About") {

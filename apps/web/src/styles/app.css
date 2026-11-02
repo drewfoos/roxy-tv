@@ -364,6 +364,20 @@ img { display: block; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .login__box { width: min(420px, 100%); background: var(--surface); border-radius: 12px; padding: 32px; display: flex; flex-direction: column; gap: 16px; }
 .login__brand { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 800; }
+.login__server { font-size: 17px; font-weight: 700; }
+.login__address { font-size: 13px; margin-top: 2px; }
+.login__options, .login__form, .login__phone { display: flex; flex-direction: column; gap: 12px; }
+.login__option { position: relative; display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 16px; border-radius: 10px; border: 1px solid var(--line, rgba(255,255,255,.12)); background: var(--surface-high, rgba(255,255,255,.04)); color: inherit; font: inherit; cursor: pointer; }
+.login__option:hover, .login__option:focus-visible { border-color: var(--accent); outline: none; }
+.login__option--last { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.login__option-title { font-weight: 700; font-size: 16px; }
+.login__option-badge { position: absolute; top: 12px; right: 12px; font-size: 11px; font-weight: 700; color: var(--accent); }
+.login__phone { align-items: center; text-align: center; }
+.login__qr { width: 220px; height: 220px; border-radius: 10px; background: #fff; padding: 8px; image-rendering: pixelated; }
+.login__code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 30px; font-weight: 800; letter-spacing: 4px; }
+.login__steps { text-align: left; margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.4; }
+.login__waiting { font-size: 13px; }
+.login__back { align-self: center; }
 /* /link/:code — approving a TV's sign-in from a phone. */
 .linktv__title { font-size: 20px; font-weight: 700; margin: 0; }
 .linktv__code { font-size: 34px; font-weight: 800; letter-spacing: 6px; font-variant-numeric: tabular-nums; padding: 12px 0; text-align: center; background: var(--surface-high); border-radius: 8px; }

@@ -101,6 +101,13 @@ export const api = {
     return request<LoginResponse>('POST', '/v1/auth/login', { username, password, client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false)
   },
   me: () => get<Me>('/v1/auth/me'),
+  // ---- signing this browser in from a phone (the same flow a TV uses) ----
+  linkStart: () =>
+    request<{ code: string; secret: string; url: string; expiresIn: number }>('POST', '/v1/link/start', { client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false),
+  /** Long-polls up to ~25 s; "done" carries this browser's own token. */
+  linkWait: (code: string, secret: string) =>
+    request<{ status: 'pending' } | ({ status: 'done' } & LoginResponse)>('GET', '/v1/link/' + encodeURIComponent(code) + '/wait?secret=' + encodeURIComponent(secret), undefined, false),
+  linkQrUrl: (code: string, secret: string) => '/v1/link/' + encodeURIComponent(code) + '/qr.png?secret=' + encodeURIComponent(secret),
   // ---- signing a TV in from this device (the TV shows a code as a QR) ----
   linkInfo: (code: string) => get<{ code: string; client: string; device: string; expiresIn: number; approved: boolean }>('/v1/link/' + encodeURIComponent(code)),
   linkApprove: (code: string) => post<void>('/v1/link/' + encodeURIComponent(code) + '/approve'),
