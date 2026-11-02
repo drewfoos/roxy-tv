@@ -10,6 +10,10 @@ only changes a host and a token.
 you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Roxy Server -> Roxy apps
 ```
 
+![Roxy TV's Home on an Android TV: the hero for The Legend of Korra with Continue: S4 E13, the side menu, and Recently added](docs/images/tv-home.jpg)
+
+*Roxy TV on a TCL Google TV: Home, with the show you are watching in the hero and the side menu (Back opens it).*
+
 ## Repository map
 
 One repository, three deliverables that version together:
@@ -26,7 +30,7 @@ One repository, three deliverables that version together:
 `.github/workflows/ci.yml` vets and tests the server, builds the web app and assembles the
 Android debug APK on every push.
 
-## What works today (2026-10-20)
+## What works today (2026-11-02)
 
 **Roxy Server** (`server/`, Go 1.27, SQLite, jellyfin-ffmpeg shelled out)
 
@@ -51,12 +55,26 @@ Android debug APK on every push.
   the app. Runs in Docker with the GPU passed through.
 - LAN discovery (a UDP beacon on 8096), in-app APK updates, server-served Terms of Use and
   Privacy. (The Jellyfin-compatible API was removed; see ADR-0008.)
+- Requests are offered only once Sonarr or Radarr has a root folder and a quality profile
+  chosen in the settings (an address and key alone, say from the environment, are not
+  enough). Anime are added as series type "standard" by default, with a setting for "anime".
+- Sign-in by phone: a TV or browser shows a QR code and a six-letter code, and a signed-in
+  phone approves it. The sign-in page's poster wall comes from the server's own library
+  (`/v1/showcase`, public, posters only).
+- Profile avatars: "From your library" characters are saved per series by a slow background
+  worker (AniList for anime; TMDB's cast for live action; none for other animation), so the
+  editor opens instantly and a thousand new shows are looked up over hours, not at once.
 
-**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.3.1)
+**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.5.19)
 
-- One APK with two layouts: a phone layout (portrait, Crunchyroll-style title pages, a
-  Netflix-style hero carousel, bottom bar Home / Discover / Watchlist / Browse / Account)
-  and a TV layout (landscape, D-pad).
+- One APK with two layouts, shown on the launcher as **Roxy TV**: a phone layout (portrait,
+  Crunchyroll-style title pages, a Netflix-style hero carousel, bottom bar Home / Discover /
+  Browse / My Lists / Account) and a TV layout (landscape, D-pad).
+- On the TV: a side menu (Search, Home, My Lists, Discover, Browse, Settings; Back opens it
+  from any page and returns to where you were), My Lists with Watchlist and History, Browse
+  by category and genre, Discover with requests, a TV profile editor, and a sign-in screen
+  that finds servers on the network and signs in with a phone's camera. Updates published
+  on the server are installed from the side menu.
 - Player on libmpv with libass: MKV-attached fonts, a 50-font fallback set, hardware
   decode for HEVC 10-bit, 4K HDR10 and AV1, software decode for Hi10P. On the phone the
   video plays inline at the top of the episode or movie page; turn the phone for full
@@ -67,6 +85,8 @@ Android debug APK on every push.
 - Offline downloads (Netflix model): per episode, per season, or a whole title, with
   resume, Wi-Fi-only, a storage check, offline playback and progress that syncs later.
 - The login screen lists servers found on the network; tap one to fill the address.
+- Browse on the phone: categories (Newly Added, A-Z, Series, Movies, genres) as chips over a
+  poster grid with the title and year under each poster.
 
 Phone screens are verified on a Galaxy S25 Ultra after every change; the TV layout runs on
 a TCL Q77K (Google TV).
@@ -75,6 +95,9 @@ a TCL Q77K (Google TV).
 
 - The computer client: Crunchyroll's layout at desktop width (`docs/design/roxy-look.md`),
   the same `/v1` API as the Android app, served by the server itself at `/`.
+- Sign-in over a poster wall (password, or approve from a phone), "Who's watching?" as on
+  the apps, Browse with a category list and genres, Discover with title pages, request
+  status and download progress, and the Sonarr / Radarr settings for admins.
 - Playback is the browser's own decoder with no transcoding: MKV, H.264 (8-bit and
   Hi10P), HEVC 10-bit (GPU), AV1; ASS/SSA rendered by jassub (libass in WebAssembly)
   with the fonts from the MKV. Verified in Chrome on every file in the test library,
@@ -154,8 +177,11 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The debug build can prefill a server URL and login through `BuildConfig`; see
-`apps/android/app/build.gradle.kts`. `apps/android/tools/publish-apk.ps1` copies a build to the
-server so installed phones get the update bar. `apps/android/FONTS.md` explains the fallback
+`apps/android/app/build.gradle.kts`. For a TV, build the `perf` variant (`./gradlew
+assemblePerf`): the debug app's id, key and sign-in, built the release way. A plain debug
+build is debuggable, so Android never compiles it ahead of time and a TV feels slow. Bump
+`versionCode`, then `apps/android/tools/publish-apk.ps1` (perf by default) copies the build to
+the server's `apps/tv` folder so installed phones and TVs offer the update. `apps/android/FONTS.md` explains the fallback
 font set and how to fetch it (fonts are not in the repository).
 
 ## Documents
