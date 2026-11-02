@@ -12,6 +12,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import tv.roxy.tv.tv.WatchNext
 import tv.roxy.tv.RoxyApp
@@ -86,6 +88,15 @@ class PlayerSession(
     }
 
     companion object {
+        /**
+         * Watch-state calls go to the server one at a time, in the order they were made.
+         * Moving on to the next episode sends "E1 is at 6:18" and "E1 is watched" together;
+         * if the watched mark landed first, the late position turned E1 into a watched
+         * episode that is also part-way through (Continue Watching showed it as watched).
+         * app.scope runs launches at once on the main thread, so each takes the lock in
+         * call order, and the lock is first come, first served.
+         */
+        private val reportLock = Mutex()
         private const val AUTO_HIDE_MS = 4000L
         private const val PROGRESS_INTERVAL_MS = 10_000L
         /** Seconds the next-episode card counts down before it plays (Netflix uses about this). */
@@ -577,8 +588,10 @@ class PlayerSession(
         if (!app.prefs.session.value.isLoggedIn) return
         app.scope.launch { WatchNext.remove(app, id) }
         app.scope.launch {
-            val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
-            if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
+            reportLock.withLock {
+                val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
+                if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
+            }
         }
     }
 
@@ -938,19 +951,21 @@ class PlayerSession(
             app.scope.launch { (app.items[id] ?: runCatching { app.api.item(id) }.getOrNull())?.let { WatchNext.publish(app, it, positionMs, durationMs) } }
         }
         app.scope.launch {
-            // While the server is unreachable (playing a download away from home) skip the
-            // network for a minute at a time instead of timing out on every tick.
-            val skip = System.currentTimeMillis() < serverDownUntil
-            val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex) }
-                .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
-                .onFailure {
-                    Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
-                    if (it !is tv.roxy.tv.api.ApiException) serverDownUntil = System.currentTimeMillis() + 60_000
-                }
-                .isSuccess
-            // Downloaded items keep their position locally too (Downloads page offline); a
-            // failed report is queued and replayed when the server is back.
-            if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
+            reportLock.withLock {
+                // While the server is unreachable (playing a download away from home) skip the
+                // network for a minute at a time instead of timing out on every tick.
+                val skip = System.currentTimeMillis() < serverDownUntil
+                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex) }
+                    .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
+                    .onFailure {
+                        Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
+                        if (it !is tv.roxy.tv.api.ApiException) serverDownUntil = System.currentTimeMillis() + 60_000
+                    }
+                    .isSuccess
+                // Downloaded items keep their position locally too (Downloads page offline); a
+                // failed report is queued and replayed when the server is back.
+                if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
+            }
         }
     }
 

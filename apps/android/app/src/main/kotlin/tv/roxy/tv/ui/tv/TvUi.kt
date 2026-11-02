@@ -297,7 +297,7 @@ fun minutesLabel(item: Item): String? {
     val len = item.runtimeMs ?: item.primarySource?.durationMs ?: return null
     if (len <= 0) return null
     val pos = item.userData?.positionMs ?: 0L
-    if (pos > 0 && item.userData?.played != true) {
+    if (pos > 0) {
         val left = ((len - pos) + 30_000) / 60_000
         return "${left.coerceAtLeast(1)}m left"
     }
@@ -367,7 +367,7 @@ fun ThumbCard(
     TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused) {
         Column(modifier = Modifier.width(width)) {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
-                val watched = item.userData?.played == true && (item.isEpisode || item.isMovie)
+                val watched = item.isWatched && (item.isEpisode || item.isMovie)
                 RoxyImage(url, cardTitle(item), modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f))
                 if (watched) {
                     ReplayBadge(size = 48.dp, modifier = Modifier.align(Alignment.Center))

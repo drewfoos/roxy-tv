@@ -455,7 +455,7 @@ private fun MovieDownloadRow(e: DownloadEntry, onPlay: () -> Unit) {
 private fun DownloadedEpisodeRow(e: DownloadEntry, onPlay: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val ep = e.item
-    val watched = ep.userData?.played == true
+    val watched = ep.isWatched
     Row(modifier = Modifier.fillMaxWidth().clickable(enabled = e.isDone, onClick = onPlay).padding(horizontal = PhonePad, vertical = 8.dp).alpha(if (e.isDone) 1f else 0.8f), verticalAlignment = Alignment.CenterVertically) {
         Box(modifier = Modifier.width(120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
             RoxyImage(app.downloads.image(app.api, ep, "thumb", widthPx(120.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.6f else 1f), placeholderTextSize = 10)

@@ -169,7 +169,7 @@ fun PhoneSeries(
     fun download(items: List<Item>) = startDownload(items, series, seasonLabel.takeIf { it != "Episodes" })
     val playable = state.episodes.filter { it.isPlayable }
     // Across all seasons (the list below shows one); the season's own pick until it is known.
-    val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
+    val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 }
         ?: playable.firstOrNull { it.userData?.played != true }
         ?: playable.firstOrNull()
     val resumable = next != null && (next.userData?.positionMs ?: 0) > 0
@@ -641,7 +641,7 @@ private fun EpisodeRowSkeleton() {
 internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit, onMarkWatched: (Boolean) -> Unit) {
     val thumbWidth = 150.dp
     val placeholder = !ep.isPlayable
-    val watched = ep.userData?.played == true
+    val watched = ep.isWatched
     val positionMs = ep.userData?.positionMs ?: 0L
     val runtimeMs = ep.runtimeMs ?: 0L
     val badge = when (ep.availability) {

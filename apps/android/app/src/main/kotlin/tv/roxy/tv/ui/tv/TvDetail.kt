@@ -136,7 +136,7 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
 
     val playable = state.episodes.filter { it.isPlayable }
     // Across all seasons (the list below shows one); the season's own pick until it is known.
-    val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 && it.userData?.played != true }
+    val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 }
         ?: playable.firstOrNull { it.userData?.played != true }
         ?: playable.firstOrNull()
     val actions = listOf(
@@ -184,7 +184,7 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
     }
     fun play(fromStart: Boolean = false) = scope.launch { playItem(context, movie, fromStart).onFailure { Timber.w(it, "play failed") } }
 
-    val started = (movie.userData?.positionMs ?: 0L) > 0 && movie.userData?.played != true
+    val started = (movie.userData?.positionMs ?: 0L) > 0
     val actions = buildList {
         add(watchlistAction(app, movie, scope))
         add(TitleAction(key = "play", label = continueLabel(movie), icon = Icons.Outlined.PlayArrow, trailing = minutesLabel(movie)?.takeIf { it.endsWith("left") }, enabled = movie.isPlayable, onClick = { play() }))
@@ -364,7 +364,7 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, 
         Row(modifier = Modifier.width(EpisodeThumbWidth + 12.dp + 326.dp)) {
             Box(modifier = Modifier.width(EpisodeThumbWidth).aspectRatio(16f / 9f)) {
                 // Watched, as on the phone: the still dimmed, a replay arrow, "Watched" in the corner.
-                val watched = ep.userData?.played == true
+                val watched = ep.isWatched
                 RoxyImage(api.imageUrl(ep, imageType, widthPx(EpisodeThumbWidth)), code.ifEmpty { ep.title }, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f))
                 if (watched) {
                     ReplayBadge(size = 44.dp, modifier = Modifier.align(Alignment.Center))

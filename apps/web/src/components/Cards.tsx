@@ -167,9 +167,13 @@ export function withPlayed(item: Item, played: boolean): Item {
   return { ...item, userData: { ...(item.userData ?? { positionMs: 0, playCount: 0, played: false, isFavorite: false }), played, positionMs: 0 } }
 }
 
-/** Marked played: the dimmed still, the replay disc and the "Watched" pill (as in the apps). */
+/**
+ * Watched with nothing to resume: the dimmed still, the replay disc and "Watched". A
+ * watched episode with a position again is a rewatch under way, so it shows as in
+ * progress (the bar and "Nm left"), the same rule as the apps' Item.isWatched.
+ */
 export function isWatched(item: Item): boolean {
-  return !!item.userData?.played
+  return !!item.userData?.played && (item.userData?.positionMs ?? 0) <= 0
 }
 
 /**

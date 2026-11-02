@@ -824,6 +824,14 @@ data class Item(
             if (ud.positionMs > 0 && len != null && len > 0) return (ud.positionMs.toFloat() / len.toFloat()).coerceIn(0f, 1f)
             return if (ud.played) 1f else null
         }
+
+    /**
+     * Watched with nothing to resume: the dimmed still, the replay badge, "Watched". A
+     * watched episode that has a position again is a rewatch under way (the server keeps
+     * it in Continue Watching), so it shows as in progress: the bar and "Nm left".
+     */
+    val isWatched: Boolean
+        get() = userData?.played == true && (userData?.positionMs ?: 0L) <= 0L
 }
 
 @Serializable
