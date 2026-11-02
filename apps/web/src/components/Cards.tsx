@@ -167,9 +167,9 @@ export function withPlayed(item: Item, played: boolean): Item {
   return { ...item, userData: { ...(item.userData ?? { positionMs: 0, playCount: 0, played: false, isFavorite: false }), played, positionMs: 0 } }
 }
 
-/** Finished with nothing left to resume: the replay overlay and the "Watched" pill. */
+/** Marked played: the dimmed still, the replay disc and the "Watched" pill (as in the apps). */
 export function isWatched(item: Item): boolean {
-  return !!item.userData?.played && !timeLeftLabel(item)
+  return !!item.userData?.played
 }
 
 /**

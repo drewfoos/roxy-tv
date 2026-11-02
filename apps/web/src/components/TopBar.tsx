@@ -165,8 +165,10 @@ export function Avatar({ name, url, size, selected = false }: { name: string; ur
   const [broken, setBroken] = useState(false)
   useEffect(() => setBroken(false), [url])
   return (
-    <span className={'avatar' + (selected ? ' avatar--selected' : '')} style={{ width: size, height: size, fontSize: size * 0.42 }}>
-      {url && !broken ? <img src={url} alt="" onError={() => setBroken(true)} /> : (name.trim()[0] ?? '?').toUpperCase()}
+    <span className={'avatar' + (selected ? ' avatar--selected' : '')} style={{ width: size, height: size, fontSize: size * 0.45 }}>
+      {/* The initial sits under the picture, so it shows while the picture loads (AvatarCircle). */}
+      {(name.trim()[0] ?? '?').toUpperCase()}
+      {url && !broken && <img src={url} alt="" onError={() => setBroken(true)} />}
     </span>
   )
 }

@@ -77,7 +77,7 @@ export function ProfilesPage() {
   )
 }
 
-function ProfileEditor({ profile, onDone }: { profile: Profile | null; onDone: (changed: boolean) => void }) {
+export function ProfileEditor({ profile, onDone }: { profile: Profile | null; onDone: (changed: boolean) => void }) {
   const s = useSession()
   const [name, setName] = useState(profile?.name ?? '')
   const [picked, setPicked] = useState<AvatarCharacter | null>(null)

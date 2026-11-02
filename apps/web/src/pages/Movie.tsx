@@ -4,8 +4,8 @@ import { api, px } from '../api/client'
 import { audioBadge, isPlayable, runtimeLabel, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
-import { Art, ProgressBar, Row, SaveButton, TitleCard } from '../components/Cards'
-import { IconPlay } from '../components/Icons'
+import { Art, ProgressBar, Row, SaveButton, TitleCard, isWatched } from '../components/Cards'
+import { IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
@@ -45,7 +45,7 @@ export function Movie() {
         actions={
           <>
             <button className="btn btn--brand" disabled={!playable} onClick={() => nav(`/watch/${movie.id}`)}>
-              <IconPlay size={20} /> {playable ? (resumable ? 'Continue watching' : 'Start watching') : movie.availability === 'unaired' ? 'Not out yet' : 'Not available'}
+              <IconPlay size={20} /> {playable ? (resumable ? 'Resume' : 'Start watching') : movie.availability === 'unaired' ? 'Not out yet' : 'Not available'}
             </button>
             <SaveButton item={movie} onChanged={() => reload(true)} />
           </>
@@ -74,12 +74,17 @@ export function Movie() {
               <Link to={playable ? `/watch/${movie.id}` : '#'}>
                 <div className="ep__art">
                   <Art url={api.imageUrl(movie, 'backdrop', px(420)) ?? api.imageUrl(movie, 'poster', px(420))} title={movie.title} />
-                  {playable && (
-                    <div className="play-ring">
-                      <IconPlay size={28} />
-                    </div>
-                  )}
-                  {(left ?? runtimeLabel(movie)) && <span className="badge badge--br">{left ?? runtimeLabel(movie)}</span>}
+                  {playable &&
+                    (isWatched(movie) ? (
+                      <div className="watched-overlay">
+                        <IconReplay size={48} />
+                      </div>
+                    ) : (
+                      <div className="play-ring">
+                        <IconPlay size={28} />
+                      </div>
+                    ))}
+                  {isWatched(movie) ? <span className="badge badge--br">Watched</span> : (left ?? runtimeLabel(movie)) && <span className="badge badge--br">{left ?? runtimeLabel(movie)}</span>}
                   <ProgressBar item={movie} />
                 </div>
                 <div className="ep__name">{movie.title}</div>

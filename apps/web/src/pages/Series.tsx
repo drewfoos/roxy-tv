@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, isPlayable, nextToPlay, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
+import { audioBadge, episodeCode, isPlayable, nextToPlay, playLabel, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard, isWatched, withPlayed } from '../components/Cards'
@@ -40,6 +40,9 @@ export function Series() {
   const { data: epsRes, loading: epsLoading } = useAsync(epsKey, () => api.items({ type: 'episode', parent: flat ? id : season!.id, recursive: flat, includeSources: true, sort: 'index' }), [epsKey])
   const episodes = useMemo(() => sortEpisodes(epsRes?.items ?? []), [epsRes])
   const shown = useMemo(() => (newest ? episodes.slice().reverse() : episodes), [episodes, newest])
+  // Play looks across every season, like the apps, not just the one picked in the dropdown.
+  const allKey = seasonsRes == null ? null : flat ? epsKey : `episodes-all:${id}`
+  const { data: allRes, loading: allLoading } = useAsync(allKey, () => api.items({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' }), [allKey])
 
   const { data: related } = useAsync(`related:${id}`, () => api.related(id).catch(() => ({ related: [] })), [id])
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
@@ -53,10 +56,8 @@ export function Series() {
   if (loading && !series) return <Spinner />
   if (!series) return <div className="empty error">{error ?? 'Not found'}</div>
 
-  const next = nextToPlay(episodes)
-  const nextEp = next ? (next.indexAired ?? next.indexAbsolute) : null
-  const resumable = next ? (next.userData?.positionMs ?? 0) > 0 : false
-  const label = !next ? (epsLoading || seasonsRes == null ? 'Play' : 'Nothing to play yet') : resumable ? `Continue watching${nextEp != null ? ` E${nextEp}` : ''}` : `Start watching${nextEp != null ? ` E${nextEp}` : ''}`
+  const next = nextToPlay(allRes?.items ?? episodes)
+  const label = playLabel(next, epsLoading || allLoading || seasonsRes == null)
   const seasonCount = series.seasonCount ?? seasons.length
   const relatedItems = (related?.related ?? []).map((r) => r.item).filter((x): x is Item => !!x)
 

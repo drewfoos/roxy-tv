@@ -49,8 +49,8 @@ img { display: block; }
 .topbar__search input::placeholder { color: var(--muted); }
 .topbar__search-close { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #fff; }
 .topbar__search-close:hover { background: rgba(255, 255, 255, 0.12); }
-.avatar { border-radius: 50%; background: var(--accent-dark); color: #fff; display: grid; place-items: center; font-weight: 700; overflow: hidden; }
-.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar { position: relative; flex: none; border-radius: 50%; background: var(--accent); color: var(--on-brand); display: grid; place-items: center; font-weight: 700; line-height: 1; overflow: hidden; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .avatar--selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 1023px) {
   .topbar__nav { display: none; }
@@ -107,8 +107,8 @@ img { display: block; }
 .lists__head { display: flex; align-items: center; margin-bottom: 20px; }
 .lists__head h2 { margin: 0; font-size: 20px; font-weight: 700; }
 .lists__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--thumb-min), 1fr)); gap: 36px var(--card-gap); }
-.avatar { border-radius: 50%; background: var(--accent-dark); color: #fff; display: grid; place-items: center; font-weight: 700; overflow: hidden; }
-.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar { position: relative; flex: none; border-radius: 50%; background: var(--accent); color: var(--on-brand); display: grid; place-items: center; font-weight: 700; line-height: 1; overflow: hidden; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .avatar--selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- hero (Crunchyroll's: art on the right, a dark fade from the left, the text column over it) ---------- */
@@ -210,7 +210,11 @@ img { display: block; }
 .badge--br { bottom: 10px; right: 8px; }
 .play-ring { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); display: grid; place-items: center; color: #fff; }
 .play-ring--big { width: 60px; height: 60px; margin: -30px 0 0 -30px; }
-.watched-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; color: #fff; }
+.watched-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; }
+.watched-overlay svg { width: 29px; height: 29px; padding: 9.5px; box-sizing: content-box; border-radius: 50%; background: rgba(0, 0, 0, 0.6); }
+/* The still at 45% over the page colour, not the grey placeholder, as on the apps. */
+:has(> .watched-overlay) { background: var(--bg) !important; }
+:has(> .watched-overlay) img { opacity: 0.45; }
 .art-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 10px; text-align: center; color: rgba(255, 255, 255, 0.92); font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
 .art-fallback svg { opacity: 0.3; margin: 0 auto 8px; }
 
@@ -501,16 +505,30 @@ img { display: block; }
 .field label { font-size: 12px; color: var(--muted); }
 .field input { height: 44px; padding: 0 14px; border-radius: 6px; border: 2px solid transparent; background: var(--surface-high); color: var(--fg); outline: 0; }
 .field input:focus { border-color: #fff; }
-.profiles { min-height: 100vh; display: grid; place-content: center; text-align: center; gap: 36px; padding: 24px; }
-.profiles h1 { font-size: 32px; font-weight: 700; margin: 0; }
-.profiles__list { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
-.profiles__one { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--muted); font-size: 16px; }
-.profiles__one:hover { color: #fff; }
-.profiles__one .avatar { width: 120px; height: 120px; font-size: 44px; border: 3px solid transparent; }
-.profiles__one:hover .avatar { border-color: #fff; }
-.profiles__actions { display: flex; align-items: center; justify-content: center; gap: 24px; }
-.profiles__manage { padding: 9px 22px; border-radius: 20px; border: 1.5px solid rgba(255,255,255,0.25); color: var(--fg); font-size: 14px; font-weight: 600; }
-.profiles__manage:hover { border-color: var(--accent); color: var(--accent); }
+/* Who's watching? -- ProfilePicker.kt: the TV layout on desktop (white focus ring, two pills),
+   the phone layout under 600px (rows, the cat on the last profile, actions pinned to the bottom). */
+.profiles { --tile: 112px; position: relative; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px 24px; background: var(--bg); }
+.profiles__hat { display: flex; justify-content: center; }
+.profiles h1 { font-size: 26px; font-weight: 700; margin: 14px 0 36px; }
+.profiles__back { position: absolute; top: 12px; left: 12px; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: #fff; }
+.profiles__back:hover { background: rgba(255,255,255,0.08); }
+.profiles__list { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; max-width: 1100px; }
+.profiles__one { width: calc(var(--tile) + 24px); display: flex; flex-direction: column; align-items: center; padding-top: 10px; color: var(--muted); font-size: 16px; }
+.profiles__ring { position: relative; display: grid; place-items: center; width: calc(var(--tile) + 16px); height: calc(var(--tile) + 16px); border-radius: 50%; border: 3px solid transparent; }
+.profiles__one--last .profiles__ring { border-color: var(--accent); }
+.profiles__one:hover .profiles__ring, .profiles__one:focus-visible .profiles__ring { border: 4px solid #fff; }
+.profiles__one:focus-visible { outline: 0; }
+.profiles__name { max-width: 100%; margin-top: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profiles__one:hover .profiles__name, .profiles__one:focus-visible .profiles__name { color: var(--fg); font-weight: 600; }
+.profiles__edit { position: absolute; inset: 5px; display: grid; place-items: center; border-radius: 50%; background: rgba(0,0,0,0.53); color: #fff; }
+.profiles__cat { position: absolute; top: -19px; left: 50%; transform: translateX(-50%); pointer-events: none; }
+.profiles__add-circle { width: var(--tile); height: var(--tile); display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--muted); color: var(--muted); }
+.profiles__bone { width: var(--tile); height: var(--tile); margin: 18px 12px 0; border-radius: 50%; }
+.profiles__error { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.profiles__actions { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 40px; }
+.profiles__manage, .profiles__logout { padding: 10px 24px; border-radius: 20px; border: 1.5px solid var(--accent); color: var(--accent); font-size: 15px; font-weight: 600; }
+.profiles__manage:hover, .profiles__manage:focus-visible, .profiles__manage--on, .profiles__logout:hover, .profiles__logout:focus-visible { background: var(--accent); color: var(--on-brand); outline: 0; }
+.profiles--editor { justify-content: flex-start; text-align: left; }
 
 /* ---------- account ---------- */
 .account { max-width: 760px; padding: 0 var(--gutter); display: flex; flex-direction: column; gap: 16px; }
@@ -800,8 +818,6 @@ img { display: block; }
   .ep > a, .ep { display: grid; grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 12px; align-items: start; }
   .ep > a { padding: 0; grid-column: 1 / -1; }
   .ep__art { border-radius: 4px; grid-row: 1 / 3; }
-  .ep__art:has(.watched-overlay) img { opacity: 0.45; }
-  .ep__art .watched-overlay { background: transparent; }
   .ep__art .watched-overlay svg { width: 20px; height: 20px; padding: 7px; box-sizing: content-box; border-radius: 50%; background: rgba(0, 0, 0, 0.6); }
   .ep__art .play-ring { width: 34px; height: 34px; margin: -17px 0 0 -17px; }
   .ep__art .badge--br { bottom: 4px; right: 4px; border-radius: 3px; padding: 2px 5px; }
@@ -848,13 +864,19 @@ img { display: block; }
   .page:has(.acc-phonehead) { padding-top: 0; padding-bottom: 24px; }
 
   /* ---- Who's watching? (ProfilePicker.kt): the hat, 26 sp title, 112 dp tiles two across ---- */
-  .profiles { gap: 0; padding: calc(var(--sat) + 36px) 24px 24px; place-content: start center; }
-  .profiles__hat { display: flex; justify-content: center; }
-  .profiles h1 { font-size: 26px; margin: 20px 0 32px; }
-  .profiles__list { gap: 20px; }
-  .profiles__one { width: 128px; font-size: 15px; color: var(--fg); }
-  .profiles__one .avatar { width: 112px; height: 112px; font-size: 50px; border: 0; }
-  .profiles__one .avatar--selected { outline: 3px solid var(--accent); outline-offset: 4px; }
-  .profiles__actions { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-  .profiles__manage { padding: 10px 24px; border-radius: 20px; border: 1.5px solid var(--accent); color: var(--accent); font-size: 14px; font-weight: 600; }
+  .profiles { justify-content: flex-start; padding: calc(var(--sat) + 36px) 24px 154px; }
+  .profiles__back { top: calc(var(--sat) + 12px); }
+  .profiles h1 { margin: 20px 0 32px; }
+  .profiles__list { gap: 0 20px; max-width: 360px; }
+  .profiles__one { width: calc(var(--tile) + 16px); margin-bottom: 20px; font-size: 15px; color: var(--fg); }
+  .profiles__ring { width: calc(var(--tile) + 14px); height: calc(var(--tile) + 14px); }
+  .profiles__one:hover .profiles__ring { border: 3px solid transparent; }
+  .profiles__one--last:hover .profiles__ring { border-color: var(--accent); }
+  .profiles__name { margin-top: 10px; }
+  .profiles__one:hover .profiles__name { font-weight: 400; }
+  .profiles__actions { position: fixed; left: 0; right: 0; bottom: 24px; flex-direction: column; gap: 10px; margin: 0; }
+  .profiles__actions::before { content: ""; position: absolute; inset: -40px 0 -24px; z-index: -1; background: linear-gradient(transparent, var(--bg) 40%); }
+  .profiles__manage { font-size: 14px; }
+  .profiles__logout, .profiles__logout:hover { border: 0; padding: 8px; background: none; color: var(--accent); font-size: 14px; }
+  .profiles--editor { padding-bottom: 24px; }
 }

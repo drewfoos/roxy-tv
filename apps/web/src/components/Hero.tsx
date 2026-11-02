@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { ageLabel, audioBadge, episodeCode, isEpisode, isMovie } from '../api/items'
+import { ageLabel, audioBadge, isEpisode, isMovie, playLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { IconChevronLeft, IconChevronRight, IconPlay } from './Icons'
 import { SaveButton, itemPath } from './Cards'
@@ -56,10 +56,7 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
         const logo = api.imageUrl(t, 'logo', px(360))
         const genres = (t.genres ?? []).slice(0, 4).join(', ')
         const badge = audioBadge(h.play) ?? audioBadge(t)
-        const resumable = (h.play.userData?.positionMs ?? 0) > 0
-        const code = episodeCode(h.play)
-        const ep = h.play.indexAired ?? h.play.indexAbsolute
-        const label = resumable ? (isEpisode(h.play) && ep != null ? `Continue watching E${ep}` : 'Continue watching') : isEpisode(h.play) && ep != null ? `Start watching E${ep}` : code ? `Start watching ${code}` : 'Start watching'
+        const label = playLabel(h.play)
         const playTo = isEpisode(h.play) || isMovie(h.play) ? `/watch/${h.play.id}` : itemPath(h.play)
         return (
           <div key={t.id} className={'hero__slide' + (i === index ? ' hero__slide--on' : '')} aria-hidden={i !== index}>

@@ -150,10 +150,24 @@ export function sortEpisodes(eps: Item[]): Item[] {
   return eps.slice().sort((a, b) => key(a) - key(b) || (a.indexAired ?? a.indexAbsolute ?? 0) - (b.indexAired ?? b.indexAbsolute ?? 0))
 }
 
-/** The episode Play should start on a title page: resumable first, then the first unwatched, then the first. */
+/**
+ * The episode a title page's Play means, across every season (upNextOf in the apps): the
+ * latest one in progress, else the first unwatched after the last watched, else the first
+ * unwatched, else the first (watch again). Specials count only when there is nothing else.
+ */
 export function nextToPlay(eps: Item[]): Item | null {
   const playable = eps.filter(isPlayable)
-  return playable.find((e) => (e.userData?.positionMs ?? 0) > 0 && !e.userData?.played) ?? playable.find((e) => !e.userData?.played) ?? playable[0] ?? null
+  const regular = playable.filter((e) => (e.seasonAired ?? 1) !== 0)
+  const ordered = (regular.length ? regular : playable)
+    .slice()
+    .sort((a, b) => (a.seasonAired ?? 1) - (b.seasonAired ?? 1) || (a.indexAired ?? a.indexAbsolute ?? 0) - (b.indexAired ?? b.indexAbsolute ?? 0))
+  const started = ordered.filter((e) => (e.userData?.positionMs ?? 0) > 0)
+  if (started.length) return started[started.length - 1]
+  let lastWatched = -1
+  ordered.forEach((e, i) => {
+    if (e.userData?.played) lastWatched = i
+  })
+  return ordered.slice(lastWatched + 1).find((e) => !e.userData?.played) ?? ordered.find((e) => !e.userData?.played) ?? ordered[0] ?? null
 }
 
 export function playLabel(next: Item | null, loading = false): string {
