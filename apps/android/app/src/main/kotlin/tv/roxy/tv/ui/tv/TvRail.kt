@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import tv.roxy.tv.BuildConfig
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -131,7 +134,7 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
             // is in Rail.
             BackHandler(enabled = current != null && !railOpen) { railOpen = true }
             if (current != null && update !is UpdateState.None) {
-                TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomEnd))
+                TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomCenter))
             }
         }
     }
@@ -152,29 +155,59 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
         UpdateState.None -> return
     }
     val title = when (state) {
-        is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
+        is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}"
         is UpdateState.Ready -> "Roxy TV ${update.versionName} is ready to install"
-        is UpdateState.Failed -> "Update failed  ·  ${state.message}"
+        is UpdateState.Failed -> "The update didn't download"
         else -> "Roxy TV ${update.versionName} is available"
     }
+    val sub = when (state) {
+        is UpdateState.Downloading -> "${(state.fraction * 100).toInt()}%  \u00b7  you can keep watching"
+        is UpdateState.Failed -> state.message
+        else -> update.notes.ifBlank { "You have ${BuildConfig.VERSION_NAME}." }
+    }
+    // A card centred at the bottom of the screen (it sat in the corner, small and off-centre):
+    // the icon, what the update is, and two full buttons like the rest of the TV app.
+    val shape = RoundedCornerShape(16.dp)
     Row(
-        modifier = modifier.padding(end = 40.dp, bottom = 28.dp).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+        modifier = modifier.padding(bottom = 28.dp).width(680.dp).clip(shape).background(RoxyColors.surface.copy(alpha = 0.97f))
+            .border(1.dp, Color.White.copy(alpha = 0.1f), shape).padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Outlined.SystemUpdate, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
-        Column(modifier = Modifier.padding(start = 14.dp, end = 18.dp).widthIn(max = 420.dp)) {
-            Text(title, color = RoxyColors.onBackground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (update.notes.isNotBlank() && state !is UpdateState.Downloading) Text(update.notes, color = RoxyColors.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(modifier = Modifier.size(46.dp).clip(CircleShape).background(RoxyColors.accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.SystemUpdate, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
+        }
+        Column(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            Text(title, color = RoxyColors.onBackground, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, color = RoxyColors.muted, fontSize = 13.sp, lineHeight = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            if (state is UpdateState.Downloading) {
+                Box(modifier = Modifier.padding(top = 8.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.12f))) {
+                    Box(modifier = Modifier.fillMaxWidth(state.fraction.coerceIn(0f, 1f)).fillMaxHeight().background(RoxyColors.accent))
+                }
+            }
         }
         if (state !is UpdateState.Downloading) {
-            val label = when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Retry"; else -> "Update" }
-            TvFocusable(onClick = onInstall, shape = RoundedCornerShape(17.dp), background = RoxyColors.accent, focusedBackground = Color.White) { _ ->
-                Text(label, color = OnAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp))
-            }
-            Spacer(Modifier.width(8.dp))
-            TvFocusable(onClick = onDismiss, shape = RoundedCornerShape(17.dp), focusedBackground = Color(0x33FFFFFF)) { focused ->
-                Text("Not now", color = if (focused) Color.White else RoxyColors.muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
-            }
+            val label = when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Try again"; else -> "Update" }
+            BannerButton(label, primary = true, onClick = onInstall)
+            Spacer(Modifier.width(10.dp))
+            BannerButton("Not now", primary = false, onClick = onDismiss)
+        }
+    }
+}
+
+/** The banner's buttons: the accent pill (white ring when focused) and an outlined one (accent when focused). */
+@Composable
+private fun BannerButton(text: String, primary: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
+    TvFocusable(onClick = onClick, shape = shape) { focused ->
+        val bg = if (primary || focused) RoxyColors.accent else Color.Transparent
+        val ring = when {
+            primary && focused -> Color.White
+            primary -> Color.Transparent
+            focused -> RoxyColors.accent
+            else -> Color.White.copy(alpha = 0.3f)
+        }
+        Box(modifier = Modifier.height(44.dp).background(bg, shape).border(if (focused) 3.dp else 1.5.dp, ring, shape).padding(horizontal = 22.dp), contentAlignment = Alignment.Center) {
+            Text(text, color = if (primary || focused) OnAccent else RoxyColors.onBackground, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }

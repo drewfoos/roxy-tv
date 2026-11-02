@@ -225,13 +225,17 @@ fun LoginScreen() {
 
     // A brand-new server (no accounts yet) gets the setup wizard instead of a sign-in form.
     var setup by remember { mutableStateOf<tv.roxy.tv.api.SetupStatus?>(null) }
+    // null while checking; false when nothing answered at the address.
+    var reachable by remember { mutableStateOf<Boolean?>(null) }
     var openSetup by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(serverUrl) {
         setup = null
+        reachable = null
         val url = serverUrl.trim().trimEnd('/').let { if (it.isEmpty() || it.startsWith("http")) it else "http://$it" }
         if (url.isEmpty()) return@LaunchedEffect
         kotlinx.coroutines.delay(500) // typing: wait for a pause
         setup = runCatching { app.api.setupStatus(url) }.getOrNull()
+        reachable = setup != null
     }
     val needsSetup = setup?.required == true
     if (openSetup && needsSetup && setup?.allowed == true) {
@@ -246,14 +250,15 @@ fun LoginScreen() {
 
     if (isTelevision(context)) {
         // A code for the server in the field (once typing pauses), unless it still needs setting up.
-        LaunchedEffect(serverUrl, needsSetup) {
-            if (needsSetup) return@LaunchedEffect
+        LaunchedEffect(serverUrl, needsSetup, reachable) {
+            if (needsSetup || reachable != true) return@LaunchedEffect
             kotlinx.coroutines.delay(600)
             vm.startLink(serverUrl)
         }
         TvLogin(
             state = state,
             serverUrl = serverUrl, onServerUrl = { serverUrl = it },
+            serverName = setup?.serverName?.ifEmpty { null }, serverReachable = reachable,
             username = username, onUsername = { username = it },
             password = password, onPassword = { password = it },
             agreed = agreed, onAgreed = { agreed = it },

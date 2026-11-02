@@ -369,6 +369,12 @@ class RoxyApi(private val prefs: Prefs) {
         execute<LinkResult>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/link/${link.code}/wait?secret=${link.secret}").get().build())
     }
 
+    /** How many posters the sign-in wall of [serverUrl] has (public; 0 on an older server). */
+    suspend fun showcaseCountAt(serverUrl: String): Int = withContext(Dispatchers.IO) {
+        val base = serverUrl.trim().trimEnd('/').let { if (it.startsWith("http")) it else "http://$it" }
+        execute<ShowcaseCount>(Request.Builder().url("$base/v1/showcase").get().build()).count
+    }
+
     suspend fun legalAt(serverUrl: String, doc: String): LegalDoc = withContext(Dispatchers.IO) {
         execute<LegalDoc>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/legal/$doc").get().build())
     }
@@ -569,6 +575,9 @@ data class LoginResponse(val token: String, val user: User)
 
 @Serializable
 private data class LinkStartRequest(val client: String, val device: String, val deviceId: String, val version: String)
+
+@Serializable
+data class ShowcaseCount(val count: Int = 0)
 
 /** A TV sign-in code: what the TV shows, the secret it polls with, the link the QR carries. */
 @Serializable

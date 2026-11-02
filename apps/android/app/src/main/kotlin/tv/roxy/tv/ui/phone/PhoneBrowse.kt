@@ -19,6 +19,26 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -67,12 +87,36 @@ import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
-data class LibraryUiState(val items: List<Item>? = null, val error: String? = null)
+data class LibraryUiState(val items: List<Item>? = null, val error: String? = null, val refreshing: Boolean = false)
+
+/** A way of slicing the library for Browse: a chip label and the rule (sort / filter). */
+class BrowseCategory(val key: String, val label: String, val pick: (List<Item>) -> List<Item>)
+
+/** Browse's chips and the grid under the selected one; [items] is null until the library arrives. */
+data class BrowseUiState(val categories: List<BrowseCategory> = emptyList(), val selected: String = "new", val items: List<Item>? = null)
 
 /**
- * The whole library's series and movies in one list (sorted by title), shared by Browse,
- * Search and Watchlist so the three tabs cost one request between them. Reloaded on
- * resume only when it has been more than a minute, not on every tab switch.
+ * Browse's categories, as the TV's Browse has them: Newly Added, A-Z, Series, Movies, then
+ * every genre in the library, the most common first.
+ */
+private fun browseCategories(all: List<Item>): List<BrowseCategory> {
+    val byTitle = compareBy<Item> { it.sortTitle ?: it.title.lowercase() }
+    val fixed = listOf(
+        BrowseCategory("new", "Newly Added") { it.sortedByDescending { x -> x.dateCreated.orEmpty() } },
+        BrowseCategory("az", "A-Z") { it.sortedWith(byTitle) },
+        BrowseCategory("series", "Series") { it.filter { x -> x.isSeries }.sortedWith(byTitle) },
+        BrowseCategory("movies", "Movies") { it.filter { x -> x.isMovie }.sortedWith(byTitle) },
+    )
+    val genres = all.flatMap { it.genres }.groupingBy { it }.eachCount().entries
+        .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key }).map { it.key }
+    return fixed + genres.map { g -> BrowseCategory("genre:$g", g) { it.filter { x -> g in x.genres }.sortedWith(byTitle) } }
+}
+
+/**
+ * The whole library's series and movies in one list (sorted by title), shared by Browse
+ * and Search so they cost one request between them. Activity-scoped, so it outlives a trip
+ * to a title page: reloaded on resume only when it is more than [FRESH_MS] old or the
+ * library version changed, not on every return.
  */
 class LibraryViewModel(private val api: RoxyApi, private val favoritesOnly: Boolean = false) : ViewModel() {
     private val _state = MutableStateFlow(LibraryUiState())
@@ -80,42 +124,107 @@ class LibraryViewModel(private val api: RoxyApi, private val favoritesOnly: Bool
     private var loadedAt = 0L
     private var seenVersion = -1L
 
+    private val category = MutableStateFlow("new")
+
+    /**
+     * Browse's chips and grid, sorted and filtered off the main thread. Kept in the view
+     * model so coming back from a title page shows the same category and list at once.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val browse: StateFlow<BrowseUiState> = combine(_state.map { it.items }.distinctUntilChanged(), category) { items, key -> items to key }
+        .mapLatest { (items, key) ->
+            if (items == null) BrowseUiState(selected = key)
+            else withContext(Dispatchers.Default) {
+                val cats = browseCategories(items)
+                val cat = cats.firstOrNull { it.key == key } ?: cats.first()
+                BrowseUiState(categories = cats, selected = cat.key, items = cat.pick(items))
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BrowseUiState())
+
+    fun selectCategory(key: String) { category.value = key }
+
     /** [version] is the library version the caller sees (ItemCache.version); a change forces a refetch. */
     fun load(force: Boolean = false, version: Long = seenVersion) {
         val now = System.currentTimeMillis()
         val stale = version != seenVersion
-        if (!force && !stale && _state.value.items != null && now - loadedAt < 60_000) return
+        if (!force && !stale && _state.value.items != null && now - loadedAt < FRESH_MS) return
         seenVersion = version
+        if (force && _state.value.items != null) _state.value = _state.value.copy(refreshing = true)
         viewModelScope.launch {
             runCatching {
                 if (favoritesOnly) api.favorites().items
                 else api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items
             }
                 .onSuccess { loadedAt = System.currentTimeMillis(); _state.value = LibraryUiState(items = it) }
-                .onFailure { t -> Timber.e(t, "library load failed"); _state.value = _state.value.copy(error = t.message) }
+                .onFailure { t -> Timber.e(t, "library load failed"); _state.value = _state.value.copy(error = t.message, refreshing = false) }
         }
     }
+
+    private companion object { const val FRESH_MS = 5 * 60_000L }
 }
 
-/** Browse tab: Series / Movies toggle over a three-column poster grid, search in the corner. */
+/**
+ * Browse tab, after Crunchyroll's phone app: a scrolling row of category chips (Newly
+ * Added, A-Z, Series, Movies, then the library's genres) over a three-column poster grid
+ * with each title and "year · Series/Movie" under its poster. Pull down to refresh.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSearch: () -> Unit, bottomInset: Dp) {
     val vm = libraryViewModel()
     val state by vm.state.collectAsStateWithLifecycle()
+    val browse by vm.browse.collectAsStateWithLifecycle()
     val items = RoxyApp.get(LocalContext.current).items
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(version = items.version) }
     OnUserDataChanged { vm.load(version = items.version) }
-    var movies by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val gridState = rememberLazyGridState()
+    val chipState = rememberLazyListState()
 
-    val all = state.items
-    val shown = all?.filter { if (movies) it.isMovie else it.isSeries }
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         TabHeader("Browse", onSearch = onSearch)
-        Row(modifier = Modifier.padding(horizontal = PhonePad, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("Series", selected = !movies, onClick = { movies = false })
-            Chip("Movies", selected = movies, onClick = { movies = true })
+        if (state.items == null && state.error != null) {
+            Text(state.error ?: "", color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
+            return@Column
         }
-        PosterGrid(items = shown, error = state.error, emptyText = "Nothing here yet.", bottomInset = bottomInset, onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) })
+        if (browse.categories.isEmpty()) {
+            ChipRowSkeleton()
+        } else {
+            LazyRow(
+                state = chipState,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = PhonePad, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(browse.categories, key = { it.key }) { c ->
+                    Chip(c.label, selected = c.key == browse.selected, onClick = {
+                        if (c.key != browse.selected) {
+                            vm.selectCategory(c.key)
+                            scope.launch { gridState.scrollToItem(0) }
+                        }
+                    })
+                }
+            }
+        }
+        PullToRefreshBox(
+            isRefreshing = state.refreshing,
+            onRefresh = { vm.load(force = true, version = items.version) },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            PosterGrid(
+                items = browse.items, error = null, emptyText = "Nothing here yet.", bottomInset = bottomInset, state = gridState,
+                onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) },
+            )
+        }
+    }
+}
+
+/** Placeholder for the category chips while the library loads. */
+@Composable
+private fun ChipRowSkeleton() {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(104.dp, 56.dp, 70.dp, 74.dp, 84.dp).forEach { Bone(Modifier.width(it).height(34.dp), shape = RoundedCornerShape(17.dp)) }
     }
 }
 
@@ -233,24 +342,66 @@ fun PhoneSearch(onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (
     }
 }
 
-/** Three-column poster grid with skeleton, error and empty states. */
+/** Three-column poster grid (title and "year · Series/Movie" under each) with skeleton, error and empty states. */
 @Composable
-private fun PosterGrid(items: List<Item>?, error: String?, emptyText: String, bottomInset: Dp, onOpen: (Item) -> Unit) {
+private fun PosterGrid(
+    items: List<Item>?, error: String?, emptyText: String, bottomInset: Dp,
+    state: LazyGridState = rememberLazyGridState(), onOpen: (Item) -> Unit,
+) {
     val app = RoxyApp.get(LocalContext.current)
     when {
         items == null && error != null -> Text(error, color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
-        items == null -> GridSkeleton(modifier = Modifier.padding(top = 8.dp))
-        items.isEmpty() -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+        items == null -> CaptionedGridSkeleton(modifier = Modifier.padding(top = 8.dp))
+        // Scrollable even when empty, so pull-to-refresh still works on an empty category.
+        items.isEmpty() -> Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp), contentAlignment = Alignment.TopCenter) {
             Text(emptyText, color = RoxyColors.muted, textAlign = TextAlign.Center, lineHeight = 20.sp)
         }
         else -> LazyVerticalGrid(
             columns = GridCells.Fixed(3),
+            state = state,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 8.dp, bottom = bottomInset + 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(items, key = { it.id }) { PosterTile(it, app.api, modifier = Modifier.fillMaxWidth(), onClick = { onOpen(it) }) }
+            items(items, key = { it.id }) { CaptionedPoster(it, app.api, onClick = { onOpen(it) }) }
+        }
+    }
+}
+
+/** A grid poster with its title (two lines at most) and "2019 · Series" under it; the whole tile is the tap target. */
+@Composable
+private fun CaptionedPoster(item: Item, api: RoxyApi, onClick: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick)) {
+        PosterTile(item, api, modifier = Modifier.fillMaxWidth(), onClick = onClick)
+        Text(
+            item.title, fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground,
+            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            listOfNotNull(item.year?.toString(), if (item.isMovie) "Movie" else "Series").joinToString(" · "),
+            fontSize = 11.sp, lineHeight = 14.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+/** Skeleton for [PosterGrid]: three posters across, each with a title line and a shorter detail line. */
+@Composable
+private fun CaptionedGridSkeleton(modifier: Modifier = Modifier, rows: Int = 3) {
+    Column(modifier = modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        repeat(rows) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(3) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Bone(Modifier.fillMaxWidth().aspectRatio(2f / 3f))
+                        Spacer(Modifier.height(8.dp))
+                        Bone(Modifier.fillMaxWidth(0.85f).height(12.dp), shape = RoundedCornerShape(4.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Bone(Modifier.fillMaxWidth(0.5f).height(10.dp), shape = RoundedCornerShape(4.dp))
+                    }
+                }
+            }
         }
     }
 }
