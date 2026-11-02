@@ -4,6 +4,7 @@ import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { Spinner } from '../components/Skeleton'
+import { LegalText } from '../components/LegalText'
 
 /** The server's Terms of Use or Privacy Policy, as it serves them. */
 export function Legal() {
@@ -16,7 +17,7 @@ export function Legal() {
       <div className="tabhead">
         <h1>{data?.title ?? (key === 'privacy' ? 'Privacy Policy' : 'Terms of Use')}</h1>
       </div>
-      {loading && !data ? <Spinner /> : error && !data ? <div className="empty error">{error}</div> : <pre className="legal">{data?.body ?? ''}</pre>}
+      {loading && !data ? <Spinner /> : error && !data ? <div className="empty error">{error}</div> : <div className="legal"><LegalText body={data?.body ?? ''} /></div>}
       <Footer />
     </div>
   )

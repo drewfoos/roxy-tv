@@ -3,12 +3,49 @@ import { api, ApiError, APP_VERSION } from '../api/client'
 import type { LoginResponse } from '../api/types'
 import { session } from '../api/session'
 import { WitchHat } from '../components/Icons'
+import { LegalText } from '../components/LegalText'
 
 type View = 'password' | 'phone' | 'server'
 
 function signIn(r: LoginResponse) {
   session.set({ token: r.token, userId: r.user.id, userName: r.user.name, isAdmin: !!r.user.isAdmin, profileId: null, profileName: '', profileHasAvatar: false, profileAvatarKey: '' })
 }
+
+// ---- Terms of Use: agreed once per terms version; recorded on the login after sign-in ----
+
+const TERMS_KEY = 'roxy.termsAccepted'
+
+function termsAcceptedHere(version: string | null): boolean {
+  if (!version) return false
+  try {
+    return localStorage.getItem(TERMS_KEY) === version
+  } catch {
+    return false
+  }
+}
+
+/** Record the agreement on the server (the same record the apps keep) and in this browser. */
+async function recordTerms(token: string, version: string | null) {
+  if (!version) return
+  try {
+    await fetch('/v1/legal/accept', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ version }) })
+    localStorage.setItem(TERMS_KEY, version)
+  } catch {
+    /* not fatal: the apps ask again */
+  }
+}
+
+/** What the sign-in forms need to know about the terms. */
+interface Terms {
+  version: string | null
+  /** This browser hasn't agreed to this version yet: the checkbox shows and must be ticked. */
+  needed: boolean
+  agreed: boolean
+  setAgreed: (v: boolean) => void
+  show: (doc: 'terms' | 'privacy') => void
+}
+
+const MUST_AGREE = 'Please agree to the Terms of Use and Privacy Policy to continue.'
 
 /** A sign-in error in words a person can act on. */
 function friendly(err: unknown): string {
@@ -92,6 +129,9 @@ export function Login() {
   const [view, setView] = useState<View>('password')
   const [serverName, setServerName] = useState<string | null>(null)
   const [needsSetup, setNeedsSetup] = useState(false)
+  const [termsVersion, setTermsVersion] = useState<string | null>(null)
+  const [agreed, setAgreed] = useState(false)
+  const [doc, setDoc] = useState<'terms' | 'privacy' | null>(null)
 
   useEffect(() => {
     api
@@ -103,20 +143,21 @@ export function Login() {
       })
       .catch(() => setServerName(null))
     api.setupStatus().then((s) => setNeedsSetup(!!s.required)).catch(() => undefined)
+    api.legal('terms').then((d) => setTermsVersion(d.version)).catch(() => setTermsVersion(null))
   }, [])
+
+  const terms: Terms = { version: termsVersion, needed: !!termsVersion && !termsAcceptedHere(termsVersion), agreed, setAgreed, show: setDoc }
 
   return (
     <div className="signin">
       <PosterWall />
-      <header className="signin__top">
+      <main className="signin__center">
         <div className="signin__logo">
-          <WitchHat size={34} />
+          <WitchHat size={40} />
           <span>
             Roxy <b>TV</b>
           </span>
         </div>
-      </header>
-      <main className="signin__center">
         <div className="signin__card">
           {needsSetup ? (
             <>
@@ -126,38 +167,32 @@ export function Login() {
           ) : view === 'server' ? (
             <ChangeServer onBack={() => setView('password')} />
           ) : (
-            <>
-              <ServerRow name={serverName} onChange={() => setView('server')} />
-              {view === 'phone' ? <PhoneSignIn onBack={() => setView('password')} /> : <PasswordSignIn onPhone={() => setView('phone')} />}
-            </>
+            view === 'phone' ? (
+              <PhoneSignIn terms={terms} onBack={() => setView('password')} />
+            ) : (
+              <PasswordSignIn terms={terms} onPhone={() => setView('phone')} />
+            )
           )}
         </div>
         {view === 'password' && !needsSetup && <Help />}
-        <div className="signin__foot">Roxy TV · web {APP_VERSION}</div>
+        <div className="signin__foot">
+          {view !== 'server' && (
+            <span>
+              Signing in to <b>{serverName ?? 'Roxy'}</b> · {window.location.host} ·{' '}
+              <button type="button" className="signin__foot-link" onClick={() => setView('server')}>
+                Different server?
+              </button>
+            </span>
+          )}
+          <span>Roxy TV · web {APP_VERSION}</span>
+        </div>
       </main>
+      {doc && <LegalDialog doc={doc} onClose={() => setDoc(null)} />}
     </div>
   )
 }
 
-/** Which server this signs in to, with the way to pick another. */
-function ServerRow({ name, onChange }: { name: string | null; onChange: () => void }) {
-  return (
-    <div className="signin__server">
-      <span className="signin__server-icon">
-        <IconServer />
-      </span>
-      <span className="signin__server-text">
-        <span className="signin__server-name">{name ?? 'Connecting…'}</span>
-        <span className="signin__muted">{window.location.host}</span>
-      </span>
-      <button type="button" className="signin__link" onClick={onChange}>
-        Change
-      </button>
-    </div>
-  )
-}
-
-function PasswordSignIn({ onPhone }: { onPhone: () => void }) {
+function PasswordSignIn({ terms, onPhone }: { terms: Terms; onPhone: () => void }) {
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
@@ -173,10 +208,16 @@ function PasswordSignIn({ onPhone }: { onPhone: () => void }) {
       setError(!name.trim() ? 'Enter your username.' : 'Enter your password.')
       return
     }
+    if (terms.needed && !terms.agreed) {
+      setError(MUST_AGREE)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      signIn(await api.login(name.trim(), password))
+      const r = await api.login(name.trim(), password)
+      if (terms.needed) await recordTerms(r.token, terms.version)
+      signIn(r)
     } catch (err) {
       setError(friendly(err))
       setPassword('')
@@ -205,6 +246,7 @@ function PasswordSignIn({ onPhone }: { onPhone: () => void }) {
           </span>
         </label>
         {caps && <div className="signin__hint">Caps Lock is on.</div>}
+        <TermsLine terms={terms} />
         {error && (
           <div className="signin__error" role="alert">
             {error}
@@ -218,10 +260,88 @@ function PasswordSignIn({ onPhone }: { onPhone: () => void }) {
       <div className="signin__or">
         <span>or</span>
       </div>
-      <button type="button" className="signin__secondary" onClick={onPhone}>
+      <button
+        type="button"
+        className="signin__secondary"
+        onClick={() => {
+          if (terms.needed && !terms.agreed) setError(MUST_AGREE)
+          else onPhone()
+        }}
+      >
         <IconPhone /> Sign in with your phone
       </button>
     </>
+  )
+}
+
+/** The agreement: a checkbox until this browser has agreed to this version, then one line. */
+function TermsLine({ terms }: { terms: Terms }) {
+  if (!terms.version) return null
+  const links = (
+    <>
+      the{' '}
+      <button type="button" className="signin__inline-link" onClick={() => terms.show('terms')}>
+        Terms of Use
+      </button>{' '}
+      and{' '}
+      <span className="signin__nowrap">
+        <button type="button" className="signin__inline-link" onClick={() => terms.show('privacy')}>
+          Privacy Policy
+        </button>
+        .
+      </span>
+    </>
+  )
+  if (!terms.needed) return <p className="signin__fine">By signing in you agree to {links}</p>
+  return (
+    <label className="signin__check">
+      <input type="checkbox" checked={terms.agreed} onChange={(e) => terms.setAgreed(e.target.checked)} />
+      <span className="signin__check-box" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m5 12 5 5 9-10" />
+        </svg>
+      </span>
+      <span>I agree to {links}</span>
+    </label>
+  )
+}
+
+/** The Terms of Use or Privacy Policy over the sign-in page (those pages need a session). */
+function LegalDialog({ doc, onClose }: { doc: 'terms' | 'privacy'; onClose: () => void }) {
+  const [data, setData] = useState<{ title: string; body: string } | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    api
+      .legal(doc)
+      .then((d) => setData({ title: d.title, body: d.body }))
+      .catch(() => setFailed(true))
+  }, [doc])
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="signin__dialog-scrim" onClick={onClose}>
+      <div className="signin__dialog" role="dialog" aria-modal="true" aria-label={data?.title ?? 'Terms'} onClick={(e) => e.stopPropagation()}>
+        <div className="signin__dialog-head">
+          <h2>{data?.title ?? (doc === 'privacy' ? 'Privacy Policy' : 'Terms of Use')}</h2>
+          <button type="button" className="signin__dialog-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="signin__dialog-body">
+          {failed ? <p className="signin__error">This document didn't load. Try again in a moment.</p> : data ? <LegalText body={data.body} /> : <p className="signin__muted">Loading…</p>}
+        </div>
+        <div className="signin__dialog-foot">
+          <button type="button" className="signin__primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -242,7 +362,7 @@ function Help() {
             <b>Signed in on your phone?</b> Use <i>Sign in with your phone</i>: no password needed.
           </li>
           <li>
-            <b>Wrong server?</b> Press <i>Change</i> on the card and type the right address.
+            <b>Wrong server?</b> Use <i>Different server?</i> below and type the right address.
           </li>
           <li>
             <b>Page won't load at all?</b> The server may be off, or you may be outside your home network.
@@ -254,7 +374,7 @@ function Help() {
 }
 
 /** The QR / code sign-in: ask for a link code, show it three ways, wait for a phone to approve it. */
-function PhoneSignIn({ onBack }: { onBack: () => void }) {
+function PhoneSignIn({ terms, onBack }: { terms: Terms; onBack: () => void }) {
   const [link, setLink] = useState<{ code: string; secret: string; expiresAt: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -281,6 +401,7 @@ function PhoneSignIn({ onBack }: { onBack: () => void }) {
             const r = await api.linkWait(l.code, l.secret)
             if (stop) return
             if (r.status === 'done') {
+              if (terms.needed) await recordTerms(r.token, terms.version)
               signIn(r)
               return
             }
