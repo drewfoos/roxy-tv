@@ -124,6 +124,10 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
                         true
                     },
             ) { content() }
+            // Under the rail, and hidden while it is open so the rail's Update row shows.
+            if (current != null && update !is UpdateState.None && !railOpen) {
+                TvUpdateNotice(update, modifier = Modifier.align(Alignment.BottomCenter))
+            }
             if (current != null) Rail(
                 current, open = railOpen, onSelect = { p -> railOpen = false; onSelect(p); enterTick++ }, onSwitchProfile = onSwitchProfile,
                 onClosed = { railOpen = false; enterTick++ },
@@ -133,20 +137,19 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
             // Back. A text field being typed in takes its Back first; Back on the rail itself
             // is in Rail.
             BackHandler(enabled = current != null && !railOpen) { railOpen = true }
-            if (current != null && update !is UpdateState.None) {
-                TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss(); enterTick++ }, modifier = Modifier.align(Alignment.BottomCenter))
-            }
         }
     }
 }
 
 /**
- * "Roxy 0.3.2 is available": a newer build published on the server, with Update (download
- * and hand to Android's installer) and Not now. Sits over the page's bottom-right corner
- * until one is pressed; Down from the page's last row reaches it.
+ * "Roxy TV 0.5.15 is available - press Back for the menu, then Update": a notice, not a
+ * control. Buttons on a card floating over the page could not be reached with the remote;
+ * the rail's Update row (always reachable with Back) is where the update is started. Shown
+ * for a while when a version first appears, and throughout a download, an install that
+ * waits, or a failure.
  */
 @Composable
-private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvUpdateNotice(state: UpdateState, modifier: Modifier = Modifier) {
     val update = when (state) {
         is UpdateState.Available -> state.update
         is UpdateState.Downloading -> state.update
@@ -154,68 +157,42 @@ private fun TvUpdateBanner(state: UpdateState, onInstall: () -> Unit, onDismiss:
         is UpdateState.Failed -> state.update
         UpdateState.None -> return
     }
+    // "Available" leaves the screen after a while; the rail keeps the way to it.
+    var shown by remember(update.versionCode) { mutableStateOf(true) }
+    LaunchedEffect(update.versionCode, state is UpdateState.Available) {
+        shown = true
+        if (state is UpdateState.Available) { kotlinx.coroutines.delay(15_000); shown = false }
+    }
+    if (!shown) return
     val title = when (state) {
-        is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}"
+        is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}  \u00b7  ${(state.fraction * 100).toInt()}%"
         is UpdateState.Ready -> "Roxy TV ${update.versionName} is ready to install"
         is UpdateState.Failed -> "The update didn't download"
         else -> "Roxy TV ${update.versionName} is available"
     }
-    val sub = when (state) {
-        is UpdateState.Downloading -> "${(state.fraction * 100).toInt()}%  \u00b7  you can keep watching"
-        is UpdateState.Failed -> state.message
-        else -> update.notes.ifBlank { "You have ${BuildConfig.VERSION_NAME}." }
-    }
-    // A card centred at the bottom of the screen (it sat in the corner, small and off-centre):
-    // the icon, what the update is, and two full buttons like the rest of the TV app.
-    // A new version takes focus once, on Update: with the remote, the card was hard to reach
-    // (only Down from a page's last row got there). Not now hands focus back to the page.
-    val updateFocus = remember { FocusRequester() }
-    val offered = state is UpdateState.Available || state is UpdateState.Ready
-    LaunchedEffect(update.versionCode, offered) {
-        if (!offered) return@LaunchedEffect
-        repeat(10) { withFrameNanos { }; if (runCatching { updateFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
+    val hint = when (state) {
+        is UpdateState.Downloading -> "You can keep watching. The installer opens when it's done."
+        is UpdateState.Ready -> "Press Back to open the menu, then choose Install update."
+        is UpdateState.Failed -> "${state.message}. Press Back for the menu, then Retry update."
+        else -> "Press Back to open the menu, then choose Update Roxy TV."
     }
     val shape = RoundedCornerShape(16.dp)
     Row(
-        modifier = modifier.padding(bottom = 28.dp).width(680.dp).clip(shape).background(RoxyColors.surface.copy(alpha = 0.97f))
-            .border(1.dp, Color.White.copy(alpha = 0.1f), shape).padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = modifier.padding(bottom = 28.dp).width(640.dp).clip(shape).background(RoxyColors.surface.copy(alpha = 0.95f))
+            .border(1.dp, Color.White.copy(alpha = 0.1f), shape).padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(46.dp).clip(CircleShape).background(RoxyColors.accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(RoxyColors.accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
             Icon(Icons.Outlined.SystemUpdate, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(24.dp))
         }
-        Column(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+        Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
             Text(title, color = RoxyColors.onBackground, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(sub, color = RoxyColors.muted, fontSize = 13.sp, lineHeight = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            Text(hint, color = RoxyColors.muted, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
             if (state is UpdateState.Downloading) {
                 Box(modifier = Modifier.padding(top = 8.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.12f))) {
                     Box(modifier = Modifier.fillMaxWidth(state.fraction.coerceIn(0f, 1f)).fillMaxHeight().background(RoxyColors.accent))
                 }
             }
-        }
-        if (state !is UpdateState.Downloading) {
-            val label = when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Try again"; else -> "Update" }
-            BannerButton(label, primary = true, onClick = onInstall, modifier = Modifier.focusRequester(updateFocus))
-            Spacer(Modifier.width(10.dp))
-            BannerButton("Not now", primary = false, onClick = onDismiss)
-        }
-    }
-}
-
-/** The banner's buttons: the accent pill (white ring when focused) and an outlined one (accent when focused). */
-@Composable
-private fun BannerButton(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(22.dp)
-    TvFocusable(onClick = onClick, shape = shape, modifier = modifier) { focused ->
-        val bg = if (primary || focused) RoxyColors.accent else Color.Transparent
-        val ring = when {
-            primary && focused -> Color.White
-            primary -> Color.Transparent
-            focused -> RoxyColors.accent
-            else -> Color.White.copy(alpha = 0.3f)
-        }
-        Box(modifier = Modifier.height(44.dp).background(bg, shape).border(if (focused) 3.dp else 1.5.dp, ring, shape).padding(horizontal = 22.dp), contentAlignment = Alignment.Center) {
-            Text(text, color = if (primary || focused) OnAccent else RoxyColors.onBackground, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
