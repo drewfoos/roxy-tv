@@ -197,3 +197,45 @@ func TestLimiterAnd429Retry(t *testing.T) {
 		t.Errorf("expected one retry after ~1s, got %d calls in %s", n, time.Since(start))
 	}
 }
+
+// A folder named after a release title the main title lacks: TMDB's search finds
+// "Pokémon the Movie 2000" for "Pokemon - The Power of One" (1999), which only its
+// US/UK alternative title matches.
+func TestTMDBMatchesByAlternativeTitle(t *testing.T) {
+	alt := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search/movie":
+			w.Write([]byte(`{"results":[{"id":12599,"title":"Pokémon the Movie 2000","original_title":"劇場版ポケットモンスター 幻のポケモン ルギア爆誕","release_date":"1999-07-17"}]}`))
+		case "/movie/12599/alternative_titles":
+			alt++
+			w.Write([]byte(`{"id":12599,"titles":[{"iso_3166_1":"US","title":"Pokémon the Movie 2000: The Power of One"}]}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"status_message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+	p := NewTMDB("k")
+	p.base = srv.URL
+	year := 1999
+	id, err := p.search(context.Background(), &model.Item{Type: model.TypeMovie, Title: "Pokemon - The Power of One", Year: &year}, true)
+	if err != nil || id != 12599 {
+		t.Fatalf("id = %d, %v", id, err)
+	}
+	if alt != 1 {
+		t.Errorf("alternative titles fetched %d times", alt)
+	}
+}
+
+// A remake shares the original's title; a movie more than two years off is not a match.
+func TestPickBestRejectsDistantMovieYears(t *testing.T) {
+	cands := []candidate{{names: []string{"Pokémon: Mewtwo Strikes Back—Evolution"}, year: 2019}}
+	y := 1998
+	if i := pickBest("Pokemon - Mewtwo Strikes Back", &y, cands, movieYearGap); i != -1 {
+		t.Fatalf("1998 folder matched the 2019 remake")
+	}
+	if i := pickBest("Pokemon - Mewtwo Strikes Back", &y, cands, 0); i != 0 {
+		t.Fatalf("without the movie rule the title still matches (series keep the soft penalty)")
+	}
+}

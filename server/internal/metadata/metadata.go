@@ -227,9 +227,16 @@ const minMatchScoreSameYear = 0.45
 
 // pickBest scores candidates by title similarity (best of the given names) plus a year
 // bonus, and returns the index of the winner or -1.
-func pickBest(query string, year *int, candidates []candidate) int {
+//
+// maxYearGap > 0 rejects a candidate whose year is further than that from the folder's:
+// movies use it, since a film and its remake share a title (Mewtwo Strikes Back, 1998,
+// and "Mewtwo Strikes Back—Evolution", 2019, were matched to the same entry).
+func pickBest(query string, year *int, candidates []candidate, maxYearGap int) int {
 	best, bestScore := -1, 0.0
 	for i, c := range candidates {
+		if maxYearGap > 0 && year != nil && c.year != 0 && (*year-c.year > maxYearGap || c.year-*year > maxYearGap) {
+			continue
+		}
 		score := 0.0
 		for _, n := range c.names {
 			if s := TitleSimilarity(query, n); s > score {

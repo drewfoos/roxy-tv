@@ -133,10 +133,10 @@ func TestTitleSimilarity(t *testing.T) {
 	// lowers the bar, a different year does not.
 	y2026, y2024 := 2026, 2024
 	cands := []candidate{{names: []string{"Avatar Aang: The Last Airbender"}, year: 2026}}
-	if i := pickBest("The Legend of Aang - The Last Airbender", &y2026, cands); i != 0 {
+	if i := pickBest("The Legend of Aang - The Last Airbender", &y2026, cands, 0); i != 0 {
 		t.Errorf("pickBest same year = %d, want 0", i)
 	}
-	if i := pickBest("The Legend of Aang - The Last Airbender", &y2024, cands); i != -1 {
+	if i := pickBest("The Legend of Aang - The Last Airbender", &y2024, cands, 0); i != -1 {
 		t.Errorf("pickBest other year = %d, want -1", i)
 	}
 	if StripHTML("a<br/>b<BR>c &amp; d <b>e</b>") != "a\nb\nc & d e" {

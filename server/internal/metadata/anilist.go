@@ -559,7 +559,11 @@ func (a *AniList) search(ctx context.Context, item *model.Item) (*anilistMedia, 
 		names := append([]string{m.Title.Romaji, m.Title.English, m.Title.Native}, m.Synonyms...)
 		cands[i] = candidate{names: names, year: m.StartDate.Year}
 	}
-	i := pickBest(item.Title, item.Year, cands)
+	gap := 0
+	if item.Type == model.TypeMovie {
+		gap = movieYearGap
+	}
+	i := pickBest(item.Title, item.Year, cands, gap)
 	if i < 0 {
 		return nil, nil
 	}

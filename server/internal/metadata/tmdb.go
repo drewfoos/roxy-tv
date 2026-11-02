@@ -470,11 +470,18 @@ func (t *TMDB) search(ctx context.Context, item *model.Item, isMovie bool) (int,
 			}
 		}
 		cands := make([]candidate, len(res.Results))
+		ids := make([]int, len(res.Results))
 		for i, r := range res.Results {
 			cands[i] = candidate{names: []string{r.Title, r.OriginalTitle}, year: dateYear(r.ReleaseDate)}
+			ids[i] = r.ID
 		}
-		if i := pickBest(item.Title, item.Year, cands); i >= 0 {
+		if i := pickBest(item.Title, item.Year, cands, movieYearGap); i >= 0 {
 			return res.Results[i].ID, nil
+		}
+		if t.addAltTitles(ctx, "movie", ids, cands) {
+			if i := pickBest(item.Title, item.Year, cands, movieYearGap); i >= 0 {
+				return res.Results[i].ID, nil
+			}
 		}
 		return 0, nil
 	}
@@ -492,13 +499,54 @@ func (t *TMDB) search(ctx context.Context, item *model.Item, isMovie bool) (int,
 		}
 	}
 	cands := make([]candidate, len(res.Results))
+	ids := make([]int, len(res.Results))
 	for i, r := range res.Results {
 		cands[i] = candidate{names: []string{r.Name, r.OriginalName}, year: dateYear(r.FirstAirDate)}
+		ids[i] = r.ID
 	}
-	if i := pickBest(item.Title, item.Year, cands); i >= 0 {
+	if i := pickBest(item.Title, item.Year, cands, 0); i >= 0 {
 		return res.Results[i].ID, nil
 	}
+	if t.addAltTitles(ctx, "tv", ids, cands) {
+		if i := pickBest(item.Title, item.Year, cands, 0); i >= 0 {
+			return res.Results[i].ID, nil
+		}
+	}
 	return 0, nil
+}
+
+// movieYearGap: a movie match more than this many years from the folder's year is
+// another film (a remake, a sequel with the same name), not this one.
+const movieYearGap = 2
+
+// addAltTitles adds TMDB's alternative titles of the first few search results to their
+// names, for a folder named after a release title the main title lacks: TMDB finds
+// "Pokemon - The Power of One" (1999) as "Pokémon the Movie 2000", whose US/UK title is
+// "Pokémon the Movie 2000: The Power of One". False when there was nothing to add.
+func (t *TMDB) addAltTitles(ctx context.Context, kind string, ids []int, cands []candidate) bool {
+	type altTitle struct {
+		Title string `json:"title"`
+	}
+	added := false
+	for i := range cands {
+		if i >= 3 {
+			break
+		}
+		var alt struct {
+			Titles  []altTitle `json:"titles"`  // movies
+			Results []altTitle `json:"results"` // tv
+		}
+		if err := t.get(ctx, fmt.Sprintf("/%s/%d/alternative_titles", kind, ids[i]), nil, &alt); err != nil {
+			continue
+		}
+		for _, a := range append(alt.Titles, alt.Results...) {
+			if a.Title != "" {
+				cands[i].names = append(cands[i].names, a.Title)
+				added = true
+			}
+		}
+	}
+	return added
 }
 
 func (t *TMDB) Episodes(ctx context.Context, series *Result, season int) (*Season, error) {
