@@ -72,7 +72,7 @@ export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
             Browse
           </NavLink>
           <span className="topbar__sep" />
-          <NavLink to="/browse?type=movie" className={link}>
+          <NavLink to="/browse?c=movies" className={link}>
             Movies
           </NavLink>
         </nav>
@@ -143,7 +143,7 @@ export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
             <NavLink to="/browse" end className="drawer__item" onClick={close}>
               <IconGrid size={22} /> Browse Series
             </NavLink>
-            <NavLink to="/browse?type=movie" className="drawer__item" onClick={close}>
+            <NavLink to="/browse?c=movies" className="drawer__item" onClick={close}>
               <IconGrid size={22} /> Browse Movies
             </NavLink>
           </div>

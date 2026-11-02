@@ -39,7 +39,7 @@ export function TitleBanner({ item, badge, extra, actions, menu }: { item: Item;
               {genres.map((g, i) => (
                 <span key={g}>
                   {i > 0 && ', '}
-                  <Link to={'/browse?q=' + encodeURIComponent(g)}>{g}</Link>
+                  <Link to={'/browse?c=' + encodeURIComponent('genre:' + g)}>{g}</Link>
                 </span>
               ))}
             </span>

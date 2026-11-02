@@ -56,8 +56,8 @@ export function ProgressBar({ item }: { item: Item }) {
  * lines of synopsis, the poster showing faintly through, and Play / Save at the foot.
  * There is no three-dot menu on a mouse; the phone keeps its own.
  */
-export function TitleCard({ item, width = 260 }: { item: Item; width?: number }) {
-  const sub = audioBadge(item) ?? [yearOf(item), isMovie(item) ? 'Movie' : null].filter(Boolean).join('  ·  ')
+export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; width?: number; sub?: string }) {
+  const sub = subLine ?? audioBadge(item) ??[yearOf(item), isMovie(item) ? 'Movie' : null].filter(Boolean).join('  ·  ')
   const [hover, setHover] = useState(false)
   const timer = useRef<number | null>(null)
   const enter = () => {

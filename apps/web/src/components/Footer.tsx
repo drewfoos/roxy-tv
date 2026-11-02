@@ -29,8 +29,8 @@ export function Footer() {
           <h4>Explore</h4>
           <Link to="/">Home</Link>
           <Link to="/discover">Discover</Link>
-          <Link to="/browse">Browse Series</Link>
-          <Link to="/browse?type=movie">Browse Movies</Link>
+          <Link to="/browse?c=series">Browse Series</Link>
+          <Link to="/browse?c=movies">Browse Movies</Link>
         </div>
         <div className="footer__col">
           <h4>Resources</h4>
