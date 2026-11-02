@@ -1071,6 +1071,7 @@ data class ArrConfig(
     val qualityProfileId: Int = 0,
     val animeRootFolder: String = "",
     val animeQualityProfileId: Int = 0,
+    val animeSeriesType: String = "",
     val tags: List<Int> = emptyList(),
     val animeTags: List<Int> = emptyList(),
     val seasonFolders: Boolean? = null,

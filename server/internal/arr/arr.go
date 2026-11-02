@@ -35,7 +35,11 @@ type Config struct {
 	AnimeQualityProfileID int    `json:"animeQualityProfileId,omitempty"`
 	Tags                  []int  `json:"tags,omitempty"`
 	AnimeTags             []int  `json:"animeTags,omitempty"`
-	SeasonFolders         *bool  `json:"seasonFolders,omitempty"` // Sonarr; default true
+	// Sonarr only: the series type an anime request is added with, "standard" (default:
+	// SxxEyy release names, which most groups and hand-tuned profiles expect) or "anime"
+	// (absolute numbering, "Show - 05").
+	AnimeSeriesType string `json:"animeSeriesType,omitempty"`
+	SeasonFolders   *bool  `json:"seasonFolders,omitempty"` // Sonarr; default true
 	// Radarr only: announced | inCinemas | released (default released).
 	MinimumAvailability string `json:"minimumAvailability,omitempty"`
 	SearchOnAdd         *bool  `json:"searchOnAdd,omitempty"` // default true
@@ -48,6 +52,15 @@ func (c Config) Configured() bool {
 
 func (c Config) seasonFolders() bool { return c.SeasonFolders == nil || *c.SeasonFolders }
 func (c Config) searchOnAdd() bool   { return c.SearchOnAdd == nil || *c.SearchOnAdd }
+
+// animeSeriesType is Sonarr's seriesType for an anime request: "standard" unless the
+// admin chose "anime".
+func (c Config) animeSeriesType() string {
+	if strings.EqualFold(strings.TrimSpace(c.AnimeSeriesType), "anime") {
+		return "anime"
+	}
+	return "standard"
+}
 
 // Client is one arr instance.
 type Client struct {
@@ -317,7 +330,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 	series["seasonFolder"] = c.cfg.seasonFolders()
 	series["tags"] = tags
 	if anime {
-		series["seriesType"] = "anime"
+		series["seriesType"] = c.cfg.animeSeriesType()
 	}
 	if ss, ok := series["seasons"].([]any); ok {
 		for _, x := range ss {

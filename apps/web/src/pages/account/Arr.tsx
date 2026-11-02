@@ -113,6 +113,16 @@ export function ArrPage() {
               <Field label="Anime quality profile">
                 <Select value={cfg.animeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as above' }, ...profileOptions]} onChange={(v) => patch({ animeQualityProfileId: v || null })} />
               </Field>
+              <Field
+                label="Anime series type"
+                hint={cfg.animeSeriesType === 'anime' ? 'Sonarr names and searches by absolute episode numbers (Episode 1047).' : 'Sonarr names and searches by season and episode (S21E1047), like the rest of your library.'}
+              >
+                <Select
+                  value={cfg.animeSeriesType === 'anime' ? 'anime' : 'standard'}
+                  options={[{ id: 'standard', label: 'Standard (recommended)' }, { id: 'anime', label: 'Anime (absolute numbering)' }]}
+                  onChange={(v) => patch({ animeSeriesType: v as 'standard' | 'anime' })}
+                />
+              </Field>
             </>
           )}
           {(test.tags?.length ?? 0) > 0 && (

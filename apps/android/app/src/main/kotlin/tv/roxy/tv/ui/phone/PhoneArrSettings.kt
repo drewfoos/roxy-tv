@@ -155,6 +155,7 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
                 Picker("Anime root folder", listOf("" to "Same as above") + p.rootFolders.map { it.path to it.path }, cfg.animeRootFolder) { onChange(cfg.copy(animeRootFolder = it)) }
                 if (cfg.animeRootFolder.isNotEmpty()) RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.animeRootFolder }, name)
                 Picker("Anime quality profile", listOf("0" to "Same as above") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.animeQualityProfileId.toString()) { onChange(cfg.copy(animeQualityProfileId = it.toIntOrNull() ?: 0)) }
+                Picker("Anime series type", listOf("standard" to "Standard (recommended)", "anime" to "Anime (absolute numbering)"), if (cfg.animeSeriesType == "anime") "anime" else "standard") { onChange(cfg.copy(animeSeriesType = it)) }
                 if (p.tags.isNotEmpty()) {
                     TagPicker("Tags", p.tags, cfg.tags) { onChange(cfg.copy(tags = it)) }
                     TagPicker("Anime tags", p.tags, cfg.animeTags) { onChange(cfg.copy(animeTags = it)) }
