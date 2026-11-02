@@ -414,6 +414,9 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 			n = len(parsed.Episodes) // Crunchyroll lists OVAs as the last episode
 		}
 		si := SeasonInfo{Number: i + 1, EpisodeCount: n, Poster: m.CoverImage.ExtraLarge, ProviderID: strconv.Itoa(m.ID)}
+		if m.IDMal != nil && *m.IDMal > 0 {
+			si.MalID = strconv.Itoa(*m.IDMal)
+		}
 		// AniList sometimes attaches season 1's Crunchyroll episode list to a sequel
 		// entry verbatim; a repeated list is wrong by definition, so refuse it.
 		if len(parsed.Episodes) > 0 {

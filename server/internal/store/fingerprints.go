@@ -137,6 +137,16 @@ func (s *Store) SeasonOfSource(ctx context.Context, sourceID string) (string, er
 	return parent.String, err
 }
 
+// DeleteSegmentTypes removes a source's segments of one origin and the given types.
+func (s *Store) DeleteSegmentTypes(ctx context.Context, sourceID, origin string, types []string) error {
+	for _, t := range types {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM media_segments WHERE source_id = ? AND origin = ? AND type = ?`, sourceID, origin, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ReplaceSegmentsByOrigin swaps a source's segments of one origin for the given set.
 // Segments of other origins (chapters, manual) are left alone; a conflict on type keeps
 // the existing row (chapters beat fingerprints).

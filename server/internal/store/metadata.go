@@ -62,6 +62,40 @@ func (s *Store) UpdateItemMetadata(ctx context.Context, id string, m ItemMetadat
 	return nil
 }
 
+// SetProviderIDs upserts an item's provider ids; empty values are skipped.
+func (s *Store) SetProviderIDs(ctx context.Context, itemID string, ids map[string]string) error {
+	for p, v := range ids {
+		if v == "" {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO item_provider_ids (item_id, provider, value) VALUES (?,?,?)
+			ON CONFLICT(item_id, provider) DO UPDATE SET value = excluded.value`, itemID, p, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeleteProviderIDs removes the named provider ids from an item.
+func (s *Store) DeleteProviderIDs(ctx context.Context, itemID string, providers ...string) error {
+	for _, p := range providers {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM item_provider_ids WHERE item_id = ? AND provider = ?`, itemID, p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ProviderID is one provider id of an item ("" when it has none).
+func (s *Store) ProviderID(ctx context.Context, itemID, provider string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM item_provider_ids WHERE item_id = ? AND provider = ?`, itemID, provider).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
 // ItemImage is one cached image file for an item.
 type ItemImage struct {
 	ItemID    string

@@ -142,7 +142,6 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	// Metadata lookups run off a queue fed by ingest (library must not import metadata).
 	meta := metadata.New(db, cfg)
 	meta.UseFFmpeg(ff)
-	meta.Start(ctx)
 	lib.OnItemIngested = meta.Enqueue
 
 	// Seek-preview thumbnails, generated after ingest (and swept for anything missing).
@@ -153,6 +152,9 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	segs := segments.New(db, ff, cfg)
 	segs.Start(ctx)
 	lib.OnSourceIngested = func(id string) { trick.Enqueue(id); segs.EnqueueSource(id) }
+	// A season that just got its MAL id can ask AniSkip. Set before the metadata worker starts.
+	meta.OnSeasonMal = segs.EnqueueSeason
+	meta.Start(ctx)
 
 	if cfg.ScanOnStart {
 		go func() {

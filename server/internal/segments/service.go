@@ -36,9 +36,10 @@ const (
 // Service runs detection for seasons as their episodes are ingested (debounced, so a
 // season scan triggers one pass) and on demand.
 type Service struct {
-	store *store.Store
-	ff    *ffmpeg.FFmpeg
-	cfg   *config.Config
+	store   *store.Store
+	ff      *ffmpeg.FFmpeg
+	cfg     *config.Config
+	aniskip *AniSkip // nil = do not ask AniSkip
 
 	mu      sync.Mutex
 	pending map[string]time.Time // season id -> when it was last touched
@@ -46,7 +47,7 @@ type Service struct {
 }
 
 func New(st *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Service {
-	return &Service{store: st, ff: ff, cfg: cfg, pending: map[string]time.Time{}, wake: make(chan struct{}, 1)}
+	return &Service{store: st, ff: ff, cfg: cfg, aniskip: NewAniSkip(), pending: map[string]time.Time{}, wake: make(chan struct{}, 1)}
 }
 
 // Start runs the worker: seasons sit in the pending set until nothing new has arrived
@@ -139,6 +140,7 @@ type EpisodeReport struct {
 	Index       int                  `json:"index"`
 	Found       []model.MediaSegment `json:"found"`
 	Chapters    []model.MediaSegment `json:"chapters,omitempty"` // what the markers said, for comparison
+	AniSkip     []model.MediaSegment `json:"aniskip,omitempty"`  // gaps filled from AniSkip
 	MatchedWith int                  `json:"matchedWith,omitempty"`
 	Note        string               `json:"note,omitempty"`
 }
@@ -154,6 +156,8 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 	}
 	rep := &Report{SeasonID: seasonID}
 	if len(eps) < 2 {
+		// Nothing to compare a lone episode with; AniSkip may still know it.
+		s.fillFromAniSkip(ctx, seasonID, dry, rep)
 		rep.Elapsed = time.Since(started).String()
 		return rep, nil
 	}
@@ -249,11 +253,16 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 		}
 		rep.Episodes = append(rep.Episodes, er)
 		if !dry {
+			// A measured segment outranks a crowd-sourced one of the same type.
+			if err := s.store.DeleteSegmentTypes(ctx, e.SourceID, AniSkipOrigin, segmentTypes(found)); err != nil {
+				return rep, err
+			}
 			if err := s.store.ReplaceSegmentsByOrigin(ctx, e.SourceID, Origin, found); err != nil {
 				return rep, err
 			}
 		}
 	}
+	s.fillFromAniSkip(ctx, seasonID, dry, rep)
 	rep.Elapsed = time.Since(started).String()
 	slog.Info("segments detected", "season", seasonID, "episodes", len(eps), "took", rep.Elapsed, "dry", dry)
 	return rep, nil
@@ -293,6 +302,83 @@ func (s *Service) cachedFingerprint(ctx context.Context, e store.SeasonEpisode, 
 	}
 	_ = s.store.PutFingerprint(ctx, &store.Fingerprint{SourceID: e.SourceID, Kind: kind, StartMs: ms(startSec), LengthMs: ms(lengthSec), Points: p})
 	return p, nil
+}
+
+// fillFromAniSkip asks AniSkip for the episodes of a season that still miss an intro or
+// an outro, and adds only the types they miss. It needs the season's own MAL id, which
+// the metadata service stores when AniList and TMDB agree on the season.
+func (s *Service) fillFromAniSkip(ctx context.Context, seasonID string, dry bool, rep *Report) {
+	if s.aniskip == nil {
+		return
+	}
+	mal, err := s.store.ProviderID(ctx, seasonID, "mal")
+	if err != nil || mal == "" {
+		return
+	}
+	eps, err := s.store.SeasonEpisodes(ctx, seasonID) // re-read: the fingerprint pass just wrote
+	if err != nil {
+		return
+	}
+	added := 0
+	for _, e := range eps {
+		dur := float64(e.DurationMs) / 1000
+		if e.Index < 1 || dur < MinEpisodeSec || (hasType(e.Segments, "intro") && hasType(e.Segments, "outro")) {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		segs, err := s.aniskip.Lookup(ctx, mal, e.Index, dur)
+		if err != nil {
+			slog.Warn("aniskip lookup failed; trying again on the next pass", "season", seasonID, "mal", mal, "episode", e.Index, "err", err)
+			return
+		}
+		var add []model.MediaSegment
+		for _, sg := range segs {
+			if !hasType(e.Segments, sg.Type) {
+				add = append(add, sg)
+			}
+		}
+		if len(add) == 0 {
+			continue
+		}
+		added += len(add)
+		rep.addAniSkip(e, add)
+		if dry {
+			continue
+		}
+		// Keep the AniSkip rows the episode already has and add the new ones.
+		keep := add
+		for _, sg := range e.Segments {
+			if sg.Origin == AniSkipOrigin {
+				keep = append(keep, sg)
+			}
+		}
+		if err := s.store.ReplaceSegmentsByOrigin(ctx, e.SourceID, AniSkipOrigin, keep); err != nil {
+			slog.Warn("aniskip: storing segments", "item", e.ItemID, "err", err)
+		}
+	}
+	if added > 0 {
+		slog.Info("segments from aniskip", "season", seasonID, "mal", mal, "added", added, "dry", dry)
+	}
+}
+
+func (r *Report) addAniSkip(e store.SeasonEpisode, segs []model.MediaSegment) {
+	for i := range r.Episodes {
+		if r.Episodes[i].ItemID == e.ItemID {
+			r.Episodes[i].AniSkip = append(r.Episodes[i].AniSkip, segs...)
+			return
+		}
+	}
+	r.Episodes = append(r.Episodes, EpisodeReport{ItemID: e.ItemID, Index: e.Index, AniSkip: segs})
+}
+
+func segmentTypes(segs []model.MediaSegment) []string {
+	var out []string
+	for _, s := range segs {
+		out = append(out, s.Type)
+	}
+	return out
 }
 
 func hasOrigin(segs []model.MediaSegment, o string) bool {

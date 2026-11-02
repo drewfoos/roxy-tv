@@ -52,6 +52,8 @@ type SeasonInfo struct {
 	// ProviderID is the provider's id for this season when seasons are separate entries
 	// (AniList models each TV season as its own Media; TMDB does not need it).
 	ProviderID string
+	// MalID is MyAnimeList's id for the same entry (AniList carries it): AniSkip's key.
+	MalID string
 	// NoEpisodeData marks a season whose per-episode data from this provider is known
 	// to be wrong (AniList sometimes repeats season 1's Crunchyroll episode list on a
 	// sequel). Episodes() returns nil for it so another provider can fill the season.

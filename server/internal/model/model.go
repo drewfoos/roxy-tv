@@ -134,7 +134,7 @@ type MediaSegment struct {
 	Type    string `json:"type"` // intro | outro | recap | preview
 	StartMs int64  `json:"startMs"`
 	EndMs   int64  `json:"endMs"`
-	Origin  string `json:"origin,omitempty"` // chapters | fingerprint | manual
+	Origin  string `json:"origin,omitempty"` // chapters | fingerprint | aniskip | manual
 }
 
 type MediaPart struct {

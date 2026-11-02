@@ -52,6 +52,10 @@ type Service struct {
 	mu            sync.Mutex
 	pending       map[string]bool      // queued but not yet picked up (dedupe)
 	failed        map[string]time.Time // top-level item id -> last unmatched attempt
+
+	// OnSeasonMal is called with a season's id when it gets a new MyAnimeList id, so skip
+	// segments can be looked up for it (main wires it to the segment detector).
+	OnSeasonMal func(seasonID string)
 }
 
 type job struct {
@@ -555,7 +559,85 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 		slog.Info("metadata: episodes updated", "series", series.Title, "count", updated)
 	}
 	s.createPlaceholders(ctx, series, seasons, primary, secondary, fetch)
+	s.storeSeasonIDs(ctx, series, primary, secondary)
 	return updated
+}
+
+// storeSeasonIDs records each season's own AniList and MyAnimeList ids. AniList models
+// every TV season as its own entry and AniSkip looks skip times up by that entry's MAL id,
+// but library seasons follow TMDB's numbering, which can differ from AniList's chain of
+// sequels (split cours, arcs). So a season gets the ids only when the two agree on it:
+// TMDB lists the same episode count (one off allowed, for an OVA AniList counts in), or,
+// with no TMDB season to compare, every file in it fits inside the AniList entry. A
+// season that stops agreeing loses the ids, so it never borrows another season's times.
+func (s *Service) storeSeasonIDs(ctx context.Context, series *model.Item, primary, secondary *Result) {
+	var al, other *Result
+	for _, r := range []*Result{primary, secondary} {
+		switch {
+		case r == nil:
+		case r.Provider == "anilist":
+			al = r
+		case other == nil:
+			other = r
+		}
+	}
+	if al == nil || len(al.Seasons) == 0 {
+		return
+	}
+	seasons, err := s.store.Children(ctx, series.ID, model.TypeSeason)
+	if err != nil {
+		return
+	}
+	for _, se := range seasons {
+		if se.IndexAired == nil || *se.IndexAired < 1 || *se.IndexAired > len(al.Seasons) {
+			continue
+		}
+		n := *se.IndexAired
+		si := al.Seasons[n-1]
+		if si.Number != n || si.ProviderID == "" {
+			continue
+		}
+		trusted := false
+		if o := seasonInfo(other, n); o != nil && o.EpisodeCount > 0 {
+			d := o.EpisodeCount - si.EpisodeCount
+			trusted = si.EpisodeCount > 0 && d >= -1 && d <= 1
+		} else {
+			maxIdx := 0
+			if eps, err := s.store.Children(ctx, se.ID, model.TypeEpisode); err == nil {
+				for _, e := range eps {
+					if !e.IsVirtual && e.IndexAired != nil && *e.IndexAired > maxIdx {
+						maxIdx = *e.IndexAired
+					}
+				}
+			}
+			trusted = maxIdx > 0 && si.EpisodeCount > 0 && maxIdx <= si.EpisodeCount
+		}
+		if !trusted {
+			_ = s.store.DeleteProviderIDs(ctx, se.ID, "anilist", "mal")
+			continue
+		}
+		before, _ := s.store.ProviderID(ctx, se.ID, "mal")
+		ids := map[string]string{"anilist": si.ProviderID, "mal": si.MalID}
+		if err := s.store.SetProviderIDs(ctx, se.ID, ids); err != nil {
+			slog.Warn("metadata: season ids", "series", series.Title, "season", n, "err", err)
+			continue
+		}
+		if si.MalID != "" && si.MalID != before && s.OnSeasonMal != nil {
+			s.OnSeasonMal(se.ID)
+		}
+	}
+}
+
+func seasonInfo(r *Result, n int) *SeasonInfo {
+	if r == nil {
+		return nil
+	}
+	for i := range r.Seasons {
+		if r.Seasons[i].Number == n {
+			return &r.Seasons[i]
+		}
+	}
+	return nil
 }
 
 // createPlaceholders adds virtual seasons/episodes for everything the providers list
