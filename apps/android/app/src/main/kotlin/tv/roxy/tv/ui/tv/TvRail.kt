@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -69,8 +69,9 @@ import tv.roxy.tv.ui.theme.RoxyColors
 enum class RailPage(val label: String, val icon: ImageVector, val route: Route, val routeName: String) {
     Search("Search", Icons.Outlined.Search, Route.Search, Route.Search.serializer().descriptor.serialName),
     Home("Home", Icons.Outlined.Home, Route.Home, Route.Home.serializer().descriptor.serialName),
-    Watchlist("Watchlist", Icons.Outlined.BookmarkBorder, Route.Watchlist, Route.Watchlist.serializer().descriptor.serialName),
-    History("History", Icons.Outlined.History, Route.History, Route.History.serializer().descriptor.serialName),
+    Watchlist("My Lists", Icons.Outlined.BookmarkBorder, Route.Watchlist, Route.Watchlist.serializer().descriptor.serialName),
+    // History lives in My Lists now; Discover (TMDB and requests) took its place.
+    Discover("Discover", Icons.Outlined.Explore, Route.Discover, Route.Discover.serializer().descriptor.serialName),
     Browse("Browse", Icons.Outlined.GridView, Route.Browse, Route.Browse.serializer().descriptor.serialName),
     Settings("Settings", Icons.Outlined.Settings, Route.Settings, Route.Settings.serializer().descriptor.serialName),
 }
@@ -242,6 +243,8 @@ private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit,
         }
         Spacer(Modifier.height(39.dp))
         RailPage.entries.forEach { page ->
+            // Settings stands apart at the bottom, as far from the others as Search is from the profile.
+            if (page == RailPage.Settings) Spacer(Modifier.height(39.dp))
             TvListRow(
                 label = if (expanded) page.label else "",
                 icon = page.icon,

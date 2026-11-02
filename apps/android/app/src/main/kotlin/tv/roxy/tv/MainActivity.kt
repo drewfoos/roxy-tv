@@ -39,8 +39,8 @@ import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.ui.tv.TvMovie
 import tv.roxy.tv.ui.tv.TvDiscoverTitle
 import tv.roxy.tv.ui.tv.TvSeries
-import tv.roxy.tv.ui.tv.TvWatchlist
-import tv.roxy.tv.ui.tv.TvHistory
+import tv.roxy.tv.ui.tv.TvMyLists
+import tv.roxy.tv.ui.tv.TvDiscover
 import tv.roxy.tv.ui.tv.TvBrowse
 import tv.roxy.tv.ui.tv.TvSearch
 import tv.roxy.tv.ui.tv.TvSettings
@@ -323,8 +323,8 @@ private fun TvRoot(onUnauthorized: () -> Unit) {
                 val r = entry.toRoute<Route.DiscoverDetail>()
                 TvDiscoverTitle(r.type, r.tmdbId, onOpenSeries = openSeries, onOpenMovie = openMovie)
             }
-            composable<Route.Watchlist> { TvWatchlist(onOpenSeries = openSeries, onOpenMovie = openMovie) }
-            composable<Route.History> { TvHistory() }
+            composable<Route.Watchlist> { TvMyLists(onOpenSeries = openSeries, onOpenMovie = openMovie) }
+            composable<Route.Discover> { TvDiscover(onOpenSeries = openSeries, onOpenMovie = openMovie, onOpenDiscover = { type, tmdbId -> openDiscover(type, tmdbId) }) }
             composable<Route.Browse> { TvBrowse(onOpenSeries = openSeries, onOpenMovie = openMovie) }
             composable<Route.Search> { TvSearch(onOpenSeries = openSeries, onOpenMovie = openMovie) }
             composable<Route.Settings> {

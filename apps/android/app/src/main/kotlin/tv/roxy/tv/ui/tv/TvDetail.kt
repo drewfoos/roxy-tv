@@ -208,7 +208,8 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
     TitlePage(title = movie, play = movie, api = app.api, actions = actions, tabs = listOf("Movie", "Details", "More like this"), tab = tab, onTab = { tab = it }) { first ->
         when (tab) {
             0 -> Row(modifier = Modifier.fillMaxSize()) {
-                Spacer(Modifier.width(EpisodeListStart))
+                // No seasons on a movie: the film takes the seasons' place at the left, under its tab.
+                Spacer(Modifier.width(PageStart - TvDims.FocusBorder))
                 Column(modifier = Modifier.padding(top = 27.dp)) {
                     EpisodeRow(movie, app.api, index = 0, onClick = { play() }, modifier = Modifier.focusRequester(first))
                 }

@@ -6,7 +6,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,15 +44,44 @@ import java.util.Date
 
 private const val GridColumns = 5
 
+/**
+ * My Lists (Crunchyroll's): the Watchlist and History as two tabs. History left the rail to
+ * make room for Discover. Tabs switch as focus lands on them; Down goes to the list.
+ */
+@Composable
+fun TvMyLists(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+    val memory = rememberFocusMemory()
+    var tab by rememberSaveable { mutableStateOf(0) }
+    // The first card of each tab once it has loaded: where Down from a tab and the rail go.
+    val firstCard = remember { mutableStateOf(arrayOfNulls<String>(2)) }
+    fun tabKey(i: Int) = "lists/tab/$i"
+    RegisterPageEntry { memory.restore(firstCard.value[tab] ?: tabKey(tab)) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        PageTitle("My Lists")
+        Row(modifier = Modifier.padding(start = TvDims.ContentStart, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Watchlist", "History").forEachIndexed { i, label ->
+                TvTab(
+                    label, selected = i == tab, onClick = { tab = i }, onFocused = { tab = i },
+                    modifier = Modifier.focusKey(memory, tabKey(i)).focusProperties { firstCard.value[i]?.let { down = memory.requester(it) } },
+                )
+            }
+        }
+        val onFirst = { i: Int, key: String? -> if (firstCard.value[i] != key) firstCard.value = firstCard.value.copyOf().also { it[i] = key } }
+        when (tab) {
+            0 -> WatchlistTab(memory, upKey = tabKey(0), onFirst = { onFirst(0, it) }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie)
+            else -> HistoryTab(memory, upKey = tabKey(1), onFirst = { onFirst(1, it) })
+        }
+    }
+}
+
 /** The saved titles (the profile's favourites), newest saved first. */
 @Composable
-fun TvWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
-    val memory = rememberFocusMemory()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    RegisterPageEntry { memory.restore(items?.firstOrNull()?.let { "watchlist/${it.id}" }) }
+    LaunchedEffect(items) { onFirst(items?.firstOrNull()?.let { "watchlist/${it.id}" }) }
     suspend fun load() {
         runCatching { app.api.favorites().items }
             .onSuccess { items = it; error = null }
@@ -58,30 +91,26 @@ fun TvWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { load() } }
     OnUserDataChanged { scope.launch { load() } }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        PageTitle("Watchlist")
-        val list = items
-        when {
-            list == null && error != null -> PageMessage(error!!, color = RoxyColors.error)
-            list == null -> Unit
-            list.isEmpty() -> PageMessage("Titles you add to your watchlist show up here.")
-            else -> CardGrid(list, memory, key = "watchlist", secondLine = { audioBadge(it) ?: it.year?.toString() }) { item ->
-                if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
-            }
+    val list = items
+    when {
+        list == null && error != null -> PageMessage(error!!, color = RoxyColors.error)
+        list == null -> Unit
+        list.isEmpty() -> PageMessage("Titles you add to your watchlist show up here.")
+        else -> CardGrid(list, memory, key = "watchlist", upKey = upKey, secondLine = { audioBadge(it) ?: it.year?.toString() }) { item ->
+            if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
         }
     }
 }
 
 /** What the profile played, newest first: episodes and films, OK plays them. */
 @Composable
-fun TvHistory() {
+private fun HistoryTab(memory: FocusMemory, upKey: String, onFirst: (String?) -> Unit) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
-    val memory = rememberFocusMemory()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    RegisterPageEntry { memory.restore(items?.firstOrNull()?.let { "history/${it.id}" }) }
+    LaunchedEffect(items) { onFirst(items?.firstOrNull()?.let { "history/${it.id}" }) }
     suspend fun load() {
         runCatching { app.api.history(100).items }
             .onSuccess { items = it; error = null }
@@ -91,16 +120,13 @@ fun TvHistory() {
     OnUserDataChanged { scope.launch { load() } }
     val dateFormat = remember { DateFormat.getDateInstance(DateFormat.SHORT) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        PageTitle("History")
-        val list = items
-        when {
-            list == null && error != null -> PageMessage(error!!, color = RoxyColors.error)
-            list == null -> Unit
-            list.isEmpty() -> PageMessage("Episodes and movies you watch show up here, newest first.")
-            else -> CardGrid(list, memory, key = "history", secondLine = { historyLine(it, dateFormat) }) { item ->
-                scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
-            }
+    val list = items
+    when {
+        list == null && error != null -> PageMessage(error!!, color = RoxyColors.error)
+        list == null -> Unit
+        list.isEmpty() -> PageMessage("Episodes and movies you watch show up here, newest first.")
+        else -> CardGrid(list, memory, key = "history", upKey = upKey, secondLine = { historyLine(it, dateFormat) }) { item ->
+            scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
         }
     }
 }
@@ -113,19 +139,20 @@ private fun historyLine(item: Item, dateFormat: DateFormat): String {
 }
 
 /**
- * Five cards across with the accent frame's spacing. The first card takes focus when the
- * page opens; later the remembered card does.
+ * Five cards across with the accent frame's spacing. The remembered card takes focus again
+ * when the list comes back (from a title page); the first row's Up goes to [upKey] (the tabs).
  */
 @Composable
-private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, secondLine: (Item) -> String?, onClick: (Item) -> Unit) {
+private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, upKey: String, secondLine: (Item) -> String?, onClick: (Item) -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val gridState = rememberLazyGridState()
     var restored by remember { mutableStateOf(false) }
     LaunchedEffect(items.isNotEmpty()) {
         if (restored || items.isEmpty()) return@LaunchedEffect
-        val first = "$key/${items.first().id}"
-        memory.key?.let { k -> items.indexOfFirst { "$key/${it.id}" == k }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } }
-        repeat(6) { withFrameNanos { }; if (memory.restore(first)) { restored = true; return@LaunchedEffect } }
+        // Only a card of this list: a tab switch must leave focus on the tab.
+        val k = memory.key?.takeIf { it.startsWith("$key/") } ?: return@LaunchedEffect
+        items.indexOfFirst { "$key/${it.id}" == k }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } ?: return@LaunchedEffect
+        repeat(6) { withFrameNanos { }; if (memory.restore()) { restored = true; return@LaunchedEffect } }
     }
     LazyVerticalGrid(
         columns = GridCells.Fixed(GridColumns),
@@ -135,10 +162,11 @@ private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, second
         verticalArrangement = Arrangement.spacedBy(2.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(items, key = { it.id }) { item ->
+        itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
             ThumbCard(
                 item, app.api, width = TvDims.GridCardWidth, captionHeight = TvDims.GridCaption, titleLines = 2, secondLine = secondLine(item),
-                onClick = { onClick(item) }, modifier = Modifier.focusKey(memory, "$key/${item.id}"),
+                onClick = { onClick(item) },
+                modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i < GridColumns) Modifier.focusProperties { up = memory.requester(upKey) } else Modifier),
                 badge = if (item.isEpisode || item.isMovie) minutesLabel(item) else null,
                 progress = if (item.isEpisode || item.isMovie) item.progressFraction else null,
             )
