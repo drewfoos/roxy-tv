@@ -2,6 +2,7 @@ package tv.roxy.tv.ui.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -67,7 +68,10 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 loadRelated()
             }.onFailure { t ->
                 Timber.e(t, "series load failed")
-                _state.value = SeriesUiState(loading = false, error = t.message)
+                // A reload that fails (back from the player during a Wi-Fi drop) keeps the
+                // page that is showing; only a first load turns into the error.
+                if (_state.value.series != null) _state.value = _state.value.copy(loading = false)
+                else _state.value = SeriesUiState(loading = false, error = t.message)
             }
         }
     }
@@ -86,7 +90,8 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 .onFailure { Timber.w(it, "episodes for up next") }.getOrNull()
             val next = all?.let { upNextOf(it) }
             _state.value = _state.value.copy(upNext = next)
-            if (opening && seasons.isNotEmpty()) {
+            // Not if a season was picked meanwhile (the all-episodes fetch is slow on long shows).
+            if (opening && seasons.isNotEmpty() && !userPicked) {
                 val at = next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
                 _state.value = _state.value.copy(selectedSeason = at)
                 loadEpisodes(seasons[at].id)
@@ -106,9 +111,16 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
         val s = _state.value
         if (index !in s.seasons.indices) return
         if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showRelated) return
-        _state.value = s.copy(selectedSeason = index, showRelated = false)
-        if (index != s.selectedSeason || s.episodes.isEmpty()) loadEpisodes(s.seasons[index].id)
+        userPicked = true
+        // A different season empties the list until its episodes land, so the old season's
+        // episodes are never shown (or played) under the new season's name.
+        val other = index != s.selectedSeason
+        _state.value = s.copy(selectedSeason = index, showRelated = false, episodes = if (other) emptyList() else s.episodes)
+        if (other || s.episodes.isEmpty()) loadEpisodes(s.seasons[index].id)
     }
+
+    private var userPicked = false
+    private var episodesJob: Job? = null
 
     fun selectRelated() {
         _state.value = _state.value.copy(showRelated = true)
@@ -116,15 +128,18 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
 
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {
         _state.value = _state.value.copy(episodesLoading = true)
-        viewModelScope.launch {
+        // Only the latest request counts: two quick season picks cannot land out of order.
+        episodesJob?.cancel()
+        episodesJob = viewModelScope.launch {
             runCatching { api.items(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index").items }
                 .onSuccess { eps ->
                     val sorted = eps.sortedWith(compareBy({ it.seasonAired ?: 0 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
                     _state.value = _state.value.copy(episodes = sorted, episodesLoading = false)
                 }
                 .onFailure { t ->
+                    if (t is kotlinx.coroutines.CancellationException) throw t
                     Timber.e(t, "episodes load failed")
-                    _state.value = _state.value.copy(episodesLoading = false, error = t.message)
+                    _state.value = _state.value.copy(episodesLoading = false)
                 }
         }
     }

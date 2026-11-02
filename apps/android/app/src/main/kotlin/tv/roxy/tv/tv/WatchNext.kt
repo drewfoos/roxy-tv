@@ -109,6 +109,33 @@ object WatchNext {
         }
     }
 
+    /**
+     * The rows belong to the profile that made them. When a different profile (or another
+     * login) is in use, the old profile's rows leave the launcher: picking one would play and
+     * record progress as the new profile.
+     */
+    suspend fun keepFor(app: RoxyApp, profileId: String?) {
+        if (!supported(app)) return
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                val owner = prefs.getString(OWNER_KEY, null)
+                if (owner == profileId) return@withLock
+                for ((itemId, value) in prefs.all) {
+                    if (itemId == OWNER_KEY) continue
+                    val id = value as? Long ?: continue
+                    runCatching { app.contentResolver.delete(TvContractCompat.buildWatchNextProgramUri(id), null, null) }
+                        .onFailure { Timber.w("watch next delete failed: %s", it.message) }
+                    thumbFile(app, itemId).delete()
+                }
+                prefs.edit().clear().putString(OWNER_KEY, profileId).apply()
+                Timber.i("watch next: cleared rows of another profile")
+            }
+        }
+    }
+
+    private const val OWNER_KEY = "__profile"
+
     /** A 480-wide 16:9 JPEG of the item's still (or its backdrop) in the cache; null when the server has none. */
     private fun cacheThumb(app: RoxyApp, item: Item): File? {
         val url = app.api.imageUrl(item, if (item.isEpisode) "thumb" else "backdrop", 480) ?: app.api.imageUrl(item, "poster", 320) ?: return null

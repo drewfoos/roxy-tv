@@ -19,7 +19,12 @@ class MovieViewModel(private val api: RoxyApi, private val movieId: String, init
         viewModelScope.launch {
             runCatching { api.item(movieId) }
                 .onSuccess { _state.value = MovieUiState(loading = false, movie = it, partOf = _state.value.partOf) }
-                .onFailure { t -> Timber.e(t, "movie load failed"); _state.value = MovieUiState(loading = false, error = t.message) }
+                .onFailure { t ->
+                    Timber.e(t, "movie load failed")
+                    // A failed reload keeps the page; only a first load shows the error.
+                    _state.value = if (_state.value.movie != null && !_state.value.loading) _state.value
+                    else MovieUiState(loading = false, error = t.message)
+                }
             // The series this movie belongs to (AniList relations), if it is in the library.
             runCatching { api.related(movieId).partOf }
                 .onSuccess { p -> _state.value = _state.value.copy(partOf = p) }

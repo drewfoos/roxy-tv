@@ -130,7 +130,12 @@ fun TvTextField(
                 cursorBrush = SolidColor(RoxyColors.accent),
                 visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
-                keyboardActions = KeyboardActions(onDone = { editing = false; keyboard?.hide(); onDone() }),
+                // Every action key finishes typing: the Search key did nothing before.
+                keyboardActions = KeyboardActions(
+                    onDone = { editing = false; keyboard?.hide(); onDone() },
+                    onSearch = { editing = false; keyboard?.hide(); onDone() },
+                    onGo = { editing = false; keyboard?.hide(); onDone() },
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(fieldFocus)

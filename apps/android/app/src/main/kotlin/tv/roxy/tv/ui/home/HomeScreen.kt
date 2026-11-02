@@ -71,6 +71,8 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
                 if (t is CancellationException) return@onFailure // the probe already decided
                 Timber.e(t, "home failed")
                 val unauthorized = t is ApiException && t.isUnauthorized
+                // A silent reload (back from the player) that fails keeps the rows on screen.
+                if (silent && !unauthorized && _state.value is HomeUiState.Ready) return@onFailure
                 val offline = t !is ApiException && !api.reachable()
                 _state.value = HomeUiState.Error(t.message ?: t::class.simpleName.orEmpty(), unauthorized, offline)
             }

@@ -267,6 +267,8 @@ private fun AppRoot(tv: Boolean) {
             playItem(activity, item).onFailure { Timber.w(it, "watch next play failed") }
         }
     }
+    // Launcher Watch Next rows are per profile: another profile's go when this one is in use.
+    LaunchedEffect(session.profileId) { WatchNext.keepFor(app, session.profileId) }
     // Keyed by profile so every screen's ViewModel starts fresh after a switch.
     key(session.profileId) {
         if (tv) TvRoot(onUnauthorized) else PhoneRoot(onUnauthorized)

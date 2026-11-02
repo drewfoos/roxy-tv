@@ -44,6 +44,7 @@ private const val GridColumns = 5
 @Composable
 fun TvWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
     val memory = rememberFocusMemory()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -53,8 +54,9 @@ fun TvWatchlist(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
             .onSuccess { items = it; error = null }
             .onFailure { if (items == null) error = it.message ?: "Could not load the watchlist" }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { app.scope.launch { load() } }
-    OnUserDataChanged { app.scope.launch { load() } }
+    // The page's scope, not the app's: leaving the page cancels the request.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { load() } }
+    OnUserDataChanged { scope.launch { load() } }
 
     Column(modifier = Modifier.fillMaxSize()) {
         PageTitle("Watchlist")
@@ -85,8 +87,8 @@ fun TvHistory() {
             .onSuccess { items = it; error = null }
             .onFailure { if (items == null) error = it.message ?: "Could not load the history" }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { app.scope.launch { load() } }
-    OnUserDataChanged { app.scope.launch { load() } }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { load() } }
+    OnUserDataChanged { scope.launch { load() } }
     val dateFormat = remember { DateFormat.getDateInstance(DateFormat.SHORT) }
 
     Column(modifier = Modifier.fillMaxSize()) {

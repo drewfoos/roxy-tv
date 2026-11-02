@@ -1,6 +1,11 @@
 package tv.roxy.tv.ui.tv
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -53,6 +58,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -246,7 +252,19 @@ private fun TitlePage(
         repeat(6) { withFrameNanos { }; if (memory.restore("play")) { restored = true; return@LaunchedEffect } }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    // Back from the list (folded) goes up to the actions first, as on Crunchyroll; a second
+    // Back leaves the page. Taken before Compose sees it: left alone, the first Back only
+    // dropped focus (nothing highlighted, still on the page).
+    Column(
+        modifier = Modifier.fillMaxSize().onPreviewKeyEvent { ev ->
+            if (ev.key != Key.Back || !folded) return@onPreviewKeyEvent false
+            if (ev.type == KeyEventType.KeyUp) {
+                folded = false
+                pendingFocus = memory.requester("play")
+            }
+            true
+        },
+    ) {
         Box(modifier = Modifier.fillMaxWidth().height(topHeight).clipToBounds().focusProperties { canFocus = !folded }) {
             Box(modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height(TopBlockHeight)) {
                 val art = backdropUrl ?: api.imageUrl(title, "backdrop", widthPx(960.dp)) ?: play?.let { api.imageUrl(it, "thumb", widthPx(960.dp)) }
@@ -315,8 +333,11 @@ private fun TitlePage(
 @Composable
 private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester) {
     val firstEpisode = remember { FocusRequester() }
-    var counts by remember(seasons) { mutableStateOf<Map<String, Int>>(emptyMap()) }
-    LaunchedEffect(seasons) {
+    // Keyed by the season ids: a reload brings new Item objects (fresh watch state) for the
+    // same seasons, and counting them again cost one request per season every time.
+    val seasonIds = remember(seasons) { seasons.joinToString(",") { it.id } }
+    var counts by remember(seasonIds) { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    LaunchedEffect(seasonIds) {
         for (s in seasons) {
             val n = runCatching { api.items(type = "episode", parent = s.id, limit = 1).total }.getOrNull() ?: continue
             counts = counts + (s.id to n)
@@ -335,15 +356,16 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
                     label = name, trailing = count, selected = i == selected, height = 44.dp, fontSize = 19.sp, startPadding = 16.dp,
                     onClick = { onSelectSeason(i) },
                     modifier = Modifier.fillMaxWidth()
-                        .then(if (i == selected) Modifier.focusRequester(first) else Modifier)
-                        .focusProperties { if (episodes.isNotEmpty()) right = firstEpisode },
+                        .then(if (i == selected) Modifier.focusRequester(first) else Modifier),
                 )
             }
         }
         if (episodes.isEmpty()) {
             Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
         } else {
-            LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+            // Right from the seasons comes back to the episode last focused (the first one
+            // for a new season). It used to aim at episode 1 only, a dead end once scrolled.
+            LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp).focusRestorer(firstEpisode), contentPadding = PaddingValues(bottom = 24.dp)) {
                 itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
                     EpisodeRow(ep, api, index = i, onClick = { if (ep.isPlayable) onPlay(ep) }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
                 }
@@ -383,11 +405,26 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, 
     }
 }
 
+/**
+ * Tabs switch as focus passes over them, so a sweep along the tab strip recreated Details and
+ * More like this and fetched both again each time. Their answers are kept for a while here.
+ */
+private object TabCache {
+    private val map = object : LinkedHashMap<String, Any>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Any>?) = size > 40
+    }
+    @Synchronized fun get(key: String): Any? = map[key]
+    @Synchronized fun put(key: String, value: Any) { map[key] = value }
+}
+
 /** Facts about the title: the full synopsis, genres, year, studio, status, audio, cast. Focusable so it can be scrolled up to. */
 @Composable
 private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester, loadDetails: suspend () -> ItemDetails? = { api.itemDetails(item.id) }) {
-    var details by remember(item.id) { mutableStateOf<ItemDetails?>(null) }
-    LaunchedEffect(item.id) { details = runCatching { loadDetails() }.getOrNull() }
+    var details by remember(item.id) { mutableStateOf(TabCache.get("details/${item.id}") as? ItemDetails) }
+    LaunchedEffect(item.id) {
+        if (details != null) return@LaunchedEffect
+        details = runCatching { loadDetails() }.getOrNull()?.also { TabCache.put("details/${item.id}", it) }
+    }
     val facts = buildList {
         item.genres.takeIf { it.isNotEmpty() }?.let { add("Genres" to it.joinToString(", ")) }
         (item.year ?: item.premiered?.take(4)?.toIntOrNull())?.let { add("Year" to it.toString()) }
@@ -420,8 +457,12 @@ private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester, loadDeta
  */
 @Composable
 private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpenDiscover: (type: String, tmdbId: Int) -> Unit, first: FocusRequester) {
-    var similar by remember(item.id) { mutableStateOf<List<DiscoverItem>?>(null) }
-    LaunchedEffect(item.id) { similar = runCatching { api.similar(item.id) }.getOrDefault(emptyList()) }
+    @Suppress("UNCHECKED_CAST")
+    var similar by remember(item.id) { mutableStateOf(TabCache.get("similar/${item.id}") as? List<DiscoverItem>) }
+    LaunchedEffect(item.id) {
+        if (similar != null) return@LaunchedEffect
+        similar = runCatching { api.similar(item.id) }.onSuccess { TabCache.put("similar/${item.id}", it) }.getOrDefault(emptyList())
+    }
     val cards: List<Any> = related + similar.orEmpty().filter { s -> related.none { it.id == s.libraryItemId } }
     if (similar != null && cards.isEmpty()) { PageMessage("Nothing like this in the library yet."); return }
     LazyVerticalGrid(

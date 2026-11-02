@@ -41,6 +41,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
@@ -57,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.tv.material3.Text
 import tv.roxy.tv.data.UpdateState
+import androidx.activity.compose.BackHandler
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.nav.Route
@@ -108,12 +110,25 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
                         // Left with nowhere to go inside the page opens the rail.
                         if (current == null || railOpen || ev.type != KeyEventType.KeyDown || ev.key != Key.DirectionLeft) return@onPreviewKeyEvent false
                         if (focusManager.moveFocus(FocusDirection.Left)) true else { railOpen = true; true }
+                    }
+                    // Back opens the rail right away. Taken on the way back up from the focused
+                    // element (a text field being typed in keeps its Back), before Compose's own
+                    // handling at the root, which turns Back into "drop focus".
+                    .onKeyEvent { ev ->
+                        if (current == null || railOpen || ev.key != Key.Back) return@onKeyEvent false
+                        if (ev.type == KeyEventType.KeyUp) railOpen = true
+                        true
                     },
             ) { content() }
             if (current != null) Rail(
                 current, open = railOpen, onSelect = { p -> railOpen = false; onSelect(p); enterTick++ }, onSwitchProfile = onSwitchProfile,
                 onClosed = { railOpen = false; enterTick++ },
             )
+            // Back on a rail page opens the rail, also when nothing on the page has focus (a
+            // card that went away). Registered after the page so it comes before NavHost's own
+            // Back. A text field being typed in takes its Back first; Back on the rail itself
+            // is in Rail.
+            BackHandler(enabled = current != null && !railOpen) { railOpen = true }
             if (current != null && update !is UpdateState.None) {
                 TvUpdateBanner(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() }, modifier = Modifier.align(Alignment.BottomEnd))
             }
@@ -199,9 +214,14 @@ private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit,
             .fillMaxHeight()
             .then(if (expanded) Modifier.background(RoxyColors.surface) else Modifier)
             .onFocusChanged { railFocused = it.hasFocus }
-            // Right or Back leaves the rail for the page.
+            // Right goes back into the page. Back goes to Home, and on Home it is left to the
+            // system, which closes the app (the rail is where Back ends up, so the next press leaves).
             .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionRight || ev.key == Key.Back)) { onClosed(); true } else false
+                when {
+                    ev.key == Key.DirectionRight && ev.type == KeyEventType.KeyDown -> { onClosed(); true }
+                    ev.key == Key.Back && current != RailPage.Home -> { if (ev.type == KeyEventType.KeyUp) onSelect(RailPage.Home); true }
+                    else -> false
+                }
             }
             // Items take focus only while the rail is open.
             .focusProperties { canFocus = open; left = FocusRequester.Cancel },

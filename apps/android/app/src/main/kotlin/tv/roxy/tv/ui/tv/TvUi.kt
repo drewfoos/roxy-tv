@@ -37,6 +37,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -416,7 +417,7 @@ fun TvRow(
     // Compose's own scroll-into-view is switched off for the row (NoBringIntoView), since
     // it fought this scroll and dragged rows back to their start.
     val pivot = remember { mutableStateOf(-1 to 0) }
-    LaunchedEffect(rowState) { snapshotFlow { pivot.value }.collect { (i, _) -> if (i >= 0) rowState.animateScrollToItem(i) } }
+    LaunchedEffect(rowState) { snapshotFlow { pivot.value }.collectLatest { (i, _) -> if (i >= 0) rowState.animateScrollToItem(i) } }
     Column(modifier = modifier.fillMaxWidth().padding(top = 10.dp)) {
         Text(title, color = RoxyColors.muted, fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TvDims.ContentStart))
         CompositionLocalProvider(LocalBringIntoViewSpec provides NoBringIntoView) {

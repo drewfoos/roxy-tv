@@ -32,6 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -75,10 +78,12 @@ private fun categories(all: List<Item>): List<Category> {
 @Composable
 private fun rememberLibrary(): Pair<List<Item>?, String?> {
     val app = RoxyApp.get(LocalContext.current)
+    // The page's own scope: leaving the page cancels the fetch instead of finishing it into nothing.
+    val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        app.scope.launch {
+        scope.launch {
             runCatching { app.api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items }
                 .onSuccess { items = it; error = null }
                 .onFailure { if (items == null) error = it.message ?: "Could not load the library" }
@@ -94,6 +99,16 @@ fun TvBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     var selected by rememberSaveable { mutableStateOf("new") }
     RegisterPageEntry { memory.restore("cat/$selected") }
     val cats = remember(all) { categories(all.orEmpty()) }
+    val gridState = rememberLazyGridState()
+    val lastCard = remember { arrayOfNulls<String>(1) }
+    // Right from a category: the card last focused in the grid when it is still on screen,
+    // else the first card on screen. A fixed "first card" was a dead end once the grid had
+    // scrolled (the card was no longer composed).
+    fun gridTarget(): androidx.compose.ui.focus.FocusRequester {
+        val onScreen = gridState.layoutInfo.visibleItemsInfo.map { "browse/${it.key}" }
+        val k = lastCard[0]?.takeIf { it in onScreen } ?: onScreen.firstOrNull() ?: "browse/first"
+        return memory.requester(k)
+    }
     // Sorting and filtering happen off the main thread; the grid keeps the last result meanwhile.
     var shown by remember { mutableStateOf<List<Item>>(emptyList()) }
     LaunchedEffect(all, selected) {
@@ -110,12 +125,14 @@ fun TvBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
                     TvListRow(
                         label = c.label, icon = c.icon, selected = c.key == selected, height = if (c.icon != null) 56.dp else 48.dp, startPadding = if (c.icon != null) 22.dp else 22.dp,
                         onClick = { selected = c.key }, onFocused = { selected = c.key },
-                        // Right always lands on the grid's first card.
-                        modifier = Modifier.focusKey(memory, "cat/${c.key}").focusProperties { right = memory.requester("browse/first") },
+                        modifier = Modifier.focusKey(memory, "cat/${c.key}").focusProperties { right = gridTarget() },
                     )
                 }
             }
-            PosterGrid(shown, memory, key = "browse", resetKey = selected, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie)
+            PosterGrid(shown, memory, key = "browse", resetKey = selected, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, state = gridState, lastCard = lastCard,
+                // Left from the grid's first column: the selected category (the two lists do
+                // not find each other on their own on this TV; focus was simply dropped).
+                leftTarget = { memory.requester("cat/$selected") })
         }
     }
 }
@@ -127,12 +144,14 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     val memory = rememberFocusMemory()
     var query by rememberSaveable { mutableStateOf("") }
     RegisterPageEntry { memory.restore("search/field") }
-    val shown by remember(all) {
+    // Lower-cased once per library load, not on every keystroke.
+    val index = remember(all) {
+        all.orEmpty().sortedByDescending { it.dateCreated.orEmpty() }.map { it to (it.title + "\n" + it.genres.joinToString("\n")).lowercase() }
+    }
+    val shown by remember(index) {
         derivedStateOf {
             val q = query.trim().lowercase()
-            val source = all.orEmpty()
-            if (q.isEmpty()) source.sortedByDescending { it.dateCreated.orEmpty() }
-            else source.filter { it.title.lowercase().contains(q) || it.genres.any { g -> g.lowercase().contains(q) } }
+            if (q.isEmpty()) index.map { it.first } else index.filter { it.second.contains(q) }.map { it.first }
         }
     }
     Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.RailWidth)) {
@@ -147,9 +166,13 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
 
 /** Five posters across; the grid remembers which card had focus. */
 @Composable
-private fun PosterGrid(items: List<Item>, memory: FocusMemory, key: String, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, startPadding: androidx.compose.ui.unit.Dp = 20.dp, resetKey: Any? = null) {
+private fun PosterGrid(
+    items: List<Item>, memory: FocusMemory, key: String, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit,
+    startPadding: androidx.compose.ui.unit.Dp = 20.dp, resetKey: Any? = null,
+    state: LazyGridState = rememberLazyGridState(), lastCard: Array<String?>? = null,
+    leftTarget: (() -> androidx.compose.ui.focus.FocusRequester)? = null,
+) {
     val app = RoxyApp.get(LocalContext.current)
-    val state = rememberLazyGridState()
     // A new category starts at the top (a lazy grid otherwise keeps the old first card in
     // view by key, which can be anywhere in the new order).
     LaunchedEffect(resetKey) { if (resetKey != null) state.scrollToItem(0) }
@@ -164,7 +187,9 @@ private fun PosterGrid(items: List<Item>, memory: FocusMemory, key: String, onOp
             PosterCard(
                 item, app.api, width = TvDims.BrowseCardWidth, captionHeight = TvDims.BrowseCaption,
                 onClick = { if (item.isMovie) onOpenMovie(item) else onOpenSeries(item) },
-                modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i == 0) Modifier.focusRequester(memory.requester("$key/first")) else Modifier),
+                modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i == 0) Modifier.focusRequester(memory.requester("$key/first")) else Modifier)
+                    .then(if (lastCard != null) Modifier.onFocusChanged { if (it.isFocused) lastCard[0] = "$key/${item.id}" } else Modifier)
+                    .then(if (leftTarget != null && i % BrowseColumns == 0) Modifier.focusProperties { left = leftTarget() } else Modifier),
             )
         }
     }

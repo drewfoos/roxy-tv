@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
@@ -105,9 +106,19 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
     // follows can swap the hero (Newly Added -> Continue Watching) under the button. Put focus
     // back on what had it (the button that started playback) once now and after the reload.
     val heroId = (state as? HomeUiState.Ready)?.let { r -> (r.heroes.firstOrNull()?.play ?: r.hero)?.id }
-    LaunchedEffect(resumedAt, heroId) {
+    val readyRows = (state as? HomeUiState.Ready)?.rows
+    LaunchedEffect(resumedAt, heroId, readyRows) {
         if (resumedAt == 0L || android.os.SystemClock.elapsedRealtime() - resumedAt > 8_000) return@LaunchedEffect
         repeat(10) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
+        // The card that had focus left its row (the finished episode was replaced by the next
+        // one in Continue Watching) and the hero is scrolled away: take the row's first card,
+        // else go back to the top and the hero. Before, nothing was focused at all.
+        val rowKey = memory.key?.substringBefore('/')
+        val first = readyRows?.let { tvRows(it) }?.firstOrNull { it.key == rowKey }?.items?.firstOrNull()
+        if (first != null) repeat(5) { withFrameNanos { }; if (memory.restore("$rowKey/${first.id}")) return@LaunchedEffect }
+        listState.scrollToItem(0)
+        memory.key = "hero/play"
+        repeat(6) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
     }
     OnUserDataChanged { vm.load(silent = true) }
 
@@ -137,7 +148,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
             // The focused row drives the page scroll through a flow: no recomposition per focus
             // change. The hero pins the page to its top; a row sits RowPin below the top.
             val focusedRow = remember { mutableStateOf(-1) }
-            LaunchedEffect(listState) { snapshotFlow { focusedRow.value }.collect { if (it == 0) listState.animateScrollToItem(0) else if (it > 0) listState.animateScrollToItem(it, -pin) } }
+            LaunchedEffect(listState) { snapshotFlow { focusedRow.value }.collectLatest { if (it == 0) listState.animateScrollToItem(0) else if (it > 0) listState.animateScrollToItem(it, -pin) } }
             val rows = remember(s.rows) { tvRows(s.rows) }
             // Each row remembers its last focused card, so Up / Down between rows (and Down
             // from the hero) land there instead of on whatever card happens to be nearest.
