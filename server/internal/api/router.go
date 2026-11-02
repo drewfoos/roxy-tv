@@ -61,6 +61,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	if meta != nil {
 		s.discover = discover.New(st, cfg, meta.TMDBProvider())
 		s.discover.Start(context.Background())
+		s.startCharacterWorker(context.Background())
 	}
 
 	r := chi.NewRouter()

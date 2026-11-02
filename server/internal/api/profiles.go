@@ -22,7 +22,6 @@ import (
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/metadata"
 	"github.com/roxy-media/roxy/server/internal/model"
-	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 // Profiles (docs/api/native.md "Profiles"): several viewers on one login. Clients send
@@ -272,45 +271,15 @@ func (s *Server) avatarSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/avatars/suggested: the main cast of the series in the library, a few per show.
+// GET /v1/avatars/suggested -> {characters}: "From your library", read from what the
+// character worker saved (avatarchars.go). Instant, and never a call to AniList.
 func (s *Server) avatarSuggested(w http.ResponseWriter, r *http.Request) {
-	if s.meta == nil || s.meta.AniList() == nil {
-		writeError(w, 503, "metadata service not running")
-		return
-	}
-	series, _, err := s.store.ListItems(r.Context(), store.ItemQuery{Types: []model.ItemType{model.TypeSeries}, Limit: 40, SortBy: "date_created", Desc: true})
+	chars, err := s.store.SuggestedCharacters(r.Context(), 6, 60)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
-	out := []metadata.Character{}
-	seen := map[int]bool{}
-	for _, it := range series {
-		id := it.ProviderIDs["anilist"]
-		if id == "" {
-			continue
-		}
-		cast, err := s.meta.AniList().CharactersForMedia(r.Context(), id)
-		if err != nil {
-			slog.Warn("avatar suggestions", "series", it.Title, "err", err)
-			continue
-		}
-		n := 0
-		for _, c := range cast {
-			if seen[c.ID] {
-				continue
-			}
-			seen[c.ID] = true
-			out = append(out, c)
-			n++
-			if n == 6 {
-				break
-			}
-		}
-		if len(out) >= 60 {
-			break
-		}
-	}
-	writeJSON(w, 200, map[string]any{"characters": out})
+	writeJSON(w, 200, map[string]any{"characters": chars})
 }
 
 var _ = auth.PrincipalFrom
