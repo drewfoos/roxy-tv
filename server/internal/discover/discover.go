@@ -1153,7 +1153,7 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 		if radarr == nil {
 			return
 		}
-		id, err := radarr.AddMovie(ctx, r.TMDBID)
+		id, err := radarr.AddMovie(ctx, r.TMDBID, det != nil && det.IsAnime)
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: radarr add failed", "title", r.Title, "err", err)

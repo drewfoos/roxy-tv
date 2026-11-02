@@ -30,11 +30,17 @@ type Config struct {
 	// Defaults for new requests; ids and paths as the arr app reports them.
 	RootFolder       string `json:"rootFolder"`
 	QualityProfileID int    `json:"qualityProfileId"`
-	// Sonarr only: used instead of the above when the series is anime (TMDB: Animation + Japan).
+	// Used instead of the above when the title is anime (TMDB: Animation + Japan): Sonarr
+	// for series, Radarr for films (an "Anime Movies" folder, say).
 	AnimeRootFolder       string `json:"animeRootFolder,omitempty"`
 	AnimeQualityProfileID int    `json:"animeQualityProfileId,omitempty"`
-	Tags                  []int  `json:"tags,omitempty"`
-	AnimeTags             []int  `json:"animeTags,omitempty"`
+	// Sonarr only: the profile for older anime (first aired before OldAnimeBefore and
+	// ended), which often exists only as DVD / 480p rips that an HD profile rejects. A
+	// long runner that started earlier but still airs (One Piece) keeps the anime profile:
+	// its new episodes are HD. 0 = no special case.
+	OldAnimeQualityProfileID int   `json:"oldAnimeQualityProfileId,omitempty"`
+	Tags                     []int `json:"tags,omitempty"`
+	AnimeTags                []int `json:"animeTags,omitempty"`
 	// Sonarr only: the series type an anime request is added with, "standard" (default:
 	// SxxEyy release names, which most groups and hand-tuned profiles expect) or "anime"
 	// (absolute numbering, "Show - 05").
@@ -59,6 +65,14 @@ func (c Config) ReadyForRequests() bool {
 
 func (c Config) seasonFolders() bool { return c.SeasonFolders == nil || *c.SeasonFolders }
 func (c Config) searchOnAdd() bool   { return c.SearchOnAdd == nil || *c.SearchOnAdd }
+
+// OldAnimeBefore: a series first aired before this year (and ended) counts as older anime.
+const OldAnimeBefore = 2010
+
+// ErrManagedByHand: Sonarr already has the series and it is unmonitored, so someone
+// keeps it by hand (subtitles only, a few episodes). A request must not turn on
+// downloads for the whole thing (a long runner would pull in a thousand episodes).
+var ErrManagedByHand = errors.New("already in Sonarr and not monitored there (kept by hand); an admin can turn it on in Sonarr")
 
 // animeSeriesType is Sonarr's seriesType for an anime request: "standard" unless the
 // admin chose "anime".
@@ -280,6 +294,9 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 			if tv, _ := s["tvdbId"].(float64); int(tv) != tvdbID || id == 0 {
 				continue
 			}
+			if m, _ := s["monitored"].(bool); !m {
+				return 0, ErrManagedByHand
+			}
 			// Already there: monitor the asked-for seasons (all when none given) and search them.
 			changed := false
 			if ss, ok := s["seasons"].([]any); ok {
@@ -333,6 +350,9 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 	series["tags"] = tags
 	if anime {
 		series["seriesType"] = c.cfg.animeSeriesType()
+		if c.cfg.OldAnimeQualityProfileID != 0 && olderSeries(series) {
+			series["qualityProfileId"] = c.cfg.OldAnimeQualityProfileID
+		}
 	}
 	if ss, ok := series["seasons"].([]any); ok {
 		for _, x := range ss {
@@ -368,6 +388,13 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 	return added.ID, nil
 }
 
+// olderSeries: Sonarr's lookup says the series first aired before OldAnimeBefore and has ended.
+func olderSeries(s map[string]any) bool {
+	year, _ := s["year"].(float64)
+	status, _ := s["status"].(string)
+	return year > 0 && int(year) < OldAnimeBefore && strings.EqualFold(status, "ended")
+}
+
 // searchSeasons searches the asked-for seasons of a series, or the whole series (Sonarr's
 // SeriesSearch, which goes season by season) when none were named. Best effort: the
 // series is already added, and Sonarr's RSS still picks up new episodes.
@@ -382,7 +409,7 @@ func (c *Client) searchSeasons(ctx context.Context, seriesID int, want map[int]b
 }
 
 // AddMovie adds a movie to Radarr by TMDB id (monitored, search on add). Returns the Radarr movie id.
-func (c *Client) AddMovie(ctx context.Context, tmdbID int) (int, error) {
+func (c *Client) AddMovie(ctx context.Context, tmdbID int, anime bool) (int, error) {
 	var existing []struct {
 		ID     int `json:"id"`
 		TmdbID int `json:"tmdbId"`
@@ -401,7 +428,7 @@ func (c *Client) AddMovie(ctx context.Context, tmdbID int) (int, error) {
 	if movie == nil || movie["title"] == nil {
 		return 0, fmt.Errorf("radarr: tmdb:%d not found", tmdbID)
 	}
-	root, profile, tags, err := c.rootAndProfile(ctx, false)
+	root, profile, tags, err := c.rootAndProfile(ctx, anime)
 	if err != nil {
 		return 0, err
 	}

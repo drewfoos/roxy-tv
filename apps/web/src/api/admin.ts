@@ -108,6 +108,8 @@ export interface ArrConfig {
   qualityProfileId?: number | null
   animeRootFolder?: string
   animeQualityProfileId?: number | null
+  /** Sonarr only: older anime (first aired before 2010, ended). Empty means the anime profile. */
+  oldAnimeQualityProfileId?: number | null
   /** Sonarr only: the series type anime is added with. Empty means standard. */
   animeSeriesType?: '' | 'standard' | 'anime'
   tags?: number[]

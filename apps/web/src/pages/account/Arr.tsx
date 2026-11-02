@@ -123,13 +123,19 @@ export function ArrPage() {
           <Field label="Quality profile">
             <Select value={cfg.qualityProfileId ?? 0} options={[{ id: 0, label: 'Choose…' }, ...profileOptions]} onChange={(v) => patch({ qualityProfileId: v || null })} />
           </Field>
+          <Field label={kind === 'sonarr' ? 'Anime root folder' : 'Anime movies root folder'} hint={cfg.animeRootFolder ? rootHint(cfg.animeRootFolder) : undefined}>
+            <Select value={cfg.animeRootFolder ?? ''} options={[{ id: '', label: 'Same as above' }, ...folderOptions]} onChange={(v) => patch({ animeRootFolder: v })} />
+          </Field>
+          <Field label={kind === 'sonarr' ? 'Anime quality profile' : 'Anime movies quality profile'}>
+            <Select value={cfg.animeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as above' }, ...profileOptions]} onChange={(v) => patch({ animeQualityProfileId: v || null })} />
+          </Field>
           {kind === 'sonarr' && (
             <>
-              <Field label="Anime root folder">
-                <Select value={cfg.animeRootFolder ?? ''} options={[{ id: '', label: 'Same as above' }, ...folderOptions]} onChange={(v) => patch({ animeRootFolder: v })} />
-              </Field>
-              <Field label="Anime quality profile">
-                <Select value={cfg.animeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as above' }, ...profileOptions]} onChange={(v) => patch({ animeQualityProfileId: v || null })} />
+              <Field
+                label="Older anime quality profile"
+                hint="For anime that first aired before 2010 and has ended, which often exists only as DVD or 480p releases. Shows still airing (One Piece) keep the anime profile."
+              >
+                <Select value={cfg.oldAnimeQualityProfileId ?? 0} options={[{ id: 0, label: 'Same as anime' }, ...profileOptions]} onChange={(v) => patch({ oldAnimeQualityProfileId: v || null })} />
               </Field>
               <Field
                 label="Anime series type"
@@ -185,7 +191,9 @@ export function ArrPage() {
         </Field>
       )}
       {kind === 'sonarr' && <ToggleRow title="Season folders" hint="Sonarr puts each season in its own folder, the way Roxy expects." on={cfg.seasonFolders !== false} onChange={(v) => patch({ seasonFolders: v })} />}
-      <ToggleRow title="Search when added" hint={`${name} starts looking for files as soon as a request arrives.`} on={cfg.searchOnAdd !== false} onChange={(v) => patch({ searchOnAdd: v })} />
+      <ToggleRow
+        title="Search when added"
+        hint={kind === 'sonarr' ? 'Sonarr searches each requested season as soon as a request arrives (season packs first). A show Sonarr has but does not monitor is left alone.' : 'Radarr starts looking as soon as a request arrives.'} on={cfg.searchOnAdd !== false} onChange={(v) => patch({ searchOnAdd: v })} />
       <Field label="External URL (optional, for links)" hint={`Where you open ${name} from your browser, if it differs from the URL above.`}>
         <TextInput value={cfg.externalUrl ?? ''} onChange={(v) => patch({ externalUrl: v })} autoComplete="off" />
       </Field>

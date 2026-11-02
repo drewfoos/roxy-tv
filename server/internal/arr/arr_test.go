@@ -127,3 +127,69 @@ func TestReadyForRequests(t *testing.T) {
 		}
 	}
 }
+
+// fakeSonarrWith serves a lookup result and an optional existing series, recording what was sent.
+func fakeSonarrWith(t *testing.T, lookup, existing string, sent *map[string]any, calls *[]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*calls = append(*calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
+			w.Write([]byte(existing))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series/lookup":
+			w.Write([]byte(lookup))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/series":
+			_ = json.NewDecoder(r.Body).Decode(sent)
+			w.Write([]byte(`{"id":7}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/command":
+			w.Write([]byte(`{"id":1}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+}
+
+// Older anime (before 2010 and ended) takes the older-anime profile; a long runner that
+// started earlier but still airs, and modern anime, keep the anime profile.
+func TestAddSeriesOlderAnimeProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		lookup string
+		anime  bool
+		want   float64
+	}{
+		{"old and ended", `[{"tvdbId":1,"year":2000,"status":"ended","seasons":[]}]`, true, 7},
+		{"old but still airing", `[{"tvdbId":1,"year":1999,"status":"continuing","seasons":[]}]`, true, 4},
+		{"modern", `[{"tvdbId":1,"year":2023,"status":"ended","seasons":[]}]`, true, 4},
+		{"old cartoon, not anime", `[{"tvdbId":1,"year":1999,"status":"ended","seasons":[]}]`, false, 4},
+	} {
+		var sent map[string]any
+		var calls []string
+		srv := fakeSonarrWith(t, tc.lookup, `[]`, &sent, &calls)
+		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, AnimeQualityProfileID: 4, OldAnimeQualityProfileID: 7})
+		if _, err := c.AddSeries(context.Background(), 1, tc.anime, nil); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		srv.Close()
+		if sent["qualityProfileId"] != tc.want {
+			t.Errorf("%s: profile %v, want %v", tc.name, sent["qualityProfileId"], tc.want)
+		}
+	}
+}
+
+// A series Sonarr has but does not monitor is kept by hand: the request is refused and
+// nothing is changed or searched.
+func TestAddSeriesLeavesUnmonitoredAlone(t *testing.T) {
+	var sent map[string]any
+	var calls []string
+	srv := fakeSonarrWith(t, `[]`, `[{"id":3,"tvdbId":1,"monitored":false,"seasons":[{"seasonNumber":1,"monitored":false}]}]`, &sent, &calls)
+	defer srv.Close()
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
+	if _, err := c.AddSeries(context.Background(), 1, false, nil); err != ErrManagedByHand {
+		t.Fatalf("err %v, want ErrManagedByHand", err)
+	}
+	for _, call := range calls {
+		if call != "GET /api/v3/series" {
+			t.Errorf("unexpected call %s", call)
+		}
+	}
+}
