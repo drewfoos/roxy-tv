@@ -74,18 +74,33 @@ private fun categories(all: List<Item>): List<Category> {
     return fixed + genres.map { g -> Category("genre:$g", g) { it.filter { x -> g in x.genres }.sortedWith(byTitle) } }
 }
 
-/** The library's series and movies, loaded once per page and kept while the page lives. */
+/** The library list Browse and Search share, kept across visits for a few minutes. */
+private object LibraryCache {
+    const val FRESH_MS = 5 * 60_000L
+    @Volatile var items: List<Item>? = null
+    @Volatile var at = 0L
+}
+
+/**
+ * The library's series and movies. Shown from [LibraryCache] at once; asked again only when
+ * that is a few minutes old. It used to be fetched on every resume, so each return from a
+ * title page downloaded the whole library again.
+ */
 @Composable
 private fun rememberLibrary(): Pair<List<Item>?, String?> {
     val app = RoxyApp.get(LocalContext.current)
     // The page's own scope: leaving the page cancels the fetch instead of finishing it into nothing.
     val scope = rememberCoroutineScope()
-    var items by remember { mutableStateOf<List<Item>?>(null) }
+    var items by remember { mutableStateOf(LibraryCache.items) }
     var error by remember { mutableStateOf<String?>(null) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (LibraryCache.items != null && System.currentTimeMillis() - LibraryCache.at < LibraryCache.FRESH_MS) {
+            items = LibraryCache.items
+            return@LifecycleEventEffect
+        }
         scope.launch {
             runCatching { app.api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items }
-                .onSuccess { items = it; error = null }
+                .onSuccess { items = it; error = null; LibraryCache.items = it; LibraryCache.at = System.currentTimeMillis() }
                 .onFailure { if (items == null) error = it.message ?: "Could not load the library" }
         }
     }

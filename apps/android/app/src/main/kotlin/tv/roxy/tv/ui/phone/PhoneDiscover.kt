@@ -141,7 +141,7 @@ data class DiscoverUiState(
     val genres: Map<String, List<Genre>> = emptyMap(),
 )
 
-class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
+class DiscoverViewModel(private val api: RoxyApi, private val rowsFreshMs: Long = 120_000L) : ViewModel() {
     private val _state = MutableStateFlow(DiscoverUiState())
     val state: StateFlow<DiscoverUiState> = _state
     private var searchJob: Job? = null
@@ -152,7 +152,7 @@ class DiscoverViewModel(private val api: RoxyApi) : ViewModel() {
      * refreshes the requests (their status moves); the TMDB rows (~100 KB) are kept.
      */
     fun load(force: Boolean = false) {
-        val fresh = System.currentTimeMillis() - loadedAt < 120_000L && !_state.value.rows.isNullOrEmpty()
+        val fresh = System.currentTimeMillis() - loadedAt < rowsFreshMs && !_state.value.rows.isNullOrEmpty()
         if (fresh && !force) {
             viewModelScope.launch { refreshRequests() }
             return

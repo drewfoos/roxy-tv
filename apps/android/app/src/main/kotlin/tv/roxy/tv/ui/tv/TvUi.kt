@@ -43,6 +43,15 @@ import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.State
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -112,9 +121,10 @@ object TvDims {
     val PosterCaption = 52.dp
     val ContinueCardWidth = 282.dp
     val ContinueCaption = 69.dp
-    /** Watchlist / History: five 16:9 cards across. */
-    val GridCardWidth = 160.dp
-    val GridCaption = 75.dp
+    /** My Lists (Watchlist / History): four 16:9 cards across, centred under the title. */
+    val GridCardWidth = 196.dp
+    val GridCaption = 66.dp
+    val GridGap = 14.dp
     /** Browse / Search: five posters across, right of the category list. */
     val BrowseCardWidth = 108.dp
     val BrowseCaption = 57.dp
@@ -378,7 +388,7 @@ fun ThumbCard(
                     if (progress != null && progress < 1f) ProgressBar(progress, modifier = Modifier.align(Alignment.BottomCenter))
                 }
             }
-            Column(modifier = Modifier.fillMaxWidth().height(captionHeight).background(RoxyColors.surface).padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().height(captionHeight).background(RoxyColors.surface).padding(horizontal = 12.dp, vertical = 10.dp)) {
                 CaptionTitle(cardTitle(item), lines = titleLines, fontSize = 16.sp, lineHeight = 20.sp)
                 if (secondLine != null) {
                     Spacer(Modifier.weight(1f))
@@ -573,4 +583,26 @@ fun PageMessage(text: String, modifier: Modifier = Modifier, color: Color = Roxy
     Box(modifier = modifier.fillMaxWidth().padding(horizontal = TvDims.ContentStart, vertical = 24.dp)) {
         Text(text, color = color, fontSize = 16.sp)
     }
+}
+
+/**
+ * Loading placeholders for the TV. One slow pulse per screen, read only when drawing: the
+ * blocks never recompose while they pulse (a shimmer per card was a frame drain on the TCL).
+ */
+@Composable
+fun rememberSkeletonPulse(): State<Float> {
+    val transition = rememberInfiniteTransition(label = "skeleton")
+    return transition.animateFloat(
+        initialValue = 0.55f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
+        label = "pulse",
+    )
+}
+
+/** A rounded grey block that breathes with [pulse]. */
+@Composable
+fun SkeletonBlock(pulse: State<Float>, modifier: Modifier = Modifier, radius: Dp = 6.dp) {
+    Box(modifier = modifier.drawBehind {
+        drawRoundRect(RoxyColors.surfaceHigh.copy(alpha = pulse.value), cornerRadius = CornerRadius(radius.toPx()))
+    })
 }

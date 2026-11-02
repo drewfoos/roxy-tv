@@ -59,3 +59,21 @@ func TestAddSeriesAnimeTypeDefaultsToStandard(t *testing.T) {
 		}
 	}
 }
+
+func TestReadyForRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"nothing", Config{}, false},
+		{"address and key only (from the environment)", Config{URL: "http://s:8989", APIKey: "k"}, false},
+		{"no quality profile", Config{URL: "http://s:8989", APIKey: "k", RootFolder: "/data/TV"}, false},
+		{"no root folder", Config{URL: "http://s:8989", APIKey: "k", QualityProfileID: 4}, false},
+		{"set up", Config{URL: "http://s:8989", APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4}, true},
+	} {
+		if got := tc.cfg.ReadyForRequests(); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

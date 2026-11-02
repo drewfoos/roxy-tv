@@ -14,6 +14,7 @@ data class MovieUiState(val loading: Boolean = true, val error: String? = null, 
 class MovieViewModel(private val api: RoxyApi, private val movieId: String, initial: Item? = null) : ViewModel() {
     private val _state = MutableStateFlow(MovieUiState(movie = initial))
     val state: StateFlow<MovieUiState> = _state
+    private var relatedLoaded = false
 
     fun load() {
         viewModelScope.launch {
@@ -25,9 +26,11 @@ class MovieViewModel(private val api: RoxyApi, private val movieId: String, init
                     _state.value = if (_state.value.movie != null && !_state.value.loading) _state.value
                     else MovieUiState(loading = false, error = t.message)
                 }
-            // The series this movie belongs to (AniList relations), if it is in the library.
+            // The series this movie belongs to (AniList relations), if it is in the library:
+            // once per page, not on every return from the player.
+            if (relatedLoaded) return@launch
             runCatching { api.related(movieId).partOf }
-                .onSuccess { p -> _state.value = _state.value.copy(partOf = p) }
+                .onSuccess { p -> relatedLoaded = true; _state.value = _state.value.copy(partOf = p) }
                 .onFailure { Timber.w(it, "related load failed") }
         }
     }

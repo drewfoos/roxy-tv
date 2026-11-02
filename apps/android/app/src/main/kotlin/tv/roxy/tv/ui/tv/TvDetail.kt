@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -335,6 +336,16 @@ private fun TitlePage(
                     layout(placeable.width, minOf(placeable.height, constraints.maxHeight)) { placeable.placeRelative(0, 0) }
                 }
                 .clipToBounds()
+                // Up out of the content goes back to the tab showing (Episodes from the seasons,
+                // Movie from the film); the nearest tab above was often Details or More like this.
+                .focusProperties {
+                    onExit = {
+                        if (requestedFocusDirection == FocusDirection.Up) {
+                            cancelFocusChange()
+                            pendingFocus = memory.requester("tab/$tab")
+                        }
+                    }
+                }
                 .focusGroup(),
         ) { content(contentFocus) }
     }
@@ -490,7 +501,7 @@ private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpe
             when (c) {
                 is Item -> PosterCard(c, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = { if (c.isMovie) onOpenMovie(c) else onOpenSeries(c) }, modifier = firstMod)
                 is DiscoverItem -> UrlPosterCard(
-                    title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, dim = !c.inLibrary, modifier = firstMod,
+                    title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, modifier = firstMod,
                     note = if (c.inLibrary) null else "Not in library",
                     onClick = {
                         val id = c.libraryItemId
@@ -500,56 +511,5 @@ private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpe
                 )
             }
         }
-    }
-}
-
-
-/**
- * A title the library does not hold (from More like this): TMDB's art and copy in the
- * same frame as a library title, with Open in library when it does exist, Request when
- * requests are on, or the request's status; Details under the strip.
- */
-@Composable
-fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
-    val app = RoxyApp.get(LocalContext.current)
-    val scope = rememberCoroutineScope()
-    var detail by remember(type, tmdbId) { mutableStateOf<DiscoverDetail?>(null) }
-    var error by remember(type, tmdbId) { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    suspend fun load() { runCatching { app.api.discoverDetail(type, tmdbId) }.onSuccess { detail = it; error = null }.onFailure { error = it.message ?: "Could not load this title" } }
-    LaunchedEffect(type, tmdbId) { load() }
-    val d = detail
-    if (d == null) {
-        if (error != null) PageMessage(error!!, color = RoxyColors.error) else Box(Modifier.fillMaxSize())
-        return
-    }
-    val stub = Item(
-        id = "tmdb:$type:$tmdbId", type = if (d.isMovie) "movie" else "series", title = d.title, year = d.year, overview = d.overview,
-        tagline = d.tagline, genres = d.genres, officialRating = d.officialRating, status = d.status, seasonCount = d.seasonCount.takeIf { it > 0 },
-        communityRating = d.rating, hasMedia = false,
-    )
-    val request = d.request
-    val actions = buildList {
-        val libraryId = d.libraryItemId
-        when {
-            libraryId != null -> add(TitleAction(key = "play", label = "Open in library", icon = Icons.Outlined.PlayArrow, onClick = {
-                val lib = Item(id = libraryId, type = stub.type, title = d.title)
-                if (lib.isMovie) onOpenMovie(lib) else onOpenSeries(lib)
-            }))
-            request != null -> add(TitleAction(key = "play", label = "Requested  \u00b7  " + request.status.replaceFirstChar { it.uppercase() }, icon = Icons.Outlined.Check, enabled = false, onClick = {}))
-            d.requestsEnabled -> add(TitleAction(key = "play", label = if (busy) "Requesting\u2026" else "Request", icon = Icons.Outlined.Add, enabled = !busy, onClick = {
-                scope.launch {
-                    busy = true
-                    runCatching { app.api.discoverRequest(d.type, d.tmdbId, d.missingSeasons.map { it.number }) }.onFailure { error = it.message }
-                    load()
-                    busy = false
-                }
-            }))
-            else -> add(TitleAction(key = "play", label = "Not in the library", icon = Icons.Outlined.Info, enabled = false, onClick = {}))
-        }
-    }
-    var tab by rememberSaveable(type, tmdbId) { mutableStateOf(0) }
-    TitlePage(title = stub, play = null, api = app.api, actions = actions, tabs = listOf("Details"), tab = tab, onTab = { tab = it }, backdropUrl = d.backdrop ?: d.poster, logoUrl = d.logo) { first ->
-        DetailsTab(stub, app.api, first, loadDetails = { app.api.discoverMoreDetails(d.type, d.tmdbId) })
     }
 }

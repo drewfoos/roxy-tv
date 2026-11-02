@@ -65,7 +65,8 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
                 else if (seasons.isEmpty()) loadEpisodes(seriesId, recursive = true) // flat series without season folders
                 loadUpNext(seasons)
-                loadRelated()
+                // Related titles do not change while you watch: once per page, not on every return.
+                if (!relatedLoaded) loadRelated()
             }.onFailure { t ->
                 Timber.e(t, "series load failed")
                 // A reload that fails (back from the player during a Wi-Fi drop) keeps the
@@ -77,6 +78,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     }
 
     private var firstLoad = true
+    private var relatedLoaded = false
 
     /**
      * Every episode of the show, for [SeriesUiState.upNext]. On the first load the page then
@@ -102,7 +104,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     private fun loadRelated() {
         viewModelScope.launch {
             runCatching { api.related(seriesId).related }
-                .onSuccess { rel -> _state.value = _state.value.copy(related = rel) }
+                .onSuccess { rel -> relatedLoaded = true; _state.value = _state.value.copy(related = rel) }
                 .onFailure { Timber.w(it, "related load failed") } // older server: no row, nothing else breaks
         }
     }

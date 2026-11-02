@@ -301,9 +301,9 @@ func (s *Service) RequestsEnabled(mediaType string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if mediaType == "movie" {
-		return s.radarr != nil
+		return s.radarr != nil && s.arrCfg.Radarr.ReadyForRequests()
 	}
-	return s.sonarr != nil
+	return s.sonarr != nil && s.arrCfg.Sonarr.ReadyForRequests()
 }
 
 func (s *Service) clients() (*arr.Client, *arr.Client) {

@@ -33,6 +33,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -226,13 +228,46 @@ private fun tvRows(rows: List<HomeRow>): List<HomeRow> {
     }
 }
 
-/** Grey blocks where the hero and the first row will be. */
+/**
+ * Home while the server answers (slow Wi-Fi, a server waking up): the hero's copy and
+ * buttons and the first row of posters as blocks in their real places, so nothing jumps
+ * when the page arrives. One slow pulse, drawn only (see [SkeletonBlock]).
+ */
 @Composable
 private fun HomeSkeleton() {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Spacer(Modifier.height(HeroHeight))
-        Row(modifier = Modifier.padding(start = TvDims.ContentStart, top = 38.dp)) {
-            repeat(6) { Box(Modifier.width(TvDims.PosterCardWidth).height(260.dp).background(RoxyColors.surface)); Spacer(Modifier.width(8.dp)) }
+    val pulse = rememberSkeletonPulse()
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Where the key art will be: a faint panel at the right of the hero.
+        Box(modifier = Modifier.align(Alignment.TopEnd).fillMaxWidth(0.58f).height(HeroHeight).background(Brush.horizontalGradient(0f to Color.Transparent, 1f to RoxyColors.surface)))
+        Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 112.dp)) {
+            SkeletonBlock(pulse, Modifier.width(130.dp).height(16.dp))
+            Spacer(Modifier.height(18.dp))
+            SkeletonBlock(pulse, Modifier.width(250.dp).height(76.dp))
+            Spacer(Modifier.height(16.dp))
+            SkeletonBlock(pulse, Modifier.width(320.dp).height(16.dp))
+            Spacer(Modifier.height(14.dp))
+            SkeletonBlock(pulse, Modifier.width(440.dp).height(15.dp))
+            Spacer(Modifier.height(8.dp))
+            SkeletonBlock(pulse, Modifier.width(360.dp).height(15.dp))
+            Spacer(Modifier.height(26.dp))
+            Row {
+                SkeletonBlock(pulse, Modifier.width(210.dp).height(TvDims.HeroButtonHeight), radius = 2.dp)
+                Spacer(Modifier.width(18.dp))
+                SkeletonBlock(pulse, Modifier.width(150.dp).height(TvDims.HeroButtonHeight), radius = 2.dp)
+            }
+        }
+        Column(modifier = Modifier.padding(top = HeroHeight + 10.dp)) {
+            SkeletonBlock(pulse, Modifier.padding(start = TvDims.ContentStart).width(170.dp).height(20.dp))
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.padding(start = TvDims.ContentStart), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(7) {
+                    Column {
+                        SkeletonBlock(pulse, Modifier.width(TvDims.PosterCardWidth).aspectRatio(2f / 3f), radius = 2.dp)
+                        Spacer(Modifier.height(10.dp))
+                        SkeletonBlock(pulse, Modifier.width(TvDims.PosterCardWidth * 0.7f).height(13.dp))
+                    }
+                }
+            }
         }
     }
 }

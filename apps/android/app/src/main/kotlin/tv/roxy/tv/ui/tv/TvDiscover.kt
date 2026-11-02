@@ -50,6 +50,32 @@ import tv.roxy.tv.api.DiscoverRow
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.ui.phone.DiscoverViewModel
 import tv.roxy.tv.ui.theme.RoxyColors
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
+import coil3.compose.AsyncImage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import tv.roxy.tv.api.DiscoverDetail
+import tv.roxy.tv.api.DiscoverSeason
+import tv.roxy.tv.api.DownloadStatus
+import tv.roxy.tv.ui.components.RoxyImage
 
 /*
  * Discover on the TV: the phone's Discover (Roxy's own request app) laid out for a remote. A
@@ -65,7 +91,11 @@ private const val ResultColumns = 6
 @Composable
 fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpenDiscover: (type: String, tmdbId: Int) -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
-    val vm: DiscoverViewModel = viewModel { DiscoverViewModel(app.api) }
+    // Kept by the activity, not the page: leaving Discover on the rail pops the page, and a
+    // page-scoped model fetched every TMDB row again on each visit. Rows stay 30 min; only
+    // "Your requests" (their status moves) is asked again when coming back.
+    val activity = LocalContext.current as androidx.activity.ComponentActivity
+    val vm: DiscoverViewModel = viewModel(viewModelStoreOwner = activity, key = "tv-discover") { DiscoverViewModel(app.api, rowsFreshMs = 30 * 60_000L) }
     val state by vm.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
     val memory = rememberFocusMemory()
@@ -95,7 +125,7 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
     Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.RailWidth)) {
         Spacer(Modifier.height(40.dp))
         TvTextField(
-            state.query, vm::search, placeholder = "Search for a series or movie to request", icon = Icons.Outlined.Search, imeAction = ImeAction.Search,
+            state.query, vm::search, placeholder = "Search TMDB for a series or movie", icon = Icons.Outlined.Search, imeAction = ImeAction.Search,
             modifier = Modifier.padding(start = 15.dp).width(560.dp).focusKey(memory, "discover/search")
                 .focusProperties { down = memory.requester(if (searching) "discover/result/first" else rowTarget(0) ?: "discover/search") },
         )
@@ -180,4 +210,226 @@ private fun DiscoverCard(c: DiscoverItem, onClick: () -> Unit, modifier: Modifie
         else -> null
     }
     UrlPosterCard(title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = onClick, modifier = modifier, note = note)
+}
+
+/**
+ * A title from TMDB, its own page rather than a library title's frame: the art at the
+ * right, copy and facts at the left, one action (Request, its status, or Open in library)
+ * with a line under it saying what will happen or what is happening, then the seasons
+ * and what the library holds of each. Only the action takes focus.
+ */
+@Composable
+fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    val cacheKey = "$type:$tmdbId"
+    var detail by remember(type, tmdbId) { mutableStateOf(DetailCache.get(cacheKey)) }
+    var error by remember(type, tmdbId) { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    suspend fun load() {
+        runCatching { app.api.discoverDetail(type, tmdbId) }
+            .onSuccess { detail = it; DetailCache.put(cacheKey, it) }
+            .onFailure { if (detail == null) error = it.message ?: "Could not load this title" }
+    }
+    // Opened again within a few minutes (Back and forth from Discover): shown from memory, no request.
+    LaunchedEffect(type, tmdbId) { if (detail == null) load() }
+    // A request's download moves while the page is open.
+    val watching = detail?.let { it.request != null && !it.inLibrary } == true
+    LaunchedEffect(watching) {
+        while (watching) { delay(15_000); load() }
+    }
+    val d = detail
+    if (d == null) {
+        if (error != null) PageMessage(error!!, color = RoxyColors.error) else DiscoverTitleSkeleton()
+        return
+    }
+    val action = remember { FocusRequester() }
+    LaunchedEffect(d.tmdbId) { repeat(6) { withFrameNanos { }; if (runCatching { action.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+
+    val dl = d.download
+    val canRequest = !d.inLibrary && d.request == null && d.requestsEnabled && !busy
+    val label = when {
+        d.inLibrary -> "Open in library"
+        busy -> "Requesting…"
+        d.request != null -> requestWord(d)
+        d.requestsEnabled -> "Request"
+        else -> "Requests aren't set up"
+    }
+    val icon = when {
+        d.inLibrary -> Icons.Outlined.PlayArrow
+        d.request != null -> Icons.Outlined.Check
+        d.requestsEnabled -> Icons.Outlined.Add
+        else -> Icons.Outlined.Info
+    }
+    val missing = d.missingSeasons
+    val hint = when {
+        error != null -> error
+        d.inLibrary -> null
+        d.request != null && dl?.message != null && (dl.state == "attention" || dl.state == "failed") -> dl.message
+        d.request != null -> "Requested by ${d.request.userName.ifBlank { "someone" }}"
+        !d.requestsEnabled && app.prefs.session.value.isAdmin -> "Choose a root folder and quality profile for ${if (d.isMovie) "Radarr" else "Sonarr"} in the web app (Account, Requests) to turn requests on."
+        !d.requestsEnabled -> "Ask whoever runs this server to connect ${if (d.isMovie) "Radarr" else "Sonarr"}."
+        d.isMovie -> "Sends the movie to Radarr."
+        missing.isEmpty() || missing.size == d.seasons.count { !it.special } -> "Sends the series to Sonarr."
+        else -> "Sends " + missing.joinToString(", ") { "S${it.number}" } + " to Sonarr."
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // The art fills the screen; the copy sits on a near-solid scrim at the left.
+        RoxyImage(d.backdrop ?: d.poster, "", modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
+        Box(modifier = Modifier.fillMaxWidth(0.74f).fillMaxHeight().background(Brush.horizontalGradient(0f to RoxyColors.background, 0.68f to RoxyColors.background.copy(alpha = 0.93f), 1f to Color.Transparent)))
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.45f).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to RoxyColors.background)))
+        Column(modifier = Modifier.padding(start = 56.dp, top = 48.dp).width(520.dp)) {
+            Box(modifier = Modifier.height(110.dp).fillMaxWidth(), contentAlignment = Alignment.BottomStart) {
+                if (d.logo != null) {
+                    AsyncImage(model = d.logo, contentDescription = d.title, contentScale = ContentScale.Fit, alignment = Alignment.BottomStart, modifier = Modifier.width(280.dp).height(110.dp))
+                } else {
+                    Text(d.title, fontSize = 36.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, color = RoxyColors.onBackground)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            DiscoverFacts(d)
+            if (!d.tagline.isNullOrBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(d.tagline, color = TvSubtle, fontSize = 16.sp, fontStyle = FontStyle.Italic, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(d.overview.orEmpty(), color = TvCopy, fontSize = 16.sp, lineHeight = 22.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, style = TvShadowed)
+            Spacer(Modifier.height(26.dp))
+            TvListRow(
+                label = label, icon = icon, selected = true, height = TvDims.ListRowHeight,
+                trailing = if (dl != null && !d.inLibrary) dl.percentLabel() else null,
+                onClick = {
+                    val libraryId = d.libraryItemId
+                    when {
+                        libraryId != null -> {
+                            val lib = Item(id = libraryId, type = if (d.isMovie) "movie" else "series", title = d.title)
+                            if (lib.isMovie) onOpenMovie(lib) else onOpenSeries(lib)
+                        }
+                        canRequest -> scope.launch {
+                            busy = true
+                            error = null
+                            runCatching { app.api.discoverRequest(d.type, d.tmdbId, missing.map { it.number }) }.onFailure { error = it.message ?: "The request failed" }
+                            busy = false
+                            load()
+                        }
+                    }
+                },
+                modifier = Modifier.width(360.dp).focusRequester(action).alpha(if (canRequest || d.inLibrary || d.request != null) 1f else 0.6f),
+            )
+            if (hint != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(hint, color = if (error != null) RoxyColors.error else RoxyColors.muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        // Bottom: the seasons (series) and the facts that do not fit the top line.
+        Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 56.dp, end = 56.dp, bottom = 36.dp)) {
+            val seasons = d.seasons.filter { !it.special }
+            if (seasons.isNotEmpty()) {
+                Text("SEASONS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    seasons.take(10).forEach { SeasonPill(it) }
+                    if (seasons.size > 10) Text("+${seasons.size - 10}", color = RoxyColors.muted, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
+                }
+                Spacer(Modifier.height(18.dp))
+            }
+            val more = buildList {
+                d.status?.takeIf { it.isNotBlank() }?.let { add("Status" to it) }
+                d.networks.takeIf { it.isNotEmpty() }?.let { add((if (d.isMovie) "Studio" else "Network") to it.take(2).joinToString(", ")) }
+                if (!d.isMovie && d.episodes > 0) add("Episodes" to d.episodes.toString())
+                if (d.runtimeMinutes > 0) add("Runtime" to "${d.runtimeMinutes} min")
+            }
+            if (more.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+                more.forEach { (k, v) ->
+                    Column {
+                        Text(k.uppercase(), color = RoxyColors.muted, fontSize = 12.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
+                        Text(v, color = RoxyColors.onBackground, fontSize = 16.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** TMDB title pages already fetched this session, for a few minutes each. */
+private object DetailCache {
+    private const val FRESH_MS = 5 * 60_000L
+    private val map = HashMap<String, Pair<Long, DiscoverDetail>>()
+    @Synchronized fun get(key: String): DiscoverDetail? = map[key]?.takeIf { System.currentTimeMillis() - it.first < FRESH_MS }?.second
+    @Synchronized fun put(key: String, d: DiscoverDetail) {
+        if (map.size > 60) map.clear()
+        map[key] = System.currentTimeMillis() to d
+    }
+}
+
+/** "TV-14  2023 · ★ 8.1 · Animation, Action · 3 seasons" over the copy. */
+@Composable
+private fun DiscoverFacts(d: DiscoverDetail) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        d.officialRating?.takeIf { it.isNotBlank() }?.let { AgePill(it); Spacer(Modifier.width(10.dp)) }
+        val parts = listOfNotNull(
+            d.year?.toString(),
+            d.rating?.takeIf { it > 0 }?.let { "★ " + String.format(java.util.Locale.US, "%.1f", it) },
+            d.genres.take(3).joinToString(", ").ifEmpty { null },
+            if (d.isMovie) null else d.seasonCount.takeIf { it > 0 }?.let { if (it == 1) "1 season" else "$it seasons" },
+        )
+        Text(parts.joinToString("  ·  "), color = TvCopy, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TvShadowed)
+    }
+}
+
+/** One season: "S1" over what the library has (accent = all there, outlined text = requested, grey = missing). */
+@Composable
+private fun SeasonPill(s: DiscoverSeason) {
+    val bg = if (s.complete) RoxyColors.accent else RoxyColors.surfaceHigh
+    val fg = when {
+        s.complete -> OnAccent
+        s.requested -> RoxyColors.accent
+        s.partial -> RoxyColors.onBackground
+        else -> RoxyColors.muted
+    }
+    val note = when {
+        s.complete -> "In library"
+        s.requested -> "Requested"
+        s.partial -> "${s.have}/${s.episodes}"
+        s.episodes > 0 -> "${s.episodes} eps"
+        else -> ""
+    }
+    Column(modifier = Modifier.background(bg, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("S${s.number}", color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        if (note.isNotEmpty()) Text(note, color = fg, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+/** The request's state in a word or two, for the action. */
+private fun requestWord(d: DiscoverDetail): String = when (d.download?.state) {
+    "downloading" -> "Downloading"
+    "stalled" -> "Download stalled"
+    "importing" -> "Adding to library"
+    "queued", "waiting" -> "Requested  ·  waiting"
+    "searching" -> "Requested  ·  searching"
+    "notFound" -> "Requested  ·  not found yet"
+    "failed", "attention" -> "Request needs attention"
+    "complete" -> "Downloaded"
+    else -> "Requested"
+}
+
+private fun DownloadStatus.percentLabel(): String? = when (state) {
+    "downloading", "stalled" -> "${(progress * 100).toInt().coerceIn(0, 100)}%"
+    else -> null
+}
+
+/** Blocks where the logo, facts, copy and action will be, while TMDB answers. */
+@Composable
+private fun DiscoverTitleSkeleton() {
+    val pulse = rememberSkeletonPulse()
+    Column(modifier = Modifier.padding(start = 56.dp, top = 48.dp)) {
+        SkeletonBlock(pulse, Modifier.width(280.dp).height(90.dp))
+        Spacer(Modifier.height(22.dp))
+        SkeletonBlock(pulse, Modifier.width(340.dp).height(18.dp))
+        Spacer(Modifier.height(20.dp))
+        repeat(3) { SkeletonBlock(pulse, Modifier.width(480.dp).height(15.dp)); Spacer(Modifier.height(9.dp)) }
+        Spacer(Modifier.height(22.dp))
+        SkeletonBlock(pulse, Modifier.width(360.dp).height(TvDims.ListRowHeight))
+    }
 }

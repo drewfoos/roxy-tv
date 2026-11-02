@@ -50,6 +50,13 @@ func (c Config) Configured() bool {
 	return strings.TrimSpace(c.URL) != "" && strings.TrimSpace(c.APIKey) != ""
 }
 
+// ReadyForRequests: connected, and a root folder and quality profile chosen in the
+// settings. An address and key alone (from the environment, say) do not turn requests
+// on: without the choices a request would land in whatever folder and profile come first.
+func (c Config) ReadyForRequests() bool {
+	return c.Configured() && strings.TrimSpace(c.RootFolder) != "" && c.QualityProfileID > 0
+}
+
 func (c Config) seasonFolders() bool { return c.SeasonFolders == nil || *c.SeasonFolders }
 func (c Config) searchOnAdd() bool   { return c.SearchOnAdd == nil || *c.SearchOnAdd }
 

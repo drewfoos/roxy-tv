@@ -8,6 +8,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.focusProperties
@@ -42,7 +47,10 @@ import java.util.Date
  * focus is remembered so Back from a title page lands on it again.
  */
 
-private const val GridColumns = 5
+private const val GridColumns = 4
+
+/** The lists' column: four cards and their gaps, plus room for the focus frame at both edges. */
+private val ListsWidth = TvDims.GridCardWidth * GridColumns + TvDims.GridGap * (GridColumns - 1) + TvDims.FocusBorder * 2
 
 /**
  * My Lists (Crunchyroll's): the Watchlist and History as two tabs. History left the rail to
@@ -58,7 +66,10 @@ fun TvMyLists(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     RegisterPageEntry { memory.restore(firstCard.value[tab] ?: tabKey(tab)) }
     Column(modifier = Modifier.fillMaxSize()) {
         PageTitle("My Lists")
-        Row(modifier = Modifier.padding(start = TvDims.ContentStart, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Tabs and cards share one column centred under the title, so their left edges line up.
+        Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.RailWidth), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(modifier = Modifier.width(ListsWidth).fillMaxHeight()) {
+        Row(modifier = Modifier.padding(start = TvDims.FocusBorder, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Watchlist", "History").forEachIndexed { i, label ->
                 TvTab(
                     label, selected = i == tab, onClick = { tab = i }, onFocused = { tab = i },
@@ -71,7 +82,15 @@ fun TvMyLists(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
             0 -> WatchlistTab(memory, upKey = tabKey(0), onFirst = { onFirst(0, it) }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie)
             else -> HistoryTab(memory, upKey = tabKey(1), onFirst = { onFirst(1, it) })
         }
+        }
+        }
     }
+}
+
+/** An empty or failed list: one line under the tabs. */
+@Composable
+private fun ListMessage(text: String, color: androidx.compose.ui.graphics.Color = RoxyColors.muted) {
+    Text(text, color = color, fontSize = 16.sp, modifier = Modifier.padding(start = TvDims.FocusBorder, top = 10.dp))
 }
 
 /** The saved titles (the profile's favourites), newest saved first. */
@@ -93,9 +112,9 @@ private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) 
 
     val list = items
     when {
-        list == null && error != null -> PageMessage(error!!, color = RoxyColors.error)
+        list == null && error != null -> ListMessage(error!!, color = RoxyColors.error)
         list == null -> Unit
-        list.isEmpty() -> PageMessage("Titles you add to your watchlist show up here.")
+        list.isEmpty() -> ListMessage("Titles you add to your watchlist show up here.")
         else -> CardGrid(list, memory, key = "watchlist", upKey = upKey, secondLine = { audioBadge(it) ?: it.year?.toString() }) { item ->
             if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
         }
@@ -122,20 +141,29 @@ private fun HistoryTab(memory: FocusMemory, upKey: String, onFirst: (String?) ->
 
     val list = items
     when {
-        list == null && error != null -> PageMessage(error!!, color = RoxyColors.error)
+        list == null && error != null -> ListMessage(error!!, color = RoxyColors.error)
         list == null -> Unit
-        list.isEmpty() -> PageMessage("Episodes and movies you watch show up here, newest first.")
+        list.isEmpty() -> ListMessage("Episodes and movies you watch show up here, newest first.")
         else -> CardGrid(list, memory, key = "history", upKey = upKey, secondLine = { historyLine(it, dateFormat) }) { item ->
             scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
         }
     }
 }
 
-/** "E2 - 10/27/2026": the episode code and the day it was last played. */
+/** "S1 E2  ·  10/27/2026": the season and episode, and the day it was last played. */
 private fun historyLine(item: Item, dateFormat: DateFormat): String {
-    val code = if (item.isEpisode) episodeShort(item) else ""
+    val code = if (!item.isEpisode) "" else {
+        val ep = item.indexAired ?: item.indexAbsolute
+        val season = item.seasonAired
+        when {
+            ep == null -> ""
+            season == 0 -> "Special $ep"
+            season != null -> "S$season E$ep"
+            else -> "E$ep"
+        }
+    }
     val day = item.userData?.lastPlayedAt?.let { runCatching { dateFormat.format(Date.from(java.time.Instant.parse(it))) }.getOrNull() }
-    return listOfNotNull(code.ifEmpty { null }, day).joinToString(" - ")
+    return listOfNotNull(code.ifEmpty { null }, day).joinToString("  \u00b7  ")
 }
 
 /**
@@ -157,14 +185,14 @@ private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, upKey:
     LazyVerticalGrid(
         columns = GridCells.Fixed(GridColumns),
         state = gridState,
-        contentPadding = PaddingValues(start = TvDims.CardStart, end = TvDims.ContentStart, bottom = 32.dp),
-        horizontalArrangement = Arrangement.spacedBy(0.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        contentPadding = PaddingValues(start = TvDims.FocusBorder, end = TvDims.FocusBorder, top = TvDims.FocusBorder, bottom = 32.dp),
+        horizontalArrangement = Arrangement.spacedBy(TvDims.GridGap),
+        verticalArrangement = Arrangement.spacedBy(TvDims.GridGap),
         modifier = Modifier.fillMaxSize(),
     ) {
         itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
             ThumbCard(
-                item, app.api, width = TvDims.GridCardWidth, captionHeight = TvDims.GridCaption, titleLines = 2, secondLine = secondLine(item),
+                item, app.api, width = TvDims.GridCardWidth, captionHeight = TvDims.GridCaption, titleLines = 1, secondLine = secondLine(item),
                 onClick = { onClick(item) },
                 modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i < GridColumns) Modifier.focusProperties { up = memory.requester(upKey) } else Modifier),
                 badge = if (item.isEpisode || item.isMovie) minutesLabel(item) else null,
