@@ -309,12 +309,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 				}
 			}
 			if c.cfg.searchOnAdd() {
-				for n := range want {
-					_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeasonSearch", "seriesId": int(id), "seasonNumber": n}, nil)
-				}
-				if len(want) == 0 {
-					_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeriesSearch", "seriesId": int(id)}, nil)
-				}
+				c.searchSeasons(ctx, int(id), want)
 			}
 			return int(id), nil
 		}
@@ -356,15 +351,34 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 	} else {
 		series["monitorNewItems"] = "none"
 	}
-	// No "monitor" option: Sonarr keeps the per-season flags set above.
-	series["addOptions"] = map[string]any{"searchForMissingEpisodes": c.cfg.searchOnAdd(), "ignoreEpisodesWithFiles": true}
+	// No "monitor" option: Sonarr keeps the per-season flags set above. Sonarr's own
+	// search on add is off: it searches episode by episode, which never matches a season
+	// pack, so it grabs one stray episode and that file then blocks the pack as a
+	// "downgrade". Season searches find the packs (and single episodes when there are none).
+	series["addOptions"] = map[string]any{"searchForMissingEpisodes": false, "ignoreEpisodesWithFiles": true}
 	var added struct {
 		ID int `json:"id"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/series", nil, series, &added); err != nil {
 		return 0, err
 	}
+	if c.cfg.searchOnAdd() && added.ID != 0 {
+		c.searchSeasons(ctx, added.ID, want)
+	}
 	return added.ID, nil
+}
+
+// searchSeasons searches the asked-for seasons of a series, or the whole series (Sonarr's
+// SeriesSearch, which goes season by season) when none were named. Best effort: the
+// series is already added, and Sonarr's RSS still picks up new episodes.
+func (c *Client) searchSeasons(ctx context.Context, seriesID int, want map[int]bool) {
+	if len(want) == 0 {
+		_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeriesSearch", "seriesId": seriesID}, nil)
+		return
+	}
+	for n := range want {
+		_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeasonSearch", "seriesId": seriesID, "seasonNumber": n}, nil)
+	}
 }
 
 // AddMovie adds a movie to Radarr by TMDB id (monitored, search on add). Returns the Radarr movie id.

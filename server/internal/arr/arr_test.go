@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// fakeSonarr answers the calls AddSeries makes and records the series it was sent.
-func fakeSonarr(t *testing.T, sent *map[string]any) *httptest.Server {
+// fakeSonarr answers the calls AddSeries makes and records the series it was sent and
+// the commands (searches) it was asked to run.
+func fakeSonarr(t *testing.T, sent *map[string]any, commands ...*[]map[string]any) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
@@ -21,6 +22,13 @@ func fakeSonarr(t *testing.T, sent *map[string]any) *httptest.Server {
 				t.Errorf("decode: %v", err)
 			}
 			w.Write([]byte(`{"id":7}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/command":
+			var cmd map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&cmd)
+			if len(commands) > 0 {
+				*commands[0] = append(*commands[0], cmd)
+			}
+			w.Write([]byte(`{"id":1}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
@@ -57,6 +65,48 @@ func TestAddSeriesAnimeTypeDefaultsToStandard(t *testing.T) {
 		if sent["rootFolderPath"] != wantRoot {
 			t.Errorf("rootFolderPath %v, want %s", sent["rootFolderPath"], wantRoot)
 		}
+	}
+}
+
+// A new series is added with Sonarr's per-episode search off (it grabs a stray episode
+// that then blocks the season pack) and searched by season instead.
+func TestAddSeriesSearchesBySeason(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seasons []int
+		want    string // the command sent
+	}{
+		{"whole series", nil, "SeriesSearch"},
+		{"one season", []int{1}, "SeasonSearch"},
+	} {
+		var sent map[string]any
+		var cmds []map[string]any
+		srv := fakeSonarr(t, &sent, &cmds)
+		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
+		if _, err := c.AddSeries(context.Background(), 424536, false, tc.seasons); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		srv.Close()
+		opts, _ := sent["addOptions"].(map[string]any)
+		if opts["searchForMissingEpisodes"] != false {
+			t.Errorf("%s: searchForMissingEpisodes %v, want false", tc.name, opts["searchForMissingEpisodes"])
+		}
+		if len(cmds) != 1 || cmds[0]["name"] != tc.want || cmds[0]["seriesId"] != float64(7) {
+			t.Errorf("%s: commands %v, want one %s for series 7", tc.name, cmds, tc.want)
+		}
+	}
+	// Search on add turned off in settings: no search at all.
+	var sent map[string]any
+	var cmds []map[string]any
+	srv := fakeSonarr(t, &sent, &cmds)
+	off := false
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, SearchOnAdd: &off})
+	if _, err := c.AddSeries(context.Background(), 424536, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	if len(cmds) != 0 {
+		t.Errorf("search off: commands %v, want none", cmds)
 	}
 }
 

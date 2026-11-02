@@ -31,6 +31,9 @@ export function ArrPage() {
   const test = tests[kind]
   const patch = (p: Partial<ArrConfig>) => setDraft({ ...draft, [kind]: { ...cfg, ...p } })
   const name = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
+  // The key lives in Sonarr / Radarr itself: link straight to the page that shows it.
+  const arrBase = (cfg.externalUrl?.trim() || cfg.url.trim()).replace(/\/+$/, '')
+  const keyPage = /^https?:\/\/[^/]/i.test(arrBase) ? `${arrBase}/settings/general` : null
 
   const runTest = async () => {
     setErr(null)
@@ -81,7 +84,22 @@ export function ArrPage() {
       <Field label={`${name} URL (http://host:port, with any URL base)`}>
         <TextInput value={cfg.url} onChange={(v) => patch({ url: v })} placeholder={kind === 'sonarr' ? 'http://192.168.1.10:8989' : 'http://192.168.1.10:7878'} autoComplete="off" />
       </Field>
-      <Field label="API key (Settings → General → Security)" hint="The saved key stays unless you type a new one.">
+      <Field
+        label="API key"
+        hint={
+          <>
+            {name}'s own key: in {name}, Settings → General → Security → API Key.{' '}
+            {keyPage ? (
+              <a href={keyPage} target="_blank" rel="noreferrer">
+                Open {name}'s General settings
+              </a>
+            ) : (
+              `Fill in the URL above for a link to it.`
+            )}{' '}
+            A saved key stays unless you type a new one.
+          </>
+        }
+      >
         <TextInput type="password" value={cfg.apiKey} onChange={(v) => patch({ apiKey: v })} autoComplete="off" />
       </Field>
       <div className="acc-actions">
