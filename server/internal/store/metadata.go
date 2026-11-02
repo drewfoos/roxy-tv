@@ -182,14 +182,45 @@ func (s *Store) Children(ctx context.Context, parentID string, t model.ItemType)
 	return items, err
 }
 
-// CountUnrefreshedEpisodes reports how many episodes under a series have never
-// received provider metadata; the metadata service uses it to decide whether a
-// recently refreshed series still needs its new episodes filled in.
-func (s *Store) CountUnrefreshedEpisodes(ctx context.Context, seriesID string) (int, error) {
+// CountUnrefreshedEpisodes reports how many real episodes under a series have never
+// received provider metadata although a provider could fill them (they carry an episode
+// number), counting only those created after since when it is set: the metadata service
+// uses it to decide whether a recently refreshed series has new episodes to fill in,
+// without re-trying the ones the last attempt already could not fill.
+func (s *Store) CountUnrefreshedEpisodes(ctx context.Context, seriesID string, since *time.Time) (int, error) {
+	q := `SELECT COUNT(*) FROM items e JOIN items se ON se.id = e.parent_id
+		WHERE se.parent_id = ? AND e.type = 'episode' AND e.is_virtual = 0 AND e.metadata_refreshed_at IS NULL
+		AND COALESCE(e.index_aired, e.index_absolute) IS NOT NULL`
+	args := []any{seriesID}
+	if since != nil {
+		q += ` AND e.date_created > ?`
+		args = append(args, since.UTC().Format(TimeFormat))
+	}
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items e JOIN items se ON se.id = e.parent_id
-		WHERE se.parent_id = ? AND e.type = 'episode' AND e.metadata_refreshed_at IS NULL`, seriesID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n, err
+}
+
+// MetadataAttemptedAt is when the metadata service last tried the item (nil = never).
+func (s *Store) MetadataAttemptedAt(ctx context.Context, id string) (*time.Time, error) {
+	var v sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT metadata_attempted_at FROM items WHERE id = ?`, id).Scan(&v); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !v.Valid || v.String == "" {
+		return nil, nil
+	}
+	t := ParseTime(v.String)
+	return &t, nil
+}
+
+// SetMetadataAttempted records a finished lookup attempt that started at t.
+func (s *Store) SetMetadataAttempted(ctx context.Context, id string, t time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE items SET metadata_attempted_at = ? WHERE id = ?`, t.UTC().Format(TimeFormat), id)
+	return err
 }
 
 // TopLevelItemIDs lists every series and movie id (for the post-scan metadata sweep).

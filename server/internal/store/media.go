@@ -29,7 +29,7 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 		src.ID, src.ItemID, nullStr(src.Name), nullStr(src.Container), src.Size, src.DurationMs, nullInt64(src.Bitrate), nullStr(src.VersionLabel), boolInt(src.IsPrimary), now, nullStr(probeJSON)); err != nil {
 		return err
 	}
-	for _, t := range []string{"media_parts", "media_streams", "attachments", "media_segments"} {
+	for _, t := range []string{"media_parts", "media_streams", "attachments", "media_segments", "segment_detection"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE source_id = ?`, src.ID); err != nil {
 			return err
 		}

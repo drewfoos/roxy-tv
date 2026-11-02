@@ -362,13 +362,21 @@ func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 
 // EnsureVirtualItem inserts a placeholder item unless an item with the same GUID already
 // exists (real or virtual). It returns the stored item either way and whether it was
-// created. Placeholders never overwrite anything.
+// created. Placeholders never overwrite anything, except that an existing placeholder
+// follows the library id it is given (its series' library: a series that moved takes
+// its placeholders along).
 func (s *Store) EnsureVirtualItem(ctx context.Context, it *model.Item) (*model.Item, bool, error) {
 	existing, err := s.GetItemByGUID(ctx, it.GUID)
 	if err != nil {
 		return nil, false, err
 	}
 	if existing != nil {
+		if existing.IsVirtual && it.LibraryID != 0 && existing.LibraryID != it.LibraryID {
+			if _, err := s.db.ExecContext(ctx, `UPDATE items SET library_id = ? WHERE id = ? AND is_virtual = 1`, it.LibraryID, existing.ID); err != nil {
+				return nil, false, err
+			}
+			existing.LibraryID = it.LibraryID
+		}
 		return existing, false, nil
 	}
 	it.IsVirtual = true
@@ -376,6 +384,26 @@ func (s *Store) EnsureVirtualItem(ctx context.Context, it *model.Item) (*model.I
 		return nil, false, err
 	}
 	return it, true, nil
+}
+
+// SyncChildLibrary gives every season and episode under a series the series' library id
+// (placeholders included). Returns how many rows changed.
+func (s *Store) SyncChildLibrary(ctx context.Context, seriesID string) (int, error) {
+	total := 0
+	for _, q := range []string{
+		`UPDATE items SET library_id = (SELECT library_id FROM items WHERE id = ?) WHERE parent_id = ? AND type = 'season'
+			AND library_id != (SELECT library_id FROM items WHERE id = ?)`,
+		`UPDATE items SET library_id = (SELECT library_id FROM items WHERE id = ?) WHERE type = 'episode'
+			AND parent_id IN (SELECT id FROM items WHERE parent_id = ?) AND library_id != (SELECT library_id FROM items WHERE id = ?)`,
+	} {
+		res, err := s.db.ExecContext(ctx, q, seriesID, seriesID, seriesID)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += int(n)
+	}
+	return total, nil
 }
 
 // DeleteVirtualChildren removes placeholder episodes/seasons under a series that the

@@ -64,16 +64,23 @@ type SeasonEpisode struct {
 	Index      int
 	DurationMs int64
 	Segments   []model.MediaSegment
+	// DetectVersion is the detector version that last worked on the source (0 = never).
+	DetectVersion int
+	// AniSkipMal is the MAL id AniSkip was last asked with for the source; AniSkipAsked
+	// is false when it never was.
+	AniSkipMal   string
+	AniSkipAsked bool
 }
 
 // SeasonEpisodes lists a season's episodes that have a primary file, in aired order,
 // with the segments known so far.
 func (s *Store) SeasonEpisodes(ctx context.Context, seasonID string) ([]SeasonEpisode, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, COALESCE(i.index_aired, 0), ms.id, ms.duration_ms, mp.path
+		SELECT i.id, COALESCE(i.index_aired, 0), ms.id, ms.duration_ms, mp.path, COALESCE(sd.version, 0), sd.aniskip_mal
 		FROM items i
 		JOIN media_sources ms ON ms.item_id = i.id AND ms.is_primary = 1
 		JOIN media_parts mp ON mp.source_id = ms.id AND mp.part_index = 0
+		LEFT JOIN segment_detection sd ON sd.source_id = ms.id
 		WHERE i.parent_id = ? AND i.type = 'episode'
 		ORDER BY COALESCE(i.index_aired, 0), i.id`, seasonID)
 	if err != nil {
@@ -83,9 +90,11 @@ func (s *Store) SeasonEpisodes(ctx context.Context, seasonID string) ([]SeasonEp
 	var out []SeasonEpisode
 	for rows.Next() {
 		var e SeasonEpisode
-		if err := rows.Scan(&e.ItemID, &e.Index, &e.SourceID, &e.DurationMs, &e.Path); err != nil {
+		var mal sql.NullString
+		if err := rows.Scan(&e.ItemID, &e.Index, &e.SourceID, &e.DurationMs, &e.Path, &e.DetectVersion, &mal); err != nil {
 			return nil, err
 		}
+		e.AniSkipMal, e.AniSkipAsked = mal.String, mal.Valid
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -166,4 +175,19 @@ func (s *Store) ReplaceSegmentsByOrigin(ctx context.Context, sourceID, origin st
 		}
 	}
 	return tx.Commit()
+}
+
+// MarkDetected records that the segment detector (at version) worked on a source.
+func (s *Store) MarkDetected(ctx context.Context, sourceID string, version int) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO segment_detection (source_id, version, detected_at) VALUES (?,?,?)
+		ON CONFLICT(source_id) DO UPDATE SET version = excluded.version, detected_at = excluded.detected_at`, sourceID, version, Now())
+	return err
+}
+
+// MarkAniSkipAsked records that AniSkip was asked about a source with mal ("" = the
+// season had no MAL id, so there was nothing to ask).
+func (s *Store) MarkAniSkipAsked(ctx context.Context, sourceID, mal string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO segment_detection (source_id, version, detected_at, aniskip_mal) VALUES (?,0,?,?)
+		ON CONFLICT(source_id) DO UPDATE SET aniskip_mal = excluded.aniskip_mal`, sourceID, Now(), mal)
+	return err
 }

@@ -14,11 +14,15 @@ var (
 	reSxxExx     = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-?E?(\d{1,4}))?\b`)
 	reAbsDash    = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`) // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
 	reAbsBracket = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s*(?:\[|\(|$)`)
-	reIDTag      = regexp.MustCompile(`(?i)[\[{](tvdbid|tmdbid|imdbid|tvdb|tmdb|imdb)[-=](tt\d+|\d+)[\]}]`)
-	reYear       = regexp.MustCompile(`\((19|20)\d{2}\)`)
-	reSeasonDir  = regexp.MustCompile(`(?i)^(?:season|s)\s*(\d{1,3})$`)
-	reSpecials   = regexp.MustCompile(`(?i)^specials?$`)
-	reRlsGroup   = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
+	// "[DB]Tokyo Magnitude 8.0_-_01_(Dual Audio_10bit_BD1080p_x265)": underscores for spaces.
+	reAbsUnderscore = regexp.MustCompile(`_-_(\d{1,4})(?:v\d)?(?:_|\(|\[|$)`)
+	// "Episode 1 - The Golden Age" (Berserk Memorial Edition): an episode of the folder's season.
+	reEpisodeWord = regexp.MustCompile(`(?i)(?:^|[\s._\-\]])episode[\s._]*(\d{1,4})(?:v\d)?(?:$|[\s._\-\[(])`)
+	reIDTag       = regexp.MustCompile(`(?i)[\[{](tvdbid|tmdbid|imdbid|tvdb|tmdb|imdb)[-=](tt\d+|\d+)[\]}]`)
+	reYear        = regexp.MustCompile(`\((19|20)\d{2}\)`)
+	reSeasonDir   = regexp.MustCompile(`(?i)^(?:season|s)\s*(\d{1,3})$`)
+	reSpecials    = regexp.MustCompile(`(?i)^specials?$`)
+	reRlsGroup    = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
 	// Scene-style "Title.Of.Film.2019.1080p.BluRay.x265-GRP": the first bare year token
 	// separated by dots/underscores/spaces ends the title.
 	reSceneYear = regexp.MustCompile(`(?:^|[. _(\[])((?:19|20)\d{2})(?:[. _)\]]|$)`)
@@ -90,12 +94,26 @@ func ParseEpisodeFile(name string) ParsedName {
 	} else if a := reAbsBracket.FindStringSubmatch(stem); a != nil {
 		n, _ := strconv.Atoi(a[1])
 		p.Absolute = &n
+	} else if a := reAbsUnderscore.FindStringSubmatchIndex(stem); a != nil && !isYear(stem[a[2]:a[3]]) {
+		n, _ := strconv.Atoi(stem[a[2]:a[3]])
+		p.Absolute = &n
+		p.CleanTitle = strings.TrimSpace(strings.ReplaceAll(stripBrackets(stem[:a[0]]), "_", " "))
+	} else if a := reEpisodeWord.FindStringSubmatch(stem); a != nil && !isYear(a[1]) {
+		n, _ := strconv.Atoi(a[1])
+		p.Episode = &n
 	}
 	if m := reRlsGroup.FindStringSubmatch(stripBrackets(stem)); m != nil {
 		p.ReleaseGroup = m[1]
 	}
-	p.CleanTitle = cleanTitle(stem)
+	if p.CleanTitle == "" {
+		p.CleanTitle = cleanTitle(stem)
+	}
 	return p
+}
+
+// isYear reports a four-digit 19xx/20xx number, which is never an episode number.
+func isYear(s string) bool {
+	return len(s) == 4 && (strings.HasPrefix(s, "19") || strings.HasPrefix(s, "20"))
 }
 
 // ParseSeriesDir extracts title, year and id tags from a series folder name.

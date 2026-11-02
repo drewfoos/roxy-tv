@@ -231,7 +231,11 @@ func (s *Service) applyLocal(ctx context.Context, it *model.Item) (handled bool,
 				slog.Warn("metadata: unreadable episode .nfo", "path", p.Path, "err", err)
 				continue
 			}
+			var index *int // the .nfo's <episode>: the order inside the season ("Wano 01.mp4" has no number the scanner reads)
 			if ep != nil {
+				if v, err := strconv.Atoi(strings.TrimSpace(ep.Episode)); err == nil && v > 0 {
+					index = &v
+				}
 				em := ep.meta()
 				em.Year = nil
 				if err := s.store.UpdateItemMetadata(ctx, p.ItemID, em); err != nil {
@@ -250,8 +254,8 @@ func (s *Service) applyLocal(ctx context.Context, it *model.Item) (handled bool,
 				season = s.localSeason(ctx, it, epDir)
 				seasons[epDir] = season
 			}
-			if season != nil {
-				if err := s.placeInSeason(ctx, p.ItemID, season); err != nil {
+			if season != nil || index != nil {
+				if err := s.placeInSeason(ctx, p.ItemID, season, index); err != nil {
 					slog.Warn("metadata: placing episode in its season", "path", p.Path, "err", err)
 				}
 			}
@@ -365,17 +369,25 @@ func (s *Service) localSeason(ctx context.Context, series *model.Item, dir strin
 	return season
 }
 
-// placeInSeason moves an episode under season when it sits elsewhere.
-func (s *Service) placeInSeason(ctx context.Context, episodeID string, season *model.Item) error {
+// placeInSeason moves an episode under season when it sits elsewhere (season nil: it
+// stays where it is) and gives it the episode number index when one is set.
+func (s *Service) placeInSeason(ctx context.Context, episodeID string, season *model.Item, index *int) error {
 	ep, err := s.store.GetItem(ctx, episodeID)
 	if err != nil || ep == nil {
 		return err
 	}
-	if ep.ParentID != nil && *ep.ParentID == season.ID && ep.SeasonAired != nil && season.IndexAired != nil && *ep.SeasonAired == *season.IndexAired {
+	inSeason := season == nil || (ep.ParentID != nil && *ep.ParentID == season.ID && ep.SeasonAired != nil && season.IndexAired != nil && *ep.SeasonAired == *season.IndexAired)
+	indexed := index == nil || (ep.IndexAired != nil && *ep.IndexAired == *index)
+	if inSeason && indexed {
 		return nil
 	}
-	ep.ParentID = &season.ID
-	ep.SeasonAired = season.IndexAired
+	if season != nil {
+		ep.ParentID = &season.ID
+		ep.SeasonAired = season.IndexAired
+	}
+	if index != nil {
+		ep.IndexAired = index
+	}
 	return s.store.UpsertItem(ctx, ep)
 }
 

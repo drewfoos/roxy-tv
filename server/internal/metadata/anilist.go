@@ -25,12 +25,17 @@ type AniList struct {
 
 const anilistEndpoint = "https://graphql.anilist.co"
 
+// anilistLimiter is shared by every AniList client in the process (matching, Identify
+// search, profile avatars): AniList allows 90 requests a minute, 30 when it runs
+// degraded, and also limits bursts. One request every 2 s with a burst of 3 stays
+// under the degraded limit; a 429 pauses it for the Retry-After.
+var anilistLimiter = newLimiter(3, 6*time.Second)
+
 func NewAniList() *AniList {
 	return &AniList{
 		endpoint: anilistEndpoint,
 		client:   &http.Client{Timeout: 20 * time.Second},
-		// AniList allows 90/min; stay well under it.
-		lim: newLimiter(30, time.Minute),
+		lim:      anilistLimiter,
 	}
 }
 
@@ -376,7 +381,12 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 			break
 		}
 		m, err := fetch(id)
-		if err != nil || m == nil {
+		if err != nil {
+			// A failed hop (rate limit, outage) must not pass for a shorter chain: the
+			// seasons and relations would be saved short.
+			return nil, err
+		}
+		if m == nil {
 			break
 		}
 		seen[id] = true
@@ -393,7 +403,10 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 			break
 		}
 		m, err := fetch(id)
-		if err != nil || m == nil {
+		if err != nil {
+			return nil, err
+		}
+		if m == nil {
 			break
 		}
 		seen[id] = true

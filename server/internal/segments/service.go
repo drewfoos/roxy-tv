@@ -33,6 +33,10 @@ const (
 	seasonDebounce = 20 * time.Second
 )
 
+// DetectorVersion is stored per source after a detection pass (store.MarkDetected).
+// Raise it when detection changes enough that every season should be redone once.
+const DetectorVersion = 1
+
 // Service runs detection for seasons as their episodes are ingested (debounced, so a
 // season scan triggers one pass) and on demand.
 type Service struct {
@@ -42,12 +46,17 @@ type Service struct {
 	aniskip *AniSkip // nil = do not ask AniSkip
 
 	mu      sync.Mutex
-	pending map[string]time.Time // season id -> when it was last touched
+	pending map[string]pendingSeason // season id -> when it was last touched, and how
 	wake    chan struct{}
 }
 
+type pendingSeason struct {
+	at    time.Time
+	force bool // redo every episode (admin refresh), not only the ones never detected
+}
+
 func New(st *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Service {
-	return &Service{store: st, ff: ff, cfg: cfg, aniskip: NewAniSkip(), pending: map[string]time.Time{}, wake: make(chan struct{}, 1)}
+	return &Service{store: st, ff: ff, cfg: cfg, aniskip: NewAniSkip(), pending: map[string]pendingSeason{}, wake: make(chan struct{}, 1)}
 }
 
 // Start runs the worker: seasons sit in the pending set until nothing new has arrived
@@ -63,8 +72,8 @@ func (s *Service) Start(ctx context.Context) {
 			case <-s.wake:
 			case <-t.C:
 			}
-			for _, id := range s.due() {
-				if _, err := s.DetectSeason(ctx, id, false); err != nil {
+			for id, p := range s.due() {
+				if err := s.runSeason(ctx, id, p.force); err != nil {
 					slog.Warn("segment detection failed", "season", id, "err", err)
 				}
 			}
@@ -72,14 +81,32 @@ func (s *Service) Start(ctx context.Context) {
 	}()
 }
 
-func (s *Service) due() []string {
+// runSeason runs the fingerprint pass when an episode of the season was never detected
+// (at this DetectorVersion), or when forced; otherwise only AniSkip, for episodes it was
+// not yet asked about with the season's current MAL id.
+func (s *Service) runSeason(ctx context.Context, seasonID string, force bool) error {
+	if !force {
+		eps, err := s.store.SeasonEpisodes(ctx, seasonID)
+		if err != nil {
+			return err
+		}
+		if !needsFingerprints(eps) {
+			s.fillFromAniSkip(ctx, seasonID, false, &Report{SeasonID: seasonID})
+			return nil
+		}
+	}
+	_, err := s.DetectSeason(ctx, seasonID, false)
+	return err
+}
+
+func (s *Service) due() map[string]pendingSeason {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var ids []string
+	ids := map[string]pendingSeason{}
 	now := time.Now()
-	for id, at := range s.pending {
-		if now.Sub(at) >= seasonDebounce {
-			ids = append(ids, id)
+	for id, p := range s.pending {
+		if now.Sub(p.at) >= seasonDebounce {
+			ids[id] = p
 			delete(s.pending, id)
 		}
 	}
@@ -95,9 +122,17 @@ func (s *Service) EnqueueSource(sourceID string) {
 	s.EnqueueSeason(season)
 }
 
-func (s *Service) EnqueueSeason(seasonID string) {
+// EnqueueSeason schedules a season: episodes never detected get the fingerprint pass,
+// and AniSkip is asked about what it was not asked yet (a new MAL id).
+func (s *Service) EnqueueSeason(seasonID string) { s.enqueue(seasonID, false) }
+
+// RedetectSeason schedules a full pass over every episode of a season (admin refresh).
+func (s *Service) RedetectSeason(seasonID string) { s.enqueue(seasonID, true) }
+
+func (s *Service) enqueue(seasonID string, force bool) {
 	s.mu.Lock()
-	s.pending[seasonID] = time.Now()
+	p := s.pending[seasonID]
+	s.pending[seasonID] = pendingSeason{at: time.Now(), force: force || p.force}
 	s.mu.Unlock()
 	select {
 	case s.wake <- struct{}{}:
@@ -105,7 +140,11 @@ func (s *Service) EnqueueSeason(seasonID string) {
 	}
 }
 
-// SweepAll schedules every season whose episodes still lack segments.
+// SweepAll schedules every season with work left: an episode the detector never worked
+// on (at this DetectorVersion), fingerprint results on a file now considered too short,
+// or an episode missing an intro or outro that AniSkip was not yet asked about with the
+// season's MAL id. An episode that simply has no intro or outro (a finale, a special, a
+// show without an OP) does not bring its season back once both were tried.
 func (s *Service) SweepAll(ctx context.Context) {
 	ids, err := s.store.SeasonIDs(ctx)
 	if err != nil {
@@ -113,19 +152,54 @@ func (s *Service) SweepAll(ctx context.Context) {
 	}
 	for _, id := range ids {
 		eps, err := s.store.SeasonEpisodes(ctx, id)
-		if err != nil {
+		if err != nil || len(eps) == 0 {
+			continue
+		}
+		if needsFingerprints(eps) {
+			s.EnqueueSeason(id)
+			continue
+		}
+		if s.aniskip == nil {
+			continue
+		}
+		mal, err := s.store.ProviderID(ctx, id, "mal")
+		if err != nil || mal == "" {
 			continue
 		}
 		for _, e := range eps {
-			// Missing a segment, or carrying fingerprint results from a file now considered
-			// too short (an earlier version matched identical test clips whole): redo it.
-			stale := float64(e.DurationMs)/1000 < MinEpisodeSec && hasOrigin(e.Segments, Origin)
-			if stale || !hasType(e.Segments, "intro") || !hasType(e.Segments, "outro") {
+			if needsAniSkip(e, mal) {
 				s.EnqueueSeason(id)
 				break
 			}
 		}
 	}
+}
+
+// needsFingerprints reports a season with an episode the detector has not worked on at
+// this version, or one carrying fingerprint results from a file now considered too short
+// (an earlier version matched identical test clips whole).
+func needsFingerprints(eps []store.SeasonEpisode) bool {
+	for _, e := range eps {
+		if e.DetectVersion < DetectorVersion {
+			return true
+		}
+		if float64(e.DurationMs)/1000 < MinEpisodeSec && hasOrigin(e.Segments, Origin) {
+			return true
+		}
+	}
+	return false
+}
+
+// needsAniSkip reports an episode AniSkip could still help: long enough, numbered,
+// missing an intro or an outro, and not yet asked about with this MAL id.
+func needsAniSkip(e store.SeasonEpisode, mal string) bool {
+	if e.Index < 1 || float64(e.DurationMs)/1000 < MinEpisodeSec {
+		return false
+	}
+	if hasType(e.Segments, "intro") && hasType(e.Segments, "outro") {
+		return false
+	}
+	return !e.AniSkipAsked || e.AniSkipMal != mal
 }
 
 // Report is what one detection pass found, for logs and the admin endpoint.
@@ -157,6 +231,9 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 	rep := &Report{SeasonID: seasonID}
 	if len(eps) < 2 {
 		// Nothing to compare a lone episode with; AniSkip may still know it.
+		if !dry {
+			s.markDetected(ctx, eps, nil, nil)
+		}
 		s.fillFromAniSkip(ctx, seasonID, dry, rep)
 		rep.Elapsed = time.Since(started).String()
 		return rep, nil
@@ -262,6 +339,9 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 			}
 		}
 	}
+	if !dry {
+		s.markDetected(ctx, eps, heads, tails)
+	}
 	s.fillFromAniSkip(ctx, seasonID, dry, rep)
 	rep.Elapsed = time.Since(started).String()
 	slog.Info("segments detected", "season", seasonID, "episodes", len(eps), "took", rep.Elapsed, "dry", dry)
@@ -322,7 +402,8 @@ func (s *Service) fillFromAniSkip(ctx context.Context, seasonID string, dry bool
 	added := 0
 	for _, e := range eps {
 		dur := float64(e.DurationMs) / 1000
-		if e.Index < 1 || dur < MinEpisodeSec || (hasType(e.Segments, "intro") && hasType(e.Segments, "outro")) {
+		// A dry run shows what AniSkip has now; a real one asks once per episode and MAL id.
+		if !needsAniSkip(e, mal) && (!dry || e.Index < 1 || dur < MinEpisodeSec || (hasType(e.Segments, "intro") && hasType(e.Segments, "outro"))) {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -332,6 +413,11 @@ func (s *Service) fillFromAniSkip(ctx context.Context, seasonID string, dry bool
 		if err != nil {
 			slog.Warn("aniskip lookup failed; trying again on the next pass", "season", seasonID, "mal", mal, "episode", e.Index, "err", err)
 			return
+		}
+		if !dry {
+			if err := s.store.MarkAniSkipAsked(ctx, e.SourceID, mal); err != nil {
+				slog.Warn("aniskip: recording the lookup", "item", e.ItemID, "err", err)
+			}
 		}
 		var add []model.MediaSegment
 		for _, sg := range segs {
@@ -400,3 +486,18 @@ func hasType(segs []model.MediaSegment, t string) bool {
 }
 
 func ms(sec float64) int64 { return int64(sec*1000 + 0.5) }
+
+// markDetected records the pass on every episode it could fingerprint (heads/tails nil:
+// a lone episode, nothing to fingerprint against) and on files too short to have an
+// OP/ED. An episode whose fingerprint failed stays unmarked, so the next sweep retries it.
+func (s *Service) markDetected(ctx context.Context, eps []store.SeasonEpisode, heads, tails [][]uint32) {
+	for i, e := range eps {
+		short := float64(e.DurationMs)/1000 < MinEpisodeSec
+		if heads != nil && !short && (len(heads[i]) == 0 || len(tails[i]) == 0) {
+			continue
+		}
+		if err := s.store.MarkDetected(ctx, e.SourceID, DetectorVersion); err != nil {
+			slog.Warn("segments: recording the pass", "item", e.ItemID, "err", err)
+		}
+	}
+}

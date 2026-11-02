@@ -125,7 +125,7 @@ func (s *Server) libraryRefresh(w http.ResponseWriter, r *http.Request) {
 			if body.Segments && s.segs != nil {
 				if seasons, err := s.store.Children(ctx, id, model.TypeSeason); err == nil {
 					for _, se := range seasons {
-						s.segs.EnqueueSeason(se.ID)
+						s.segs.RedetectSeason(se.ID)
 					}
 				}
 			}

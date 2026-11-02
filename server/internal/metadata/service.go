@@ -31,7 +31,13 @@ const (
 	// retryFailed is how long an unmatched item is left alone (in-process) before the
 	// next scan may try it again.
 	retryFailed = time.Hour
-	queueSize   = 1024
+	// retryUnmatched is how long a title no provider matched is left alone across
+	// restarts (the last attempt is stored on the item).
+	retryUnmatched = 24 * time.Hour
+	// maxRetries is how many times in a row a lookup a provider failed to answer is
+	// re-queued (after retryDelay, doubling) before it waits for the next scan.
+	maxRetries = 4
+	queueSize  = 1024
 )
 
 // Service runs metadata lookups off a work queue: one worker goroutine, items by id.
@@ -52,6 +58,8 @@ type Service struct {
 	mu            sync.Mutex
 	pending       map[string]bool      // queued but not yet picked up (dedupe)
 	failed        map[string]time.Time // top-level item id -> last unmatched attempt
+	retries       map[string]int       // top-level item id -> provider failures in a row
+	retryDelay    time.Duration        // first re-queue delay after a provider failure
 
 	// OnSeasonMal is called with a season's id when it gets a new MyAnimeList id, so skip
 	// segments can be looked up for it (main wires it to the segment detector).
@@ -90,12 +98,14 @@ func (s *Service) AniList() *AniList { a, _ := s.anilist.(*AniList); return a }
 
 func New(st *store.Store, cfg *config.Config) *Service {
 	s := &Service{
-		store:   st,
-		cfg:     cfg,
-		images:  &http.Client{Timeout: 30 * time.Second},
-		queue:   make(chan job, queueSize),
-		pending: map[string]bool{},
-		failed:  map[string]time.Time{},
+		store:      st,
+		cfg:        cfg,
+		images:     &http.Client{Timeout: 30 * time.Second},
+		queue:      make(chan job, queueSize),
+		pending:    map[string]bool{},
+		failed:     map[string]time.Time{},
+		retries:    map[string]int{},
+		retryDelay: 2 * time.Minute,
 	}
 	s.anilist = NewAniList()
 	// Always there; without a key it matches nothing until one is entered (setup / settings).
@@ -196,6 +206,8 @@ func (s *Service) process(ctx context.Context, j job) error {
 	if handled, err := s.applyLocal(ctx, it); handled || err != nil {
 		return err
 	}
+	startedAt := time.Now()
+	attempted, _ := s.store.MetadataAttemptedAt(ctx, it.ID)
 	onlyNewEpisodes := false
 	if !j.force {
 		// .nfo files or artwork added or changed next to the media since the last lookup
@@ -204,7 +216,10 @@ func (s *Service) process(ctx context.Context, j job) error {
 			if it.Type != model.TypeSeries {
 				return nil
 			}
-			n, err := s.store.CountUnrefreshedEpisodes(ctx, it.ID)
+			// Only episodes that arrived since the last attempt: the ones a provider could
+			// not fill then (no data yet, unparseable names) do not trigger a lookup on
+			// every start.
+			n, err := s.store.CountUnrefreshedEpisodes(ctx, it.ID, attempted)
 			if err != nil || n == 0 {
 				return err
 			}
@@ -214,6 +229,10 @@ func (s *Service) process(ctx context.Context, j job) error {
 		last, tried := s.failed[it.ID]
 		s.mu.Unlock()
 		if tried && time.Since(last) < retryFailed {
+			return nil
+		}
+		// A title no provider matched is not asked again on every restart either.
+		if it.MetadataRefreshedAt == nil && attempted != nil && time.Since(*attempted) < retryUnmatched {
 			return nil
 		}
 	}
@@ -227,12 +246,28 @@ func (s *Service) process(ctx context.Context, j job) error {
 		}
 	}
 
-	primary, secondary := s.match(ctx, it, hints)
+	primary, secondary, failed, err := s.match(ctx, it, hints)
+	if err != nil {
+		// A provider that should have answered did not (AniList's 429, an outage): keep
+		// everything as it is rather than overwrite it with the other provider's view,
+		// and try again later.
+		s.mu.Lock()
+		s.failed[it.ID] = time.Now()
+		s.mu.Unlock()
+		s.retryLater(j)
+		return err
+	}
+	s.mu.Lock()
+	delete(s.retries, it.ID)
+	s.mu.Unlock()
 	if primary == nil {
 		s.mu.Lock()
 		s.failed[it.ID] = time.Now()
 		s.mu.Unlock()
-		slog.Info("metadata: no match", "item", it.Title, "type", it.Type, "anime", hints.Anime)
+		if len(failed) == 0 {
+			_ = s.store.SetMetadataAttempted(ctx, it.ID, startedAt)
+		}
+		slog.Info("metadata: no match", "item", it.Title, "type", it.Type, "anime", hints.Anime, "failed", failed)
 		return nil
 	}
 	merged := merge(primary, secondary)
@@ -262,14 +297,20 @@ func (s *Service) process(ctx context.Context, j job) error {
 			}
 		}
 		slog.Info("metadata: matched", "item", it.Title, "type", it.Type, "provider", primary.Provider, "title", merged.Title, "year", merged.Year, "ids", merged.ProviderIDs)
-		rels := make([]store.ItemRelation, 0, len(merged.Related))
-		for _, r := range merged.Related {
-			rels = append(rels, store.ItemRelation{Provider: r.Provider, ProviderID: r.ProviderID, Relation: r.Type, Title: r.Title, Format: r.Format, Year: r.Year, PosterURL: r.Poster, Episodes: r.Episodes})
-		}
-		if err := s.store.ReplaceRelations(ctx, it.ID, rels); err != nil {
-			slog.Warn("metadata: saving relations", "item", it.Title, "err", err)
-		} else if len(rels) > 0 {
-			slog.Info("metadata: relations", "item", it.Title, "count", len(rels), "seasons", len(merged.Seasons))
+		if failed["anilist"] {
+			// Related titles come from AniList; without its answer an empty list would
+			// only erase the ones saved before.
+			slog.Info("metadata: relations kept (AniList did not answer)", "item", it.Title)
+		} else {
+			rels := make([]store.ItemRelation, 0, len(merged.Related))
+			for _, r := range merged.Related {
+				rels = append(rels, store.ItemRelation{Provider: r.Provider, ProviderID: r.ProviderID, Relation: r.Type, Title: r.Title, Format: r.Format, Year: r.Year, PosterURL: r.Poster, Episodes: r.Episodes})
+			}
+			if err := s.store.ReplaceRelations(ctx, it.ID, rels); err != nil {
+				slog.Warn("metadata: saving relations", "item", it.Title, "err", err)
+			} else if len(rels) > 0 {
+				slog.Info("metadata: relations", "item", it.Title, "count", len(rels), "seasons", len(merged.Seasons))
+			}
 		}
 	}
 	if it.Type == model.TypeSeries {
@@ -281,13 +322,59 @@ func (s *Service) process(ctx context.Context, j job) error {
 			s.mu.Unlock()
 		}
 	}
+	if len(failed) == 0 {
+		_ = s.store.SetMetadataAttempted(ctx, it.ID, startedAt)
+	}
 	return nil
+}
+
+// retryLater re-queues a job whose lookup a provider failed to answer, after a delay
+// that doubles with every failure in a row; after maxRetries it waits for the next scan
+// or refresh (s.failed holds plain scans back for retryFailed meanwhile).
+func (s *Service) retryLater(j job) {
+	s.mu.Lock()
+	n := s.retries[j.itemID]
+	if n >= maxRetries {
+		delete(s.retries, j.itemID)
+		s.mu.Unlock()
+		slog.Warn("metadata: giving up for now; the next scan or refresh tries again", "item", j.itemID)
+		return
+	}
+	s.retries[j.itemID] = n + 1
+	delay := s.retryDelay << n
+	s.mu.Unlock()
+	time.AfterFunc(delay, func() { s.enqueueJob(j) })
+}
+
+// errProviderDown is a provider error for an item that provider is responsible for.
+type errProviderDown struct {
+	provider string
+	err      error
+}
+
+func (e *errProviderDown) Error() string { return e.provider + " did not answer: " + e.err.Error() }
+func (e *errProviderDown) Unwrap() error { return e.err }
+
+// mustAnswer reports whether the item's lookup is meaningless without p: AniList for
+// anime (an anime-mode library, or a title already matched on AniList), TMDB for a title
+// already matched on TMDB. Without them the other provider's answer would replace the
+// metadata, art and related titles.
+func mustAnswer(p Provider, it *model.Item, hints Hints) bool {
+	switch p.Name() {
+	case "anilist":
+		return hints.Anime || it.ProviderIDs["anilist"] != ""
+	case "tmdb":
+		return it.ProviderIDs["tmdb"] != ""
+	}
+	return false
 }
 
 // match tries every provider: the first hit is primary (TMDB unless the library is in
 // anime mode, where AniList leads), later hits enrich. AniList is always consulted so
-// anime gets its anilist id even when TMDB matched first.
-func (s *Service) match(ctx context.Context, it *model.Item, hints Hints) (primary, secondary *Result) {
+// anime gets its anilist id even when TMDB matched first. A provider error is an error
+// (errProviderDown) when that provider is responsible for the item (mustAnswer);
+// otherwise the provider is skipped and named in failed.
+func (s *Service) match(ctx context.Context, it *model.Item, hints Hints) (primary, secondary *Result, failed map[string]bool, err error) {
 	order := make([]Provider, 0, len(s.providers))
 	if hints.Anime {
 		order = append(order, s.anilist)
@@ -302,7 +389,14 @@ func (s *Service) match(ctx context.Context, it *model.Item, hints Hints) (prima
 	for _, p := range order {
 		r, err := p.Match(ctx, it, hints)
 		if err != nil {
+			if mustAnswer(p, it, hints) {
+				return nil, nil, nil, &errProviderDown{provider: p.Name(), err: err}
+			}
 			slog.Warn("metadata: provider error", "provider", p.Name(), "item", it.Title, "err", err)
+			if failed == nil {
+				failed = map[string]bool{}
+			}
+			failed[p.Name()] = true
 			continue
 		}
 		if r == nil {
@@ -315,7 +409,7 @@ func (s *Service) match(ctx context.Context, it *model.Item, hints Hints) (prima
 			secondary = r
 		}
 	}
-	return primary, secondary
+	return primary, secondary, failed, nil
 }
 
 // merge fills gaps in a with b and unions provider ids and images.
@@ -476,6 +570,17 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 		cache[key] = se
 		return se
 	}
+	// How the library's seasons line up with each provider's (see layout.go).
+	lengths := s.realSeasonLengths(ctx, seasons)
+	layouts := map[*Result]*seasonLayout{}
+	for _, r := range []*Result{primary, secondary} {
+		if r != nil {
+			layouts[r] = layoutFor(r, lengths)
+			if layouts[r].split {
+				slog.Debug("metadata: seasons split differently from the provider", "series", series.Title, "provider", r.Provider)
+			}
+		}
+	}
 	updated := 0
 	for i := range seasons {
 		season := &seasons[i]
@@ -484,10 +589,18 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			num = *season.IndexAired
 		}
 		if _, ok := season.Images["poster"]; !ok || !onlyNew {
-			if se := fetch(primary, num); se != nil && se.Poster != "" {
-				s.fetchImage(ctx, season.ID, "poster", se.Poster)
-			} else if se := fetch(secondary, num); se != nil && se.Poster != "" {
-				s.fetchImage(ctx, season.ID, "poster", se.Poster)
+			for _, r := range []*Result{primary, secondary} {
+				if r == nil {
+					continue
+				}
+				ps, ok := layouts[r].posterSeason(r, num, lengths[num])
+				if !ok {
+					continue
+				}
+				if se := fetch(r, ps); se != nil && se.Poster != "" {
+					s.fetchImage(ctx, season.ID, "poster", se.Poster)
+					break
+				}
 			}
 		}
 		// A forced refresh on a season whose provider data turned out to be wrong
@@ -512,14 +625,15 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			if ep.IndexAired != nil {
 				en = *ep.IndexAired
 			}
+			absolute := false
 			// Absolute-numbered files ("Show - 013 - Title") land in season 1 with
 			// index == absolute; map them through the provider's season lengths.
 			if ep.IndexAbsolute != nil && (ep.IndexAired == nil || *ep.IndexAired == *ep.IndexAbsolute) {
 				if s2, e2, ok := primary.AbsoluteToAired(*ep.IndexAbsolute); ok {
-					sn, en = s2, e2
+					sn, en, absolute = s2, e2, true
 				} else if secondary != nil {
 					if s2, e2, ok := secondary.AbsoluteToAired(*ep.IndexAbsolute); ok {
-						sn, en = s2, e2
+						sn, en, absolute = s2, e2, true
 					}
 				}
 			}
@@ -528,9 +642,21 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			}
 			var hit *EpisodeResult
 			for _, r := range []*Result{primary, secondary} {
-				if se := fetch(r, sn); se != nil {
+				if r == nil {
+					continue
+				}
+				// Seasons split differently from this provider's: find the episode by its
+				// absolute position (JJK S2E1 is TMDB's S1E25).
+				rsn, ren := sn, en
+				if !absolute {
+					var ok bool
+					if rsn, ren, ok = layouts[r].toProvider(r, sn, en); !ok {
+						continue
+					}
+				}
+				if se := fetch(r, rsn); se != nil {
 					for k := range se.Episodes {
-						if se.Episodes[k].Episode == en {
+						if se.Episodes[k].Episode == ren {
 							hit = &se.Episodes[k]
 							break
 						}
@@ -558,8 +684,11 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	if updated > 0 {
 		slog.Info("metadata: episodes updated", "series", series.Title, "count", updated)
 	}
-	s.createPlaceholders(ctx, series, seasons, primary, secondary, fetch)
-	s.storeSeasonIDs(ctx, series, primary, secondary)
+	if n, err := s.store.SyncChildLibrary(ctx, series.ID); err == nil && n > 0 {
+		slog.Info("metadata: seasons/episodes moved to the series' library", "series", series.Title, "count", n)
+	}
+	s.createPlaceholders(ctx, series, seasons, primary, secondary, fetch, layouts, lengths)
+	s.storeSeasonIDs(ctx, series, primary, secondary, layouts, lengths)
 	return updated
 }
 
@@ -568,9 +697,12 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 // but library seasons follow TMDB's numbering, which can differ from AniList's chain of
 // sequels (split cours, arcs). So a season gets the ids only when the two agree on it:
 // TMDB lists the same episode count (one off allowed, for an OVA AniList counts in), or,
-// with no TMDB season to compare, every file in it fits inside the AniList entry. A
-// season that stops agreeing loses the ids, so it never borrows another season's times.
-func (s *Service) storeSeasonIDs(ctx context.Context, series *model.Item, primary, secondary *Result) {
+// with no TMDB season to compare (or TMDB split differently from the folders), every file
+// in it fits inside the AniList entry. When the folders split AniList's seasons (see
+// layout.go), a season gets the ids of the AniList entry it covers exactly, from its
+// first episode, and none otherwise. A season that stops agreeing loses the ids, so it
+// never borrows another season's times.
+func (s *Service) storeSeasonIDs(ctx context.Context, series *model.Item, primary, secondary *Result, layouts map[*Result]*seasonLayout, lengths map[int]int) {
 	var al, other *Result
 	for _, r := range []*Result{primary, secondary} {
 		switch {
@@ -588,29 +720,43 @@ func (s *Service) storeSeasonIDs(ctx context.Context, series *model.Item, primar
 	if err != nil {
 		return
 	}
+	alLayout := layouts[al]
 	for _, se := range seasons {
-		if se.IndexAired == nil || *se.IndexAired < 1 || *se.IndexAired > len(al.Seasons) {
+		if se.IndexAired == nil || *se.IndexAired < 1 {
 			continue
 		}
 		n := *se.IndexAired
-		si := al.Seasons[n-1]
-		if si.Number != n || si.ProviderID == "" {
-			continue
-		}
+		var si SeasonInfo
 		trusted := false
-		if o := seasonInfo(other, n); o != nil && o.EpisodeCount > 0 {
-			d := o.EpisodeCount - si.EpisodeCount
-			trusted = si.EpisodeCount > 0 && d >= -1 && d <= 1
-		} else {
-			maxIdx := 0
-			if eps, err := s.store.Children(ctx, se.ID, model.TypeEpisode); err == nil {
-				for _, e := range eps {
-					if !e.IsVirtual && e.IndexAired != nil && *e.IndexAired > maxIdx {
-						maxIdx = *e.IndexAired
-					}
+		if alLayout != nil && alLayout.split {
+			if ps, ok := alLayout.wholeSeason(al, n, lengths[n]); ok && lengths[n] > 0 {
+				if p := seasonInfo(al, ps); p != nil && p.ProviderID != "" {
+					si, trusted = *p, true
 				}
 			}
-			trusted = maxIdx > 0 && si.EpisodeCount > 0 && maxIdx <= si.EpisodeCount
+		} else {
+			if n > len(al.Seasons) {
+				continue
+			}
+			si = al.Seasons[n-1]
+			if si.Number != n || si.ProviderID == "" {
+				continue
+			}
+			otherSplit := other != nil && layouts[other] != nil && layouts[other].split
+			if o := seasonInfo(other, n); o != nil && o.EpisodeCount > 0 && !otherSplit {
+				d := o.EpisodeCount - si.EpisodeCount
+				trusted = si.EpisodeCount > 0 && d >= -1 && d <= 1
+			} else {
+				maxIdx := 0
+				if eps, err := s.store.Children(ctx, se.ID, model.TypeEpisode); err == nil {
+					for _, e := range eps {
+						if !e.IsVirtual && e.IndexAired != nil && *e.IndexAired > maxIdx {
+							maxIdx = *e.IndexAired
+						}
+					}
+				}
+				trusted = maxIdx > 0 && si.EpisodeCount > 0 && maxIdx <= si.EpisodeCount
+			}
 		}
 		if !trusted {
 			_ = s.store.DeleteProviderIDs(ctx, se.ID, "anilist", "mal")
@@ -646,13 +792,23 @@ func seasonInfo(r *Result, n int) *SeasonInfo {
 // the library already has a Specials season with at least one real file, because
 // provider specials lists are long and mostly recaps/shorts. Placeholders share the
 // GUIDs the scanner uses, so an arriving file flips the same row to real.
-func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, seasons []model.Item, primary, secondary *Result, fetch func(*Result, int) *Season) {
+//
+// When the library's seasons split the provider's differently (layout.go: JJK's three
+// season folders against TMDB's one season of 59), the folders win: a season gets
+// placeholders only for gaps up to its last real episode, the last real season also for
+// what the provider has after it in the same provider season, and later provider seasons
+// become the seasons after the last real one. Nothing duplicates a real season.
+func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, seasons []model.Item, primary, secondary *Result, fetch func(*Result, int) *Season, layouts map[*Result]*seasonLayout, lengths map[int]int) {
 	src := primary
 	if len(src.Seasons) == 0 && secondary != nil && len(secondary.Seasons) > 0 {
 		src = secondary
 	}
 	if len(src.Seasons) == 0 {
 		return
+	}
+	lay := layouts[src]
+	if lay == nil {
+		lay = layoutFor(src, lengths)
 	}
 	bySeason := map[int]*model.Item{}
 	for i := range seasons {
@@ -662,45 +818,114 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 		}
 		bySeason[n] = &seasons[i]
 	}
-	keep := map[string]bool{}
-	created := 0
-	for _, si := range src.Seasons {
-		if si.Number == 0 {
-			sp, ok := bySeason[0]
+	// episodeAt finds provider data for library (season, episode n) through the layout.
+	episodeAt := func(season, n int) *EpisodeResult {
+		for i, r := range []*Result{src, secondary} {
+			if r == nil || (i == 1 && r == src) {
+				continue
+			}
+			l := layouts[r]
+			if l == nil {
+				l = layoutFor(r, lengths)
+			}
+			ps, pe, ok := l.toProvider(r, season, n)
 			if !ok {
 				continue
 			}
-			if eps, err := s.store.Children(ctx, sp.ID, model.TypeEpisode); err != nil || len(eps) == 0 {
-				continue
+			if se := fetch(r, ps); se != nil {
+				for k := range se.Episodes {
+					if se.Episodes[k].Episode == pe {
+						return &se.Episodes[k]
+					}
+				}
 			}
 		}
+		return nil
+	}
+	type plan struct {
+		number, count int
+		poster        string
+	}
+	var plans []plan
+	hasSpecials := func() bool {
+		sp, ok := bySeason[0]
+		if !ok {
+			return false
+		}
+		eps, err := s.store.Children(ctx, sp.ID, model.TypeEpisode)
+		return err == nil && len(eps) > 0
+	}
+	// seasonCount is a provider season's episode count, or its list's length when longer.
+	seasonCount := func(si SeasonInfo) int {
+		count := si.EpisodeCount
 		se := fetch(src, si.Number)
-		if se == nil && src != secondary && secondary != nil {
+		if se == nil && src != secondary && secondary != nil && !(layouts[secondary] != nil && layouts[secondary].split) {
 			se = fetch(secondary, si.Number)
 		}
-		seasonGUID := fmt.Sprintf("%s:season:%d", series.GUID, si.Number)
-		season, ok := bySeason[si.Number]
-		if !ok && si.EpisodeCount == 0 && (se == nil || len(se.Episodes) == 0) {
-			continue // announced season with no episodes yet: nothing to show
+		if se != nil && len(se.Episodes) > count {
+			count = len(se.Episodes)
 		}
+		return count
+	}
+	if lay.split {
+		for _, si := range src.Seasons {
+			if si.Number == 0 && hasSpecials() {
+				plans = append(plans, plan{number: 0, count: seasonCount(si), poster: si.Poster})
+			}
+		}
+		for n := 1; n <= lay.last; n++ {
+			count := lengths[n]
+			if n == lay.last {
+				count += lay.tail
+			}
+			plans = append(plans, plan{number: n, count: count})
+		}
+		for n := lay.last + 1; ; n++ {
+			ps, ok := lay.beyond[n]
+			if !ok {
+				break
+			}
+			si := seasonInfo(src, ps)
+			if count := seasonCount(*si); count > 0 {
+				plans = append(plans, plan{number: n, count: count, poster: si.Poster})
+			}
+		}
+	} else {
+		for _, si := range src.Seasons {
+			if si.Number == 0 && !hasSpecials() {
+				continue
+			}
+			count := seasonCount(si)
+			if _, ok := bySeason[si.Number]; !ok && count == 0 {
+				continue // announced season with no episodes yet: nothing to show
+			}
+			plans = append(plans, plan{number: si.Number, count: count, poster: si.Poster})
+		}
+	}
+
+	keep := map[string]bool{}
+	created := 0
+	for _, pl := range plans {
+		seasonGUID := fmt.Sprintf("%s:season:%d", series.GUID, pl.number)
 		keep[seasonGUID] = true
+		season, ok := bySeason[pl.number]
 		if !ok {
-			title := fmt.Sprintf("Season %d", si.Number)
-			if si.Number == 0 {
+			title := fmt.Sprintf("Season %d", pl.number)
+			if pl.number == 0 {
 				title = "Specials"
 			}
-			n := si.Number
+			n := pl.number
 			it := &model.Item{ID: newID(), GUID: seasonGUID, LibraryID: series.LibraryID, Type: model.TypeSeason, ParentID: &series.ID, Title: title, IndexAired: &n}
 			stored, made, err := s.store.EnsureVirtualItem(ctx, it)
 			if err != nil {
-				slog.Warn("metadata: creating virtual season", "series", series.Title, "season", si.Number, "err", err)
+				slog.Warn("metadata: creating virtual season", "series", series.Title, "season", pl.number, "err", err)
 				continue
 			}
-			if made && si.Poster != "" {
-				s.fetchImage(ctx, stored.ID, "poster", si.Poster)
+			if made && pl.poster != "" {
+				s.fetchImage(ctx, stored.ID, "poster", pl.poster)
 			}
 			season = stored
-			bySeason[si.Number] = season
+			bySeason[pl.number] = season
 		}
 		// What the season already holds, by episode number; a file with only an absolute
 		// number ("Show - 03.mkv") counts as that episode, as the shadow cleanup does.
@@ -715,26 +940,14 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 				}
 			}
 		}
-		count := si.EpisodeCount
-		if se != nil && len(se.Episodes) > count {
-			count = len(se.Episodes)
-		}
-		for n := 1; n <= count; n++ {
-			guid := fmt.Sprintf("%s:s%02de%04d", series.GUID, si.Number, n)
+		for n := 1; n <= pl.count; n++ {
+			guid := fmt.Sprintf("%s:s%02de%04d", series.GUID, pl.number, n)
 			keep[guid] = true
 			if existing[n] {
 				continue
 			}
-			var hit *EpisodeResult
-			if se != nil {
-				for k := range se.Episodes {
-					if se.Episodes[k].Episode == n {
-						hit = &se.Episodes[k]
-						break
-					}
-				}
-			}
-			sn, en := si.Number, n
+			hit := episodeAt(pl.number, n)
+			sn, en := pl.number, n
 			it := &model.Item{ID: newID(), GUID: guid, LibraryID: series.LibraryID, Type: model.TypeEpisode, ParentID: &season.ID, Title: fmt.Sprintf("Episode %d", n), IndexAired: &en, SeasonAired: &sn}
 			if hit != nil && hit.Title != "" {
 				it.Title = hit.Title
