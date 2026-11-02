@@ -32,7 +32,8 @@ export function LibraryPage() {
   }, [busy, manage])
 
   const status = !manage.data ? '…' : manage.data.scanning ? 'Scanning folders…' : manage.data.queue > 0 ? `Looking up details: ${manage.data.queue} waiting` : manage.data.lastScanAt ? `Last scan ${formatWhen(manage.data.lastScanAt)}` : 'Up to date'
-  const unmatched = (manage.data?.titles ?? []).filter((t) => !t.matched)
+  // A locked title was fixed by hand, so it doesn't need attention.
+  const unmatched = (manage.data?.titles ?? []).filter((t) => !t.matched && !t.locked)
 
   const run = async (fn: () => Promise<unknown>, after?: () => void) => {
     setErr(null)
@@ -177,7 +178,7 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
   const [chosen, setChosen] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [kind, setKind] = useState('series')
-  const [anime, setAnime] = useState(true)
+  const [anime, setAnime] = useState(false)
   const go = (path?: string) => {
     setErr(null)
     api
@@ -188,7 +189,11 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
   useEffect(() => go(), [])
   const pick = (path: string) => {
     setChosen(path)
-    if (!name) setName(path.split(/[\\/]/).filter(Boolean).pop() ?? '')
+    // Guess the type and anime from the folder's name, like the phone.
+    const base = path.split(/[\\/]/).filter(Boolean).pop() ?? ''
+    if (!name) setName(base)
+    setKind(/movie|film/i.test(base) ? 'movies' : 'series')
+    setAnime(/anime/i.test(base))
   }
   return (
     <div className="acc-sub">
@@ -210,7 +215,7 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
             </div>
             <div className="acc-list acc-list--scroll">
               {(tree.path ? tree.dirs : (tree.roots ?? tree.dirs)).map((d) => (
-                <ListRow key={d.path} title={d.name} sub={d.skip ? 'Skipped' : d.videos ? `${d.videos} videos` : undefined} right={<span className="link-brand">Open</span>} onClick={() => go(d.path)} />
+                <ListRow key={d.path} title={d.name} sub={d.skip ? d.skip : d.videos ? `${d.videos} videos` : undefined} right={<span className="link-brand">Open</span>} onClick={() => go(d.path)} />
               ))}
             </div>
             {tree.path && (
@@ -262,7 +267,7 @@ function RefreshForm({ onDone, run, ids }: { onDone: () => void; run: Run; ids?:
       {row('trickplay', 'Trickplay', 'Rebuild the seek-preview thumbnails')}
       {row('segments', 'Intro & outro', 'Find the openings and endings again')}
       <div className="acc-actions">
-        <ActionButton onClick={() => run(() => api.libraryRefresh({ ...opts, ids, all: !ids }), onDone)} done="Started">
+        <ActionButton onClick={() => run(() => api.libraryRefresh({ ...opts, ids, all: !ids }), onDone)} done="Started" disabled={!Object.values(opts).some(Boolean)}>
           {ids ? 'Refresh this title' : 'Refresh all titles'}
         </ActionButton>
         <button className="btn btn--grey" onClick={onDone}>

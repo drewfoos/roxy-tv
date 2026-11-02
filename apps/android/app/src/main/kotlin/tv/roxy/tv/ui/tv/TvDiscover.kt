@@ -282,7 +282,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         d.inLibrary -> null
         d.request != null && dl?.message != null && (dl.state == "attention" || dl.state == "failed") -> dl.message
         d.request != null -> "Requested by ${d.request.userName.ifBlank { "someone" }}"
-        !d.requestsEnabled && app.prefs.session.value.isAdmin -> "Choose a root folder and quality profile for ${if (d.isMovie) "Radarr" else "Sonarr"} in the web app (Account, Requests) to turn requests on."
+        !d.requestsEnabled && app.prefs.session.value.isAdmin -> "Set up ${if (d.isMovie) "Radarr" else "Sonarr"} on your phone or in the web app (Account, Sonarr & Radarr) to turn requests on."
         !d.requestsEnabled -> "Ask whoever runs this server to connect ${if (d.isMovie) "Radarr" else "Sonarr"}."
         d.isMovie -> "Sends the movie to Radarr."
         missing.isEmpty() || missing.size == d.seasons.count { !it.special } -> "Sends the series to Sonarr."

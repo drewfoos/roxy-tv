@@ -38,10 +38,12 @@ export interface MediaRequest {
   userId?: string
   userName?: string
   status: 'pending' | 'sent' | 'failed' | 'approval' | 'declined' | string
+  /** Seasons asked for; empty is the whole series, [-1] means episodes only. */
   seasons?: number[]
-  episodes?: number
+  /** Single episodes asked for, as "S0E5" codes. */
+  episodes?: string[]
+  /** Why it failed to send, or the decline reason. */
   error?: string
-  reason?: string
   createdAt?: string
   updatedAt?: string
   poster?: string
@@ -82,7 +84,8 @@ export interface BrowseDir {
   name: string
   path: string
   videos?: number
-  skip?: boolean
+  /** Why a scan leaves this folder alone (download folder, extras...); empty when it doesn't. */
+  skip?: string
 }
 
 export interface BrowseResponse {
@@ -132,7 +135,7 @@ export interface ArrTest {
   supported?: boolean
   note?: string
   error?: string
-  rootFolders?: { path: string; freeSpace?: number; roxy?: string; roxyMatch?: 'yes' | 'maybe' | 'no' | string }[]
+  rootFolders?: { path: string; freeSpace?: number; roxy?: string; roxyMatch?: 'yes' | 'maybe' | '' }[]
   qualityProfiles?: { id: number; name: string }[]
   tags?: { id: number; label: string }[]
 }

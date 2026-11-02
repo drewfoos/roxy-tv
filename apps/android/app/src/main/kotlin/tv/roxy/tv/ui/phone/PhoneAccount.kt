@@ -249,7 +249,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: ()
                 Divider()
                 SettingRow(Icons.Outlined.Memory, "Transcoding", "Which GPU converts video for lower qualities", onClick = onOpenTranscoding)
                 Divider()
-                SettingRow(Icons.Outlined.Image, "fanart.tv", "Logos and backgrounds for the art picker", onClick = onOpenFanart)
+                SettingRow(Icons.Outlined.Image, "TMDB & fanart.tv", "Metadata keys: titles, posters, logos and backgrounds", onClick = onOpenFanart)
                 Divider()
                 SettingRow(Icons.Outlined.Webhook, "Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
             }

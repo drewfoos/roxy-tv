@@ -120,7 +120,7 @@ function UserEditor({ user, onChanged, onGone }: { user: AccountUser; onChanged:
           {confirm ? 'Tap again to delete' : 'Delete account'}
         </button>
       </div>
-      {confirm && <div className="ffield__hint">Deleting removes their profiles, watch history and requests. There is no undo.</div>}
+      {confirm && <div className="ffield__hint">Deleting removes their profiles and watch history. Their requests stay. There is no undo.</div>}
     </div>
   )
 }

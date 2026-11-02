@@ -321,7 +321,10 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun arrSettings(): ArrSettingsResponse = get("/v1/settings/arr")
 
-    suspend fun saveArrSettings(s: ArrSettings): ArrSettingsResponse = putJson("/v1/settings/arr", json.encodeToString(ArrSettings.serializer(), s))
+    // Every field is sent, defaults included: the server keeps any field left out, so an
+    // emptied URL or "Same as above" (empty / 0) would otherwise never reach it.
+    private val jsonAllFields = Json(json) { encodeDefaults = true }
+    suspend fun saveArrSettings(s: ArrSettings): ArrSettingsResponse = putJson("/v1/settings/arr", jsonAllFields.encodeToString(ArrSettings.serializer(), s))
 
     suspend fun testArr(kind: String, url: String, apiKey: String): ArrProbe =
         postJson("/v1/settings/arr/test", json.encodeToString(ArrTestBody.serializer(), ArrTestBody(kind, url, apiKey)))

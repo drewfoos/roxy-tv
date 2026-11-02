@@ -21,7 +21,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.Color
+import tv.roxy.tv.ui.components.RoxyTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +84,8 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
     var error by remember { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf("all") }
     var busy by remember { mutableStateOf<String?>(null) }
+    var declining by remember { mutableStateOf<AdminRequest?>(null) }
+    var reason by remember { mutableStateOf("") }
     suspend fun reload() {
         runCatching { app.api.adminRequests() }.onSuccess { list = it; error = null }.onFailure { error = it.message }
     }
@@ -113,6 +119,10 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
             Chip("Downloading · ${active.size}", selected = tab == "active", onClick = { filter = "active" })
             Chip("Problems · ${problems.size}", selected = tab == "problems", onClick = { filter = "problems" })
         }
+        // Requests that failed to reach Sonarr / Radarr are retried every 10 minutes; this sends them now.
+        if (all.any { it.status == "failed" }) {
+            GreyButton(if (busy == "retry") "Retrying…" else "Retry failed", modifier = Modifier.padding(start = PhonePad, top = 8.dp).height(38.dp), onClick = { act("retry") { app.api.retryRequests() } })
+        }
         error?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp)) }
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 12.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             when {
@@ -125,9 +135,21 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
                 }
                 else -> items(shown, key = { it.id }) { r -> RequestCard(r, busy == r.id, onOpen = { onOpen(r.type, r.tmdbId) },
                     onApprove = { act(r.id) { app.api.approveRequest(r.id) } },
-                    onDecline = { act(r.id) { app.api.declineRequest(r.id) } }) }
+                    onDecline = { reason = ""; declining = r }) }
             }
         }
+    }
+    declining?.let { r ->
+        AlertDialog(
+            onDismissRequest = { declining = null },
+            containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+            title = { Text("Decline ${r.title}?") },
+            text = { RoxyTextField(reason, { reason = it }, label = "Reason (optional, shown to them)") },
+            confirmButton = {
+                TextButton(onClick = { declining = null; act(r.id) { app.api.declineRequest(r.id, reason.trim()) } }) { Text("Decline", color = RoxyColors.error) }
+            },
+            dismissButton = { TextButton(onClick = { declining = null }) { Text("Cancel", color = Color.White) } },
+        )
     }
 }
 

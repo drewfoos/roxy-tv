@@ -64,8 +64,8 @@ export function ArrPage() {
     if (!r) return null
     if (r.roxyMatch === 'yes') return `Roxy watches this folder as "${r.roxy}". Imports show up on their own.`
     if (r.roxyMatch === 'maybe') return `This may be inside a Roxy library (${r.roxy}). Check after the first download.`
-    if (r.roxyMatch === 'no') return 'Roxy has no library on this folder: add it under Library or downloads will not appear.'
-    return null
+    // The server leaves roxyMatch empty when no library reads the folder.
+    return 'Roxy has no library on this folder: add it under Library or downloads will not appear.'
   }
   const folderOptions = (test?.rootFolders ?? []).map((f) => ({ id: f.path, label: `${f.path}${f.freeSpace ? ` · ${formatBytes(f.freeSpace)} free` : ''}` }))
   const profileOptions = (test?.qualityProfiles ?? []).map((p) => ({ id: p.id, label: p.name }))
@@ -203,7 +203,7 @@ export function ArrPage() {
           Save
         </ActionButton>
       </div>
-      <p className="acc-foot">Saving sends any requests made earlier. Leave the URL empty to disconnect; requests then wait until it is back.</p>
+      <p className="acc-foot">Saving sends any requests made earlier. Leave the URL empty to disconnect; requesting is then turned off.</p>
     </section>
   )
 }

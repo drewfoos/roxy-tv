@@ -24,7 +24,7 @@ function statusLine(r: MediaRequest): string {
     case 'approval':
       return 'Waiting for your approval'
     case 'declined':
-      return r.reason ? `Declined · ${r.reason}` : 'Declined'
+      return r.error ? `Declined · ${r.error}` : 'Declined'
     case 'failed':
       return r.error ? `Couldn't send · ${r.error}` : "Couldn't send"
     case 'pending':
@@ -41,9 +41,16 @@ function statusLine(r: MediaRequest): string {
 
 function asked(r: MediaRequest): string {
   if (r.type === 'movie') return 'Movie'
-  if (r.episodes) return `Series · ${r.episodes} episodes`
-  if (r.seasons?.length) return `Series · ${r.seasons.map((n) => `S${n}`).join(', ')}`
-  return 'Series · Whole series'
+  const seasons = r.seasons ?? []
+  const eps = r.episodes ?? []
+  // [-1] marks a request for single episodes only.
+  if ((seasons.length === 1 && seasons[0] === -1) || (!seasons.length && eps.length)) return `Series · ${eps.length} episode${eps.length === 1 ? '' : 's'}`
+  if (!seasons.length) return 'Series · Whole series'
+  return `Series · ${seasons
+    .filter((n) => n >= 0)
+    .sort((a, b) => a - b)
+    .map((n) => (n === 0 ? 'Specials' : `S${n}`))
+    .join(', ')}`
 }
 
 /** Requests (admin): every Discover request, with approve / decline for the waiting ones. */

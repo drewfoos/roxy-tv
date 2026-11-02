@@ -36,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -120,8 +122,8 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding().padding(horizontal = PhonePad, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(
-            if (isSonarr) "Series requests are added to Sonarr, monitored, with a search. Anime (Animation from Japan) uses the anime root folder and profile when set, as series type \"anime\"."
-            else "Movie requests are added to Radarr, monitored, with a search.",
+            if (isSonarr) "Series requests are added to Sonarr, monitored, and searched season by season. Anime (Animation from Japan) uses the anime root folder and profile when set. A show Sonarr has but doesn't monitor is left alone."
+            else "Movie requests are added to Radarr, monitored, with a search. Anime films use the anime root folder and profile when set.",
             fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted,
         )
         Text(
@@ -130,13 +132,21 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
             fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted,
         )
         RoxyTextField(cfg.url, { onChange(cfg.copy(url = it)) }, label = "$name URL (http://host:port, with any URL base)", keyboardType = KeyboardType.Uri)
-        RoxyTextField(cfg.apiKey, { onChange(cfg.copy(apiKey = it)) }, label = "API key (Settings → General → Security)", password = true, imeAction = ImeAction.Done)
+        RoxyTextField(cfg.apiKey, { onChange(cfg.copy(apiKey = it)) }, label = "API key", password = true, imeAction = ImeAction.Done)
+        // The key is Sonarr's / Radarr's own: link to the page that shows it.
+        val base = cfg.externalUrl.trim().ifEmpty { cfg.url.trim() }.trimEnd('/')
+        val keyPage = base.takeIf { Regex("^https?://[^/]", RegexOption.IGNORE_CASE).containsMatchIn(it) }?.let { "$it/settings/general" }
+        val uri = LocalUriHandler.current
+        Text("$name's own key: in $name, Settings → General → Security → API Key. A saved key stays unless you type a new one.", fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted)
+        if (keyPage != null) {
+            Text("Open $name's General settings", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable { runCatching { uri.openUri(keyPage) } })
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             GreyButton(if (testing) "Testing…" else "Test connection", onClick = {
                 if (testing) return@GreyButton
                 testing = true; testError = null
                 scope.launch {
-                    runCatching { app.api.testArr(kind, cfg.url, cfg.apiKey) }
+                    runCatching { app.api.testArr(kind, cfg.url.trim(), cfg.apiKey) }
                         .onSuccess { p -> probe = p }
                         .onFailure { t -> testError = t.message ?: "failed" }
                     testing = false
@@ -148,9 +158,9 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
         testError?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
         val p = probe
         if (p != null) {
-            Picker("Root folder (where $name saves downloads)", p.rootFolders.map { it.path to it.path + (it.freeSpace.takeIf { f -> f > 0 }?.let { f -> "  ·  ${formatBytes(f)} free" } ?: "") }, cfg.rootFolder) { onChange(cfg.copy(rootFolder = it)) }
-            RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.rootFolder } ?: p.rootFolders.firstOrNull(), name)
-            Picker("Quality profile", p.qualityProfiles.map { it.id.toString() to it.name }, cfg.qualityProfileId.toString()) { onChange(cfg.copy(qualityProfileId = it.toIntOrNull() ?: 0)) }
+            Picker("Root folder (where $name saves downloads)", listOf("" to "Choose…") + p.rootFolders.map { it.path to it.path + (it.freeSpace.takeIf { f -> f > 0 }?.let { f -> "  ·  ${formatBytes(f)} free" } ?: "") }, cfg.rootFolder) { onChange(cfg.copy(rootFolder = it)) }
+            if (cfg.rootFolder.isNotEmpty()) RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.rootFolder }, name)
+            Picker("Quality profile", listOf("0" to "Choose…") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.qualityProfileId.toString()) { onChange(cfg.copy(qualityProfileId = it.toIntOrNull() ?: 0)) }
             // Anime goes to its own folder and profile on both (Radarr: an "Anime Movies" folder).
             Picker(if (isSonarr) "Anime root folder" else "Anime movies root folder", listOf("" to "Same as above") + p.rootFolders.map { it.path to it.path }, cfg.animeRootFolder) { onChange(cfg.copy(animeRootFolder = it)) }
             if (cfg.animeRootFolder.isNotEmpty()) RootFolderCheck(p.rootFolders.firstOrNull { it.path == cfg.animeRootFolder }, name)
@@ -158,6 +168,7 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
             if (isSonarr) {
                 Picker("Older anime quality profile (before 2010, ended)", listOf("0" to "Same as anime") + p.qualityProfiles.map { it.id.toString() to it.name }, cfg.oldAnimeQualityProfileId.toString()) { onChange(cfg.copy(oldAnimeQualityProfileId = it.toIntOrNull() ?: 0)) }
                 Picker("Anime series type", listOf("standard" to "Standard (recommended)", "anime" to "Anime (absolute numbering)"), if (cfg.animeSeriesType == "anime") "anime" else "standard") { onChange(cfg.copy(animeSeriesType = it)) }
+                Hint(if (cfg.animeSeriesType == "anime") "Sonarr names and searches by absolute episode numbers (Episode 1047)." else "Sonarr names and searches by season and episode (S21E1047), like the rest of your library.")
                 if (p.tags.isNotEmpty()) {
                     TagPicker("Tags", p.tags, cfg.tags) { onChange(cfg.copy(tags = it)) }
                     TagPicker("Anime tags", p.tags, cfg.animeTags) { onChange(cfg.copy(animeTags = it)) }
@@ -174,9 +185,11 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
         }
         if (!isSonarr) {
             Picker("Minimum availability", availabilityChoices, cfg.minimumAvailability.ifEmpty { "released" }) { onChange(cfg.copy(minimumAvailability = it)) }
+            Hint("How early Radarr starts looking for a movie.")
         }
         if (isSonarr) ToggleRow("Season folders", cfg.seasonFolders ?: true) { onChange(cfg.copy(seasonFolders = it)) }
         ToggleRow("Search when added", cfg.searchOnAdd ?: true) { onChange(cfg.copy(searchOnAdd = it)) }
+        Hint(if (isSonarr) "Sonarr searches each requested season as soon as a request arrives (season packs first)." else "Radarr starts looking as soon as a request arrives.")
         RoxyTextField(cfg.externalUrl, { onChange(cfg.copy(externalUrl = it)) }, label = "External URL (optional, for links)", keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done)
 
         Spacer(Modifier.height(4.dp))
@@ -186,6 +199,9 @@ private fun ArrForm(kind: String, cfg: ArrConfig, onChange: (ArrConfig) -> Unit,
         Spacer(Modifier.height(24.dp))
     }
 }
+
+@Composable
+private fun Hint(text: String) = Text(text, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, modifier = Modifier.offset(y = (-8).dp))
 
 /** Label + dropdown chip over (value, label) pairs. */
 @Composable
