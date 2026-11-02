@@ -100,6 +100,21 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
         if (current == null || enterTick == 0) return@LaunchedEffect
         repeat(15) { withFrameNanos { }; if (entry.owner == current && runCatching { entry.enter() }.getOrDefault(false)) return@LaunchedEffect }
     }
+    // Closing the rail hands focus straight from the rail to the page's element: the page
+    // may take focus again first (closing), the entry moves focus there, and only then does
+    // the rail close. Closing it first left focus nowhere for a frame, the page's first
+    // element (the search field, Home's hero) lit up, and then the highlight jumped.
+    var closing by remember { mutableStateOf(false) }
+    LaunchedEffect(closing) {
+        if (!closing) return@LaunchedEffect
+        FocusMemory.muteBriefly()
+        for (attempt in 0 until 15) {
+            withFrameNanos { }
+            if (entry.owner == current && runCatching { entry.enter() }.getOrDefault(false)) break
+        }
+        railOpen = false
+        closing = false
+    }
     val app = RoxyApp.get(androidx.compose.ui.platform.LocalContext.current)
     val update by app.updates.state.collectAsStateWithLifecycle()
     CompositionLocalProvider(LocalPageEntry provides entry, LocalPageOwner provides current) {
@@ -109,7 +124,7 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
                     .fillMaxSize()
                     // While the rail is open the page cannot take focus, so Up / Down on the
                     // rail never land on a page element that happens to be nearer.
-                    .focusProperties { canFocus = !railOpen }
+                    .focusProperties { canFocus = !railOpen || closing }
                     .onPreviewKeyEvent { ev ->
                         // Left with nowhere to go inside the page opens the rail.
                         if (current == null || railOpen || ev.type != KeyEventType.KeyDown || ev.key != Key.DirectionLeft) return@onPreviewKeyEvent false
@@ -130,7 +145,7 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
             }
             if (current != null) Rail(
                 current, open = railOpen, onSelect = { p -> FocusMemory.muteBriefly(); railOpen = false; onSelect(p); enterTick++ }, onSwitchProfile = onSwitchProfile,
-                onClosed = { FocusMemory.muteBriefly(); railOpen = false; enterTick++ },
+                onClosed = { closing = true },
             )
             // Back on a rail page opens the rail, also when nothing on the page has focus (a
             // card that went away). Registered after the page so it comes before NavHost's own
