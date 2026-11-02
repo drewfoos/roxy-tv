@@ -441,6 +441,15 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	if epNum == nil {
 		epNum = parsed.Absolute
 	}
+	// "Arlong Park 07.mp4" inside "[One Pace][69-95] Arlong Park": the folder's own name
+	// plus a number (Jellyfin reads "<name> <number>" too). Only the number is set: the
+	// item keeps its path GUID, because arc folders are not "Season N" folders and every
+	// arc would otherwise collide on s01eNN.
+	if epNum == nil && len(parts) > 1 {
+		if n, ok := FolderTitleNumber(stem, parts[len(parts)-2]); ok {
+			epNum = &n
+		}
+	}
 	epTitle := episodeTitle(fileName, parsed)
 	epGUID, err := l.episodeGUID(ctx, series.GUID, season.ID, seasonNum, parsed, path)
 	if err != nil {

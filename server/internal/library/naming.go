@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Fallback filename parsing for libraries not fed by Sonarr/Radarr webhooks (ADR-0005).
@@ -195,4 +196,35 @@ func cleanTitle(stem string) string {
 	}
 	s = strings.TrimRight(s, " -")
 	return strings.TrimSpace(s)
+}
+
+var reTitleNumber = regexp.MustCompile(`^(.*\S)[ ._]+(\d{1,3})$`)
+
+// FolderTitleNumber reads "<folder name> <number>" file stems, e.g. "Arlong Park 07" in
+// "[One Pace][69-95] Arlong Park". The name must equal the folder's (bracket tags
+// removed, case and punctuation ignored), so titles that merely end in a number
+// ("Mob Psycho 100", "Blade Runner 2049") are never read as an episode.
+func FolderTitleNumber(stem, dir string) (int, bool) {
+	m := reTitleNumber.FindStringSubmatch(stem)
+	if m == nil {
+		return 0, false
+	}
+	key := func(s string) string {
+		var b strings.Builder
+		for _, r := range strings.ToLower(reBrackets.ReplaceAllString(s, " ")) {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+	name, folder := key(m[1]), key(dir)
+	if name == "" || name != folder {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }
