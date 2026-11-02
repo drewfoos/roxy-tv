@@ -30,8 +30,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.5.1"
+        versionCode = 22
+        versionName = "0.5.2"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -113,7 +113,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.libmpv)
+    // libmpv: our build of libmpv-android v1.0.0 with libplacebo 7.387.0 (GL sync leak and AV1
+    // film-grain fixes) and libass 0.17.5; mpv 0.41.0, same MPVLib API. Recipe: tools/build-libmpv.md.
+    implementation(files("libs/libmpv-roxy-1.0.0-pl7.387.aar"))
     implementation(libs.timber)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
