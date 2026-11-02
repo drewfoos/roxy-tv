@@ -117,6 +117,14 @@ private val SeasonPickerWidth = 305.dp
 /** The episode list's left edge: right of the season column. */
 private val EpisodeListStart = 385.dp
 private val EpisodeThumbWidth = 192.dp
+
+/**
+ * The height the content keeps while it sits under the art, off screen: enough for its first
+ * row (the first episode, the first similar title), which Down from the tabs must reach. It
+ * was 320 dp, three episode rows composed and measured that nobody could see yet: a 26 ms
+ * frame on the TCL as the episodes arrived. The rest compose as the page folds up.
+ */
+private val ContentFloor = 140.dp
 private val Fold = tween<Dp>(220)
 
 /** One text action under the synopsis: "Add to Watchlist", "CONTINUE: E2 ... 20m left". */
@@ -247,6 +255,11 @@ private fun TitlePage(
     }
     val topHeight by animateDpAsState(if (folded) 0.dp else TopBlockHeight, Fold, label = "fold")
     var restored by remember { mutableStateOf(false) }
+    // The page arrives in two frames: the art, copy and actions first, then the tabs and the
+    // content (which start at the bottom edge, mostly off screen) one frame later. In one
+    // frame it was 26 ms on the TCL; split, each half fits a frame.
+    var below by remember(title.id) { mutableStateOf(false) }
+    LaunchedEffect(title.id) { withFrameNanos { }; below = true }
     LaunchedEffect(title.id) {
         if (restored) return@LaunchedEffect
         repeat(6) { withFrameNanos { }; if (memory.restore("play")) { restored = true; return@LaunchedEffect } }
@@ -296,6 +309,7 @@ private fun TitlePage(
                 }
             }
         }
+        if (!below) { Spacer(Modifier.height(23.dp + TvDims.TabHeight)); return@Column }
         Row(modifier = Modifier.padding(start = PageStart, top = 23.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             tabs.forEachIndexed { i, t ->
                 TvTab(
@@ -312,10 +326,10 @@ private fun TitlePage(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                // Measured at least 320 dp tall but placed at its top (a child that overflows its
-                // constraints is otherwise centred, which drew the rows over the art).
+                // Measured at least ContentFloor tall but placed at its top (a child that overflows
+                // its constraints is otherwise centred, which drew the rows over the art).
                 .layout { measurable, constraints ->
-                    val floor = 320.dp.roundToPx()
+                    val floor = ContentFloor.roundToPx()
                     val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = maxOf(constraints.maxHeight, floor)))
                     layout(placeable.width, minOf(placeable.height, constraints.maxHeight)) { placeable.placeRelative(0, 0) }
                 }
