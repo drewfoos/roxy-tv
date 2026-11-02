@@ -13,13 +13,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
+	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/stills"
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -541,12 +544,20 @@ func itemMetadata(r *Result, t model.ItemType) store.ItemMetadata {
 
 // applySeries fills season posters and episode titles/overviews/air dates/stills.
 // Returns the number of episodes updated.
+//
+// Episode data comes from TMDB first whichever provider matched first: its seasons
+// follow the TVDB-style numbering Sonarr files by, while AniList's Crunchyroll lists are
+// per AniList entry and sometimes another season's. A file whose name carries an episode
+// title (Sonarr's "Show - S00E03 - Title") is matched by that title within the season
+// before its number: TVDB and TMDB number specials (and some shows' episodes)
+// differently, so the number alone can name another episode.
 func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, secondary *Result, onlyNew bool) int {
 	seasons, err := s.store.Children(ctx, series.ID, model.TypeSeason)
 	if err != nil {
 		slog.Warn("metadata: listing seasons", "series", series.Title, "err", err)
 		return 0
 	}
+	fileTitles := s.episodeFiles(ctx, series)
 	cache := map[string]*Season{} // "<provider>:<season>" -> fetched season (nil = unknown)
 	fetch := func(r *Result, n int) *Season {
 		if r == nil {
@@ -581,6 +592,11 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			}
 		}
 	}
+	byPref := tmdbFirst(primary, secondary)
+	src := placeholderSource(primary, secondary)
+	// Provider episodes (in src's numbering, per library season) a file claimed by its
+	// title although it carries another number: no "missing" placeholder for them.
+	claimed := map[int]map[int]bool{}
 	updated := 0
 	for i := range seasons {
 		season := &seasons[i]
@@ -616,6 +632,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 		if err != nil {
 			continue
 		}
+		restarts := absoluteRestarts(episodes)
 		for j := range episodes {
 			ep := &episodes[j]
 			if onlyNew && ep.MetadataRefreshedAt != nil {
@@ -625,48 +642,95 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			if ep.IndexAired != nil {
 				en = *ep.IndexAired
 			}
-			absolute := false
-			// Absolute-numbered files ("Show - 013 - Title") land in season 1 with
-			// index == absolute; map them through the provider's season lengths.
+			// Absolute-numbered files ("Show - 013 - Title") carry index == absolute; map
+			// them through the provider's season lengths. In a later season's folder the
+			// numbers may instead restart at 1 (InuYasha's "The Final Act" folder holds
+			// 01..26): then they are that season's own, unless the provider puts the
+			// absolute number in that very season.
+			abs := 0
 			if ep.IndexAbsolute != nil && (ep.IndexAired == nil || *ep.IndexAired == *ep.IndexAbsolute) {
-				if s2, e2, ok := primary.AbsoluteToAired(*ep.IndexAbsolute); ok {
-					sn, en, absolute = s2, e2, true
-				} else if secondary != nil {
-					if s2, e2, ok := secondary.AbsoluteToAired(*ep.IndexAbsolute); ok {
-						sn, en, absolute = s2, e2, true
+				abs = *ep.IndexAbsolute
+				if num > 1 && restarts {
+					inSeason := true
+					for _, r := range byPref {
+						if ms, _, ok := r.AbsoluteToAired(abs); ok {
+							inSeason = ms != num
+							break
+						}
+					}
+					if inSeason {
+						abs = 0
 					}
 				}
 			}
-			if en == 0 {
+			if en == 0 && abs == 0 {
 				continue
 			}
-			var hit *EpisodeResult
-			for _, r := range []*Result{primary, secondary} {
-				if r == nil {
-					continue
-				}
-				// Seasons split differently from this provider's: find the episode by its
-				// absolute position (JJK S2E1 is TMDB's S1E25).
-				rsn, ren := sn, en
-				if !absolute {
-					var ok bool
-					if rsn, ren, ok = layouts[r].toProvider(r, sn, en); !ok {
-						continue
+			toProvider := func(r *Result) (int, int, bool) {
+				if abs > 0 {
+					if ps, pe, ok := r.AbsoluteToAired(abs); ok {
+						return ps, pe, true
 					}
 				}
-				if se := fetch(r, rsn); se != nil {
-					for k := range se.Episodes {
-						if se.Episodes[k].Episode == ren {
+				if en == 0 {
+					return 0, 0, false
+				}
+				return layouts[r].toProvider(r, sn, en)
+			}
+			fileTitle := fileTitles[ep.ID]
+			var hit *EpisodeResult
+			if fileTitle != "" {
+				for _, r := range byPref {
+					ps, pe, ok := toProvider(r)
+					if !ok {
+						continue
+					}
+					if se := fetch(r, ps); se != nil {
+						if k := matchEpisodeTitle(se.Episodes, fileTitle, pe); k >= 0 {
 							hit = &se.Episodes[k]
+							if r == src && hit.Episode != pe && (sn == 0 || !layouts[r].split) {
+								if claimed[sn] == nil {
+									claimed[sn] = map[int]bool{}
+								}
+								claimed[sn][hit.Episode] = true
+							}
 							break
 						}
 					}
 				}
-				if hit != nil {
-					break
+			}
+			mismatch := false
+			if hit == nil {
+				for _, r := range byPref {
+					ps, pe, ok := toProvider(r)
+					if !ok {
+						continue
+					}
+					if se := fetch(r, ps); se != nil {
+						for k := range se.Episodes {
+							if se.Episodes[k].Episode == pe {
+								hit = &se.Episodes[k]
+								break
+							}
+						}
+					}
+					if hit != nil {
+						break
+					}
+				}
+				// A special named after something else than the provider's special of the
+				// same number (JUJUTSU KAISEN 0 filed as S00E01, TMDB's S00E01 a New Year's
+				// short) is not that special: it keeps its own name.
+				if hit != nil && sn == 0 && namesSomething(fileTitle) && !titleAgrees(fileTitle, hit.Title) {
+					hit, mismatch = nil, true
 				}
 			}
 			if hit == nil {
+				if mismatch && ep.Title != fileTitle {
+					if err := s.store.ResetEpisodeToFile(ctx, ep.ID, fileTitle); err == nil {
+						slog.Info("metadata: special keeps its file's title", "series", series.Title, "episode", en, "title", fileTitle)
+					}
+				}
 				slog.Debug("metadata: no episode data", "series", series.Title, "season", sn, "episode", en)
 				continue
 			}
@@ -687,10 +751,187 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	if n, err := s.store.SyncChildLibrary(ctx, series.ID); err == nil && n > 0 {
 		slog.Info("metadata: seasons/episodes moved to the series' library", "series", series.Title, "count", n)
 	}
-	s.createPlaceholders(ctx, series, seasons, primary, secondary, fetch, layouts, lengths)
+	s.createPlaceholders(ctx, series, seasons, src, otherResult(src, primary, secondary), fetch, layouts, lengths, claimed)
 	s.storeSeasonIDs(ctx, series, primary, secondary, layouts, lengths)
 	return updated
 }
+
+// tmdbFirst lists the non-nil results with TMDB's first.
+func tmdbFirst(rs ...*Result) []*Result {
+	var out []*Result
+	for _, r := range rs {
+		if r != nil && r.Provider == "tmdb" {
+			out = append(out, r)
+		}
+	}
+	for _, r := range rs {
+		if r != nil && r.Provider != "tmdb" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// placeholderSource is the result whose seasons placeholders follow: TMDB's whenever
+// TMDB matched (TVDB-style seasons), AniList's only without a TMDB match at all. AniList's
+// chain of sequels counts spin-offs as seasons (Yu-Gi-Oh! GX and 5D's would become
+// seasons 2 and 3 of Duel Monsters), and its Crunchyroll lists are sometimes another
+// season's.
+func placeholderSource(primary, secondary *Result) *Result {
+	if rs := tmdbFirst(primary, secondary); len(rs) > 0 {
+		return rs[0]
+	}
+	return nil
+}
+
+// otherResult is whichever of primary/secondary is not r.
+func otherResult(r, primary, secondary *Result) *Result {
+	if r == primary {
+		return secondary
+	}
+	return primary
+}
+
+// absoluteRestarts reports whether a season's absolute-only files start at 1 (their
+// numbers count within the season folder rather than across the show).
+func absoluteRestarts(eps []model.Item) bool {
+	lowest := 0
+	for _, e := range eps {
+		if e.IsVirtual || e.IndexAbsolute == nil || (e.IndexAired != nil && *e.IndexAired != *e.IndexAbsolute) {
+			continue
+		}
+		if lowest == 0 || *e.IndexAbsolute < lowest {
+			lowest = *e.IndexAbsolute
+		}
+	}
+	return lowest == 1
+}
+
+// episodeFiles reads the media file names under a series: the episode title each one
+// carries, by item id ("" when none), and the last episode of every multi-episode file
+// (stored for files scanned before the store kept it).
+func (s *Service) episodeFiles(ctx context.Context, series *model.Item) map[string]string {
+	paths, err := s.store.PathsUnder(ctx, series.ID)
+	if err != nil {
+		return nil
+	}
+	titles := map[string]string{}
+	for _, p := range paths {
+		name := filepath.Base(p.Path)
+		if t := library.FileEpisodeTitle(name); t != "" && titles[p.ItemID] == "" {
+			titles[p.ItemID] = t
+		}
+		if pn := library.ParseEpisodeFile(name); pn.Episode != nil && pn.EpisodeEnd != nil && *pn.EpisodeEnd > *pn.Episode {
+			_ = s.store.SetIndexEnd(ctx, p.ItemID, pn.EpisodeEnd)
+		}
+	}
+	return titles
+}
+
+// compactTitle folds a title for comparing a file name's copy with a provider's: case,
+// accents, punctuation and spaces all go ("God's Blessings on This Wonderful Choker!"
+// and Sonarr's "Gods Blessings On This Wonderful Choker!" are the same).
+func compactTitle(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if f, ok := accentFold[r]; ok {
+			r = f
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// sameTitle: equal once compacted, or one a prefix of the other when the shorter still
+// says enough (Sonarr shortens long titles).
+func sameTitle(a, b string) bool {
+	ca, cb := compactTitle(a), compactTitle(b)
+	if ca == "" || cb == "" {
+		return false
+	}
+	if ca == cb {
+		return true
+	}
+	if len(ca) > len(cb) {
+		ca, cb = cb, ca
+	}
+	return len(ca) >= 15 && strings.HasPrefix(cb, ca)
+}
+
+// titleCandidates is a file's title and, for a multi-episode file ("Help Wanted + Reef
+// Blower + Tea at the Treedome"), its first part.
+func titleCandidates(t string) []string {
+	out := []string{t}
+	for _, sep := range []string{" + ", " / "} {
+		if i := strings.Index(t, sep); i > 0 {
+			out = append(out, strings.TrimSpace(t[:i]))
+		}
+	}
+	return out
+}
+
+// matchEpisodeTitle finds the provider episode a file's title names: an exact match
+// before a shortened one, the episode numbered nearest the file's number among equals.
+// -1 when none matches.
+func matchEpisodeTitle(eps []EpisodeResult, fileTitle string, near int) int {
+	best, bestRank, bestDist := -1, 0, 0
+	for _, cand := range titleCandidates(fileTitle) {
+		cf := compactTitle(cand)
+		for k := range eps {
+			if !sameTitle(cand, eps[k].Title) {
+				continue
+			}
+			rank := 1
+			if compactTitle(eps[k].Title) == cf {
+				rank = 2
+			}
+			d := eps[k].Episode - near
+			if d < 0 {
+				d = -d
+			}
+			if best < 0 || rank > bestRank || rank == bestRank && d < bestDist {
+				best, bestRank, bestDist = k, rank, d
+			}
+		}
+		if best >= 0 {
+			return best
+		}
+	}
+	return -1
+}
+
+// titleAgrees reports whether a provider episode's title can be the file's: the same
+// title, or a provider title that names nothing ("", "Episode 3").
+func titleAgrees(fileTitle, providerTitle string) bool {
+	if providerTitle == "" || reGenericEpisode.MatchString(providerTitle) {
+		return true
+	}
+	for _, c := range titleCandidates(fileTitle) {
+		if sameTitle(c, providerTitle) {
+			return true
+		}
+	}
+	return false
+}
+
+// namesSomething reports whether a file's episode title is a name rather than a label
+// ("S1 sp 17.5", "OVA 2"): it has a word of three or more letters that is not one of the
+// words such labels are made of.
+func namesSomething(t string) bool {
+	for _, w := range strings.FieldsFunc(strings.ToLower(t), func(r rune) bool { return !unicode.IsLetter(r) }) {
+		if len([]rune(w)) >= 3 && !labelWords[w] {
+			return true
+		}
+	}
+	return false
+}
+
+var labelWords = map[string]bool{"ova": true, "oad": true, "ona": true, "special": true, "specials": true, "extra": true, "extras": true,
+	"episode": true, "part": true, "season": true, "bonus": true, "recap": true, "preview": true, "picture": true, "drama": true}
+
+var reGenericEpisode = regexp.MustCompile(`(?i)^\s*(?:episode|ep\.?|special)\s*\d+\s*$`)
 
 // storeSeasonIDs records each season's own AniList and MyAnimeList ids. AniList models
 // every TV season as its own entry and AniSkip looks skip times up by that entry's MAL id,
@@ -793,23 +1034,27 @@ func seasonInfo(r *Result, n int) *SeasonInfo {
 // provider specials lists are long and mostly recaps/shorts. Placeholders share the
 // GUIDs the scanner uses, so an arriving file flips the same row to real.
 //
+// The seasons and their lengths come from src alone (placeholderSource: TMDB whenever it
+// matched); other only lends titles for episodes src has no data for. An episode a file
+// covers in another way (a multi-episode file's range, a title claimed in claimed) gets
+// no placeholder.
+//
 // When the library's seasons split the provider's differently (layout.go: JJK's three
 // season folders against TMDB's one season of 59), the folders win: a season gets
 // placeholders only for gaps up to its last real episode, the last real season also for
 // what the provider has after it in the same provider season, and later provider seasons
 // become the seasons after the last real one. Nothing duplicates a real season.
-func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, seasons []model.Item, primary, secondary *Result, fetch func(*Result, int) *Season, layouts map[*Result]*seasonLayout, lengths map[int]int) {
-	src := primary
-	if len(src.Seasons) == 0 && secondary != nil && len(secondary.Seasons) > 0 {
-		src = secondary
-	}
-	if len(src.Seasons) == 0 {
+func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, seasons []model.Item, src, other *Result, fetch func(*Result, int) *Season, layouts map[*Result]*seasonLayout, lengths map[int]int, claimed map[int]map[int]bool) {
+	if src == nil || len(src.Seasons) == 0 {
 		return
 	}
-	lay := layouts[src]
-	if lay == nil {
-		lay = layoutFor(src, lengths)
+	layoutOf := func(r *Result) *seasonLayout {
+		if l := layouts[r]; l != nil {
+			return l
+		}
+		return layoutFor(r, lengths)
 	}
+	lay := layoutOf(src)
 	bySeason := map[int]*model.Item{}
 	for i := range seasons {
 		n := 1
@@ -820,15 +1065,11 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 	}
 	// episodeAt finds provider data for library (season, episode n) through the layout.
 	episodeAt := func(season, n int) *EpisodeResult {
-		for i, r := range []*Result{src, secondary} {
-			if r == nil || (i == 1 && r == src) {
+		for _, r := range []*Result{src, other} {
+			if r == nil {
 				continue
 			}
-			l := layouts[r]
-			if l == nil {
-				l = layoutFor(r, lengths)
-			}
-			ps, pe, ok := l.toProvider(r, season, n)
+			ps, pe, ok := layoutOf(r).toProvider(r, season, n)
 			if !ok {
 				continue
 			}
@@ -858,11 +1099,7 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 	// seasonCount is a provider season's episode count, or its list's length when longer.
 	seasonCount := func(si SeasonInfo) int {
 		count := si.EpisodeCount
-		se := fetch(src, si.Number)
-		if se == nil && src != secondary && secondary != nil && !(layouts[secondary] != nil && layouts[secondary].split) {
-			se = fetch(secondary, si.Number)
-		}
-		if se != nil && len(se.Episodes) > count {
+		if se := fetch(src, si.Number); se != nil && len(se.Episodes) > count {
 			count = len(se.Episodes)
 		}
 		return count
@@ -928,13 +1165,19 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 			bySeason[pl.number] = season
 		}
 		// What the season already holds, by episode number; a file with only an absolute
-		// number ("Show - 03.mkv") counts as that episode, as the shadow cleanup does.
+		// number ("Show - 03.mkv") counts as that episode, as the shadow cleanup does,
+		// and a multi-episode file (S01E01-E03) as every episode in its range.
 		existing := map[int]bool{}
 		if eps, err := s.store.Children(ctx, season.ID, model.TypeEpisode); err == nil {
 			for _, e := range eps {
 				switch {
 				case e.IndexAired != nil:
 					existing[*e.IndexAired] = true
+					if !e.IsVirtual && e.IndexAiredEnd != nil {
+						for n := *e.IndexAired + 1; n <= *e.IndexAiredEnd; n++ {
+							existing[n] = true
+						}
+					}
 				case e.IndexAbsolute != nil && !e.IsVirtual:
 					existing[*e.IndexAbsolute] = true
 				}
@@ -942,6 +1185,9 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 		}
 		for n := 1; n <= pl.count; n++ {
 			guid := fmt.Sprintf("%s:s%02de%04d", series.GUID, pl.number, n)
+			if claimed[pl.number][n] {
+				continue // a file under another number is this episode (by its title)
+			}
 			keep[guid] = true
 			if existing[n] {
 				continue
@@ -968,8 +1214,9 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 	if dropped, err := s.store.DeleteVirtualChildren(ctx, series.ID, keep); err == nil && dropped > 0 {
 		slog.Info("metadata: stale placeholders removed", "series", series.Title, "count", dropped)
 	}
-	// A file that arrived under a different GUID (absolute numbering) now covers its
-	// placeholder: drop the placeholder rather than list the episode twice.
+	// A file that arrived under a different GUID (absolute numbering) or covers several
+	// episodes now covers its placeholder: drop the placeholder rather than list the
+	// episode twice.
 	if dropped, err := s.store.DeleteShadowedPlaceholders(ctx, series.ID); err == nil && dropped > 0 {
 		slog.Info("metadata: shadowed placeholders removed", "series", series.Title, "count", dropped)
 	}

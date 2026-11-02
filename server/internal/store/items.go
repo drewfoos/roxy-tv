@@ -17,7 +17,7 @@ import (
 var itemColNames = []string{"id", "guid", "library_id", "type", "parent_id", "title", "sort_title", "year", "overview",
 	"index_aired", "season_aired", "index_absolute", "runtime_ms", "date_created", "date_modified",
 	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual",
-	"season_count", "related_count", "advisories"}
+	"season_count", "related_count", "advisories", "index_aired_end"}
 
 var itemCols = strings.Join(itemColNames, ", ")
 
@@ -33,13 +33,13 @@ func itemColsFor(alias string) string {
 func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, error) {
 	var it model.Item
 	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed, advisories sql.NullString
-	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount sql.NullInt64
+	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount, idxEnd sql.NullInt64
 	var rating sql.NullFloat64
 	var created, modified string
 	var virtual int
 	dest := []any{&it.ID, &it.GUID, &it.LibraryID, &it.Type, &parent, &it.Title, &sortTitle, &year, &overview,
 		&idxAired, &seasonAired, &idxAbs, &runtime, &created, &modified,
-		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories}
+		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd}
 	dest = append(dest, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return nil, err
@@ -51,6 +51,7 @@ func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, er
 	it.IndexAired = ptrInt(idxAired)
 	it.SeasonAired = ptrInt(seasonAired)
 	it.IndexAbsolute = ptrInt(idxAbs)
+	it.IndexAiredEnd = ptrInt(idxEnd)
 	it.RuntimeMs = ptrInt64(runtime)
 	it.DateCreated = ParseTime(created)
 	it.DateModified = ParseTime(modified)
@@ -317,6 +318,11 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 //
 // On update, fields the metadata service owns (title, year, overview) are kept once the
 // item has been matched (metadata_refreshed_at set): a rescan must not undo a lookup.
+//
+// A placeholder that becomes real (its file arrived) is the exception: what it showed
+// was the provider's guess for that slot, which need not be what the file is (an OVA
+// filed as a season's last episode), so it starts over from the file, without the
+// provider still, as a newly added episode; the next metadata pass fills it again.
 func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 	now := Now()
 	existing, err := s.GetItemByGUID(ctx, it.GUID)
@@ -326,23 +332,32 @@ func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 	if existing != nil {
 		it.ID = existing.ID
 		it.DateCreated = existing.DateCreated
+		if existing.IsVirtual && !it.IsVirtual {
+			if _, err := s.db.ExecContext(ctx, `UPDATE items SET metadata_refreshed_at = NULL, overview = NULL, date_created = ? WHERE id = ?`, now, it.ID); err != nil {
+				return err
+			}
+			if _, err := s.db.ExecContext(ctx, `DELETE FROM item_images WHERE item_id = ? AND type = 'thumb' AND locked = 0`, it.ID); err != nil {
+				return err
+			}
+			it.DateCreated = ParseTime(now)
+		}
 		_, err = s.db.ExecContext(ctx, `UPDATE items SET library_id=?, type=?, parent_id=?,
 			title = CASE WHEN metadata_refreshed_at IS NULL THEN ? ELSE title END,
 			sort_title=?,
 			year = CASE WHEN metadata_refreshed_at IS NULL THEN ? ELSE COALESCE(year, ?) END,
 			overview = COALESCE(overview, ?),
-			index_aired=?, season_aired=?, index_absolute=?, runtime_ms=COALESCE(?, runtime_ms), is_virtual=?, date_modified=? WHERE id=?`,
+			index_aired=?, season_aired=?, index_absolute=?, index_aired_end=?, runtime_ms=COALESCE(?, runtime_ms), is_virtual=?, date_modified=? WHERE id=?`,
 			it.LibraryID, it.Type, strPtrNull(it.ParentID), it.Title, nullStr(it.SortTitle), intPtrNull(it.Year), intPtrNull(it.Year), nullStr(it.Overview),
-			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual), now, it.ID)
+			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual), now, it.ID)
 	} else {
 		if it.ID == "" {
 			return errors.New("UpsertItem: new item needs an ID")
 		}
 		it.DateCreated = ParseTime(now)
 		_, err = s.db.ExecContext(ctx, `INSERT INTO items (id, guid, library_id, type, parent_id, title, sort_title, year, overview,
-			index_aired, season_aired, index_absolute, runtime_ms, is_virtual, date_created, date_modified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			index_aired, season_aired, index_absolute, index_aired_end, runtime_ms, is_virtual, date_created, date_modified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			it.ID, it.GUID, it.LibraryID, it.Type, strPtrNull(it.ParentID), it.Title, nullStr(it.SortTitle), intPtrNull(it.Year), nullStr(it.Overview),
-			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual), now, now)
+			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual), now, now)
 		if err == nil {
 			_, err = s.db.ExecContext(ctx, `INSERT INTO items_fts (rowid, title) SELECT rowid, title FROM items WHERE id = ?`, it.ID)
 		}
@@ -437,10 +452,18 @@ func (s *Store) DeleteVirtualChildren(ctx context.Context, seriesID string, keep
 // season already covers: same episode number, counting an absolute number as the
 // episode number when the file has no season numbering (a season-folder show named
 // "Show - 03.mkv" gets the GUID abs0003, the placeholder s01e0003, so the GUIDs never
-// meet and both rows would show).
+// meet and both rows would show), or a number inside a multi-episode file's range
+// (S01E01-E03 covers E2 and E3).
 const shadowedPlaceholders = `is_virtual = 1 AND type = 'episode' AND EXISTS (
 	SELECT 1 FROM items r WHERE r.is_virtual = 0 AND r.type = 'episode' AND r.parent_id = items.parent_id
-	AND COALESCE(r.index_aired, r.index_absolute) = items.index_aired)`
+	AND items.index_aired BETWEEN COALESCE(r.index_aired, r.index_absolute)
+		AND MAX(COALESCE(r.index_aired, r.index_absolute), COALESCE(r.index_aired_end, 0)))`
+
+// SetIndexEnd records the last episode a multi-episode file covers (nil: a single one).
+func (s *Store) SetIndexEnd(ctx context.Context, itemID string, end *int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE items SET index_aired_end = ? WHERE id = ?`, intPtrNull(end), itemID)
+	return err
+}
 
 // DeleteShadowedPlaceholders drops placeholder episodes that a real file in the same
 // season already stands for (see shadowedPlaceholders); seriesID limits it to one show,
@@ -491,6 +514,19 @@ func (s *Store) ResetEpisodeMetadata(ctx context.Context, seasonID string) error
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM item_images WHERE type = 'thumb' AND item_id IN (SELECT id FROM items WHERE parent_id = ? AND type = 'episode')`, seasonID)
+	return err
+}
+
+// ResetEpisodeToFile puts an episode back on what its file says: the file's title, no
+// provider overview, air date or still (frame grabs and artwork next to the media stay).
+// Used when an earlier lookup gave it another episode's data.
+func (s *Store) ResetEpisodeToFile(ctx context.Context, id, title string) error {
+	now := Now()
+	if _, err := s.db.ExecContext(ctx, `UPDATE items SET title = ?, overview = NULL, premiere_date = NULL, metadata_refreshed_at = ?, date_modified = ?
+		WHERE id = ? AND type = 'episode'`, title, now, now, id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM item_images WHERE item_id = ? AND type = 'thumb' AND locked = 0 AND source_url LIKE 'http%'`, id)
 	return err
 }
 

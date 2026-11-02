@@ -85,14 +85,20 @@ func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool
 
 // MarkPlayedUnder flags every episode beneath a series or season, so "mark all as
 // watched" on a title page is one call. The parent row itself carries no flag: a
-// series' progress is derived from its episodes.
+// series' progress is derived from its episodes. Marking watched skips placeholders
+// (missing or unaired episodes): they share the GUID of the file that arrives later,
+// which would otherwise show up already watched. Marking unwatched clears them too.
 func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, played bool) error {
-	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+	q := `WITH RECURSIVE tree(id) AS (
 			SELECT id FROM items WHERE id = ?
 			UNION ALL
 			SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
 		)
-		SELECT guid FROM items WHERE type = 'episode' AND id IN (SELECT id FROM tree)`, itemID)
+		SELECT guid FROM items WHERE type = 'episode' AND id IN (SELECT id FROM tree)`
+	if played {
+		q += ` AND is_virtual = 0`
+	}
+	rows, err := s.db.QueryContext(ctx, q, itemID)
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,9 @@ func (s *Store) SetFavorite(ctx context.Context, userID, guid string, fav bool) 
 	return err
 }
 
-// ResumeItems lists in-progress items (position > 0, not played), most recent first.
+// ResumeItems lists in-progress items (position > 0), most recent first. A played item
+// with a position is a rewatch under way (finishing resets the position to 0), so it
+// counts as in progress too.
 func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]model.Item, error) {
 	if limit <= 0 {
 		limit = 20
@@ -129,7 +137,7 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 	// each series (grouped by the season's parent); movies stand on their own.
 	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items i
 		JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
-		WHERE u.position_ms > 0 AND u.played = 0 AND i.type IN ('movie', 'episode')
+		WHERE u.position_ms > 0 AND i.type IN ('movie', 'episode')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM items i2
 		    JOIN user_item_data u2 ON u2.item_guid = i2.guid AND u2.scope_id = u.scope_id
@@ -137,7 +145,7 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 		    JOIN items s2 ON s2.id = i2.parent_id
 		    WHERE i.type = 'episode' AND i2.type = 'episode' AND i2.id <> i.id
 		      AND s1.parent_id = s2.parent_id
-		      AND u2.position_ms > 0 AND u2.played = 0
+		      AND u2.position_ms > 0
 		      AND (u2.last_played_at > u.last_played_at OR (u2.last_played_at = u.last_played_at AND i2.id > i.id))
 		  )
 		ORDER BY u.last_played_at DESC LIMIT ?`, userID, limit)

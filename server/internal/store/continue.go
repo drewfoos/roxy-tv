@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"sort"
 
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -84,17 +86,16 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		if at, ok := seriesAt[f.series]; ok && at >= f.at {
 			continue // a half-watched episode of this show is more recent
 		}
-		row := s.db.QueryRowContext(ctx, `SELECT `+itemColsFor("i")+` FROM items i
-			JOIN items se ON se.id = i.parent_id
-			LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
-			WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0 AND COALESCE(u.played, 0) = 0
-			  AND COALESCE(se.index_aired, 0) > 0
-			  AND (COALESCE(se.index_aired, 0) > ? OR (COALESCE(se.index_aired, 0) = ? AND COALESCE(i.index_aired, 0) > ?))
-			ORDER BY COALESCE(se.index_aired, 0), COALESCE(i.index_aired, 0) LIMIT 1`,
-			scopeID, f.series, f.season, f.season, f.epNum)
-		it, err := scanItem(row)
+		it, err := s.nextEpisodeAfter(ctx, scopeID, f.series, f.season, f.epNum, true)
 		if err != nil || it == nil {
-			continue // finished the last episode there is
+			// Nothing unwatched after it. On a rewatch (every episode already watched)
+			// the next one in order still comes up; otherwise this was the last there is.
+			if all, err2 := s.allEpisodesPlayed(ctx, scopeID, f.series); err2 == nil && all {
+				it, err = s.nextEpisodeAfter(ctx, scopeID, f.series, f.season, f.epNum, false)
+			}
+			if err != nil || it == nil {
+				continue
+			}
 		}
 		// Replaces an older half-watched episode of the same show.
 		if _, ok := seriesAt[f.series]; ok {
@@ -134,4 +135,38 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		out = append(out, e.item)
 	}
 	return out, nil
+}
+
+// nextEpisodeAfter is the first real regular episode of a series after (season, ep), in
+// order; with unplayedOnly, the first the profile has not watched.
+func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID string, season, ep int, unplayedOnly bool) (*model.Item, error) {
+	played := ""
+	if unplayedOnly {
+		played = ` AND COALESCE(u.played, 0) = 0`
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT `+itemColsFor("i")+` FROM items i
+		JOIN items se ON se.id = i.parent_id
+		LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
+		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0`+played+`
+		  AND COALESCE(se.index_aired, 0) > 0
+		  AND (COALESCE(se.index_aired, 0) > ? OR (COALESCE(se.index_aired, 0) = ? AND COALESCE(i.index_aired, 0) > ?))
+		ORDER BY COALESCE(se.index_aired, 0), COALESCE(i.index_aired, 0) LIMIT 1`,
+		scopeID, seriesID, season, season, ep)
+	it, err := scanItem(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return it, err
+}
+
+// allEpisodesPlayed reports whether the profile has watched every real regular episode
+// of a series (so finishing one again is a rewatch).
+func (s *Store) allEpisodesPlayed(ctx context.Context, scopeID, seriesID string) (bool, error) {
+	var unplayed int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items i
+		JOIN items se ON se.id = i.parent_id
+		LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
+		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0
+		  AND COALESCE(se.index_aired, 0) > 0 AND COALESCE(u.played, 0) = 0`, scopeID, seriesID).Scan(&unplayed)
+	return unplayed == 0, err
 }

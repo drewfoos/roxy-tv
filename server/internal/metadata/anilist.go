@@ -413,44 +413,13 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 		chain = append(chain, m)
 		cur = m
 	}
-	base.Seasons = base.Seasons[:0]
+	base.Seasons = a.chainSeasons(chain)
 	base.EpisodeCount = 0
-	related := map[string]Relation{}
-	fingerprints := map[string]int{} // streaming-episode title list -> first season that had it
-	for i, m := range chain {
-		n := 0
-		if m.Episodes != nil {
-			n = *m.Episodes
-		}
-		parsed := a.seasonResult(m, i+1)
-		if len(parsed.Episodes) > n {
-			n = len(parsed.Episodes) // Crunchyroll lists OVAs as the last episode
-		}
-		si := SeasonInfo{Number: i + 1, EpisodeCount: n, Poster: m.CoverImage.ExtraLarge, ProviderID: strconv.Itoa(m.ID)}
-		if m.IDMal != nil && *m.IDMal > 0 {
-			si.MalID = strconv.Itoa(*m.IDMal)
-		}
-		// AniList sometimes attaches season 1's Crunchyroll episode list to a sequel
-		// entry verbatim; a repeated list is wrong by definition, so refuse it.
-		if len(parsed.Episodes) > 0 {
-			var sb strings.Builder
-			for _, e := range parsed.Episodes {
-				sb.WriteString(e.Title)
-				sb.WriteByte('\n')
-			}
-			fp := sb.String()
-			if first, dup := fingerprints[fp]; dup {
-				si.NoEpisodeData = true
-				if m.Episodes != nil {
-					si.EpisodeCount = *m.Episodes
-				}
-				_ = first
-			} else {
-				fingerprints[fp] = i + 1
-			}
-		}
-		base.Seasons = append(base.Seasons, si)
+	for _, si := range base.Seasons {
 		base.EpisodeCount += si.EpisodeCount
+	}
+	related := map[string]Relation{}
+	for _, m := range chain {
 		for _, rel := range a.mediaResult(m).Related {
 			if _, ok := related[rel.ProviderID]; !ok && !seen[atoi(rel.ProviderID)] {
 				related[rel.ProviderID] = rel
@@ -466,6 +435,98 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 		base.Status = anilistStatus(chain[len(chain)-1].Status)
 	}
 	return base, nil
+}
+
+// chainSeasons numbers the chain's entries as seasons 1..n.
+//
+// An entry's Crunchyroll episode list (streamingEpisodes) is only trusted when it fits
+// the entry. AniList sometimes attaches another season's list: season 1's repeated on a
+// sequel, or a later season's on season 1 (KonoSuba S1 carries S3's 11 titles, Mushoku
+// Tensei's first cour S2's 25). Such a list gives no titles or stills for the season
+// (NoEpisodeData) and does not stretch its episode count:
+//   - a list longer than the entry's episode count by more than one (one more is
+//     Crunchyroll listing an OVA as the last episode), or numbering an episode past it;
+//   - a list another entry of the chain carries too: it belongs to the entry whose
+//     episode count it matches (the first one when none or several do).
+func (a *AniList) chainSeasons(chain []*anilistMedia) []SeasonInfo {
+	out := make([]SeasonInfo, 0, len(chain))
+	lists := map[string][]int{} // streaming-episode title list -> indices of the entries carrying it
+	listLen := map[string]int{}
+	var order []string
+	for i, m := range chain {
+		n := 0
+		if m.Episodes != nil {
+			n = *m.Episodes
+		}
+		parsed := a.seasonResult(m, i+1)
+		si := SeasonInfo{Number: i + 1, EpisodeCount: n, Poster: m.CoverImage.ExtraLarge, ProviderID: strconv.Itoa(m.ID)}
+		if m.IDMal != nil && *m.IDMal > 0 {
+			si.MalID = strconv.Itoa(*m.IDMal)
+		}
+		if len(parsed.Episodes) > 0 {
+			if !streamingListFits(m, parsed) {
+				si.NoEpisodeData = true
+			} else {
+				if len(parsed.Episodes) > si.EpisodeCount {
+					si.EpisodeCount = len(parsed.Episodes) // Crunchyroll lists OVAs as the last episode
+				}
+				var sb strings.Builder
+				for _, e := range parsed.Episodes {
+					sb.WriteString(e.Title)
+					sb.WriteByte('\n')
+				}
+				fp := sb.String()
+				if _, ok := lists[fp]; !ok {
+					order = append(order, fp)
+				}
+				lists[fp] = append(lists[fp], i)
+				listLen[fp] = len(parsed.Episodes)
+			}
+		}
+		out = append(out, si)
+	}
+	for _, fp := range order {
+		idx := lists[fp]
+		if len(idx) < 2 {
+			continue
+		}
+		owner := idx[0]
+		for _, i := range idx {
+			if m := chain[i]; m.Episodes != nil && *m.Episodes == listLen[fp] {
+				owner = i
+				break
+			}
+		}
+		for _, i := range idx {
+			if i == owner {
+				continue
+			}
+			out[i].NoEpisodeData = true
+			if m := chain[i]; m.Episodes != nil {
+				out[i].EpisodeCount = *m.Episodes
+			}
+		}
+	}
+	return out
+}
+
+// streamingListFits reports whether an entry's parsed streaming episodes can be its own:
+// no more than one episode beyond its episode count, none numbered past it. An entry
+// with no episode count yet (still airing) is taken at its word.
+func streamingListFits(m *anilistMedia, parsed *Season) bool {
+	if m.Episodes == nil || *m.Episodes <= 0 {
+		return true
+	}
+	limit := *m.Episodes + 1
+	if len(parsed.Episodes) > limit {
+		return false
+	}
+	for _, e := range parsed.Episodes {
+		if e.Episode > limit {
+			return false
+		}
+	}
+	return true
 }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
@@ -534,7 +595,11 @@ func (a *AniList) Episodes(ctx context.Context, series *Result, season int) (*Se
 	if resp.Data.Media == nil {
 		return nil, nil
 	}
-	return a.seasonResult(resp.Data.Media, season), nil
+	se := a.seasonResult(resp.Data.Media, season)
+	if !streamingListFits(resp.Data.Media, se) {
+		return nil, nil // another season's list (see chainSeasons)
+	}
+	return se, nil
 }
 
 // AdvisoryOrder is the display order of content descriptors (Crunchyroll's vocabulary).

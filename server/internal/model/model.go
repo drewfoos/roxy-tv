@@ -41,6 +41,7 @@ type Item struct {
 	IndexAired    *int              `json:"indexAired,omitempty"`
 	SeasonAired   *int              `json:"seasonAired,omitempty"`
 	IndexAbsolute *int              `json:"indexAbsolute,omitempty"`
+	IndexAiredEnd *int              `json:"indexAiredEnd,omitempty"` // last episode a multi-episode file covers (S01E01-E03: 3)
 	RuntimeMs     *int64            `json:"runtimeMs,omitempty"`
 	ProviderIDs   map[string]string `json:"providerIds,omitempty"`
 	DateCreated   time.Time         `json:"dateCreated"`

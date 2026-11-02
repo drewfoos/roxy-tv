@@ -421,23 +421,66 @@ func (l *Library) resolveItem(ctx context.Context, lib model.Library, path strin
 		epNum = parsed.Absolute
 	}
 	epTitle := episodeTitle(fileName, parsed)
-	epGUID := ""
-	switch {
-	case parsed.Episode != nil:
-		epGUID = fmt.Sprintf("%s:s%02de%04d", series.GUID, seasonNum, *parsed.Episode)
-	case parsed.Absolute != nil:
-		epGUID = fmt.Sprintf("%s:abs%04d", series.GUID, *parsed.Absolute)
-	default:
-		epGUID = "file:" + hashHex(path)
+	epGUID, err := l.episodeGUID(ctx, series.GUID, season.ID, seasonNum, parsed, path)
+	if err != nil {
+		return nil, err
+	}
+	var epEnd *int
+	if parsed.Episode != nil && parsed.EpisodeEnd != nil && *parsed.EpisodeEnd > *parsed.Episode {
+		epEnd = parsed.EpisodeEnd
 	}
 	ep := &model.Item{
 		ID: uuid.NewString(), GUID: epGUID, LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: &season.ID,
-		Title: epTitle, IndexAired: epNum, SeasonAired: &seasonNum, IndexAbsolute: parsed.Absolute,
+		Title: epTitle, IndexAired: epNum, SeasonAired: &seasonNum, IndexAbsolute: parsed.Absolute, IndexAiredEnd: epEnd,
 	}
 	if err := l.store.UpsertItem(ctx, ep); err != nil {
 		return nil, err
 	}
 	return ep, nil
+}
+
+// episodeGUID is an episode file's stable GUID: s<season>e<episode> for season-numbered
+// files, abs<number> for absolute-numbered ones, else the path's hash.
+//
+// An absolute-numbered file in a Season N folder (N > 1) gets s<N>abs<number>, so a
+// show whose season folders each restart at "- 01" does not collapse every season's
+// episode 1 into one item. Season 1 keeps the plain abs<number> it always had, and an
+// item already stored under the old GUID in the same season keeps it (also when a
+// "S2 - 01" name, once read as absolute 1, is now read as S2E1), so a rescan never
+// duplicates an item or loses its watch state.
+func (l *Library) episodeGUID(ctx context.Context, seriesGUID, seasonID string, seasonNum int, parsed ParsedName, path string) (string, error) {
+	var guid string
+	switch {
+	case parsed.Episode != nil:
+		guid = fmt.Sprintf("%s:s%02de%04d", seriesGUID, seasonNum, *parsed.Episode)
+	case parsed.Absolute != nil && seasonNum > 1:
+		guid = fmt.Sprintf("%s:s%02dabs%04d", seriesGUID, seasonNum, *parsed.Absolute)
+	case parsed.Absolute != nil:
+		return fmt.Sprintf("%s:abs%04d", seriesGUID, *parsed.Absolute), nil
+	default:
+		return "file:" + hashHex(path), nil
+	}
+	legacy := ""
+	switch {
+	case parsed.Absolute != nil:
+		legacy = fmt.Sprintf("%s:abs%04d", seriesGUID, *parsed.Absolute)
+	case parsed.SeasonDash:
+		legacy = fmt.Sprintf("%s:abs%04d", seriesGUID, *parsed.Episode)
+	}
+	if legacy == "" {
+		return guid, nil
+	}
+	if cur, err := l.store.GetItemByGUID(ctx, guid); err != nil || cur != nil {
+		return guid, err
+	}
+	old, err := l.store.GetItemByGUID(ctx, legacy)
+	if err != nil {
+		return "", err
+	}
+	if old != nil && !old.IsVirtual && old.ParentID != nil && *old.ParentID == seasonID {
+		return legacy, nil
+	}
+	return guid, nil
 }
 
 func guidFor(ids map[string]string, kind, root, dir string) string {
@@ -465,7 +508,7 @@ func episodeTitle(fileName string, p ParsedName) string {
 		if i := strings.LastIndex(last, "-"); i > 0 && p.ReleaseGroup != "" && strings.HasSuffix(last, "-"+p.ReleaseGroup) {
 			last = strings.TrimSpace(last[:i])
 		}
-		if last != "" && !reSxxExx.MatchString(last) {
+		if last != "" && !reSxxExx.MatchString(last) && !allDigits(last) {
 			return last
 		}
 	}
@@ -476,6 +519,30 @@ func episodeTitle(fileName string, p ParsedName) string {
 		return fmt.Sprintf("Episode %d", *p.Absolute)
 	}
 	return stem
+}
+
+// FileEpisodeTitle is the episode title a file name carries (Sonarr's
+// "Series - S01E01 - Title [tags]"), or "" when it has none.
+func FileEpisodeTitle(fileName string) string {
+	p := ParseEpisodeFile(fileName)
+	t := strings.TrimSpace(strings.TrimLeft(episodeTitle(fileName, p), "-"))
+	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	if t == stem || t == "" || t == p.ReleaseGroup || strings.HasPrefix(t, "Episode ") && allDigits(strings.TrimPrefix(t, "Episode ")) {
+		return ""
+	}
+	return t
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // sidecarSubtitles finds <base>.<lang>[.forced][.hi|.cc|.sdh][.tags].<ext> next to the file.

@@ -11,8 +11,12 @@ import (
 // Handles TRaSH-style names and the common anime shapes. Webhook ingest supersedes this.
 
 var (
-	reSxxExx     = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-?E?(\d{1,4}))?\b`)
-	reAbsDash    = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`) // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
+	reSxxExx  = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-?E?(\d{1,4}))?\b`)
+	reAbsDash = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`) // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
+	// "[Group] Title S2 - 01 (1080p)", "Title 2nd Season - 03", "Title Season 2 - 03": a
+	// season token before the dash makes the number an episode of that season, not an
+	// absolute number.
+	reSeasonDash = regexp.MustCompile(`(?i)(?:^|[\s._\])])(?:S(\d{1,2})|(\d{1,2})(?:st|nd|rd|th)[\s._]+Season|Season[\s._]+(\d{1,2}))\s+-\s+(\d{1,4})(?:v\d)?(?:$|[\s._\[(])`)
 	reAbsBracket = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s*(?:\[|\(|$)`)
 	// "[DB]Tokyo Magnitude 8.0_-_01_(Dual Audio_10bit_BD1080p_x265)": underscores for spaces.
 	reAbsUnderscore = regexp.MustCompile(`_-_(\d{1,4})(?:v\d)?(?:_|\(|\[|$)`)
@@ -63,9 +67,12 @@ func LooksLikeMovie(p ParsedName, fileStem, dir string, depth int) bool {
 }
 
 type ParsedName struct {
-	Season       *int
-	Episode      *int
-	EpisodeEnd   *int
+	Season     *int
+	Episode    *int
+	EpisodeEnd *int
+	// SeasonDash: the numbers came from a "S2 - 01" style name (read as absolute
+	// numbers before such names were understood).
+	SeasonDash   bool
 	Absolute     *int
 	ProviderIDs  map[string]string
 	ReleaseGroup string
@@ -88,6 +95,11 @@ func ParseEpisodeFile(name string) ParsedName {
 			n, _ := strconv.Atoi(a[1])
 			p.Absolute = &n
 		}
+	} else if a := reSeasonDash.FindStringSubmatch(stem); a != nil {
+		s, _ := strconv.Atoi(firstNonEmpty(a[1], a[2], a[3]))
+		e, _ := strconv.Atoi(a[4])
+		p.Season, p.Episode = &s, &e
+		p.SeasonDash = true
 	} else if a := reAbsDash.FindStringSubmatch(stem); a != nil {
 		n, _ := strconv.Atoi(a[1])
 		p.Absolute = &n
@@ -109,6 +121,15 @@ func ParseEpisodeFile(name string) ParsedName {
 		p.CleanTitle = cleanTitle(stem)
 	}
 	return p
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // isYear reports a four-digit 19xx/20xx number, which is never an episode number.
@@ -167,6 +188,9 @@ func stripBrackets(s string) string { return strings.TrimSpace(reBrackets.Replac
 func cleanTitle(stem string) string {
 	s := stripBrackets(stem)
 	if i := reSxxExx.FindStringIndex(s); i != nil {
+		s = s[:i[0]]
+	}
+	if i := reSeasonDash.FindStringIndex(s); i != nil {
 		s = s[:i[0]]
 	}
 	s = strings.TrimRight(s, " -")

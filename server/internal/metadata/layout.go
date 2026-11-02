@@ -37,7 +37,8 @@ type seasonLayout struct {
 }
 
 // realSeasonLengths is, per regular library season with at least one real file, the
-// highest real episode number in it (absolute-only files count by their number).
+// highest real episode number in it (absolute-only files count by their number, a
+// multi-episode file by its last episode).
 func (s *Service) realSeasonLengths(ctx context.Context, seasons []model.Item) map[int]int {
 	out := map[int]int{}
 	for _, se := range seasons {
@@ -55,6 +56,8 @@ func (s *Service) realSeasonLengths(ctx context.Context, seasons []model.Item) m
 			}
 			n := 0
 			switch {
+			case e.IndexAiredEnd != nil:
+				n = *e.IndexAiredEnd // a multi-episode file runs to its last episode
 			case e.IndexAired != nil:
 				n = *e.IndexAired
 			case e.IndexAbsolute != nil:

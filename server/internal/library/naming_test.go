@@ -80,6 +80,11 @@ func TestParseEpisodeFilePatterns(t *testing.T) {
 		{"Akira_1988_BluRay_1080p.mkv", want{}, ""},
 		{"Wano 01.mp4", want{}, ""},
 		{"Episodes of Life.mkv", want{}, ""},
+		// A season token before the dash: an episode of that season, not absolute.
+		{"[SubsPlease] Mob Psycho 100 S2 - 01 (1080p) [ABCD1234].mkv", want{2, 1, 0}, "Mob Psycho 100"},
+		{"Kaguya-sama 2nd Season - 03 [720p].mkv", want{2, 3, 0}, "Kaguya-sama"},
+		{"Show Season 3 - 12v2.mkv", want{3, 12, 0}, "Show"},
+		{"Darker than Black S2 - 01 - Title.mkv", want{2, 1, 0}, ""},
 	}
 	val := func(p *int) int {
 		if p == nil {
@@ -95,6 +100,27 @@ func TestParseEpisodeFilePatterns(t *testing.T) {
 		}
 		if c.title != "" && p.CleanTitle != c.title {
 			t.Errorf("%q: clean title = %q, want %q", c.in, p.CleanTitle, c.title)
+		}
+	}
+}
+
+func TestParseEpisodeFileRangeAndTitle(t *testing.T) {
+	p := ParseEpisodeFile("SpongeBob SquarePants (1999) - S01E01-E03 - Help Wanted + Reef Blower + Tea at the Treedome [WEBDL-1080p].mkv")
+	if p.Episode == nil || *p.Episode != 1 || p.EpisodeEnd == nil || *p.EpisodeEnd != 3 {
+		t.Fatalf("range: %+v", p)
+	}
+	for in, want := range map[string]string{
+		"KonoSuba - S00E03 - Gods Blessings On This Wonderful Choker! [Bluray-1080p][Opus 2.0][x265]-Group.mkv": "Gods Blessings On This Wonderful Choker!",
+		"JUJUTSU KAISEN (2020) - S02E01 - 025 - Hidden Inventory [Bluray-1080p][x265]-Group.mkv":                "Hidden Inventory",
+		"Show - S01E01.mkv":                             "",
+		"[SubsPlease] Frieren - 05 (1080p).mkv":         "",
+		"[SubsPlease] Show S2 - 01 (1080p).mkv":         "",
+		"Mushoku Tensei - S01E01.v2.1080p.mkv":          "",
+		"Show (2020) - S01E02 - Episode 2 [x].mkv":      "",
+		"Show (2020) - S01E02 - [Bluray-1080p]-Grp.mkv": "",
+	} {
+		if got := FileEpisodeTitle(in); got != want {
+			t.Errorf("%q: title %q, want %q", in, got, want)
 		}
 	}
 }

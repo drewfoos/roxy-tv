@@ -5,8 +5,9 @@ import (
 	"strings"
 )
 
-// AniListTagged reports which of the given items carry an AniList provider id (i.e. were
-// matched as anime).
+// AniListTagged reports which of the given items are anime: they carry an AniList provider
+// id (matched as anime) or sit in a library in anime mode (even when AniList has not
+// answered for them yet).
 func (s *Store) AniListTagged(ctx context.Context, ids []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if len(ids) == 0 {
@@ -17,7 +18,8 @@ func (s *Store) AniListTagged(ctx context.Context, ids []string) (map[string]boo
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT item_id FROM item_provider_ids WHERE provider = 'anilist' AND item_id IN (`+ph+`)`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT item_id FROM item_provider_ids WHERE provider = 'anilist' AND item_id IN (`+ph+`)
+		UNION SELECT i.id FROM items i JOIN libraries l ON l.id = i.library_id WHERE l.anime_mode = 1 AND i.id IN (`+ph+`)`, append(args, args...)...)
 	if err != nil {
 		return nil, err
 	}
