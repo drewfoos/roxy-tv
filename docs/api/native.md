@@ -316,12 +316,25 @@ TMDB client has its own token bucket, so the app cannot hammer TMDB.
 - `GET /v1/discover/{tv|movie}/{tmdbId}` → the item plus `tagline, status, seasons,
   episodes, runtimeMinutes, networks, tvdbId, imdbId, request, requestsEnabled`.
 - `POST /v1/discover/request` `{type, tmdbId}` → the request row. Sent to Sonarr
-  (by TVDB id, series type "anime" for anime) or Radarr (by TMDB id) when
-  `ROXY_SONARR_URL` / `ROXY_SONARR_API_KEY` / `ROXY_RADARR_URL` / `ROXY_RADARR_API_KEY`
-  are configured (Account -> Server -> Sonarr & Radarr, or the `ROXY_*` variables).
-  Without the matching app the request is refused with `412` and a message naming it;
-  the apps show a "set up requests" prompt instead of a Request button (admins get a
-  link to the settings page). 409 when the library already has it.
+  (by TVDB id) or Radarr (by TMDB id) once that app is set up for requests: an address,
+  a key, **and** a root folder and quality profile chosen in the settings (Account →
+  Sonarr & Radarr). An address and key alone, say from the `ROXY_*` variables, do not
+  turn requests on. Without it the request is refused with `412` and a message naming
+  the app; the apps hide the Request button (admins get a link to the settings page).
+  409 when the library already has it.
+  - Anime (TMDB: Animation + Japanese) goes to the anime root folder and profile, on
+    Sonarr and Radarr alike, with Sonarr's series type from the settings (`standard`
+    by default). Older anime (Sonarr's lookup: first aired before 2010, status ended)
+    goes to `oldAnimeQualityProfileId` when one is set; a long runner still airing keeps
+    the anime profile.
+  - A new series is added with Sonarr's own search on add **off** (it searches episode
+    by episode, never matches a season pack, grabs one stray episode, and that file then
+    blocks the pack as a downgrade). With `searchOnAdd` on, Roxy then sends a
+    `SeriesSearch` for a whole-series request or a `SeasonSearch` per requested season.
+  - A series Sonarr already has and monitors gets the requested seasons monitored and
+    searched. One Sonarr has but does **not** monitor is kept by hand there (subtitles
+    only, a few episodes): the request fails with "already in Sonarr and not monitored
+    there (kept by hand)" and nothing in Sonarr changes.
 - `GET /v1/discover/browse?type=tv|movie&sort=popular|top|newest|oldest|votes&genres=16,35&lang=ja&anime=1&yearFrom=&yearTo=&minRating=&status=airing|ended&page=`
   → `{items, page, totalPages}` (TMDB discover; cached 5 min per query; `anime` =
   Animation + Japanese original language). `GET /v1/discover/genres?type=` → `{genres}`.
@@ -365,6 +378,12 @@ The server builds it from each title's own queue (`/queue/details`, unpaged; req
 only the first 10 queue records), episodes (`hasFile`, `airDateUtc`, `lastSearchTime`)
 and history (`downloadFailed`), every 10 s while something moves and every 2 min
 otherwise, and at once when a Sonarr / Radarr webhook arrives.
+
+When `have` goes up between two passes (an import finished), the server asks the arr
+app for the title's files (`/episodefile?seriesId=`, or the movie's `movieFile`), maps
+them to its own paths (the webhook resolver below) and adds the ones the library lacks.
+A requested title therefore shows up within seconds even with no webhook set up; titles
+added in Sonarr / Radarr directly need the webhook (or a scan).
 
 `episodes` lists every requested episode still missing with its own `state`, `progress`,
 `timeLeftSec`, `message`, `airDate` (waiting) and `canSearch` / `canRetry`; the same
@@ -425,10 +444,17 @@ request app's Services model, saved on the server (settings key `arr`, migration
 
 - `GET /v1/settings/arr` → `{sonarr, radarr, requestsEnabled}` with API keys masked as `••••••••`.
 - `PUT /v1/settings/arr` `{sonarr: {url, apiKey, rootFolder, qualityProfileId,
-  animeRootFolder, animeQualityProfileId, tags, animeTags, seasonFolders, searchOnAdd,
-  externalUrl}, radarr: {url, apiKey, rootFolder, qualityProfileId, tags,
-  minimumAvailability, searchOnAdd, externalUrl}}`; a masked key keeps the saved one.
-  Saving rebuilds the clients and sends pending requests (also retried every 10 min).
+  animeRootFolder, animeQualityProfileId, oldAnimeQualityProfileId, animeSeriesType,
+  tags, animeTags, seasonFolders, searchOnAdd, externalUrl}, radarr: {url, apiKey,
+  rootFolder, qualityProfileId, animeRootFolder, animeQualityProfileId, tags,
+  minimumAvailability, searchOnAdd, externalUrl}, pathMappings}`.
+  - The body is applied **over** the saved settings: a field left out keeps its value
+    (an older app that has never heard of a setting does not wipe it). Clear a value by
+    sending it empty or `0`, not `null`. A masked key keeps the saved one.
+  - `animeSeriesType`: `standard` (default; SxxEyy names, like the rest of a library) or
+    `anime` (absolute numbering). `oldAnimeQualityProfileId`: see requests above; `0` =
+    the anime profile.
+  - Saving rebuilds the clients and sends pending requests (also retried every 10 min).
 - `POST /v1/settings/arr/test` `{kind, url, apiKey}` → `{version, appName, rootFolders,
   qualityProfiles, tags}` so the app can offer dropdowns.
 - `DELETE /v1/discover/requests/{id}` → 204; the requester or an admin only.
@@ -445,7 +471,10 @@ under the folder), `Test`; the rest are logged. Paths are the arr app's own: an 
 longest tail of the path that exists under a library root (or, for removals, that the
 library knows) wins. Every notification lands in `GET /v1/webhooks/events?limit=`
 (admin) with its outcome. API keys: `GET/POST /v1/auth/keys`, `DELETE
-/v1/auth/keys/{id}` (admin; the token is returned once on create).
+/v1/auth/keys/{id}` (admin; the token is returned once on create). Both lists are
+always arrays (`{"keys": []}`, `{"events": []}`), never `null`. Sonarr and Radarr send
+a `Test` both on the connection's Test button and when it is saved, so two test events
+after setting one up are expected.
 
 ## Legal
 

@@ -1,8 +1,22 @@
 # Sonarr / Radarr webhook contract (ingest input)
 
-Roxy Server exposes `POST /v1/ingest/sonarr` and `POST /v1/ingest/radarr` (also reachable
-at `/webhooks/sonarr` and `/webhooks/radarr`), configured in each app as a generic
-**Webhook** connection with an API key in a header. Payload field inventory from the
+Roxy Server exposes `POST /v1/webhooks/sonarr` and `POST /v1/webhooks/radarr` (also
+reachable at `/v1/ingest/sonarr` and `/v1/ingest/radarr`), configured in each app as a
+generic **Webhook** connection with an API key in a header.
+
+## Setting it up
+
+1. In Roxy (web): Account → Webhooks → **New key for Sonarr** (and for Radarr). The key is
+   shown once; copy it.
+2. In Sonarr: Settings → Connect → + → Webhook. URL `http://<roxy-host>:<port>/v1/webhooks/sonarr`
+   (the page shows it with a copy button), method POST, triggers On Import, On Upgrade,
+   On Rename, On Series Delete, On Episode File Delete. Add a header `X-Api-Key` with the
+   key (or append `?api_key=<key>` to the URL). Same in Radarr with `/v1/webhooks/radarr`
+   and the movie triggers.
+3. Test, then Save. Both send a `Test` event, so Roxy's Recent notifications shows two.
+
+Without a webhook, titles requested through Roxy still appear on their own (the request
+tracker notices new files); anything added in Sonarr / Radarr directly then needs a scan. Payload field inventory from the
 Sonarr/Radarr source as of September 2026; JSON casing is camelCase in practice (not
 verified from serializer settings, so parse case-insensitively).
 

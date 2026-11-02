@@ -55,9 +55,22 @@ Android debug APK on every push.
   the app. Runs in Docker with the GPU passed through.
 - LAN discovery (a UDP beacon on 8096), in-app APK updates, server-served Terms of Use and
   Privacy. (The Jellyfin-compatible API was removed; see ADR-0008.)
-- Requests are offered only once Sonarr or Radarr has a root folder and a quality profile
-  chosen in the settings (an address and key alone, say from the environment, are not
-  enough). Anime are added as series type "standard" by default, with a setting for "anime".
+- Requests go straight to Sonarr and Radarr (no request app). They are offered only once Sonarr
+  or Radarr has a root folder and a quality profile chosen in the settings (an address and
+  key alone, say from the environment, are not enough). Requests follow a hand-tuned arr
+  setup rather than fighting it:
+  - Anime goes to its own root folder and profile (series and films); anime are added as
+    series type "standard" by default, with a setting for "anime". An optional older-anime
+    profile catches shows that first aired before 2010 and have ended, which often exist
+    only as DVD or 480p releases.
+  - New series are searched season by season, so season packs are found; Sonarr's own
+    search on add (episode by episode) is never used, because the one stray episode it
+    grabs blocks the pack.
+  - A show Sonarr has but does not monitor is treated as kept by hand: the request is
+    refused rather than turning on downloads for the whole series.
+  - A finished import shows up in seconds, from the webhook or from the request tracker
+    noticing the new files.
+- Saving settings from an older app never wipes a setting it does not know about.
 - Sign-in by phone: a TV or browser shows a QR code and a six-letter code, and a signed-in
   phone approves it. The sign-in page's poster wall comes from the server's own library
   (`/v1/showcase`, public, posters only).
@@ -65,7 +78,7 @@ Android debug APK on every push.
   worker (AniList for anime; TMDB's cast for live action; none for other animation), so the
   editor opens instantly and a thousand new shows are looked up over hours, not at once.
 
-**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.5.19)
+**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.5.20)
 
 - One APK with two layouts, shown on the launcher as **Roxy TV**: a phone layout (portrait,
   Crunchyroll-style title pages, a Netflix-style hero carousel, bottom bar Home / Discover /
