@@ -15,19 +15,20 @@ function signIn(r: LoginResponse) {
 
 const TERMS_KEY = 'roxy.termsAccepted'
 
-function termsAcceptedHere(version: string | null): boolean {
-  if (!version) return false
+/** The terms version this browser agreed to, if any. */
+function termsAcceptedHere(): string | null {
   try {
-    return localStorage.getItem(TERMS_KEY) === version
+    return localStorage.getItem(TERMS_KEY)
   } catch {
-    return false
+    return null
   }
 }
 
 /** Record the agreement on the server (the same record the apps keep) and in this browser. */
-async function recordTerms(token: string, version: string | null) {
-  if (!version) return
+async function recordTerms(token: string, known: string | null) {
   try {
+    const version = known ?? (await api.legal('terms')).version
+    if (!version) return
     await fetch('/v1/legal/accept', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ version }) })
     localStorage.setItem(TERMS_KEY, version)
   } catch {
@@ -146,7 +147,12 @@ export function Login() {
     api.legal('terms').then((d) => setTermsVersion(d.version)).catch(() => setTermsVersion(null))
   }, [])
 
-  const terms: Terms = { version: termsVersion, needed: !!termsVersion && !termsAcceptedHere(termsVersion), agreed, setAgreed, show: setDoc }
+  // Decided at first paint from this browser, so the form never jumps when the server
+  // answers: agreed before -> small print; never -> the checkbox. The server's version
+  // only changes that when the terms themselves changed.
+  const acceptedHere = termsAcceptedHere()
+  const needed = acceptedHere == null || (termsVersion != null && termsVersion !== acceptedHere)
+  const terms: Terms = { version: termsVersion, needed, agreed, setAgreed, show: setDoc }
 
   return (
     <div className="signin">
@@ -276,7 +282,6 @@ function PasswordSignIn({ terms, onPhone }: { terms: Terms; onPhone: () => void 
 
 /** The agreement: a checkbox until this browser has agreed to this version, then one line. */
 function TermsLine({ terms }: { terms: Terms }) {
-  if (!terms.version) return null
   const links = (
     <>
       the{' '}
