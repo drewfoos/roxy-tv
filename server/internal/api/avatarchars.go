@@ -121,7 +121,7 @@ func (s *Server) lookupCharacters(ctx context.Context, seriesID string) ([]store
 		if c.ProfilePath == "" {
 			continue
 		}
-		name := c.Character
+		name := store.CleanCharacterName(c.Character)
 		if name == "" {
 			name = c.Name
 		}

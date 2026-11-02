@@ -2,8 +2,18 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+// CleanCharacterName drops TMDB's role notes ("Rho Banks (voice)" -> "Rho Banks").
+func CleanCharacterName(name string) string {
+	name = strings.TrimSpace(name)
+	for _, note := range []string{" (voice)", " (Voice)", " (uncredited)", " (archive footage)"} {
+		name = strings.TrimSuffix(name, note)
+	}
+	return strings.TrimSpace(name)
+}
 
 // SeriesCharacter is one character saved for a series (the avatar suggestions).
 type SeriesCharacter struct {
@@ -87,6 +97,7 @@ func (s *Store) SuggestedCharacters(ctx context.Context, perSeries, max int) ([]
 		if seen[c.ID] || len(out) >= max {
 			continue
 		}
+		c.Name = CleanCharacterName(c.Name)
 		seen[c.ID] = true
 		out = append(out, c)
 	}

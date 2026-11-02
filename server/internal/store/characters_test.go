@@ -63,3 +63,11 @@ func TestSeriesCharacters(t *testing.T) {
 		t.Fatalf("suggestions %+v", got)
 	}
 }
+
+func TestCleanCharacterName(t *testing.T) {
+	for in, want := range map[string]string{"Rho Banks (voice)": "Rho Banks", "Beth Smith": "Beth Smith", " Max (uncredited) ": "Max"} {
+		if got := CleanCharacterName(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}
