@@ -880,3 +880,87 @@ img { display: block; }
   .profiles__logout, .profiles__logout:hover { border: 0; padding: 8px; background: none; color: var(--accent); font-size: 14px; }
   .profiles--editor { padding-bottom: 24px; }
 }
+
+/* ---------- Discover (PhoneDiscover.kt): poster corners, the title page's seasons, download status ---------- */
+.dcard__box { position: absolute; top: 6px; right: 6px; max-width: calc(100% - 12px); padding: 3px 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.9); font-size: 11px; line-height: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dcard__dot { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff; border: 1.5px solid rgba(0, 0, 0, 0.4); }
+.dcard__dot--lib { background: var(--accent); color: var(--on-brand); }
+.dcard__dot--bad { background: var(--error); }
+.dcard__dot--req { background: #4b4b57; }
+.dcard__bar { position: absolute; left: 0; right: 0; bottom: 0; }
+.dlbar { height: 4px; background: rgba(255, 255, 255, 0.33); overflow: hidden; border-radius: 2px; }
+.dlbar i { display: block; height: 100%; }
+.dcard__bar.dlbar { border-radius: 0; }
+.dlcard { margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 18px; text-align: left; max-width: 560px; }
+.dlcard__head { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.dlcard__head i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dlcard__head b { flex: 1; }
+.dlcard__head span { font-weight: 700; }
+.dlcard__groups { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.dlcard__groups > div { display: flex; gap: 8px; }
+.dlcard__groups b { width: 120px; flex: none; }
+.dlcard__groups span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dlcard__groups em { font-style: normal; color: var(--muted); }
+.dlcard__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.dtitle__tagline { margin: 0 0 12px; font-style: italic; color: var(--muted); }
+.dtitle__line { margin-top: 16px; font-size: 13px; color: var(--muted); }
+.dtitle__line--bad { color: var(--error); }
+.dtitle__row { display: flex; gap: 12px; margin-top: 10px; }
+.dtitle__off { margin-top: 16px; max-width: 560px; text-align: left; }
+.dtitle__done { cursor: default; }
+.dtitle__done:hover { background: var(--button-grey); }
+.title__actions a.btn { text-decoration: none; }
+.dseasons { padding: 0 var(--gutter); margin-top: 40px; max-width: 900px; }
+.dseasons .row__title { margin-bottom: 8px; }
+.dseason { border-bottom: 1px solid var(--surface-high); }
+.dseason__head { display: flex; align-items: center; gap: 12px; }
+.dseason__toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 12px 0; text-align: left; color: var(--fg); }
+.dseason__chev { color: var(--muted); flex: none; transition: transform 150ms ease; }
+.dseason--open .dseason__chev { transform: rotate(180deg); }
+.dseason__text { display: flex; flex-direction: column; min-width: 0; }
+.dseason__text b { font-size: 15px; font-weight: 600; }
+.dseason__text span { font-size: 12px; color: var(--muted); }
+.dseason__state { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.dseason__state--lib { color: var(--accent); }
+.dseason .chip { white-space: nowrap; flex: none; }
+.dseason .chip:hover { background: #444; }
+.dseason .chip[disabled] { opacity: 0.5; }
+.dseason__empty { padding: 0 0 12px 30px; font-size: 12px; color: var(--muted); }
+.dseason__eps { padding: 0 0 10px 30px; }
+.dep { padding: 6px 0; }
+.dep__row { display: flex; align-items: flex-start; gap: 8px; }
+.dep__tick { flex: none; width: 18px; height: 18px; margin-top: 1px; display: grid; place-items: center; color: var(--muted); }
+.dep__tick i { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid rgba(154, 160, 166, 0.5); }
+.dep__tick--have { color: var(--accent); }
+.dep__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; font-size: 13px; line-height: 17px; color: var(--fg); }
+.dep__text small { font-size: 11px; color: rgba(154, 160, 166, 0.85); }
+.dep__text .dlbar { margin: 3px 8px 0 0; }
+.dep__action { flex: none; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.dep__action:hover { background: rgba(62, 166, 255, 0.12); }
+.dep__req { font-size: 12px; padding: 3px 8px; }
+.dep__more { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px 2px 26px; }
+.dep__more img { width: 160px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: var(--surface-high); flex: none; }
+.dep__more p { margin: 0; font-size: 12px; line-height: 17px; color: rgba(242, 242, 245, 0.85); }
+.dcast .card__art { border-radius: 8px; }
+.dmeta { padding: 0 var(--gutter); margin-top: 40px; max-width: 900px; }
+.dmeta dl { margin: 12px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14px; }
+.dmeta dl > div { display: contents; }
+.dmeta dt { color: var(--muted); }
+.dmeta dd { margin: 0; }
+.dmeta__chips { padding: 16px 0 0; }
+.dmeta__links { display: flex; gap: 20px; margin-top: 16px; }
+@media (max-width: 600px) {
+  .dcard__box { top: 5px; right: 5px; padding: 2px 6px; font-size: 10px; line-height: 12px; }
+  .dcard__dot { top: 5px; right: 5px; width: 22px; height: 22px; }
+  .dlcard { max-width: none; }
+  .dtitle__off { max-width: none; }
+  .dtitle__line { text-align: center; }
+  .dtitle__row { justify-content: center; }
+  .dseasons, .dmeta { padding: 0 16px; margin-top: 22px; }
+  .dseasons .row__title, .dmeta .row__title { font-size: 17px; }
+  .dep__more { flex-direction: column; }
+  .dep__more img { width: 100%; max-width: 280px; }
+  /* The fixed action bar: the grey buttons share it with Watch / Request. */
+  .title__actions .btn--grey, .title__actions .btn--outline { height: 44px; border-radius: 22px; font-size: 14px; letter-spacing: 0; text-transform: none; padding: 0 18px; }
+  .title__actions > .btn:only-child { flex: 1; }
+}

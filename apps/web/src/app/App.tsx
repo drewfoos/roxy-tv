@@ -5,6 +5,7 @@ import { Profiles } from '../pages/Profiles'
 import { Home } from '../pages/Home'
 import { Browse } from '../pages/Browse'
 import { Discover } from '../pages/Discover'
+import { DiscoverTitle } from '../pages/DiscoverTitle'
 import { Lists } from '../pages/Lists'
 import { AccountSection } from '../pages/account/AccountLayout'
 import { Series } from '../pages/Series'
@@ -52,6 +53,7 @@ export default function App() {
       <Route path="/" element={<Home />} />
       <Route path="/browse" element={<Browse />} />
       <Route path="/discover" element={<Discover />} />
+      <Route path="/discover/:type/:tmdbId" element={<DiscoverTitle />} />
       <Route path="/lists" element={<Lists />} />
       <Route path="/account/*" element={<AccountSection />} />
       <Route path="/series/:id" element={<Series />} />

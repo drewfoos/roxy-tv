@@ -13,8 +13,13 @@ export interface AsyncState<T> {
  * life of the tab, so going back to a page paints at once.
  */
 const cache = new Map<string, unknown>()
+const fetchedAt = new Map<string, number>()
 
-export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unknown[] = []): AsyncState<T> {
+/**
+ * `freshMs`: a cached result younger than this is shown without asking again (Discover's
+ * TMDB rows are ~100 KB and change slowly); 0 = always refresh in the background.
+ */
+export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unknown[] = [], freshMs = 0): AsyncState<T> {
   const [data, setData] = useState<T | null>(() => (key && cache.has(key) ? (cache.get(key) as T) : null))
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<boolean>(key != null && !cache.has(key))
@@ -32,6 +37,7 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
         .then((d) => {
           if (my !== gen.current) return
           cache.set(key, d)
+          fetchedAt.set(key, Date.now())
           setData(d)
           setError(null)
           setLoading(false)
@@ -51,12 +57,12 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
     if (cache.has(key)) {
       setData(cache.get(key) as T)
       setLoading(false)
-      run(true)
+      if (!(freshMs > 0 && Date.now() - (fetchedAt.get(key) ?? 0) < freshMs)) run(true)
     } else {
       setData(null)
       run(false)
     }
-  }, [key, run])
+  }, [key, run, freshMs])
 
   return { data, error, loading, reload: run }
 }
@@ -64,4 +70,10 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
 /** Forget cached pages (after sign-out or a profile switch). */
 export function clearAsyncCache() {
   cache.clear()
+  fetchedAt.clear()
+}
+
+/** The next page that shows `key` asks the server again (after a request changed it). */
+export function markStale(key: string) {
+  fetchedAt.delete(key)
 }

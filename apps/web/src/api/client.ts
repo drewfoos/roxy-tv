@@ -4,12 +4,16 @@
 import { session, deviceName } from './session'
 import type { AccountUser, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, TranscodingSettings, WebhookEvent } from './admin'
 import type {
+  DiscoverDetail,
+  DiscoverEpisode,
   DiscoverItem,
   DiscoverResponse,
+  ItemDetails,
   HomeResponse,
   Item,
   ItemsResponse,
   LegalDoc,
+  RequestRow,
   LoginResponse,
   Me,
   MediaSource,
@@ -237,6 +241,20 @@ export const api = {
   // ---- discover ----
   discover: () => get<DiscoverResponse>('/v1/discover'),
   discoverSearch: (query: string) => get<{ items: DiscoverItem[] }>('/v1/discover/search?q=' + encodeURIComponent(query)),
+  discoverDetail: (type: string, tmdbId: number | string) => get<DiscoverDetail>(`/v1/discover/${type}/${tmdbId}`),
+  /** Cast, studio, dates, keywords and links for a Discover title. */
+  discoverMoreDetails: (type: string, tmdbId: number | string) => get<ItemDetails>(`/v1/discover/${type}/${tmdbId}/details`),
+  discoverEpisodes: (tmdbId: number | string, season: number) => get<{ episodes: DiscoverEpisode[] }>(`/v1/discover/tv/${tmdbId}/season/${season}`),
+  /** "Your requests": the signed-in user's requests as Discover titles, with download status. */
+  discoverRequests: () => get<{ items: DiscoverItem[] }>('/v1/discover/requests'),
+  /** Request a title; `seasons` narrows a series (empty = everything the library lacks), `episodes` are specials ("S0E5"). */
+  discoverRequest: (type: string, tmdbId: number, seasons?: number[], episodes?: string[]) =>
+    post<RequestRow>('/v1/discover/request', { type, tmdbId, seasons: seasons ?? [], episodes: episodes ?? [] }),
+  deleteRequest: (id: string) => del<void>(`/v1/discover/requests/${id}`),
+  /** Ask Sonarr / Radarr to look again for what the request still lacks (all, or these "S1E3" episodes). */
+  searchAgain: (id: string, episodes: string[] = []) => post<void>(`/v1/discover/requests/${id}/search`, { episodes }),
+  /** Admin: blocklist the failed / stalled download and let the arr app pick another release. */
+  tryAnotherRelease: (id: string, episodes: string[] = []) => post<void>(`/v1/discover/requests/${id}/replace`, { episodes }),
 
   // ---- images ----
   /** Absolute-enough image URL (same origin) for an item's art, or null when the server has none. */

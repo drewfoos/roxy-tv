@@ -191,10 +191,151 @@ export interface DiscoverItem {
   poster?: string | null
   backdrop?: string | null
   overview?: string | null
+  rating?: number | null
+  genres?: string[]
   isAnime?: boolean
+  /** Not sent by the server: "in the library" is `libraryItemId` being set. */
   inLibrary?: boolean
   libraryItemId?: string | null
+  /** pending | sent | failed | approval | declined when someone asked for it. */
   requestStatus?: string | null
+  /** What Sonarr / Radarr are doing with the request (absent before it reached them). */
+  download?: DownloadStatus | null
+}
+
+/**
+ * A request's download status from the server's tracker. state: searching | notFound |
+ * waiting | queued | downloading | stalled | importing | attention | failed | complete.
+ */
+export interface DownloadStatus {
+  state: string
+  progress?: number
+  timeLeftSec?: number
+  message?: string | null
+  have?: number
+  wanted?: number
+  upcoming?: number
+  nextAir?: string | null
+  lastSearch?: string | null
+  groups?: DownloadGroup[]
+  canSearch?: boolean
+  canRetry?: boolean
+  updatedAt?: string | null
+  episodes?: EpisodeDownload[]
+  /** waiting: "airing", "release" or "digital" (in cinemas). */
+  waitingFor?: string | null
+}
+
+export interface DownloadGroup {
+  state: string
+  label?: string
+  count?: number
+  progress?: number
+  timeLeftSec?: number
+  message?: string | null
+}
+
+export interface EpisodeDownload {
+  season: number
+  episode: number
+  state: string
+  progress?: number
+  timeLeftSec?: number
+  message?: string | null
+  airDate?: string | null
+  canSearch?: boolean
+  canRetry?: boolean
+}
+
+export interface RequestRow {
+  id: string
+  type: string
+  tmdbId: number
+  title: string
+  year?: number
+  userId?: string
+  userName?: string
+  /** pending | sent | failed | approval | declined */
+  status: string
+  error?: string
+  seasons?: number[]
+  episodes?: string[]
+  createdAt?: string
+}
+
+/** One season on a Discover title page, with what the library holds and whether it is requested. */
+export interface DiscoverSeason {
+  number: number
+  name?: string
+  episodes: number
+  airDate?: string | null
+  poster?: string | null
+  have: number
+  known?: number
+  requested: boolean
+  /** TMDB season 0: requested one episode at a time. */
+  special?: boolean
+}
+
+export interface DiscoverEpisode {
+  number: number
+  title?: string
+  overview?: string | null
+  airDate?: string | null
+  still?: string | null
+  have: boolean
+  requested?: boolean
+  download?: EpisodeDownload | null
+}
+
+/** GET /v1/discover/{type}/{tmdbId}: the title page. */
+export interface DiscoverDetail extends DiscoverItem {
+  tagline?: string | null
+  status?: string | null
+  logo?: string | null
+  officialRating?: string | null
+  seasonCount?: number
+  episodes?: number
+  runtimeMinutes?: number
+  networks?: string[]
+  tvdbId?: number
+  imdbId?: string | null
+  request?: RequestRow | null
+  requestsEnabled: boolean
+  seasons?: DiscoverSeason[]
+}
+
+export interface CastMember {
+  name: string
+  character?: string
+  photo?: string | null
+  tmdbId?: number
+}
+
+export interface TmdbExtras {
+  originalTitle?: string
+  firstAired?: string
+  lastAired?: string
+  status?: string
+  episodes?: number
+  seasons?: number
+  runtimeMinutes?: number
+  networks?: string[]
+  companies?: string[]
+  countries?: string[]
+  languages?: string[]
+  keywords?: string[]
+  cast?: CastMember[]
+  homepage?: string
+  tagline?: string
+}
+
+/** GET /v1/discover/{type}/{tmdbId}/details: "More details" for a title not (necessarily) in the library. */
+export interface ItemDetails {
+  item: Item
+  tmdb?: TmdbExtras | null
+  links?: Record<string, string>
+  backdrop?: string | null
 }
 
 export interface DiscoverRow {

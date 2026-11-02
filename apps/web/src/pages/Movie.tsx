@@ -10,6 +10,7 @@ import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
+import { DiscoverGrid } from '../components/DiscoverBits'
 
 /** A film: the same frame as a series, the film as one card under a "Movie" tab, and "Part of" links. */
 export function Movie() {
@@ -103,28 +104,8 @@ export function Movie() {
           )}
         </>
       ) : (
-        <div className="grid" style={{ marginTop: 28 }}>
-          {(similar?.items ?? []).map((c) => {
-            const to = c.libraryItemId ? (c.type === 'movie' ? `/movie/${c.libraryItemId}` : `/series/${c.libraryItemId}`) : null
-            const body = (
-              <>
-                <div className="card__art">{c.poster ? <img className="card__img" src={c.poster} alt="" loading="lazy" /> : <div className="art-fallback">{c.title}</div>}</div>
-                <div className="card__name">{c.title}</div>
-                <div className="card__sub">
-                  <span>{[c.year, c.inLibrary ? 'In your library' : null].filter(Boolean).join('  ·  ')}</span>
-                </div>
-              </>
-            )
-            return to ? (
-              <Link key={`${c.type}:${c.tmdbId}`} to={to} className="card">
-                {body}
-              </Link>
-            ) : (
-              <div key={`${c.type}:${c.tmdbId}`} className="card">
-                {body}
-              </div>
-            )
-          })}
+        <div style={{ marginTop: 28 }}>
+          <DiscoverGrid items={similar?.items ?? []} />
         </div>
       )}
       <Footer />

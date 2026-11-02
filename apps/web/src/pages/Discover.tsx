@@ -1,41 +1,76 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
 import { api } from '../api/client'
 import type { DiscoverItem } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { Row } from '../components/Cards'
-import { RowSkeleton } from '../components/Skeleton'
-import { IconCheckCircle, IconSearch } from '../components/Icons'
+import { GridSkeleton, RowSkeleton } from '../components/Skeleton'
+import { IconClose, IconSearch } from '../components/Icons'
+import { DiscoverCard, DiscoverGrid, isActive } from '../components/DiscoverBits'
+
+/** How long the TMDB rows (~100 KB) are shown from memory before asking again, as on the phone. */
+const ROWS_FRESH_MS = 120_000
 
 /**
- * Discover: TMDB rows through the server, search as you type. A title the library has
- * links to its page; others will get the request page (next milestone).
+ * Discover, the phone app's tab (PhoneDiscover.kt): TMDB rows through the server, search
+ * as you type, and "Your requests" first. Every poster opens a page: the library's when
+ * the library has it, else the Discover title page with Request. The corner of each
+ * poster says where it stands (in the library, requested, downloading and how far).
  */
 export function Discover() {
-  const { data, error, loading } = useAsync('discover', () => api.discover())
+  const rows = useAsync('discover', () => api.discover(), [], ROWS_FRESH_MS)
+  // Requests move (their download status): refreshed on every visit, and every few
+  // seconds only while one of them is downloading.
+  const reqs = useAsync('discover:requests', () => api.discoverRequests().then((r) => r.items ?? []))
+  const requests = reqs.data ?? []
+  const anyActive = requests.some((r) => isActive(r.download))
+  const reloadReqs = reqs.reload
+  useEffect(() => {
+    if (!anyActive) return
+    const h = window.setInterval(() => {
+      if (!document.hidden) reloadReqs(true)
+    }, 5000)
+    return () => window.clearInterval(h)
+  }, [anyActive, reloadReqs])
+
   const [q, setQ] = useState('')
   const [results, setResults] = useState<DiscoverItem[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const t = q.trim()
+    setSearchError(null)
     if (!t) {
       setResults(null)
       setSearching(false)
       return
     }
     setSearching(true)
+    let live = true
     const h = setTimeout(() => {
       api
         .discoverSearch(t)
-        .then((r) => setResults(r.items))
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false))
+        .then((r) => live && setResults(r.items ?? []))
+        .catch((e: unknown) => {
+          if (!live) return
+          setResults(null)
+          setSearchError(e instanceof Error ? e.message : String(e))
+        })
+        .finally(() => live && setSearching(false))
     }, 350)
-    return () => clearTimeout(h)
-  }, [q])
+    return () => {
+      live = false
+      clearTimeout(h)
+    }
+  }, [q, attempt])
+
+  // Rows and "Your requests" appear together: requests arriving after the rows would push
+  // the first row down under the reader's eyes.
+  const ready = rows.data && (reqs.data || reqs.error)
+  const searchActive = q.trim() !== ''
 
   return (
     <div className="page page--tab page--phone">
@@ -45,68 +80,63 @@ export function Discover() {
         <div className="tabhead__spacer" />
         <div className="topbar__search" style={{ background: 'var(--surface-high)', minWidth: 360 }}>
           <IconSearch size={20} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search shows and movies on TMDB" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search shows and movies on TMDB" aria-label="Search TMDB" />
+          {q && (
+            <button className="icon-btn" onClick={() => setQ('')} aria-label="Clear search" style={{ color: 'var(--muted)', display: 'flex' }}>
+              <IconClose size={20} />
+            </button>
+          )}
         </div>
       </div>
-      {results ? (
-        results.length === 0 && !searching ? (
-          <div className="empty">Nothing on TMDB for "{q}".</div>
-        ) : (
-          <div className="grid">
-            {results.map((it) => (
-              <DiscoverCard key={`${it.type}:${it.tmdbId}`} item={it} />
-            ))}
+      {searchActive ? (
+        searchError ? (
+          <div className="empty">
+            <div style={{ color: 'var(--fg)', fontSize: 16, fontWeight: 700 }}>Couldn't reach TMDB</div>
+            <div style={{ margin: '6px 0 14px' }}>{searchError}</div>
+            <button className="btn btn--grey" onClick={() => setAttempt((a) => a + 1)}>
+              Try again
+            </button>
           </div>
+        ) : results == null ? (
+          <GridSkeleton />
+        ) : results.length === 0 && !searching ? (
+          <div className="empty">Nothing on TMDB for "{q.trim()}".</div>
+        ) : (
+          <DiscoverGrid items={results} />
         )
-      ) : loading && !data ? (
+      ) : rows.error && !rows.data ? (
+        <div className="empty">
+          <div style={{ color: 'var(--fg)', fontSize: 18, fontWeight: 700 }}>Discover is unavailable</div>
+          <div style={{ margin: '8px 0 16px' }}>{rows.error}</div>
+          <button className="btn btn--grey" onClick={() => rows.reload()}>
+            Try again
+          </button>
+        </div>
+      ) : !ready ? (
         <>
           <RowSkeleton />
           <RowSkeleton />
+          <RowSkeleton />
         </>
-      ) : error && !data ? (
-        <div className="empty">
-          <div style={{ color: 'var(--fg)', fontSize: 18 }}>Discover is unavailable</div>
-          <div>{error}</div>
-        </div>
       ) : (
-        (data?.rows ?? []).map((r) => (
-          <Row key={r.key} title={r.title}>
-            {r.items.map((it) => (
-              <DiscoverCard key={`${it.type}:${it.tmdbId}`} item={it} />
-            ))}
-          </Row>
-        ))
+        <>
+          {requests.length > 0 && (
+            <Row title="Your requests">
+              {requests.map((it) => (
+                <DiscoverCard key={`${it.type}:${it.tmdbId}`} item={it} />
+              ))}
+            </Row>
+          )}
+          {(rows.data?.rows ?? []).map((r) => (
+            <Row key={r.key} title={r.title}>
+              {r.items.map((it) => (
+                <DiscoverCard key={`${it.type}:${it.tmdbId}`} item={it} />
+              ))}
+            </Row>
+          ))}
+        </>
       )}
       <Footer />
-    </div>
-  )
-}
-
-function DiscoverCard({ item }: { item: DiscoverItem }) {
-  const to = item.libraryItemId ? (item.type === 'movie' ? `/movie/${item.libraryItemId}` : `/series/${item.libraryItemId}`) : undefined
-  const body = (
-    <>
-      <div className="card__art">
-        {item.poster ? <img className="card__img" src={item.poster} alt="" loading="lazy" /> : <div className="art-fallback">{item.title}</div>}
-        {item.inLibrary && (
-          <span className="badge" style={{ top: 6, right: 6, background: 'var(--accent)', color: 'var(--on-brand)', borderRadius: '50%', width: 24, height: 24, display: 'grid', placeItems: 'center', padding: 0 }}>
-            <IconCheckCircle size={16} />
-          </span>
-        )}
-      </div>
-      <div className="card__name">{item.title}</div>
-      <div className="card__sub">
-        <span>{[item.year, item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : null].filter(Boolean).join('  ·  ')}</span>
-      </div>
-    </>
-  )
-  return to ? (
-    <Link to={to} className="card" title={item.title}>
-      {body}
-    </Link>
-  ) : (
-    <div className="card" title={item.title}>
-      {body}
     </div>
   )
 }

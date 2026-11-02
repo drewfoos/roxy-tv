@@ -10,6 +10,7 @@ import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
+import { DiscoverGrid } from '../components/DiscoverBits'
 
 /**
  * A series, laid out like Crunchyroll's: the banner with the info over its left side,
@@ -128,29 +129,7 @@ export function Series() {
           ) : similar.items.length === 0 ? (
             <div className="empty">Nothing to suggest for this title yet.</div>
           ) : (
-            <div className="grid">
-              {similar.items.map((c) => {
-                const to = c.libraryItemId ? (c.type === 'movie' ? `/movie/${c.libraryItemId}` : `/series/${c.libraryItemId}`) : null
-                const body = (
-                  <>
-                    <div className="card__art">{c.poster ? <img className="card__img" src={c.poster} alt="" loading="lazy" /> : <div className="art-fallback">{c.title}</div>}</div>
-                    <div className="card__name">{c.title}</div>
-                    <div className="card__sub">
-                      <span>{[c.year, c.inLibrary ? 'In your library' : null].filter(Boolean).join('  ·  ')}</span>
-                    </div>
-                  </>
-                )
-                return to ? (
-                  <Link key={`${c.type}:${c.tmdbId}`} to={to} className="card">
-                    {body}
-                  </Link>
-                ) : (
-                  <div key={`${c.type}:${c.tmdbId}`} className="card">
-                    {body}
-                  </div>
-                )
-              })}
-            </div>
+            <DiscoverGrid items={similar.items} />
           )}
         </div>
       )}
