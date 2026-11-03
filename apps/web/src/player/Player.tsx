@@ -68,6 +68,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const tokenRef = useRef<string>('')
   const modeRef = useRef<Mode>({ kind: 'direct' })
   const lastReport = useRef(0)
+  // The last position read from a live <video>. On exit React clears videoRef before the
+  // effects' cleanups run, so the final report (and the pause the removal fires) would
+  // read 0 and wipe the saved position; they use this instead.
+  const lastAbs = useRef(0)
   const hideTimer = useRef<number | null>(null)
   const seekBarRef = useRef<HTMLDivElement>(null)
 
@@ -124,17 +128,23 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
 
   const absTime = useCallback(() => {
     const v = videoRef.current
-    if (!v) return 0
+    if (!v) return lastAbs.current
     const m = modeRef.current
-    return (m.kind === 'server' ? m.offset : 0) + v.currentTime
+    const t = (m.kind === 'server' ? m.offset : 0) + v.currentTime
+    lastAbs.current = t
+    return t
   }, [])
 
   const report = useCallback(
     (force = false) => {
       const now = Date.now()
       if (!force && now - lastReport.current < REPORT_EVERY_MS) return
+      // Never report 0 (the apps don't either): a position of 0 is "nothing watched", and
+      // the server would store it over the real one.
+      const positionMs = Math.round(absTime() * 1000)
+      if (positionMs <= 0) return
       lastReport.current = now
-      api.progress(item.id, Math.round(absTime() * 1000), audioIndex ?? undefined, subsOn ? (subIndex ?? undefined) : undefined).catch(() => undefined)
+      api.progress(item.id, positionMs, audioIndex ?? undefined, subsOn ? (subIndex ?? undefined) : undefined).catch(() => undefined)
     },
     [item.id, absTime, audioIndex, subIndex, subsOn],
   )
@@ -218,6 +228,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setReady(false)
     setAdvisory(true)
     tokenRef.current = ''
+    lastAbs.current = 0 // a new item: never carry the last one's position over
     const subs = createSubtitleRenderer(v)
     subsRef.current = subs
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
