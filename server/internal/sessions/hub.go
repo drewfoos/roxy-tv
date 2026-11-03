@@ -123,6 +123,19 @@ func (h *Hub) SetNowPlaying(deviceID string, now *NowPlaying) {
 
 // List is the login's connected players other than the caller's own device, the ones
 // playing something first, then by name.
+// Connected: the login's players polling right now (this one included), by device id.
+func (h *Hub) Connected(userID string) map[string]Player {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := map[string]Player{}
+	for id, p := range h.players {
+		if p.userID == userID && time.Since(p.LastSeen) <= Stale {
+			out[id] = p.Player
+		}
+	}
+	return out
+}
+
 func (h *Hub) List(userID, exceptDevice string) []Player {
 	h.mu.Lock()
 	defer h.mu.Unlock()

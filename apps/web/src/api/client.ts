@@ -2,7 +2,7 @@
 // Vite dev server proxies /v1 to it. Every call carries the device token and the
 // profile; a 401 clears the session so the app returns to the login screen.
 import { session, deviceName } from './session'
-import type { AccountUser, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, TranscodingSettings, WebhookEvent } from './admin'
+import type { AccountUser, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
 import type {
   DiscoverDetail,
   DiscoverEpisode,
@@ -137,6 +137,10 @@ export const api = {
   /** Signs the login out of every other device; 403 = wrong current password, 429 = throttled. */
   changePassword: (current: string, next: string) => post<void>('/v1/me/password', { current, new: next }),
   players: () => get<{ players: PlayerDevice[] }>('/v1/sessions/players'),
+  /** Every device signed in with this login, not only the ones connected now. */
+  devices: () => get<{ devices: SignedInDevice[] }>('/v1/devices'),
+  /** Sign one of this login's other devices out. */
+  signOutDevice: (id: string) => del<void>(`/v1/devices/${id}`),
 
   // ---- admin: users ----
   users: () => get<{ users: AccountUser[] }>('/v1/users'),

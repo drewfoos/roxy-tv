@@ -9,6 +9,18 @@ export interface AccountUser {
   createdAt?: string
 }
 
+/** A device signed in with this login (GET /v1/devices). */
+export interface SignedInDevice {
+  id: string
+  name: string
+  client?: string
+  lastSeen?: string
+  createdAt?: string
+  current: boolean
+  online: boolean
+  nowPlaying?: { title?: string } | null
+}
+
 export interface PlayerDevice {
   deviceId: string
   name: string

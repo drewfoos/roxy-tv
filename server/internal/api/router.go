@@ -168,6 +168,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/sessions/commands", s.sessionCommands)
 			r.Post("/sessions/state", s.sessionState)
 			r.Get("/sessions/players", s.sessionPlayers)
+			r.Get("/devices", s.listDevices)
+			r.Delete("/devices/{id}", s.deleteDevice)
 			r.Post("/sessions/players/{device}/command", s.sessionCommand)
 			r.Post("/me/progress", s.progress)
 			r.Post("/me/played/{itemId}", s.played)

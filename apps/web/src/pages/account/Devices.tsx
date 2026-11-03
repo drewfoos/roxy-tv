@@ -1,41 +1,73 @@
+import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
-import { session } from '../../api/session'
 import { useAsync } from '../../hooks/useAsync'
-import { ListRow, Notice, PanelHead, formatWhen } from '../../components/Form'
+import { ActionButton, ListRow, Notice, PanelHead, errorText, formatWhen } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
 
-/** The players signed in with this login (Crunchyroll's Device Management). */
+/** Friendly names for the apps' client strings. */
+const CLIENTS: Record<string, string> = { 'roxy-web': 'Roxy web', Roxy: 'Roxy phone', 'Roxy TV': 'Roxy TV' }
+
+/**
+ * Every device signed in with this login (Crunchyroll's Device Management): this one
+ * first-class, which are online or playing right now, when each was last seen, and a
+ * way to sign the others out. Several people share one login here, so it lists them all.
+ */
 export function DevicesPage() {
-  const { data, error, loading } = useAsync('players', () => api.players())
-  const mine = session.deviceId()
-  const players = data?.players ?? []
+  const { data, error, loading, reload } = useAsync('devices', () => api.devices())
+  const [err, setErr] = useState<string | null>(null)
+  // Online and "Playing" move: refresh while the page is open.
+  useEffect(() => {
+    const h = window.setInterval(() => {
+      if (!document.hidden) reload(true)
+    }, 30000)
+    return () => window.clearInterval(h)
+  }, [reload])
+  const devices = data?.devices ?? []
+  const signOut = async (id: string, name: string) => {
+    if (!window.confirm(`Sign out ${name}? It will need to sign in again to use Roxy.`)) return
+    setErr(null)
+    try {
+      await api.signOutDevice(id)
+      reload(true)
+    } catch (e) {
+      setErr(errorText(e))
+    }
+  }
   return (
     <section className="acc-form">
-      <PanelHead title="Device Management" sub="The apps and browsers signed in with your login, and what they are playing." />
-      {error && <Notice kind="error">{error}</Notice>}
+      <PanelHead title="Device Management" sub="Every app and browser signed in with your login, and what they are playing." />
+      {(error || err) && <Notice kind="error">{error || err}</Notice>}
       {loading && !data ? (
         <Spinner />
-      ) : players.length === 0 ? (
-        <Notice>No other device has checked in yet. Phones, TVs and browsers appear here once they play something.</Notice>
+      ) : devices.length === 0 ? (
+        <Notice>No devices are signed in.</Notice>
       ) : (
         <div className="acc-list">
-          {players.map((p) => {
-            const here = p.deviceId === mine
+          {devices.map((d) => {
+            const name = d.name || CLIENTS[d.client ?? ''] || d.client || 'Unknown device'
+            const status = d.nowPlaying?.title ? `Playing: ${d.nowPlaying.title}` : d.online ? 'Online now' : d.lastSeen ? `Last seen: ${formatWhen(d.lastSeen)}` : null
             return (
               <ListRow
-                key={p.deviceId}
+                key={d.id}
                 title={
                   <>
-                    {p.name || p.client || p.deviceId}
-                    {here && <span className="tag">This browser</span>}
+                    {name}
+                    {d.current && <span className="tag">This device</span>}
                   </>
                 }
                 sub={
                   <>
-                    {p.client && <div>{p.client}</div>}
-                    {p.nowPlaying?.title ? <div>Playing: {p.nowPlaying.title}</div> : null}
-                    {p.lastSeen && <div>Last seen: {formatWhen(p.lastSeen)}</div>}
+                    {d.client && <div>{CLIENTS[d.client] ?? d.client}</div>}
+                    {status && <div>{status}</div>}
+                    {d.createdAt && <div>Signed in: {formatWhen(d.createdAt)}</div>}
                   </>
+                }
+                right={
+                  d.current ? undefined : (
+                    <ActionButton kind="outline" onClick={() => signOut(d.id, name)}>
+                      Sign out
+                    </ActionButton>
+                  )
                 }
               />
             )

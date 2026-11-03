@@ -109,6 +109,38 @@ func (s *Store) GetDeviceByTokenHash(ctx context.Context, hash string) (*model.D
 	return &d, nil
 }
 
+// ListDevices: every device signed in with the user's login, most recently seen first.
+func (s *Store) ListDevices(ctx context.Context, userID string) ([]model.Device, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, name, client, client_version, device_id, last_seen, created_at FROM devices WHERE user_id = ? ORDER BY last_seen DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Device{}
+	for rows.Next() {
+		var d model.Device
+		var name, client, ver, devID, seen sql.NullString
+		var created string
+		if err := rows.Scan(&d.ID, &d.UserID, &name, &client, &ver, &devID, &seen, &created); err != nil {
+			return nil, err
+		}
+		d.Name, d.Client, d.ClientVersion, d.DeviceID = name.String, client.String, ver.String, devID.String
+		d.LastSeen, d.CreatedAt = ParseTime(seen.String), ParseTime(created)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUserDevice signs one of the user's devices out; false when it isn't theirs.
+func (s *Store) DeleteUserDevice(ctx context.Context, userID, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (s *Store) TouchDevice(ctx context.Context, id string) {
 	_, _ = s.db.ExecContext(ctx, `UPDATE devices SET last_seen = ? WHERE id = ?`, Now(), id)
 }

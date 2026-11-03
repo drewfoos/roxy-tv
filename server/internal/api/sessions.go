@@ -106,3 +106,67 @@ func (s *Server) sessionCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
+
+// DeviceInfo is one device signed in with the login (Device Management), with whether it
+// is the caller, connected right now, and what it plays.
+type DeviceInfo struct {
+	ID         string               `json:"id"`
+	Name       string               `json:"name"`
+	Client     string               `json:"client,omitempty"`
+	LastSeen   time.Time            `json:"lastSeen"`
+	CreatedAt  time.Time            `json:"createdAt"`
+	Current    bool                 `json:"current"`
+	Online     bool                 `json:"online"`
+	NowPlaying *sessions.NowPlaying `json:"nowPlaying,omitempty"`
+}
+
+// GET /v1/devices -> {devices: [DeviceInfo]}: every device signed in with this login, not
+// just the players connected right now (/sessions/players is those, for "Play on").
+func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
+	p := userFrom(w, r)
+	if p == nil {
+		return
+	}
+	devs, err := s.store.ListDevices(r.Context(), p.UserID)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	live := s.hub.Connected(p.UserID)
+	out := make([]DeviceInfo, 0, len(devs))
+	for _, d := range devs {
+		info := DeviceInfo{ID: d.ID, Name: d.Name, Client: d.Client, LastSeen: d.LastSeen, CreatedAt: d.CreatedAt, Current: d.ID == p.DeviceID}
+		if pl, ok := live[d.ID]; ok {
+			info.Online, info.NowPlaying = true, pl.NowPlaying
+			if pl.Name != "" {
+				info.Name = pl.Name
+			}
+		}
+		out = append(out, info)
+	}
+	writeJSON(w, 200, map[string]any{"devices": out})
+}
+
+// DELETE /v1/devices/{id}: sign one of the login's other devices out (its token stops
+// working at once). The caller signs itself out with /auth/logout instead.
+func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
+	p := userFrom(w, r)
+	if p == nil {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == p.DeviceID {
+		writeError(w, 400, "use Sign out to sign this device out")
+		return
+	}
+	ok, err := s.store.DeleteUserDevice(r.Context(), p.UserID, id)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, 404, "no such device")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
