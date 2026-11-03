@@ -222,7 +222,8 @@ func (s *Service) trackOnce(ctx context.Context) time.Duration {
 		seen[r.ID] = true
 		prev := s.Download(r.ID)
 		// Finished titles are re-checked rarely (a deleted file, a new season airing).
-		if prev != nil && prev.State == DLComplete && prev.Upcoming == 0 && time.Since(prev.UpdatedAt) < 10*time.Minute {
+		// (One finishing an upgrade carries a message and keeps being refreshed.)
+		if prev != nil && prev.State == DLComplete && prev.Upcoming == 0 && prev.Message == "" && time.Since(prev.UpdatedAt) < 10*time.Minute {
 			continue
 		}
 		s.refreshClient(ctx, c, prev)
@@ -471,6 +472,22 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 		}
 		d.Items = append(d.Items, it)
 	}
+	// Everything asked for is here and the only downloads replace files that exist (an
+	// upgrade, a dub for a sub-only file): the title is complete, not "downloading".
+	upgrading := d.Wanted > 0 && d.Have >= d.Wanted && len(d.Items) > 0
+	for _, it := range d.Items {
+		if len(it.queueIDs) == 0 || len(it.eps) == 0 || !allHaveFiles(it.eps, byID) {
+			upgrading = false
+		}
+	}
+	if upgrading {
+		up := d.Items
+		d.Items = nil
+		s.summarise(d, 0, 0)
+		d.Message = upgradeMessage(up)
+		d.Episodes = nil
+		return d
+	}
 	s.summarise(d, len(missing), len(notFound))
 	if len(byID) == 0 && len(d.Items) == 0 {
 		// Nothing Sonarr lists is part of the request. Right after an add that is because
@@ -497,6 +514,27 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 		d.State, d.Message = DLSearching, "Sonarr is searching right now."
 	}
 	return d
+}
+
+// allHaveFiles: every episode of a download already has a file (it is a replacement).
+func allHaveFiles(eps []arr.Episode, byID map[int]arr.Episode) bool {
+	for _, e := range eps {
+		if cur, ok := byID[e.ID]; !ok || !cur.HasFile {
+			return false
+		}
+	}
+	return true
+}
+
+// upgradeMessage: "Upgrading S1 E2 to a better release (73%)."
+func upgradeMessage(items []DownloadItem) string {
+	var eps []arr.Episode
+	var prog float64
+	for _, it := range items {
+		eps = append(eps, it.eps...)
+		prog += it.Progress
+	}
+	return fmt.Sprintf("Upgrading %s to a better release (%d%%).", episodesLabel(eps), int(prog/float64(len(items))*100))
 }
 
 // recentlySent: the request was sent (or widened) in the last few minutes.

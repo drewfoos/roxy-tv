@@ -335,3 +335,23 @@ func TestFreshStallWarningIsQueued(t *testing.T) {
 		t.Fatalf("paused: got %s", d.State)
 	}
 }
+
+// Every requested episode has a file and the only download replaces one (a dub for a
+// sub-only file): complete with a note, not "downloading".
+func TestUpgradeOfCompleteSeasonIsComplete(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	past := tp(now.Add(-30 * 24 * time.Hour))
+	s := newTestService()
+	r := &store.Request{Seasons: []int{1}}
+	eps := []arr.Episode{ep(1, 1, 1, true, past, nil), ep(2, 1, 2, true, past, nil)}
+	q := []arr.QueueItem{{ID: 10, DownloadID: "x", EpisodeID: 2, Status: "downloading", TrackedDownloadState: "downloading", Size: 100, SizeLeft: 27}}
+	d := s.seriesStatus(r, eps, q, nil, now)
+	if d.State != DLComplete || d.Message != "Upgrading S1 E2 to a better release (73%)." {
+		t.Fatalf("got %s %q", d.State, d.Message)
+	}
+	// A missing episode downloading is still "downloading".
+	eps[1].HasFile = false
+	if d := s.seriesStatus(r, eps, q, nil, now); d.State != DLDownloading {
+		t.Fatalf("missing episode: got %s", d.State)
+	}
+}
