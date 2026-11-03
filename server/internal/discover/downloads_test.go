@@ -274,3 +274,38 @@ func TestSeriesStatusBeforeEpisodesLoad(t *testing.T) {
 		t.Fatal("never complete with nothing to have")
 	}
 }
+
+// A search that grabbed a release finishes before the release shows in the arr's queue
+// (it polls the download client a little later). In that gap the request used to read
+// "not found"; it is queued.
+func TestJustGrabbedIsQueuedNotNotFound(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	past := tp(now.Add(-30 * 24 * time.Hour))
+	searched := tp(now.Add(-20 * time.Second))
+	grab := arr.HistoryRecord{EpisodeID: 2, EventType: "grabbed", Date: now.Add(-10 * time.Second)}
+	s := newTestService()
+	r := &store.Request{Seasons: []int{1}}
+	eps := []arr.Episode{ep(2, 1, 1, false, past, searched)}
+	d := s.seriesStatus(r, eps, nil, []arr.HistoryRecord{grab}, now)
+	if d.State != DLQueued || len(d.Episodes) != 1 || d.Episodes[0].State != DLQueued {
+		t.Fatalf("series: got %s %+v, want queued", d.State, d.Episodes)
+	}
+	// The same grab long ago with nothing in the queue: it is gone; not found again.
+	old := grab
+	old.Date = now.Add(-2 * time.Hour)
+	oldSearch := tp(now.Add(-3 * time.Hour))
+	d = s.seriesStatus(r, []arr.Episode{ep(2, 1, 1, false, past, oldSearch)}, nil, []arr.HistoryRecord{old}, now)
+	if d.State == DLQueued {
+		t.Fatalf("stale grab: still queued")
+	}
+	// Movie.
+	m := &arr.Movie{ID: 6, IsAvailable: true, LastSearchTime: searched}
+	d = s.movieStatus(&store.Request{Title: "X"}, m, nil, []arr.HistoryRecord{{EventType: "grabbed", Date: now.Add(-10 * time.Second)}}, now)
+	if d.State != DLQueued {
+		t.Fatalf("movie: got %s, want queued", d.State)
+	}
+	d = s.movieStatus(&store.Request{Title: "X"}, m, nil, nil, now)
+	if d.State != DLNotFound {
+		t.Fatalf("movie with no grab: got %s, want notFound", d.State)
+	}
+}

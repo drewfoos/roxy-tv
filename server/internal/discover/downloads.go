@@ -422,7 +422,7 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 	}
 	// Episodes not downloading: failed last time, or searched without a grab.
 	last := latestEvents(history)
-	var failed, notFound []arr.Episode
+	var failed, notFound, grabbed []arr.Episode
 	failMsg := ""
 	for _, e := range missing {
 		if inQueue[e.ID] {
@@ -435,6 +435,10 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 			}
 			continue
 		}
+		if ev, ok := last[e.ID]; ok && justGrabbed(ev, now) {
+			grabbed = append(grabbed, e)
+			continue
+		}
 		if e.LastSearchTime != nil {
 			if ev, ok := last[e.ID]; !ok || ev.Date.Before(*e.LastSearchTime) {
 				notFound = append(notFound, e)
@@ -444,6 +448,13 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 	if len(failed) > 0 {
 		it := DownloadItem{Label: episodesLabel(failed), State: DLFailed, Message: failMsg, eps: failed, CanRetry: true}
 		for _, e := range failed {
+			it.episodeIDs = append(it.episodeIDs, e.ID)
+		}
+		d.Items = append(d.Items, it)
+	}
+	if len(grabbed) > 0 {
+		it := DownloadItem{Label: episodesLabel(grabbed), State: DLQueued, Message: sentToClient, eps: grabbed}
+		for _, e := range grabbed {
 			it.episodeIDs = append(it.episodeIDs, e.ID)
 		}
 		d.Items = append(d.Items, it)
@@ -645,10 +656,35 @@ func (s *Service) movieStatusBase(r *store.Request, m *arr.Movie, queue []arr.Qu
 				notFound = 1
 			}
 		}
+		// Grabbed a moment ago and not in the queue yet: on its way, not "not found".
+		if len(d.Items) == 0 {
+			for _, h := range history {
+				if h.EventType == "downloadFailed" || h.EventType == "downloadFolderImported" {
+					break
+				}
+				if justGrabbed(h, now) {
+					d.Items = append(d.Items, DownloadItem{Label: r.Title, State: DLQueued, Message: sentToClient})
+					notFound = 0
+					break
+				}
+			}
+		}
 	}
 	s.summarise(d, missing, notFound)
 	noteRetry(d, history, now, func(int) bool { return true })
 	return d
+}
+
+// A search that finds a release grabs it and finishes; the download shows in the arr's
+// queue only when it next polls the download client (seconds, up to a minute). In
+// between, "searched, nothing in the queue" read as "not found" for a release that was
+// just grabbed. A grab this recent counts as queued.
+const grabGrace = 15 * time.Minute
+
+const sentToClient = "Sent to the download client; waiting for it to start."
+
+func justGrabbed(h arr.HistoryRecord, now time.Time) bool {
+	return h.EventType == "grabbed" && now.Sub(h.Date) < grabGrace
 }
 
 // noteRetry: Sonarr / Radarr replace a failed download with another release on their

@@ -166,11 +166,16 @@ img { display: block; }
 .row__track {
   display: grid; grid-auto-flow: column; gap: var(--card-gap);
   grid-auto-columns: calc((100% - 2 * var(--gutter) - (var(--row-cols) - 1) * var(--card-gap)) / var(--row-cols));
-  overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 0 var(--gutter);
-  padding: 4px var(--gutter) 10px;
+  /* overflow-x: auto makes the browser scroll y too; y is hidden so a hover panel (8 px
+     past the card) never turns the row into a vertical scroller. 8 px top padding, pulled
+     back by the margin, keeps that panel's top edge from being clipped. */
+  overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-padding: 0 var(--gutter);
+  padding: 8px var(--gutter) 10px; margin-top: -4px;
   scrollbar-width: none;
 }
 .row__track::-webkit-scrollbar { display: none; }
+.row__track--dragging { scroll-snap-type: none; cursor: grabbing; user-select: none; }
+.row__track--dragging * { cursor: grabbing !important; }
 .row__track > * { scroll-snap-align: start; }
 .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 2.35 * var(--card-gap)) / 3.35); }
 @media (min-width: 1600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 3.35 * var(--card-gap)) / 4.35); } }
@@ -201,6 +206,14 @@ img { display: block; }
 .card__hover-actions { position: relative; display: flex; align-items: center; gap: 14px; padding: 6px 12px 10px; }
 .card__hover-btn { width: 32px; height: 32px; display: grid; place-items: center; color: var(--accent); }
 .card__hover-btn:hover { color: var(--accent-light); }
+/* Episode stills: "E2 — Title", the date, a shorter synopsis; Continue on the left, the menu on the right. */
+.card__hover--thumb .card__hover-body { overflow: hidden; gap: 4px; }
+.card__hover-ep { font-size: 14px; line-height: 20px; font-weight: 600; color: #fff; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.card__hover--thumb .card__hover-body p { -webkit-line-clamp: 4; }
+.card__hover-actions--split { justify-content: space-between; }
+.card__hover-cta { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+.card__hover-cta:hover { color: var(--accent-light); }
+.card__hover .card__menu { opacity: 1; }
 .card__hover .save-btn { width: 32px; height: 32px; border: 0; }
 .card__saved { position: absolute; top: 0; right: 0; width: 34px; height: 34px; background: linear-gradient(225deg, var(--accent) 50%, transparent 50%); color: var(--on-brand); display: flex; justify-content: flex-end; padding: 3px 3px 0 0; }
 .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0, 0, 0, 0.55); }
@@ -552,6 +565,7 @@ img { display: block; }
 .center { display: grid; place-items: center; min-height: 60vh; }
 
 /* ---------- menus ---------- */
+.menu--float { position: fixed !important; z-index: 1000 !important; top: auto; right: auto; }
 .menu { position: absolute; right: 0; top: 100%; z-index: 20; min-width: 220px; background: var(--surface-high); border-radius: 8px; padding: 6px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
 .menu button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; text-align: left; color: #fff; font-size: 14px; }
 .menu button:hover { background: rgba(255, 255, 255, 0.08); }
@@ -762,7 +776,7 @@ img { display: block; }
   .row { margin-top: 26px; }
   .row__head { padding: 0 16px; margin-bottom: 10px; }
   .row__title { font-size: 18px; }
-  .row__track { gap: 10px; padding: 0 16px 4px; grid-auto-columns: calc((100% - 36px) / 2.5); }
+  .row__track { gap: 10px; padding: 0 16px 4px; margin-top: 0; grid-auto-columns: calc((100% - 36px) / 2.5); }
   .row__track--thumbs { grid-auto-columns: calc(100% - 60px); }
   .card__art { border-radius: 8px; }
   .card__art--thumb { border-radius: 8px; }
