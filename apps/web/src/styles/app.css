@@ -648,8 +648,10 @@ img { display: block; }
 .lrow__right { flex: none; }
 .link-brand { color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
 .link-brand:hover { color: var(--accent-light); }
-.tag { display: inline-block; padding: 2px 8px; border-radius: 3px; background: var(--accent); color: var(--on-brand); font-size: 11px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; vertical-align: middle; }
-.tag--quiet { background: rgba(255, 255, 255, 0.14); color: #ddd; }
+/* Small labels beside a name ("This device", "You", "Current"): a soft tint, not a solid block. */
+.tag { display: inline-block; margin-left: 8px; padding: 2px 10px; border-radius: 999px; background: rgba(62, 166, 255, 0.14); border: 1px solid rgba(62, 166, 255, 0.35); color: var(--accent-light); font-size: 12px; font-weight: 600; line-height: 16px; vertical-align: middle; white-space: nowrap; }
+.tag + .tag { margin-left: 6px; }
+.tag--quiet { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); color: var(--muted); }
 .facts { margin: 0; display: flex; flex-direction: column; }
 .facts div { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: 15px; }
 .facts dt { color: #a0a0a0; }
