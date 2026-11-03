@@ -175,6 +175,15 @@ class FocusMemory(private val saved: androidx.compose.runtime.MutableState<Strin
         fun muted(): Boolean = android.os.SystemClock.uptimeMillis() <= muteUntil
     }
 
+    /**
+     * Focus [key]'s element if it is on screen now. False when it is not composed (a card
+     * scrolled out of its row, a row not laid out yet): its requester has no node then.
+     */
+    fun tryFocus(key: String): Boolean {
+        val r = requesters[key] ?: return false
+        return runCatching { r.requestFocus() }.getOrDefault(false)
+    }
+
     /** Focus the remembered element, or [fallback]; false when neither is on screen yet. */
     fun restore(fallback: String? = null): Boolean {
         for (k in listOfNotNull(key, fallback)) {
@@ -225,6 +234,22 @@ fun rememberFocusMemory(): FocusMemory {
 
 /** Registers this element with [memory] under [key]: focus on it is remembered and restorable. */
 fun Modifier.focusKey(memory: FocusMemory, key: String): Modifier = this.then(memory.modifier(key))
+
+/**
+ * Up / Down to a remembered element (the card a row last had, the hero's Play) when it is
+ * on screen, else Compose's own move to the nearest element. A fixed focusProperties
+ * target cannot fall back: pointed at a card that had scrolled out of its row (new
+ * arrivals push "Recently added" along), Down from the hero went nowhere at all.
+ */
+fun Modifier.moveVertically(memory: FocusMemory, up: () -> String?, down: () -> String?): Modifier = onPreviewKeyEvent { e ->
+    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+    val target = when (e.key) {
+        Key.DirectionUp -> up()
+        Key.DirectionDown -> down()
+        else -> return@onPreviewKeyEvent false
+    } ?: return@onPreviewKeyEvent false
+    memory.tryFocus(target)
+}
 
 /**
  * A focusable, clickable box with no look of its own: the caller draws from [focused].
@@ -447,10 +472,7 @@ fun TvRow(
             itemsIndexed(items, key = { _, it -> it.id }, contentType = { _, it -> if (thumbs || it.isEpisode) 1 else 0 }) { i, item ->
                 val key = "$rowKey/${item.id}"
                 val focusMod = remember(key) {
-                    Modifier.focusKey(memory, key).focusProperties {
-                        upTarget()?.let { up = memory.requester(it) }
-                        downTarget()?.let { down = memory.requester(it) }
-                    }
+                    Modifier.focusKey(memory, key).moveVertically(memory, up = { upTarget() }, down = { downTarget() })
                 }
                 val focused = remember(key, i) { { pivot.value = i to pivot.value.second + 1; rowFocused(key) } }
                 val clicked = remember(item) { { click(item) } }

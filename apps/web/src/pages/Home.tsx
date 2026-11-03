@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api/client'
-import { isEpisode, isMovie, isSeries } from '../api/items'
+import { isEpisode, isMovie, isSeries, nextToPlay } from '../api/items'
 import type { HomeRow, Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
@@ -19,20 +19,28 @@ const MAX_HEROES = 6
  * series for the art and logo; the episode stays what Play starts.
  */
 async function resolveHeroes(rows: HomeRow[]): Promise<HeroPick[]> {
-  const picks = new Map<string, Item>()
+  const picks = new Map<string, { item: Item; continuing: boolean }>()
   for (const key of ['continue', 'recentEpisodes', 'recentMovies', 'series']) {
     for (const it of rows.find((r) => r.key === key)?.items ?? []) {
       if (picks.size >= MAX_HEROES) break
       const k = isEpisode(it) ? (it.seriesId ?? it.id) : it.id
-      if (!picks.has(k)) picks.set(k, it)
+      if (!picks.has(k)) picks.set(k, { item: it, continuing: key === 'continue' })
     }
   }
   const out = await Promise.all(
-    Array.from(picks.values()).map(async (play): Promise<HeroPick | null> => {
-      if (!isEpisode(play)) return { title: play, play }
-      if (!play.seriesId) return null
+    Array.from(picks.values()).map(async ({ item, continuing }): Promise<HeroPick | null> => {
+      if (!isEpisode(item)) return { title: item, play: item }
+      if (!item.seriesId) return null
       try {
-        return { title: await api.item(play.seriesId), play }
+        const title = await api.item(item.seriesId)
+        // A newly added episode is just what arrived last (a season's E12): Play starts
+        // where the title page's Play would, the show's next episode.
+        let play = item
+        if (!continuing) {
+          const all = await api.items({ type: 'episode', parent: item.seriesId, recursive: true, sort: 'index' }).catch(() => null)
+          play = (all && nextToPlay(all.items)) ?? item
+        }
+        return { title, play }
       } catch {
         return null
       }

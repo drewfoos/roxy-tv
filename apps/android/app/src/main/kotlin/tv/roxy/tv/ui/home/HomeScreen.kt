@@ -16,6 +16,7 @@ import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.api.HomeRow
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
+import tv.roxy.tv.ui.detail.upNextOf
 
 /** One slide of the phone's hero carousel: the series/movie to show, and what Play starts. */
 data class HeroPick(val title: Item, val play: Item)
@@ -91,23 +92,30 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
      * and logo; the episode stays as the thing Play starts.
      */
     private suspend fun resolveHeroes(rows: List<HomeRow>): List<HeroPick> {
-        val picks = LinkedHashMap<String, Item>() // show key -> item to play
-        fun consider(items: List<Item>) {
+        val picks = LinkedHashMap<String, Pair<Item, Boolean>>() // show key -> (item to play, from Continue Watching)
+        fun consider(items: List<Item>, continuing: Boolean) {
             for (it in items) {
                 if (picks.size >= MAX_HEROES) return
                 val key = if (it.isEpisode) (it.seriesId ?: it.id) else it.id
-                picks.putIfAbsent(key, it)
+                picks.putIfAbsent(key, it to continuing)
             }
         }
         listOf("continue", "recentEpisodes", "recentMovies", "series").forEach { key ->
-            consider(rows.firstOrNull { it.key == key }?.items.orEmpty())
+            consider(rows.firstOrNull { it.key == key }?.items.orEmpty(), continuing = key == "continue")
         }
         return coroutineScope {
-            picks.values.map { play ->
+            picks.values.map { (picked, continuing) ->
                 async {
-                    val title = if (play.isEpisode) {
-                        play.seriesId?.let { id -> runCatching { api.item(id) }.getOrNull() } ?: return@async null
-                    } else play
+                    val title = if (picked.isEpisode) {
+                        picked.seriesId?.let { id -> runCatching { api.item(id) }.getOrNull() } ?: return@async null
+                    } else picked
+                    // A newly added episode is just what arrived last (a season's E12): Play
+                    // starts where the title page's Play would, the show's next episode.
+                    val play = if (picked.isEpisode && !continuing) {
+                        runCatching { api.items(type = "episode", parent = title.id, recursive = true, sort = "index").items }
+                            .onFailure { Timber.w(it, "episodes for hero up next") }.getOrNull()
+                            ?.let { upNextOf(it) } ?: picked
+                    } else picked
                     HeroPick(title, play)
                 }
             }.awaitAll().filterNotNull()

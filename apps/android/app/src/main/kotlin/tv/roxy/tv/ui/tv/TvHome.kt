@@ -24,7 +24,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -320,7 +319,7 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
                 val started = (play.userData?.positionMs ?: 0L) > 0
                 val label = if (play.isEpisode && (started || (play.indexAired ?: 1) > 1)) "Continue: ${episodeShort(play)}" else if (started) "Continue" else "Start watching"
                 // Focus on either button pins the page to the top.
-                val down = Modifier.focusProperties { downKey()?.let { down = memory.requester(it) } }
+                val down = Modifier.moveVertically(memory, up = { null }, down = downKey)
                 TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play").then(down), onFocused = onFocused)
                 Spacer(Modifier.width(18.dp))
                 TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info").then(down), onFocused = onFocused)
