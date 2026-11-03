@@ -783,6 +783,8 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
     var error by remember { mutableStateOf<String?>(null) }
     // The request's own status: "approval" waits for an admin; failed / declined can be asked again.
     var status by remember(tmdbId, season) { mutableStateOf<String?>(null) }
+    // Announced but not aired: "requested" means Sonarr grabs it when it airs, not now.
+    var notOut by remember(tmdbId, season) { mutableStateOf<String?>(null) }
     fun take(r: tv.roxy.tv.api.RequestRow?) {
         status = r?.status
         val dead = r?.status == "failed" || r?.status == "declined"
@@ -790,7 +792,11 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
     }
     LaunchedEffect(tmdbId, season) {
         runCatching { app.api.discoverDetail("tv", tmdbId) }
-            .onSuccess { d -> requested = d.seasons.firstOrNull { it.number == season }?.requested ?: false; enabled = d.requestsEnabled; if (requested == true) take(d.request) }
+            .onSuccess { d ->
+                val sn = d.seasons.firstOrNull { it.number == season }
+                requested = sn?.requested ?: false; enabled = d.requestsEnabled; if (requested == true) take(d.request)
+                notOut = if (sn?.notOut == true) sn.airDate?.takeIf { it.length >= 10 }?.let { friendlyDate(it) }?.let { "Not out yet · airs $it" } ?: "Not out yet" else null
+            }
             .onFailure { requested = false }
     }
     if (setupPrompt) RequestsSetupDialog("tv", onDismiss = { setupPrompt = false })
@@ -815,7 +821,7 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
                 when { requested == null -> "Checking…"; on -> "$label requested"; busy -> "Requesting…"; status == "failed" || status == "declined" -> "Request $label again"; else -> "Request $label" },
                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) RoxyColors.muted else RoxyColors.accent,
             )
-            Text(error ?: when { on && status == "approval" -> "Waiting for an admin to approve"; on && status == "pending" -> "Waiting for Sonarr"; on -> "Sonarr is fetching it"; !enabled -> "Not in your library · requests need Sonarr"; else -> "Not in your library yet" }, fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
+            Text(error ?: when { on && status == "approval" -> "Waiting for an admin to approve"; on && status == "pending" -> "Waiting for Sonarr"; on && notOut != null -> "$notOut · Sonarr grabs it when it airs"; on -> "Sonarr is fetching it"; !enabled -> "Not in your library · requests need Sonarr"; notOut != null -> "$notOut · request it to get it when it airs"; else -> "Not in your library yet" }, fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
         }
     }
 }

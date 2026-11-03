@@ -355,7 +355,10 @@ function SeasonRow({
   }, [open, tmdbId, sn.number, refreshKey])
   const name = sn.special ? 'Specials' : sn.name || `Season ${sn.number}`
   const count = sn.episodes <= 0 ? null : sn.have > 0 && sn.have < sn.episodes ? `${sn.have} of ${sn.episodes} episodes` : `${sn.episodes} episode${sn.episodes === 1 ? '' : 's'}`
-  const sub = [count, sn.airDate?.slice(0, 4)].filter(Boolean).join('  ·  ')
+  // Announced, or airing later: requesting it means Sonarr grabs it when it airs.
+  const today = new Date().toISOString().slice(0, 10)
+  const notOut = !sn.special && (!sn.airDate || sn.airDate >= today || today.startsWith(sn.airDate))
+  const sub = [count, sn.airDate?.slice(0, 4), notOut ? 'Not out yet' : null].filter(Boolean).join('  ·  ')
 
   let state
   if (complete(sn)) {

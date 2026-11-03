@@ -26,3 +26,17 @@ func TestAvailabilityAiringToday(t *testing.T) {
 		}
 	}
 }
+
+// An episode with no date yet is announced ("TBA"), not missing; a special without a date
+// (old ones often have none) stays missing.
+func TestAvailabilityUndatedEpisode(t *testing.T) {
+	two, zero := 2, 0
+	items := []model.Item{
+		{Type: model.TypeEpisode, SeasonAired: &two},
+		{Type: model.TypeEpisode, SeasonAired: &zero},
+	}
+	fillAvailabilityAt(items, time.Now())
+	if items[0].Availability != "unaired" || items[1].Availability != "missing" {
+		t.Fatalf("got %q, %q", items[0].Availability, items[1].Availability)
+	}
+}

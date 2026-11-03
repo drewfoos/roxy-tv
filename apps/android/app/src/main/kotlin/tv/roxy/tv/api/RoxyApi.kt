@@ -1083,6 +1083,8 @@ data class DiscoverSeason(
     val special: Boolean = false,
 ) {
     val complete: Boolean get() = episodes > 0 && have >= episodes
+    /** Not out yet: no air date (announced) or one still to come ("2027" counts as to come). */
+    val notOut: Boolean get() = airDate.isNullOrBlank() || java.time.LocalDate.now().toString().let { today -> airDate >= today || today.startsWith(airDate) }
     val partial: Boolean get() = have > 0 && !complete
 }
 

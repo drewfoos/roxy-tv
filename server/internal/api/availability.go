@@ -8,7 +8,8 @@ import (
 )
 
 // fillAvailability derives Availability for playable items: "available" when a media
-// source exists, "unaired" when the provider air date is today or later, else "missing".
+// source exists, "unaired" when the provider air date is today or later (or a regular
+// episode has no date yet: announced, "TBA"), else "missing".
 // Series and seasons are containers and get no value.
 func fillAvailability(items []model.Item) {
 	fillAvailabilityAt(items, time.Now())
@@ -29,6 +30,10 @@ func fillAvailabilityAt(items []model.Item, now time.Time) {
 		case it.HasMedia:
 			it.Availability = "available"
 		case it.Premiered != "" && (it.Premiered >= today || strings.HasPrefix(today, it.Premiered)):
+			it.Availability = "unaired"
+		case it.Premiered == "" && it.Type == model.TypeEpisode && it.SeasonAired != nil && *it.SeasonAired > 0:
+			// No date yet: an announced episode (Alya S2E1 "TBA"), not one the library lacks.
+			// Specials keep "missing": old ones often have no date and did air.
 			it.Availability = "unaired"
 		default:
 			it.Availability = "missing"

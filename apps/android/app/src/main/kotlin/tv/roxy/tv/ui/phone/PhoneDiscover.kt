@@ -737,7 +737,7 @@ private fun SeasonRow(
                     sn.have in 1 until sn.episodes -> "${sn.have} of ${sn.episodes} episodes"
                     else -> "${sn.episodes} episode${if (sn.episodes == 1) "" else "s"}"
                 }
-                Text(listOfNotNull(count, sn.airDate?.take(4)).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted)
+                Text(listOfNotNull(count, sn.airDate?.take(4), if (sn.notOut && !sn.special) "Not out yet" else null).joinToString("  ·  "), fontSize = 12.sp, color = RoxyColors.muted)
             }
             when {
                 sn.special && !sn.requested -> Chip(if (sn.have > 0) "Request the rest" else "Request all", selected = false, onClick = onRequest)
