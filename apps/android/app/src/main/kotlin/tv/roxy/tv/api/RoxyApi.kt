@@ -2,6 +2,7 @@ package tv.roxy.tv.api
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Dispatcher
@@ -237,9 +238,13 @@ class RoxyApi(private val prefs: Prefs) {
 
     suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
 
-    /** Ask Sonarr / Radarr to look for what the request still lacks. */
-    suspend fun searchAgain(requestId: String, episodes: List<String> = emptyList()) {
-        postNoBody("/v1/discover/requests/$requestId/search", json.encodeToString(EpisodeCodes.serializer(), EpisodeCodes(episodes)))
+    /**
+     * Ask Sonarr / Radarr to look for what the request still lacks (all, or these "S1E3"
+     * episodes / these seasons). Throws [ApiException] 409 with the server's words when
+     * there is nothing to search.
+     */
+    suspend fun searchAgain(requestId: String, episodes: List<String> = emptyList(), seasons: List<Int> = emptyList()) {
+        postNoBody("/v1/discover/requests/$requestId/search", json.encodeToString(SearchBody.serializer(), SearchBody(episodes, seasons)))
     }
 
     /** Admin: drop the failed / stalled download, blocklist it, and let the arr app pick another (all, or these "S1E3" episodes). */
@@ -919,7 +924,8 @@ data class DiscoverItem(
  */
 @Serializable
 data class DownloadStatus(
-    val state: String = "",
+    /** The server's state as sent; read [state], which corrects a premature "complete". */
+    @SerialName("state") val rawState: String = "",
     val progress: Double = 0.0,
     val timeLeftSec: Int = 0,
     /** Sonarr's / Radarr's own words when something is wrong. */
@@ -938,7 +944,16 @@ data class DownloadStatus(
     val episodes: List<EpisodeDownload> = emptyList(),
     /** waiting: "airing", "release" (not out at all) or "digital" (in cinemas, waiting for the digital release). */
     val waitingFor: String? = null,
+    /** The server's own "an admin should look" flag (older servers leave it out). */
+    @SerialName("isProblem") val serverProblem: Boolean = false,
 ) {
+    /**
+     * The state to show. "complete" with nothing had, wanted or upcoming means Sonarr has not
+     * listed the episodes yet (older servers said "complete" then): treat it as searching.
+     */
+    val state: String get() = if (rawState == "complete" && wanted == 0 && have == 0 && upcoming == 0) "searching" else rawState
+    /** Same as [state]; named for call sites that want to be explicit. */
+    val effectiveState: String get() = state
     /** Episodes in the download client right now (downloading, stalled, importing, queued). */
     val activeEpisodes: List<EpisodeDownload> get() = episodes.filter { it.state in setOf("downloading", "stalled", "importing", "queued") }
     /** Something is moving in the download client (a ring on the poster). */
@@ -946,7 +961,7 @@ data class DownloadStatus(
     /** Worth refreshing every few seconds. */
     val isActive: Boolean get() = state in setOf("downloading", "importing", "queued", "searching", "stalled")
     /** Something an admin can fix by trying another release. */
-    val isProblem: Boolean get() = state in setOf("failed", "attention", "stalled")
+    val isProblem: Boolean get() = serverProblem || state in setOf("failed", "attention", "stalled")
 }
 
 @Serializable
@@ -968,6 +983,9 @@ data class EpisodeDownload(
 
 @Serializable
 private data class EpisodeCodes(val episodes: List<String> = emptyList())
+
+@Serializable
+private data class SearchBody(val episodes: List<String> = emptyList(), val seasons: List<Int> = emptyList())
 
 @Serializable
 data class DiscoverEpisodesResponse(val episodes: List<DiscoverEpisode> = emptyList())

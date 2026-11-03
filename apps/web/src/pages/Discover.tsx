@@ -7,7 +7,7 @@ import { Footer } from '../components/Footer'
 import { Row } from '../components/Cards'
 import { GridSkeleton, RowSkeleton } from '../components/Skeleton'
 import { IconClose, IconSearch } from '../components/Icons'
-import { DiscoverCard, DiscoverGrid, isActive } from '../components/DiscoverBits'
+import { DiscoverCard, DiscoverGrid, isActive, isPending } from '../components/DiscoverBits'
 
 /** How long the TMDB rows (~100 KB) are shown from memory before asking again, as on the phone. */
 const ROWS_FRESH_MS = 120_000
@@ -20,19 +20,20 @@ const ROWS_FRESH_MS = 120_000
  */
 export function Discover() {
   const rows = useAsync('discover', () => api.discover(), [], ROWS_FRESH_MS)
-  // Requests move (their download status): refreshed on every visit, and every few
-  // seconds only while one of them is downloading.
+  // Requests move (their download status): refreshed on every visit, every few seconds
+  // while one of them is downloading, and every minute while one is sent but not done
+  // (no status yet, or Sonarr still loading its episodes).
   const reqs = useAsync('discover:requests', () => api.discoverRequests().then((r) => r.items ?? []))
   const requests = reqs.data ?? []
-  const anyActive = requests.some((r) => isActive(r.download))
+  const pollMs = requests.some((r) => isActive(r.download)) ? 5000 : requests.some((r) => isPending(r.requestStatus, r.download)) ? 60000 : 0
   const reloadReqs = reqs.reload
   useEffect(() => {
-    if (!anyActive) return
+    if (!pollMs) return
     const h = window.setInterval(() => {
       if (!document.hidden) reloadReqs(true)
-    }, 5000)
+    }, pollMs)
     return () => window.clearInterval(h)
-  }, [anyActive, reloadReqs])
+  }, [pollMs, reloadReqs])
 
   const [q, setQ] = useState('')
   const [results, setResults] = useState<DiscoverItem[] | null>(null)

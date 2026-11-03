@@ -778,9 +778,16 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
     var setupPrompt by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // The request's own status: "approval" waits for an admin; failed / declined can be asked again.
+    var status by remember(tmdbId, season) { mutableStateOf<String?>(null) }
+    fun take(r: tv.roxy.tv.api.RequestRow?) {
+        status = r?.status
+        val dead = r?.status == "failed" || r?.status == "declined"
+        if (dead) { requested = false; error = r?.error?.takeIf { it.isNotBlank() }?.let { "Request ${r.status} · $it" } ?: "Request ${r?.status}" }
+    }
     LaunchedEffect(tmdbId, season) {
         runCatching { app.api.discoverDetail("tv", tmdbId) }
-            .onSuccess { d -> requested = d.seasons.firstOrNull { it.number == season }?.requested ?: false; enabled = d.requestsEnabled }
+            .onSuccess { d -> requested = d.seasons.firstOrNull { it.number == season }?.requested ?: false; enabled = d.requestsEnabled; if (requested == true) take(d.request) }
             .onFailure { requested = false }
     }
     if (setupPrompt) RequestsSetupDialog("tv", onDismiss = { setupPrompt = false })
@@ -788,10 +795,11 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
         modifier = Modifier.fillMaxWidth().clickable(enabled = requested == false && !busy) {
             if (!enabled) { setupPrompt = true; return@clickable }
             busy = true
+            error = null
             scope.launch {
                 runCatching { app.api.discoverRequest("tv", tmdbId, listOf(season)) }
-                    .onSuccess { requested = true }
-                    .onFailure { t -> error = t.message }
+                    .onSuccess { r -> requested = true; take(r) }
+                    .onFailure { t -> error = t.message ?: "Request failed" }
                 busy = false
             }
         }.padding(horizontal = PhonePad, vertical = 10.dp),
@@ -801,10 +809,10 @@ private fun RequestSeasonRow(tmdbId: Int, season: Int, label: String) {
         Icon(if (on) Icons.Outlined.Schedule else Icons.Outlined.AddCircleOutline, contentDescription = null, tint = if (on) RoxyColors.muted else RoxyColors.accent, modifier = Modifier.size(22.dp))
         Column(modifier = Modifier.padding(start = 10.dp)) {
             Text(
-                when { requested == null -> "Checking…"; on -> "$label requested"; busy -> "Requesting…"; else -> "Request $label" },
+                when { requested == null -> "Checking…"; on -> "$label requested"; busy -> "Requesting…"; status == "failed" || status == "declined" -> "Request $label again"; else -> "Request $label" },
                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) RoxyColors.muted else RoxyColors.accent,
             )
-            Text(error ?: when { on -> "Sonarr is fetching it"; !enabled -> "Not in your library · requests need Sonarr"; else -> "Not in your library yet" }, fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
+            Text(error ?: when { on && status == "approval" -> "Waiting for an admin to approve"; on && status == "pending" -> "Waiting for Sonarr"; on -> "Sonarr is fetching it"; !enabled -> "Not in your library · requests need Sonarr"; else -> "Not in your library yet" }, fontSize = 12.sp, color = if (error != null) RoxyColors.error else RoxyColors.muted)
         }
     }
 }

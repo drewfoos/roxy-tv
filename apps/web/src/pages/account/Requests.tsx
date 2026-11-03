@@ -1,22 +1,24 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../api/client'
 import type { MediaRequest } from '../../api/admin'
 import { useAsync } from '../../hooks/useAsync'
 import { ActionButton, Notice, PanelHead, TextInput, errorText, formatWhen } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
+import { effectiveState, isActive } from '../../components/DiscoverBits'
 
 type Filter = 'all' | 'waiting' | 'downloading' | 'problems'
 
 const DOWNLOADING = new Set(['downloading', 'importing', 'queued', 'searching', 'stalled'])
 // The arr's states in the viewer's words.
-const STATE_WORDS: Record<string, string> = { notfound: 'Not found yet', complete: 'Downloaded', downloading: 'Downloading', importing: 'Importing', queued: 'Queued', searching: 'Searching', stalled: 'Stalled', failed: 'Failed', unaired: 'Not out yet', waiting: 'Waiting' }
+const STATE_WORDS: Record<string, string> = { notfound: 'Not found yet', complete: 'Downloaded', downloading: 'Downloading', importing: 'Importing', queued: 'Queued', searching: 'Searching', stalled: 'Stalled', failed: 'Failed', attention: 'Needs attention', waiting: 'Waiting' }
+const PROBLEMS = new Set(['failed', 'attention', 'stalled'])
 
 function isProblem(r: MediaRequest) {
-  return r.status === 'failed' || !!r.download?.isProblem
+  return r.status === 'failed' || !!r.download?.isProblem || PROBLEMS.has(effectiveState(r.download))
 }
 function isDownloading(r: MediaRequest) {
-  return r.status === 'sent' && DOWNLOADING.has(r.download?.state ?? '')
+  return r.status === 'sent' && DOWNLOADING.has(effectiveState(r.download))
 }
 
 function statusLine(r: MediaRequest): string {
@@ -31,9 +33,10 @@ function statusLine(r: MediaRequest): string {
       return `Waiting for ${r.type === 'movie' ? 'Radarr' : 'Sonarr'}`
   }
   const d = r.download
-  if (d?.state) {
+  const state = effectiveState(d)
+  if (d && state) {
     const pct = d.progress != null && d.progress > 0 ? ` · ${Math.round(d.progress * 100)}%` : ''
-    const name = STATE_WORDS[d.state.toLowerCase()] ?? d.state.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase())
+    const name = STATE_WORDS[state.toLowerCase()] ?? state.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase())
     return d.message ? `${name}${pct} · ${d.message}` : `${name}${pct}`
   }
   return `Sent to ${r.type === 'movie' ? 'Radarr' : 'Sonarr'}`
@@ -61,6 +64,16 @@ export function RequestsPage() {
   const [reason, setReason] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const all = data?.requests ?? []
+  // Fresh every 10 s while something downloads, else every minute.
+  const pollMs = all.some((r) => r.status === 'sent' && isActive(r.download)) ? 10000 : 60000
+  useEffect(() => {
+    const h = window.setInterval(() => {
+      if (!document.hidden) reload(true)
+    }, pollMs)
+    return () => window.clearInterval(h)
+  }, [pollMs, reload])
+  // "Retry failed" resends requests that never reached Sonarr / Radarr, nothing else.
+  const anyUnsent = all.some((r) => r.status === 'failed')
   const counts = { all: all.length, waiting: all.filter((r) => r.status === 'approval').length, downloading: all.filter(isDownloading).length, problems: all.filter(isProblem).length }
   const shown = all.filter((r) => (filter === 'waiting' ? r.status === 'approval' : filter === 'downloading' ? isDownloading(r) : filter === 'problems' ? isProblem(r) : true))
 
@@ -92,7 +105,7 @@ export function RequestsPage() {
             {label} · {counts[id]}
           </button>
         ))}
-        {counts.problems > 0 && (
+        {anyUnsent && (
           <ActionButton kind="grey" onClick={() => act(() => api.retryRequests())}>
             Retry failed
           </ActionButton>
@@ -108,7 +121,7 @@ export function RequestsPage() {
         <div className="reqs">
           {shown.map((r) => (
             <div key={r.id} className={'req' + (isProblem(r) ? ' req--problem' : '')}>
-              <Link to={`/discover?${r.type === 'movie' ? 'movie' : 'tv'}=${r.tmdbId}`} className="req__poster">
+              <Link to={`/discover/${r.type === 'movie' ? 'movie' : 'tv'}/${r.tmdbId}`} className="req__poster">
                 {r.poster ? <img src={r.poster} alt="" loading="lazy" /> : <span />}
               </Link>
               <div className="req__body">

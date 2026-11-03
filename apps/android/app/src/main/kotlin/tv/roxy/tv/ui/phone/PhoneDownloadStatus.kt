@@ -23,6 +23,13 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +55,26 @@ import java.util.Locale
  */
 
 private val Amber = Color(0xFFF5A524)
+
+/** Request polling: fast while something moves, slow while a request still waits on Sonarr / Radarr. */
+internal const val PollFastMs = 5_000L
+internal const val PollSlowMs = 30_000L
+
+/**
+ * Runs [block] every [intervalMs] while the screen is resumed (stops in the background,
+ * starts again on return). A new [intervalMs] or [key] restarts the timer; 0 = no polling.
+ */
+@Composable
+internal fun PollWhileResumed(intervalMs: Long, key: Any? = null, block: suspend () -> Unit) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val latest by rememberUpdatedState(block)
+    LaunchedEffect(lifecycle, intervalMs, key) {
+        if (intervalMs <= 0) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) { delay(intervalMs); latest() }
+        }
+    }
+}
 
 internal fun stateColor(state: String): Color = when (state) {
     "failed", "attention" -> RoxyColors.error
@@ -251,7 +278,7 @@ internal fun DownloadStatusCard(
     }
     val detail = listOfNotNull(
         when (d.state) {
-            "searching" -> "$arr is searching"
+            "searching" -> if (d.rawState == "complete") "$arr is loading the episode list" else "$arr is searching"
             "notFound" -> ago(d.lastSearch)?.let { "Searched $it · $arr keeps checking" } ?: "$arr keeps checking for new releases"
             "waiting" -> when {
                 !isMovie -> day(d.nextAir)?.let { "First episode airs $it" }

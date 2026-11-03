@@ -93,8 +93,10 @@ type Download struct {
 	// WaitingFor says what a "waiting" request waits for: "airing" (episodes not aired),
 	// "release" (a movie not out at all) or "digital" (a movie in cinemas; Radarr waits
 	// for the digital / physical release).
-	WaitingFor string    `json:"waitingFor,omitempty"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	WaitingFor string `json:"waitingFor,omitempty"`
+	// IsProblem: failed, cannot be imported, or stalled (the admin Requests filter).
+	IsProblem bool      `json:"isProblem"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // The rules behind CanSearch / CanRetry (and what the actions enforce).
@@ -229,6 +231,7 @@ func (s *Service) trackOnce(ctx context.Context) time.Duration {
 		if prev == nil || prev.State != d.State {
 			slog.Info("downloads: status", "title", r.Title, "state", d.State, "have", d.Have, "wanted", d.Wanted, "msg", d.Message)
 		}
+		d.IsProblem = d.State == DLFailed || d.State == DLAttention || d.State == DLStalled
 		// The arr app has more files than last time: an import finished. Add them to the
 		// library now rather than waiting for a webhook or a scan. (After a restart there
 		// is no "last time"; the startup scan covers that.)
@@ -453,6 +456,19 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 		d.Items = append(d.Items, it)
 	}
 	s.summarise(d, len(missing), len(notFound))
+	if len(byID) == 0 && len(d.Items) == 0 {
+		// Nothing Sonarr lists is part of the request. Right after an add that is because
+		// Sonarr is still loading the episodes from TVDB (this used to read as 0 of 0 =
+		// "complete", so the apps said "Downloaded" and stopped looking). Later it means
+		// TVDB has no episodes for the asked-for seasons yet: waiting for them to be listed.
+		d.Have, d.Wanted = 0, 0
+		if len(eps) == 0 && recentlySent(r, now) {
+			d.State, d.Message = DLSearching, "Sonarr is loading the episode list."
+		} else {
+			d.State, d.WaitingFor = DLWaiting, "airing"
+		}
+		return d
+	}
 	noteRetry(d, history, now, func(id int) bool { _, ok := byID[id]; return ok })
 	searching := beingSearched(cmds, r.ArrID, byID)
 	d.Episodes = episodeStates(byID, d.Items, searching, now)
@@ -466,6 +482,19 @@ func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []
 	}
 	return d
 }
+
+// recentlySent: the request was sent (or widened) in the last few minutes.
+func recentlySent(r *store.Request, now time.Time) bool {
+	for _, v := range []string{r.UpdatedAt, r.CreatedAt} {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			return now.Sub(t) < loadingGrace
+		}
+	}
+	return false
+}
+
+// loadingGrace: how long a new series may show no episodes before it counts as waiting.
+const loadingGrace = 10 * time.Minute
 
 // episodeStates gives every requested episode without a file its own state: from the
 // download it is part of, else failed / not found from the items, else waiting for its
@@ -884,8 +913,8 @@ func clamp01(v float64) float64 {
 // ---- actions ----
 
 // SearchAgain asks the arr app to look for the request's missing episodes (or the movie)
-// now; with codes ("S1E3"), only those episodes.
-func (s *Service) SearchAgain(ctx context.Context, requestID string, codes ...string) error {
+// now; with seasons and / or codes ("S1E3"), only those seasons and episodes.
+func (s *Service) SearchAgain(ctx context.Context, requestID string, seasons []int, codes ...string) error {
 	r, c, err := s.trackedRequest(ctx, requestID)
 	if err != nil {
 		return err
@@ -897,10 +926,15 @@ func (s *Service) SearchAgain(ctx context.Context, requestID string, codes ...st
 		err = c.SearchMovie(ctx, r.ArrID)
 	} else {
 		want := codeSet(codes)
-		err = s.searchMissing(ctx, c, r, func(ep arr.Episode) bool { return len(want) == 0 || want[epCode(ep.SeasonNumber, ep.EpisodeNumber)] })
+		err = s.searchMissing(ctx, c, r, func(ep arr.Episode) bool {
+			if len(want) == 0 && len(seasons) == 0 {
+				return true
+			}
+			return want[epCode(ep.SeasonNumber, ep.EpisodeNumber)] || contains(seasons, ep.SeasonNumber)
+		})
 	}
 	if err == nil {
-		s.markSearching(requestID, codes...)
+		s.markSearching(requestID, seasons, codes...)
 		s.KickDownloads()
 	}
 	return err
@@ -1032,17 +1066,21 @@ func (s *Service) movieSearchable(ctx context.Context, c *arr.Client, r *store.R
 }
 
 // searchSeasonsAgain: a season that was already requested and is asked for again gets
-// its missing episodes searched (a request that changes nothing used to do nothing).
-func (s *Service) searchSeasonsAgain(ctx context.Context, r *store.Request, seasons []int) {
+// its missing episodes searched (a request that changes nothing used to do nothing). The
+// error says why nothing was searched ("searched a moment ago", "already on it"), for the
+// person who asked.
+func (s *Service) searchSeasonsAgain(ctx context.Context, r *store.Request, seasons []int) error {
 	sonarr, _ := s.clients()
 	if sonarr == nil || r.ArrID == 0 {
-		return
+		return nil
 	}
 	if err := s.searchMissing(ctx, sonarr, r, func(ep arr.Episode) bool { return len(seasons) == 0 || contains(seasons, ep.SeasonNumber) }); err != nil {
 		slog.Info("discover: search again", "title", r.Title, "err", err)
-		return
+		return err
 	}
+	s.markSearching(r.ID, seasons)
 	s.KickDownloads()
+	return nil
 }
 
 // TryAnotherRelease removes failed, stalled or unimportable downloads from the client,
@@ -1087,7 +1125,7 @@ func (s *Service) TryAnotherRelease(ctx context.Context, requestID string, codes
 				return fmt.Errorf("that download only just stalled; it gets %d minutes to recover before it is replaced", int(stallRetryAfter.Minutes()))
 			}
 		}
-		return s.SearchAgain(ctx, requestID, codes...)
+		return s.SearchAgain(ctx, requestID, nil, codes...)
 	}
 	if err := c.RemoveAndBlocklist(ctx, queueIDs); err != nil {
 		return err
@@ -1098,15 +1136,15 @@ func (s *Service) TryAnotherRelease(ctx context.Context, requestID string, codes
 		err = c.SearchEpisodes(ctx, searchIDs)
 	}
 	if err == nil {
-		s.markSearching(requestID, codes...)
+		s.markSearching(requestID, nil, codes...)
 		s.KickDownloads()
 	}
 	return err
 }
 
 // markSearching shows the search at once (the next poll fills in the truth): the whole
-// request, or just the given episodes.
-func (s *Service) markSearching(requestID string, codes ...string) {
+// request, or just the given seasons and episodes.
+func (s *Service) markSearching(requestID string, seasons []int, codes ...string) {
 	s.dl.mu.Lock()
 	defer s.dl.mu.Unlock()
 	d := s.dl.status[requestID]
@@ -1116,7 +1154,7 @@ func (s *Service) markSearching(requestID string, codes ...string) {
 	c := *d
 	c.UpdatedAt = time.Now()
 	want := codeSet(codes)
-	if len(want) == 0 {
+	if len(want) == 0 && len(seasons) == 0 {
 		c.State, c.Message, c.Items, c.Groups = DLSearching, "", nil, nil
 		eps := make([]EpisodeDL, len(c.Episodes))
 		for i, e := range c.Episodes {
@@ -1129,7 +1167,7 @@ func (s *Service) markSearching(requestID string, codes ...string) {
 	} else {
 		eps := make([]EpisodeDL, len(c.Episodes))
 		for i, e := range c.Episodes {
-			if want[epCode(e.Season, e.Episode)] {
+			if want[epCode(e.Season, e.Episode)] || (contains(seasons, e.Season) && e.State != DLWaiting) {
 				e.State, e.Progress, e.Message = DLSearching, 0, ""
 			}
 			eps[i] = e

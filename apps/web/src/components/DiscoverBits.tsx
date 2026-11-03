@@ -17,12 +17,43 @@ export function discoverPath(it: DiscoverItem): string {
 
 const MOVING = new Set(['downloading', 'stalled', 'importing'])
 const ACTIVE = new Set(['downloading', 'importing', 'queued', 'searching', 'stalled'])
+// Sonarr / Radarr are already busy with it: no point asking them to search.
+const BUSY = new Set(['searching', 'downloading', 'queued', 'importing'])
+
+type StateLike = { state?: string; have?: number; wanted?: number; upcoming?: number }
+
+/**
+ * The state to show. "complete" with nothing wanted, held or upcoming means Sonarr has
+ * not listed the episodes yet, not that anything downloaded: treat it as searching.
+ */
+export function effectiveState(d?: StateLike | null): string {
+  if (!d?.state) return ''
+  if (d.state === 'complete' && !d.wanted && !d.have && !d.upcoming) return 'searching'
+  return d.state
+}
 
 /** Something is in the download client right now. */
-export const isMoving = (d?: DownloadStatus | null) => !!d && MOVING.has(d.state)
+export const isMoving = (d?: DownloadStatus | null) => !!d && MOVING.has(effectiveState(d))
 /** Worth refreshing every few seconds. */
-export const isActive = (d?: DownloadStatus | null) => !!d && ACTIVE.has(d.state)
-const isProblem = (d: DownloadStatus) => d.state === 'failed' || d.state === 'attention' || d.state === 'stalled'
+export const isActive = (d?: StateLike | null) => !!d && ACTIVE.has(effectiveState(d))
+/** Really done: complete with something in the library. */
+export const isDone = (d?: StateLike | null) => !!d && effectiveState(d) === 'complete' && (d.have ?? 0) > 0
+/** A sent request that is not done yet: worth a slow refresh (a status can appear or move). */
+export const isPending = (status?: string | null, d?: StateLike | null) => status === 'sent' && !isDone(d)
+const isProblem = (state: string) => state === 'failed' || state === 'attention' || state === 'stalled'
+
+/**
+ * Whether "Search again" can do anything: for one season, any of its episodes that Sonarr
+ * can search; for the whole request, the same over every episode (or the request's own
+ * flag when there is no episode list, as for a movie), and nothing already under way.
+ */
+export function canSearchFor(d: DownloadStatus | null | undefined, season?: number): boolean {
+  if (!d) return false
+  const eps = d.episodes ?? []
+  if (season != null) return eps.some((e) => e.season === season && !!e.canSearch)
+  if (BUSY.has(effectiveState(d))) return false
+  return eps.length > 0 ? eps.some((e) => !!e.canSearch) : !!d.canSearch
+}
 
 export function stateColor(state: string): string {
   switch (state) {
@@ -134,21 +165,22 @@ export function DownloadBar({ progress, state, className = '' }: { progress?: nu
 function Corner({ item }: { item: DiscoverItem }) {
   const dl = item.download
   const inLibrary = !!item.libraryItemId
+  const st = effectiveState(dl)
   if (dl && isMoving(dl)) {
     const active = activeEpisodes(dl).sort((a, b) => a.season - b.season || a.episode - b.episode)
     const which = item.type === 'movie' || active.length === 0 ? null : active.length === 1 ? `S${active[0].season} E${active[0].episode}` : `${active.length} eps`
-    const how = dl.state === 'importing' ? 'Adding' : pct(dl.progress)
+    const how = st === 'importing' ? 'Adding' : pct(dl.progress)
     return (
-      <span className="dcard__box" style={{ color: stateColor(dl.state) }}>
+      <span className="dcard__box" style={{ color: stateColor(st) }}>
         {[which, how].filter(Boolean).join(' · ')}
       </span>
     )
   }
   if (dl && !inLibrary) {
-    const plain = ['searching', 'notFound', 'waiting', 'queued'].includes(dl.state)
+    const plain = ['searching', 'notFound', 'waiting', 'queued'].includes(st)
     return (
-      <span className="dcard__box" style={{ color: plain ? '#fff' : stateColor(dl.state) }}>
-        {dl.state === 'waiting' && dl.waitingFor === 'digital' ? 'In cinemas' : stateWord(dl.state)}
+      <span className="dcard__box" style={{ color: plain ? '#fff' : stateColor(st) }}>
+        {st === 'waiting' && dl.waitingFor === 'digital' ? 'In cinemas' : stateWord(st)}
       </span>
     )
   }
@@ -157,10 +189,10 @@ function Corner({ item }: { item: DiscoverItem }) {
   if (inLibrary) {
     cls = 'dcard__dot--lib'
     icon = <IconCheck size={14} />
-  } else if (rs === 'failed' || rs === 'declined' || dl?.state === 'failed' || dl?.state === 'attention') {
+  } else if (rs === 'failed' || rs === 'declined' || st === 'failed' || st === 'attention') {
     cls = 'dcard__dot--bad'
     icon = <IconClose size={14} />
-  } else if (dl?.state === 'downloading' || dl?.state === 'importing') {
+  } else if (st === 'downloading' || st === 'importing') {
     cls = 'dcard__dot--lib'
     icon = <IconDownload size={14} />
   } else if (rs) {
@@ -216,8 +248,9 @@ export function DownloadStatusCard({
 }) {
   const arr = isMovie ? 'Radarr' : 'Sonarr'
   const episodes = !isMovie && (d.wanted ?? 0) > 1
+  const state = effectiveState(d)
   const headline = (() => {
-    switch (d.state) {
+    switch (state) {
       case 'searching':
         return 'Looking for a release'
       case 'notFound':
@@ -239,11 +272,11 @@ export function DownloadStatusCard({
       case 'complete':
         return !isMovie && (d.upcoming ?? 0) > 0 ? 'Up to date' : 'Downloaded'
       default:
-        return d.state
+        return state
     }
   })()
   const first = (() => {
-    switch (d.state) {
+    switch (state) {
       case 'searching':
         return `${arr} is searching`
       case 'notFound': {
@@ -271,21 +304,21 @@ export function DownloadStatusCard({
     }
   })()
   const detail = [first, episodes ? `${d.have ?? 0} of ${d.wanted} episodes` : null].filter(Boolean).join('  ·  ')
-  const color = stateColor(d.state)
+  const color = stateColor(state)
   const groups = d.groups ?? []
   const showGroups = groups.length > 1 || (groups.length === 1 && !isMovie && (groups[0].count ?? 0) > 1)
-  const canSearch = !!d.canSearch && !['searching', 'downloading', 'queued', 'importing'].includes(d.state)
+  const canSearch = canSearchFor(d)
   const canReplace = admin && !!d.canRetry
   return (
     <div className="dlcard">
       <div className="dlcard__head">
         <i style={{ background: color }} />
         <b>{headline}</b>
-        {(d.state === 'downloading' || d.state === 'stalled') && <span style={{ color }}>{pct(d.progress)}</span>}
+        {(state === 'downloading' || state === 'stalled') && <span style={{ color }}>{pct(d.progress)}</span>}
       </div>
-      {(d.state === 'downloading' || d.state === 'stalled' || d.state === 'importing') && <DownloadBar progress={d.state === 'importing' ? 1 : d.progress} state={d.state} />}
+      {(state === 'downloading' || state === 'stalled' || state === 'importing') && <DownloadBar progress={state === 'importing' ? 1 : d.progress} state={state} />}
       {detail && <div className="muted">{detail}</div>}
-      {d.message && <div style={{ color: isProblem(d) ? color : 'var(--muted)' }}>{d.message}</div>}
+      {d.message && <div style={{ color: isProblem(state) ? color : 'var(--muted)' }}>{d.message}</div>}
       {showGroups && (
         <div className="dlcard__groups">
           {groups.map((g: DownloadGroup, i) => (

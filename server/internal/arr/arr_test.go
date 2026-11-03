@@ -64,7 +64,7 @@ func TestAddSeriesAnimeTypeDefaultsToStandard(t *testing.T) {
 		var sent map[string]any
 		srv := fakeSonarr(t, &sent)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, AnimeRootFolder: "/data/Anime", AnimeQualityProfileID: 4, AnimeSeriesType: tc.setting})
-		id, err := c.AddSeries(context.Background(), 424536, tc.isAnime, nil)
+		id, err := c.AddSeries(context.Background(), 424536, tc.isAnime, nil, nil)
 		srv.Close()
 		if err != nil || id != 7 {
 			t.Fatalf("setting %q: id %d err %v", tc.setting, id, err)
@@ -121,7 +121,7 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 		episodeCalls.Store(0)
 		srv := fakeSonarr(t, &sent, &cmds)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
-		if _, err := c.AddSeries(context.Background(), 424536, false, tc.seasons); err != nil {
+		if _, err := c.AddSeries(context.Background(), 424536, false, tc.seasons, nil); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		cmds = commandsAfter(&cmds, 1)
@@ -143,7 +143,7 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 	srv := fakeSonarr(t, &sent, &cmds)
 	off := false
 	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, SearchOnAdd: &off})
-	if _, err := c.AddSeries(context.Background(), 424536, false, nil); err != nil {
+	if _, err := c.AddSeries(context.Background(), 424536, false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	cmds = commandsAfter(&cmds, 0)
@@ -209,7 +209,7 @@ func TestAddSeriesOlderAnimeProfile(t *testing.T) {
 		var calls []string
 		srv := fakeSonarrWith(t, tc.lookup, `[]`, &sent, &calls)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, AnimeQualityProfileID: 4, OldAnimeQualityProfileID: 7})
-		if _, err := c.AddSeries(context.Background(), 1, tc.anime, nil); err != nil {
+		if _, err := c.AddSeries(context.Background(), 1, tc.anime, nil, nil); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		srv.Close()
@@ -227,7 +227,7 @@ func TestAddSeriesLeavesUnmonitoredAlone(t *testing.T) {
 	srv := fakeSonarrWith(t, `[]`, `[{"id":3,"tvdbId":1,"monitored":false,"seasons":[{"seasonNumber":1,"monitored":false}]}]`, &sent, &calls)
 	defer srv.Close()
 	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
-	if _, err := c.AddSeries(context.Background(), 1, false, nil); err != ErrManagedByHand {
+	if _, err := c.AddSeries(context.Background(), 1, false, nil, nil); err != ErrManagedByHand {
 		t.Fatalf("err %v, want ErrManagedByHand", err)
 	}
 	for _, call := range calls {
@@ -255,5 +255,122 @@ func TestMessagesFoldsUnexpectedFolder(t *testing.T) {
 	// Other messages are untouched.
 	if got := (QueueItem{ErrorMessage: "No files found"}).Messages(); got != "No files found" {
 		t.Errorf("plain: %q", got)
+	}
+}
+
+// A request for one special of a series Sonarr does not have: no season is monitored or
+// searched whole, and the special is monitored and searched once Sonarr lists it (asking
+// straight after the add found no episodes, so nothing was ever monitored).
+func TestAddSeriesEpisodesOnly(t *testing.T) {
+	var mu sync.Mutex
+	var sent map[string]any
+	var calls []string
+	var monitored []any
+	epCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+fmt.Sprint(body["name"]))
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
+			w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series/lookup":
+			w.Write([]byte(`[{"tvdbId":1,"seasons":[{"seasonNumber":0},{"seasonNumber":1}]}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/series":
+			sent = body
+			w.Write([]byte(`{"id":7}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/episode":
+			epCalls++
+			if epCalls == 1 {
+				w.Write([]byte(`[]`))
+				return
+			}
+			w.Write([]byte(`[{"id":50,"seasonNumber":0,"episodeNumber":5},{"id":51,"seasonNumber":0,"episodeNumber":6},{"id":1,"seasonNumber":1,"episodeNumber":1}]`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/episode/monitor":
+			monitored, _ = body["episodeIds"].([]any)
+			w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/command":
+			w.Write([]byte(`{"id":1}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	readyPoll = time.Millisecond
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
+	if _, err := c.AddSeries(context.Background(), 1, false, []int{-1}, []string{"S0E5"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		mu.Lock()
+		done := monitored != nil
+		mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, x := range sent["seasons"].([]any) {
+		if m := x.(map[string]any); m["monitored"] == true {
+			t.Errorf("season %v monitored, want none", m["seasonNumber"])
+		}
+	}
+	if sent["monitorNewItems"] != "none" {
+		t.Errorf("monitorNewItems %v, want none", sent["monitorNewItems"])
+	}
+	if len(monitored) != 1 || monitored[0] != float64(50) {
+		t.Errorf("monitored %v, want [50] (S0E5 only)", monitored)
+	}
+	searches := 0
+	for _, call := range calls {
+		if strings.Contains(call, "SeasonSearch") || strings.Contains(call, "SeriesSearch") {
+			t.Errorf("unexpected %s", call)
+		}
+		if strings.Contains(call, "EpisodeSearch") {
+			searches++
+		}
+	}
+	if searches != 1 {
+		t.Errorf("episode searches %d, want 1; calls %v", searches, calls)
+	}
+}
+
+// A movie Radarr already has (dropped, unmonitored, no file) is monitored again and
+// searched; returning its id alone left the request doing nothing.
+func TestAddMovieExistingIsMonitoredAndSearched(t *testing.T) {
+	var calls []string
+	var put map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+fmt.Sprint(body["name"]))
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie":
+			w.Write([]byte(`[{"id":9,"tmdbId":550,"title":"Fight Club","monitored":false,"hasFile":false}]`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/movie/9":
+			put = body
+			w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/command":
+			w.Write([]byte(`{"id":1}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	c := New("radarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/Movies", QualityProfileID: 4})
+	id, err := c.AddMovie(context.Background(), 550, false)
+	if err != nil || id != 9 {
+		t.Fatalf("id %d err %v", id, err)
+	}
+	if put["monitored"] != true || put["title"] != "Fight Club" {
+		t.Errorf("PUT %v, want the movie monitored", put)
+	}
+	if last := calls[len(calls)-1]; last != "POST /api/v3/command MoviesSearch" {
+		t.Errorf("calls %v, want a MoviesSearch last", calls)
 	}
 }

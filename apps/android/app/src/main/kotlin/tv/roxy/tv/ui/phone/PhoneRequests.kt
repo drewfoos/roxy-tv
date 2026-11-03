@@ -90,16 +90,21 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
         runCatching { app.api.adminRequests() }.onSuccess { list = it; error = null }.onFailure { error = it.message }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { reload() } }
+    // An approve / decline / retry the server refused: kept apart from [error], which reload() clears.
+    var actionError by remember { mutableStateOf<String?>(null) }
     fun act(id: String, block: suspend () -> Unit) {
         if (busy != null) return
         busy = id
-        scope.launch { runCatching { block() }.onFailure { error = it.message }; reload(); busy = null }
+        actionError = null
+        scope.launch { runCatching { block() }.onFailure { actionError = it.message ?: "Something went wrong" }; reload(); busy = null }
     }
 
     val all = list.orEmpty()
     val waiting = all.filter { it.status == "approval" }
     val problems = all.filter { it.status == "failed" || it.download?.isProblem == true }
-    val active = all.filter { it.status == "sent" && it.download?.state in setOf("downloading", "importing", "queued", "searching", "stalled") }
+    val active = all.filter { it.status == "sent" && it.download?.isActive == true }
+    // Keep the list current while it shows: fast while something downloads.
+    PollWhileResumed(if (active.isNotEmpty()) PollFastMs else PollSlowMs) { reload() }
     val tab = filter
     val shown = when (tab) {
         "waiting" -> waiting
@@ -123,7 +128,7 @@ fun PhoneRequests(onBack: () -> Unit, onOpen: (type: String, tmdbId: Int) -> Uni
         if (all.any { it.status == "failed" }) {
             GreyButton(if (busy == "retry") "Retrying…" else "Retry failed", modifier = Modifier.padding(start = PhonePad, top = 8.dp).height(38.dp), onClick = { act("retry") { app.api.retryRequests() } })
         }
-        error?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp)) }
+        (actionError ?: error)?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp)) }
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 12.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             when {
                 list == null -> items(4) { Bone(Modifier.fillMaxWidth().height(110.dp)) }

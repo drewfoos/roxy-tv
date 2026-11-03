@@ -269,8 +269,8 @@ func (s *Service) RetryPending(ctx context.Context) {
 			slog.Warn("discover: retry detail", "title", r.Title, "err", err)
 			continue
 		}
-		if det.LibraryItemID != "" {
-			continue // already there; the request shows as available
+		if det.LibraryItemID != "" && r.MediaType == "movie" {
+			continue // already there; the request shows as available (a series may still lack seasons)
 		}
 		s.send(ctx, r, det)
 		if err := s.store.UpsertRequest(ctx, r); err != nil {
@@ -996,13 +996,17 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 				r.Seasons = kept
 			}
 			if !added && r.Status == "sent" {
-				s.searchSeasonsAgain(ctx, r, seasons)
+				if err := s.searchSeasonsAgain(ctx, r, seasons); err != nil {
+					return nil, err
+				}
 				return r, nil
 			}
 		} else if len(r.Seasons) > 0 && len(seasons) == 0 {
 			r.Seasons = nil
 		} else if r.Status == "sent" {
-			s.searchSeasonsAgain(ctx, r, seasons)
+			if err := s.searchSeasonsAgain(ctx, r, seasons); err != nil {
+				return nil, err
+			}
 			return r, nil
 		}
 		if r.Status != "approval" {
@@ -1085,9 +1089,11 @@ func (s *Service) requestEpisodes(ctx context.Context, det *Detail, user *model.
 	if !added && r.Status == "sent" {
 		if sonarr, _ := s.clients(); sonarr != nil && r.ArrID != 0 {
 			want := codeSet(episodes)
-			if err := s.searchMissing(ctx, sonarr, r, func(ep arr.Episode) bool { return want[epCode(ep.SeasonNumber, ep.EpisodeNumber)] }); err == nil {
-				s.KickDownloads()
+			if err := s.searchMissing(ctx, sonarr, r, func(ep arr.Episode) bool { return want[epCode(ep.SeasonNumber, ep.EpisodeNumber)] }); err != nil {
+				return nil, err
 			}
+			s.markSearching(r.ID, nil, episodes...)
+			s.KickDownloads()
 		}
 		return r, nil
 	}
@@ -1110,8 +1116,9 @@ func containsStr(xs []string, v string) bool {
 	return false
 }
 
-// seasonsForSonarr turns the stored seasons into what AddSeries monitors: the sentinel
-// -1 ("episodes only") becomes an empty-but-not-whole set so nothing extra is grabbed.
+// seasonsForSonarr turns the stored seasons into what AddSeries monitors. The sentinel
+// -1 ("episodes only") is passed on alone, so AddSeries monitors just the episodes; empty
+// is the whole series.
 func seasonsForSonarr(r *store.Request) []int {
 	var out []int
 	for _, n := range r.Seasons {
@@ -1119,8 +1126,8 @@ func seasonsForSonarr(r *store.Request) []int {
 			out = append(out, n)
 		}
 	}
-	if len(out) == 0 && len(r.Episodes) > 0 && len(r.Seasons) > 0 {
-		return []int{0} // episodes only: season 0 nominally, the episodes monitored one by one after
+	if len(out) == 0 && len(r.Seasons) > 0 {
+		return []int{-1}
 	}
 	return out
 }
@@ -1136,18 +1143,13 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 			r.Status, r.Error = "failed", "TMDB has no TVDB id for this series"
 			return
 		}
-		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, seasonsForSonarr(r))
+		// Episodes (specials) are monitored inside AddSeries: for a new series only once
+		// Sonarr has listed them, which takes a few seconds after the add.
+		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, seasonsForSonarr(r), r.Episodes)
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: sonarr add failed", "title", r.Title, "err", err)
 			return
-		}
-		if len(r.Episodes) > 0 {
-			if err := sonarr.MonitorEpisodes(ctx, id, r.Episodes); err != nil {
-				r.Status, r.Error = "failed", err.Error()
-				slog.Warn("discover: sonarr episode monitor failed", "title", r.Title, "err", err)
-				return
-			}
 		}
 		r.Status, r.ArrID, r.Error = "sent", id, ""
 		s.KickDownloads()

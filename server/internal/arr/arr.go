@@ -281,13 +281,20 @@ func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []stri
 // AddSeries adds a series to Sonarr by TVDB id (monitored, search on add; series type
 // "anime" with the anime root / profile when asked). With seasons, only those are
 // monitored and searched (request app's per-season requests); empty means the whole series.
-// Returns the Sonarr series id. A series Sonarr already has gets the requested seasons
-// monitored and a SeasonSearch for each instead of an error.
-func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons []int) (int, error) {
+// episodes ("S0E5" codes, specials) are monitored and searched one by one; seasons [-1]
+// means those episodes only, nothing else monitored. Returns the Sonarr series id. A series
+// Sonarr already has gets the requested seasons monitored and a SeasonSearch for each
+// instead of an error.
+func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons []int, episodes []string) (int, error) {
 	want := map[int]bool{}
 	for _, n := range seasons {
 		want[n] = true
 	}
+	// Only single episodes asked for: no season is monitored or searched whole (a request
+	// for one special must not pull in every special).
+	episodesOnly := want[-1]
+	delete(want, -1)
+	whole := len(want) == 0 && !episodesOnly
 	var existing []map[string]any
 	if err := c.do(ctx, http.MethodGet, "/series", url.Values{"tvdbId": {strconv.Itoa(tvdbID)}}, nil, &existing); err == nil {
 		for _, s := range existing {
@@ -307,7 +314,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 						continue
 					}
 					n, _ := sm["seasonNumber"].(float64)
-					if (len(want) == 0 && n != 0) || want[int(n)] {
+					if (whole && n != 0) || want[int(n)] {
 						if m, _ := sm["monitored"].(bool); !m {
 							sm["monitored"] = true
 							changed = true
@@ -317,7 +324,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 			}
 			s["monitored"] = true
 			// Asked for the whole series: follow its new seasons too.
-			if len(want) == 0 && s["monitorNewItems"] != "all" {
+			if whole && s["monitorNewItems"] != "all" {
 				s["monitorNewItems"] = "all"
 				changed = true
 			}
@@ -326,8 +333,12 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 					return 0, err
 				}
 			}
-			if c.cfg.searchOnAdd() {
+			if c.cfg.searchOnAdd() && !episodesOnly {
 				c.searchSeasons(ctx, int(id), want)
+			}
+			// Sonarr has the episodes already: monitor (and search) the asked-for ones now.
+			if err := c.MonitorEpisodes(ctx, int(id), episodes); err != nil {
+				return 0, err
 			}
 			return int(id), nil
 		}
@@ -359,7 +370,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 		for _, x := range ss {
 			if sm, ok := x.(map[string]any); ok {
 				n, _ := sm["seasonNumber"].(float64)
-				sm["monitored"] = (len(want) == 0 && n != 0) || want[int(n)]
+				sm["monitored"] = (whole && n != 0) || want[int(n)]
 			}
 		}
 	}
@@ -367,7 +378,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 	// asking for Season 1 of an ongoing show must not pull in Season 4 next year. (The
 	// lookup carries Sonarr's default, "all".) New episodes of a monitored season are
 	// grabbed as they air either way.
-	if len(want) == 0 {
+	if whole {
 		series["monitorNewItems"] = "all"
 	} else {
 		series["monitorNewItems"] = "none"
@@ -383,8 +394,8 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 	if err := c.do(ctx, http.MethodPost, "/series", nil, series, &added); err != nil {
 		return 0, err
 	}
-	if c.cfg.searchOnAdd() && added.ID != 0 {
-		go c.searchWhenReady(added.ID, want)
+	if added.ID != 0 && (c.cfg.searchOnAdd() || len(episodes) > 0) {
+		go c.searchWhenReady(added.ID, want, !episodesOnly, episodes)
 	}
 	return added.ID, nil
 }
@@ -396,13 +407,16 @@ var (
 	readyTimeout = 2 * time.Minute
 )
 
-// searchWhenReady waits until Sonarr has loaded a new series' episodes, then searches.
-// Sonarr adds the series first and fills in its episodes from TVDB a moment later; a
-// search sent straight after the add runs against no episodes and finds nothing ("Series
-// search completed. 0 reports downloaded.", and no episode ever marked searched).
-func (c *Client) searchWhenReady(seriesID int, want map[int]bool) {
+// searchWhenReady waits until Sonarr has loaded a new series' episodes, then searches
+// the seasons and monitors (and searches) the single episodes asked for. Sonarr adds the
+// series first and fills in its episodes from TVDB a moment later; a search sent straight
+// after the add runs against no episodes and finds nothing ("Series search completed. 0
+// reports downloaded.", and no episode ever marked searched), and there is nothing yet to
+// monitor one by one.
+func (c *Client) searchWhenReady(seriesID int, want map[int]bool, seasons bool, episodes []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
 	defer cancel()
+wait:
 	for {
 		if eps, err := c.Episodes(ctx, seriesID); err == nil && len(eps) > 0 {
 			break
@@ -410,12 +424,17 @@ func (c *Client) searchWhenReady(seriesID int, want map[int]bool) {
 		select {
 		case <-ctx.Done():
 			slog.Warn("sonarr: episodes never loaded; searching anyway", "series", seriesID)
-			c.searchSeasons(context.Background(), seriesID, want)
-			return
+			ctx = context.Background()
+			break wait
 		case <-time.After(readyPoll):
 		}
 	}
-	c.searchSeasons(ctx, seriesID, want)
+	if c.cfg.searchOnAdd() && seasons {
+		c.searchSeasons(ctx, seriesID, want)
+	}
+	if err := c.MonitorEpisodes(ctx, seriesID, episodes); err != nil {
+		slog.Warn("sonarr: monitor requested episodes", "series", seriesID, "err", err)
+	}
 }
 
 // olderSeries: Sonarr's lookup says the series first aired before OldAnimeBefore and has ended.
@@ -440,15 +459,26 @@ func (c *Client) searchSeasons(ctx context.Context, seriesID int, want map[int]b
 
 // AddMovie adds a movie to Radarr by TMDB id (monitored, search on add). Returns the Radarr movie id.
 func (c *Client) AddMovie(ctx context.Context, tmdbID int, anime bool) (int, error) {
-	var existing []struct {
-		ID     int `json:"id"`
-		TmdbID int `json:"tmdbId"`
-	}
+	var existing []map[string]any
 	if err := c.do(ctx, http.MethodGet, "/movie", url.Values{"tmdbId": {strconv.Itoa(tmdbID)}}, nil, &existing); err == nil {
 		for _, m := range existing {
-			if m.TmdbID == tmdbID {
-				return m.ID, nil
+			id, _ := m["id"].(float64)
+			if tm, _ := m["tmdbId"].(float64); int(tm) != tmdbID || id == 0 {
+				continue
 			}
+			// Already in Radarr (an earlier request, or added by hand and dropped): make sure
+			// it is monitored and look for it, as request app does. Returning the id alone left a
+			// re-request doing nothing.
+			if mon, _ := m["monitored"].(bool); !mon {
+				m["monitored"] = true
+				if err := c.do(ctx, http.MethodPut, "/movie/"+strconv.Itoa(int(id)), nil, m, nil); err != nil {
+					return 0, err
+				}
+			}
+			if has, _ := m["hasFile"].(bool); !has && c.cfg.searchOnAdd() {
+				_ = c.SearchMovie(ctx, int(id))
+			}
+			return int(id), nil
 		}
 	}
 	var movie map[string]any

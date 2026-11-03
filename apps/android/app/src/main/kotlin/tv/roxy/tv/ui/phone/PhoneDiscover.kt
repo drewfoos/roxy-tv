@@ -227,11 +227,9 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
     val app = RoxyApp.get(LocalContext.current)
     val vm: DiscoverViewModel = viewModel { DiscoverViewModel(app.api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    // Keep the request cards' progress current while something is downloading.
+    // Keep the request cards current while the tab shows: fast while something downloads.
     val anyActive = state.requests.any { it.download?.isActive == true }
-    LaunchedEffect(anyActive) {
-        while (anyActive) { delay(5_000); vm.refreshRequests() }
-    }
+    PollWhileResumed(if (anyActive) PollFastMs else PollSlowMs) { vm.refreshRequests() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
@@ -475,6 +473,11 @@ fun PhoneDiscoverDetail(
     // An action the server refused ("already on it", "searched a moment ago"): shown for a few seconds.
     var notice by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(notice) { if (notice != null) { delay(6_000); notice = null } }
+    // A request / withdraw / approve the server refused (409 "already requested", network):
+    // shown over the action button. Not touched by reload(); cleared by the next action.
+    var requestError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(requestError) { if (requestError != null) { delay(12_000); requestError = null } }
+    fun failed(t: Throwable) { Timber.w(t, "discover action"); requestError = t.message ?: "Something went wrong" }
 
     suspend fun reload() {
         runCatching { app.api.discoverDetail(type, tmdbId) }
@@ -487,23 +490,30 @@ fun PhoneDiscoverDetail(
     LaunchedEffect(type, tmdbId) {
         if (type == "movie") movieDetails = runCatching { app.api.discoverMoreDetails(type, tmdbId) }.onFailure { Timber.w(it, "movie details") }.getOrNull()
     }
-    LaunchedEffect(type, tmdbId) {
-        reload()
-        while (true) {
-            val dl = detail?.download
-            if (dl == null && detail?.request?.status != "sent") break
-            delay(if (dl?.isActive == true) 4_000 else 30_000)
-            reload()
-        }
+    LaunchedEffect(type, tmdbId) { reload() }
+    // Poll while a request is in flight. Keyed on the request, so one sent from this page
+    // starts it: fast while something moves, 10 s until the tracker first reports, slow
+    // while it waits (approval, pending, not found, not aired). Stops once it is downloaded.
+    val dlNow = detail?.download
+    val reqNow = detail?.request
+    val pollMs = when {
+        reqNow == null && dlNow == null -> 0L
+        dlNow?.isActive == true -> PollFastMs
+        reqNow?.status == "sent" && dlNow == null -> 10_000L
+        reqNow?.status == "approval" || reqNow?.status == "pending" -> PollSlowMs
+        dlNow != null && !(dlNow.state == "complete" && dlNow.have > 0) -> PollSlowMs
+        else -> 0L
     }
+    PollWhileResumed(pollMs, key = "${reqNow?.id}/${reqNow?.status}") { reload() }
 
     fun requestSeasons(seasons: List<Int>) {
         val cur = detail ?: return
         if (!cur.requestsEnabled) { setupPrompt = true; return }
         if (busy) return
         busy = true
+        requestError = null
         scope.launch {
-            runCatching { app.api.discoverRequest(cur.type, cur.tmdbId, seasons) }.onFailure { t -> Timber.w(t, "request failed"); error = t.message }
+            runCatching { app.api.discoverRequest(cur.type, cur.tmdbId, seasons) }.onFailure(::failed)
             reload(); busy = false
         }
     }
@@ -515,6 +525,8 @@ fun PhoneDiscoverDetail(
         return
     }
 
+    // The download card (with its own notice line) shows for a sent request still on its way.
+    val cardShown = d.download.let { dl -> dl != null && d.request?.status == "sent" && !(d.inLibrary && dl.state == "complete") }
     val listState = rememberLazyListState()
     // The library title page's look: tall key art under a black status bar, the logo on
     // its faded foot. The header strip goes solid as the art fades, and the name takes it
@@ -567,7 +579,7 @@ fun PhoneDiscoverDetail(
                                     onRequest = { requestSeasons(listOf(sn.number)) },
                                     onRequestEpisode = { code ->
                                         if (!d.requestsEnabled) setupPrompt = true
-                                        else if (!busy) { busy = true; scope.launch { runCatching { app.api.discoverRequest(d.type, d.tmdbId, episodes = listOf(code)) }.onFailure { t -> error = t.message }; reload(); busy = false } }
+                                        else if (!busy) { busy = true; requestError = null; scope.launch { runCatching { app.api.discoverRequest(d.type, d.tmdbId, episodes = listOf(code)) }.onFailure(::failed); reload(); busy = false } }
                                     },
                                     // One episode: search for it again, or (admin) replace its failed / stalled download.
                                     episodeAction = if (reqId == null) null else { code, retry ->
@@ -585,7 +597,7 @@ fun PhoneDiscoverDetail(
                         }
                     }
                     val dl = d.download
-                    if (dl != null && d.request?.status == "sent" && !(d.inLibrary && dl.state == "complete")) {
+                    if (cardShown && dl != null && d.request != null) {
                         DownloadStatusCard(
                             dl, isMovie = d.isMovie, admin = app.prefs.session.value.isAdmin, busy = busy,
                             onSearchAgain = { val id = d.request.id; busy = true; scope.launch { runCatching { app.api.searchAgain(id) }.onFailure { t -> notice = t.message }; reload(); busy = false } },
@@ -606,10 +618,10 @@ fun PhoneDiscoverDetail(
                         if (r.status == "approval" && app.prefs.session.value.isAdmin) {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 10.dp)) {
                                 GreyButton("Decline", modifier = Modifier.height(40.dp), onClick = {
-                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.declineRequest(r.id) }.onFailure { t -> notice = t.message }; reload(); busy = false } }
+                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.declineRequest(r.id) }.onFailure(::failed); reload(); busy = false } }
                                 })
                                 PlayButton("Approve", icon = Icons.Filled.Check, height = 40.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = {
-                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.approveRequest(r.id) }.onFailure { t -> notice = t.message }; reload(); busy = false } }
+                                    if (!busy) { busy = true; scope.launch { runCatching { app.api.approveRequest(r.id) }.onFailure(::failed); reload(); busy = false } }
                                 })
                             }
                         }
@@ -643,43 +655,54 @@ fun PhoneDiscoverDetail(
                 .navigationBarsPadding().padding(start = PhonePad, end = PhonePad, top = 24.dp, bottom = 12.dp),
         ) {
             val missing = d.missingSeasons
-            val openLibrary = { val id = d.libraryItemId; if (id != null) { if (d.isMovie) onOpenMovie(id, d.title) else onOpenSeries(id, d.title) } }
-            when {
-                d.inLibrary && (d.seasons.isEmpty() || missing.isEmpty()) -> PlayButton("Watch", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
-                d.inLibrary -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PlayButton("Watch", modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
-                    GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }) })
-                }
-                d.request != null && d.request.status != "failed" && d.request.status != "declined" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PlayButton(if (d.request.status == "approval") "Waiting for approval" else "Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
-                    GreyButton("Withdraw", modifier = Modifier.height(44.dp), onClick = {
-                        if (busy) return@GreyButton
-                        busy = true
-                        scope.launch { runCatching { app.api.deleteRequest(d.request.id) }.onFailure { Timber.w(it, "withdraw") }; reload(); busy = false }
-                    })
-                }
-                !d.requestsEnabled -> PlayButton(
-                    if (app.prefs.session.value.isAdmin) "Set up requests" else "Requests aren't set up",
-                    modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.Settings, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White,
-                    onClick = { setupPrompt = true },
+            // Refusals show right over the button that caused them (notice too when the card is not there).
+            val message = requestError ?: notice?.takeIf { !cardShown }
+            Column {
+                if (message != null) Text(
+                    message.replaceFirstChar { c -> c.uppercase() }, fontSize = 13.sp, lineHeight = 18.sp,
+                    color = if (requestError != null) RoxyColors.error else RoxyColors.muted, textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                 )
-                else -> PlayButton(
-                    when {
-                        busy -> "Requesting…"
-                        d.request?.status == "failed" || d.request?.status == "declined" -> "Request again"
-                        missing.isNotEmpty() && missing.size < d.seasons.count { !it.special } -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
-                        else -> "Request"
-                    },
-                    modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.AddCircleOutline, height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand,
-                    onClick = {
-                        if (busy) return@PlayButton
-                        busy = true
-                        scope.launch {
-                            runCatching { app.api.discoverRequest(d.type, d.tmdbId) }.onFailure { t -> Timber.w(t, "request failed"); error = t.message }
-                            reload(); busy = false
-                        }
-                    },
-                )
+                val openLibrary = { val id = d.libraryItemId; if (id != null) { if (d.isMovie) onOpenMovie(id, d.title) else onOpenSeries(id, d.title) } }
+                when {
+                    d.inLibrary && (d.seasons.isEmpty() || missing.isEmpty()) -> PlayButton("Watch", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
+                    d.inLibrary -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        PlayButton("Watch", modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
+                        GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }) })
+                    }
+                    d.request != null && d.request.status != "failed" && d.request.status != "declined" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        PlayButton(if (d.request.status == "approval") "Waiting for approval" else "Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
+                        GreyButton("Withdraw", modifier = Modifier.height(44.dp), onClick = {
+                            if (busy) return@GreyButton
+                            busy = true
+                            requestError = null
+                            scope.launch { runCatching { app.api.deleteRequest(d.request.id) }.onFailure(::failed); reload(); busy = false }
+                        })
+                    }
+                    !d.requestsEnabled -> PlayButton(
+                        if (app.prefs.session.value.isAdmin) "Set up requests" else "Requests aren't set up",
+                        modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.Settings, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White,
+                        onClick = { setupPrompt = true },
+                    )
+                    else -> PlayButton(
+                        when {
+                            busy -> "Requesting…"
+                            d.request?.status == "failed" || d.request?.status == "declined" -> "Request again"
+                            missing.isNotEmpty() && missing.size < d.seasons.count { !it.special } -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
+                            else -> "Request"
+                        },
+                        modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.AddCircleOutline, height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand,
+                        onClick = {
+                            if (busy) return@PlayButton
+                            busy = true
+                            requestError = null
+                            scope.launch {
+                                runCatching { app.api.discoverRequest(d.type, d.tmdbId) }.onFailure(::failed)
+                                reload(); busy = false
+                            }
+                        },
+                    )
+                }
             }
         }
     }

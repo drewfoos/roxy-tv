@@ -252,3 +252,25 @@ func TestSearchAndRetryGuards(t *testing.T) {
 		t.Error("request canRetry after a long stall")
 	}
 }
+
+// Right after a series is added Sonarr has not listed its episodes yet. That used to read
+// as 0 of 0 = "complete": every app said "Downloaded" and stopped looking for 10 minutes.
+func TestSeriesStatusBeforeEpisodesLoad(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	s := newTestService()
+	fresh := &store.Request{UpdatedAt: now.Add(-5 * time.Second).Format(time.RFC3339Nano)}
+	d := s.seriesStatus(fresh, nil, nil, nil, now)
+	if d.State != DLSearching || d.Wanted != 0 {
+		t.Fatalf("just added: got %s, want %s", d.State, DLSearching)
+	}
+	// Long after: TVDB lists nothing for the season asked for yet (an announced season).
+	old := &store.Request{Seasons: []int{3}, UpdatedAt: now.Add(-time.Hour).Format(time.RFC3339Nano)}
+	past := tp(now.Add(-24 * time.Hour))
+	d = s.seriesStatus(old, []arr.Episode{ep(1, 1, 1, true, past, nil)}, nil, nil, now)
+	if d.State != DLWaiting || d.WaitingFor != "airing" {
+		t.Fatalf("season not listed: got %s/%s, want waiting/airing", d.State, d.WaitingFor)
+	}
+	if d.State == DLComplete {
+		t.Fatal("never complete with nothing to have")
+	}
+}

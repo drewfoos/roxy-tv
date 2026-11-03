@@ -251,8 +251,14 @@ export const api = {
   discoverRequest: (type: string, tmdbId: number, seasons?: number[], episodes?: string[]) =>
     post<RequestRow>('/v1/discover/request', { type, tmdbId, seasons: seasons ?? [], episodes: episodes ?? [] }),
   deleteRequest: (id: string) => del<void>(`/v1/discover/requests/${id}`),
-  /** Ask Sonarr / Radarr to look again for what the request still lacks (all, or these "S1E3" episodes). */
-  searchAgain: (id: string, episodes: string[] = []) => post<void>(`/v1/discover/requests/${id}/search`, { episodes }),
+  /**
+   * Ask Sonarr / Radarr to look again for what the request still lacks: everything, or just
+   * these "S1E3" episodes and / or seasons. 409 with a message when nothing can be searched.
+   */
+  searchAgain: (id: string, which: string[] | { episodes?: string[]; seasons?: number[] } = []) => {
+    const w = Array.isArray(which) ? { episodes: which } : which
+    return post<void>(`/v1/discover/requests/${id}/search`, { episodes: w.episodes ?? [], seasons: w.seasons ?? [] })
+  },
   /** Admin: blocklist the failed / stalled download and let the arr app pick another release. */
   tryAnotherRelease: (id: string, episodes: string[] = []) => post<void>(`/v1/discover/requests/${id}/replace`, { episodes }),
 

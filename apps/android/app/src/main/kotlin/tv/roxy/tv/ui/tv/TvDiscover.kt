@@ -50,6 +50,9 @@ import tv.roxy.tv.api.DiscoverItem
 import tv.roxy.tv.api.DiscoverRow
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.ui.phone.DiscoverViewModel
+import tv.roxy.tv.ui.phone.PollFastMs
+import tv.roxy.tv.ui.phone.PollSlowMs
+import tv.roxy.tv.ui.phone.PollWhileResumed
 import tv.roxy.tv.ui.theme.RoxyColors
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -99,6 +102,9 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
     val vm: DiscoverViewModel = viewModel(viewModelStoreOwner = activity, key = "tv-discover") { DiscoverViewModel(app.api, rowsFreshMs = 30 * 60_000L) }
     val state by vm.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
+    // "Your requests" moves while the page shows: fast while something downloads.
+    val anyActive = state.requests.any { it.download?.isActive == true }
+    PollWhileResumed(if (anyActive) PollFastMs else PollSlowMs) { vm.refreshRequests() }
     val memory = rememberFocusMemory()
 
     val rows: List<DiscoverRow> = remember(state.rows, state.requests) {
@@ -217,10 +223,12 @@ private fun DiscoverCard(c: DiscoverItem, onClick: () -> Unit, modifier: Modifie
     val dl = c.download
     val note = when {
         c.inLibrary -> "In library"
+        c.requestStatus == "declined" -> "Declined"
         dl?.state == "downloading" -> "Downloading ${(dl.progress * 100).toInt().coerceIn(0, 100)}%"
         dl?.state == "failed" || dl?.state == "attention" || c.requestStatus == "failed" -> "Request failed"
         dl?.state == "importing" -> "Importing"
         dl?.state == "notFound" -> "Not found yet"
+        c.requestStatus == "approval" -> "Awaiting approval"
         c.requestStatus != null || dl != null -> "Requested"
         else -> null
     }
@@ -248,11 +256,22 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
     }
     // Opened again within a few minutes (Back and forth from Discover): shown from memory, no request.
     LaunchedEffect(type, tmdbId) { if (detail == null) load() }
-    // A request's download moves while the page is open.
-    val watching = detail?.let { it.request != null && !it.inLibrary } == true
-    LaunchedEffect(watching) {
-        while (watching) { delay(15_000); load() }
+    // A refused request (409 "already requested", network) stays a while; the next press clears it.
+    LaunchedEffect(error, detail != null) { if (error != null && detail != null) { delay(15_000); error = null } }
+    // A request's state moves while the page is open: fast while something downloads, 10 s
+    // until the tracker first reports, slow while it waits. Keyed on the request, so one
+    // sent from this page starts it.
+    val dlNow = detail?.download
+    val reqNow = detail?.request
+    val pollMs = when {
+        reqNow == null && dlNow == null -> 0L
+        dlNow?.isActive == true -> PollFastMs
+        reqNow?.status == "sent" && dlNow == null -> 10_000L
+        reqNow?.status == "approval" || reqNow?.status == "pending" -> PollSlowMs
+        dlNow != null && !(dlNow.state == "complete" && dlNow.have > 0) -> PollSlowMs
+        else -> 0L
     }
+    PollWhileResumed(pollMs, key = "${reqNow?.id}/${reqNow?.status}") { load() }
     val d = detail
     if (d == null) {
         if (error != null) PageMessage(error!!, color = RoxyColors.error) else DiscoverTitleSkeleton()
@@ -262,26 +281,38 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
     LaunchedEffect(d.tmdbId) { repeat(6) { withFrameNanos { }; if (runCatching { action.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
 
     val dl = d.download
-    val canRequest = !d.inLibrary && d.request == null && d.requestsEnabled && !busy
+    val req = d.request
+    // A failed or declined request can be asked again (the server resets and re-sends it).
+    val dead = req?.status == "failed" || req?.status == "declined"
+    val live = req != null && !dead
+    val canRequest = !d.inLibrary && !live && d.requestsEnabled && !busy
+    val missing = d.missingSeasons
+    // A series in the library (or already requested in part) can still ask for the seasons it lacks.
+    val canRequestMissing = !d.isMovie && (d.inLibrary || live) && missing.isNotEmpty() && d.requestsEnabled
     val label = when {
         d.inLibrary -> "Open in library"
-        busy -> "Requesting…"
-        d.request != null -> requestWord(d)
+        busy && !canRequestMissing -> "Requesting…"
+        live -> requestWord(d)
+        dead && d.requestsEnabled -> "Request again"
         d.requestsEnabled -> "Request"
         else -> "Requests aren't set up"
     }
     val icon = when {
         d.inLibrary -> Icons.Outlined.PlayArrow
-        d.request != null -> Icons.Outlined.Check
+        live -> Icons.Outlined.Check
         d.requestsEnabled -> Icons.Outlined.Add
         else -> Icons.Outlined.Info
     }
-    val missing = d.missingSeasons
+    val missingLabel = "S" + missing.joinToString(", S") { it.number.toString() }
     val hint = when {
         error != null -> error
+        req?.status == "failed" -> "Request failed" + (req.error?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "") + if (d.requestsEnabled) ". Select to try again." else ""
+        req?.status == "declined" -> "Request declined" + (req.error?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "") + if (d.requestsEnabled) ". Select to ask again." else ""
+        canRequestMissing -> "Missing $missingLabel."
         d.inLibrary -> null
-        d.request != null && dl?.message != null && (dl.state == "attention" || dl.state == "failed") -> dl.message
-        d.request != null -> "Requested by ${d.request.userName.ifBlank { "someone" }}"
+        req?.status == "approval" -> "Requested by ${req.userName.ifBlank { "someone" }}  ·  waiting for an admin to approve"
+        req != null && dl?.message != null && (dl.state == "attention" || dl.state == "failed" || dl.state == "searching") -> dl.message
+        req != null -> "Requested by ${req.userName.ifBlank { "someone" }}"
         !d.requestsEnabled && app.prefs.session.value.isAdmin -> "Set up ${if (d.isMovie) "Radarr" else "Sonarr"} on your phone or in the web app (Account, Sonarr & Radarr) to turn requests on."
         !d.requestsEnabled -> "Ask whoever runs this server to connect ${if (d.isMovie) "Radarr" else "Sonarr"}."
         d.isMovie -> "Sends the movie to Radarr."
@@ -325,13 +356,31 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
                             busy = true
                             error = null
                             runCatching { app.api.discoverRequest(d.type, d.tmdbId, missing.map { it.number }) }.onFailure { error = it.message ?: "The request failed" }
-                            busy = false
                             load()
+                            busy = false // after load(): the old state would re-enable Request for a moment
                         }
                     }
                 },
-                modifier = Modifier.width(360.dp).focusRequester(action).alpha(if (canRequest || d.inLibrary || d.request != null) 1f else 0.6f),
+                modifier = Modifier.width(360.dp).focusRequester(action).alpha(if (canRequest || d.inLibrary || live) 1f else 0.6f),
             )
+            // Seasons the library (or the request) lacks: a second row, straight below the action.
+            if (canRequestMissing) {
+                Spacer(Modifier.height(8.dp))
+                TvListRow(
+                    label = if (busy) "Requesting…" else "Request ${missing.size} missing season${if (missing.size == 1) "" else "s"}",
+                    icon = Icons.Outlined.Add, height = TvDims.ListRowHeight,
+                    onClick = {
+                        if (!busy) scope.launch {
+                            busy = true
+                            error = null
+                            runCatching { app.api.discoverRequest("tv", d.tmdbId, missing.map { it.number }) }.onFailure { error = it.message ?: "The request failed" }
+                            load()
+                            busy = false
+                        }
+                    },
+                    modifier = Modifier.width(360.dp),
+                )
+            }
             if (hint != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(hint, color = if (error != null) RoxyColors.error else RoxyColors.muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -417,7 +466,7 @@ private fun SeasonPill(s: DiscoverSeason) {
 }
 
 /** The request's state in a word or two, for the action. */
-private fun requestWord(d: DiscoverDetail): String = when (d.download?.state) {
+private fun requestWord(d: DiscoverDetail): String = if (d.request?.status == "approval") "Waiting for approval" else if (d.request?.status == "pending") "Requested  ·  waiting" else when (d.download?.state) {
     "downloading" -> "Downloading"
     "stalled" -> "Download stalled"
     "importing" -> "Adding to library"

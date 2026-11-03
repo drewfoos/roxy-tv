@@ -10,7 +10,7 @@ import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { PhoneTitleHeader } from '../components/PhoneChrome'
 import { IconCheck, IconCheckCircle, IconExpand, IconHistory, IconPlay, IconSettings } from '../components/Icons'
-import { DownloadBar, DownloadStatusCard, episodeLine, isActive, stateColor } from '../components/DiscoverBits'
+import { DownloadBar, DownloadStatusCard, canSearchFor, effectiveState, episodeLine, isActive, isPending, stateColor } from '../components/DiscoverBits'
 
 /**
  * The Discover title page (PhoneDiscoverDetail, PhoneDiscover.kt): a TMDB title in the
@@ -37,10 +37,20 @@ export function DiscoverTitle() {
     return () => window.clearTimeout(h)
   }, [notice])
 
+  // A search was just asked for: poll fast for a minute so its result shows up.
+  const [burst, setBurst] = useState(false)
+  useEffect(() => {
+    if (!burst) return
+    const h = window.setTimeout(() => setBurst(false), 60000)
+    return () => window.clearTimeout(h)
+  }, [burst])
+
   // Only poll while a request is moving: every few seconds while something downloads or
-  // is being searched, every 15 s while a sent request has no status yet. Nothing else.
+  // is being searched (or was just asked to), every 15 s while a sent request has no
+  // status yet, every 45 s while it is sent but not done. Nothing else.
   const dl = d?.download
-  const pollMs = isActive(dl) ? 5000 : d?.request?.status === 'sent' && !dl ? 15000 : 0
+  const sent = d?.request?.status
+  const pollMs = isActive(dl) || (burst && sent === 'sent') ? 5000 : sent === 'sent' && !dl ? 15000 : isPending(sent, dl) ? 45000 : 0
   useEffect(() => {
     if (!pollMs) return
     const h = window.setInterval(() => {
@@ -50,11 +60,12 @@ export function DiscoverTitle() {
   }, [pollMs, reload])
 
   /** Runs a change, then reloads the page (and lets Discover's rows ask again). */
-  const act = async (fn: () => Promise<unknown>) => {
+  const act = async (fn: () => Promise<unknown>, after?: () => void) => {
     if (busy) return
     setBusy(true)
     try {
       await fn()
+      after?.()
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     }
@@ -89,6 +100,13 @@ export function DiscoverTitle() {
   const arr = isMovie ? 'Radarr' : 'Sonarr'
   const openLibrary = () => d.libraryItemId && nav(isMovie ? `/movie/${d.libraryItemId}` : `/series/${d.libraryItemId}`)
   const request = (seasonNums?: number[], episodes?: string[]) => act(() => api.discoverRequest(type, d.tmdbId, seasonNums, episodes))
+  // Searches: errors (409 "searched a moment ago…") land in the notice; success polls fast.
+  const search = (fn: () => Promise<unknown>) => act(fn, () => setBurst(true))
+  // Roxy forgets the request; what Sonarr / Radarr already have stays with them.
+  const withdraw = (id: string) => {
+    if (!window.confirm(`Remove this request from Roxy? ${arr} keeps the title and anything it is downloading; remove it there to stop it.`)) return
+    act(() => api.deleteRequest(id))
+  }
   const plural = (n: number) => `${n} season${n === 1 ? '' : 's'}`
 
   const notSetUp = admin ? (
@@ -129,8 +147,8 @@ export function DiscoverTitle() {
         <span className="btn btn--grey dtitle__done">
           <IconCheck size={18} /> {req.status === 'approval' ? 'Waiting for approval' : 'Requested'}
         </span>
-        <button className="btn btn--outline" disabled={busy} onClick={() => act(() => api.deleteRequest(req.id))}>
-          Withdraw
+        <button className="btn btn--outline" disabled={busy} onClick={() => withdraw(req.id)}>
+          Remove request
         </button>
       </>
     )
@@ -152,7 +170,7 @@ export function DiscoverTitle() {
   }
 
   // The request's line, unless the download card says more.
-  const showCard = dl != null && req?.status === 'sent' && !(inLibrary && dl.state === 'complete')
+  const showCard = dl != null && req?.status === 'sent' && !(inLibrary && effectiveState(dl) === 'complete')
   let reqLine: string | null = null
   if (!showCard && req) {
     const who = req.userName || 'someone'
@@ -193,8 +211,8 @@ export function DiscoverTitle() {
             isMovie={isMovie}
             admin={admin}
             busy={busy}
-            onSearchAgain={() => act(() => api.searchAgain(req.id))}
-            onTryAnother={() => act(() => api.tryAnotherRelease(req.id))}
+            onSearchAgain={() => search(() => api.searchAgain(req.id))}
+            onTryAnother={() => search(() => api.tryAnotherRelease(req.id))}
           />
         )}
         {!d.requestsEnabled && (!inLibrary || missing.length > 0) && (
@@ -218,10 +236,11 @@ export function DiscoverTitle() {
               enabled={d.requestsEnabled}
               busy={busy}
               admin={admin}
-              searchAgain={sentId != null && !!dl?.canSearch}
+              searchAgain={sentId != null && canSearchFor(dl, sn.number)}
               onRequest={() => request([sn.number])}
+              onSearchAgain={() => sentId && search(() => api.searchAgain(sentId, { seasons: [sn.number] }))}
               onRequestEpisode={(code) => request(undefined, [code])}
-              onEpisodeAction={sentId ? (code, retry) => act(() => (retry ? api.tryAnotherRelease(sentId, [code]) : api.searchAgain(sentId, [code]))) : null}
+              onEpisodeAction={sentId ? (code, retry) => search(() => (retry ? api.tryAnotherRelease(sentId, [code]) : api.searchAgain(sentId, { episodes: [code] }))) : null}
             />
           ))}
         </section>
@@ -302,6 +321,7 @@ function SeasonRow({
   admin,
   searchAgain,
   onRequest,
+  onSearchAgain,
   onRequestEpisode,
   onEpisodeAction,
 }: {
@@ -313,6 +333,7 @@ function SeasonRow({
   admin: boolean
   searchAgain: boolean
   onRequest: () => void
+  onSearchAgain: () => void
   onRequestEpisode: (code: string) => void
   onEpisodeAction: ((code: string, retry: boolean) => void) | null
 }) {
@@ -345,7 +366,7 @@ function SeasonRow({
     )
   } else if (sn.requested && !sn.special && searchAgain && enabled) {
     state = (
-      <button className="chip" disabled={busy} onClick={onRequest}>
+      <button className="chip" disabled={busy} onClick={onSearchAgain}>
         Search again
       </button>
     )

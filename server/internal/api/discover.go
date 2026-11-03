@@ -236,7 +236,8 @@ func (s *Server) discoverSearchAgain(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) || userFrom(w, r) == nil {
 		return
 	}
-	if err := s.discover.SearchAgain(r.Context(), chi.URLParam(r, "id"), episodeCodes(r)...); err != nil {
+	body := searchBody(r)
+	if err := s.discover.SearchAgain(r.Context(), chi.URLParam(r, "id"), body.Seasons, body.Episodes...); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
@@ -249,23 +250,30 @@ func (s *Server) discoverReplaceRelease(w http.ResponseWriter, r *http.Request) 
 	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
 		return
 	}
-	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id"), episodeCodes(r)...); err != nil {
+	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id"), searchBody(r).Episodes...); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// episodeCodes reads an optional {episodes: ["S1E3", ...]} body: act on those episodes only.
-func episodeCodes(r *http.Request) []string {
-	var body struct {
-		Episodes []string `json:"episodes"`
-	}
+// searchBody reads an optional {episodes: ["S1E3", ...], seasons: [1]} body: act on those
+// episodes and seasons only (empty: everything missing).
+type searchTarget struct {
+	Episodes []string `json:"episodes"`
+	Seasons  []int    `json:"seasons"`
+}
+
+func searchBody(r *http.Request) searchTarget {
+	var body searchTarget
 	_ = json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8<<10)).Decode(&body)
 	if len(body.Episodes) > 200 {
 		body.Episodes = body.Episodes[:200]
 	}
-	return body.Episodes
+	if len(body.Seasons) > 100 {
+		body.Seasons = body.Seasons[:100]
+	}
+	return body
 }
 
 // upstreamError logs the real cause and tells the client only that TMDB did not answer:
