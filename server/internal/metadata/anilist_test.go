@@ -143,3 +143,33 @@ func TestTitleSimilarity(t *testing.T) {
 		t.Errorf("StripHTML = %q", StripHTML("a<br/>b<BR>c &amp; d <b>e</b>"))
 	}
 }
+
+func TestAnilistAdvisoriesViolence(t *testing.T) {
+	type tag = struct {
+		Name     string `json:"name"`
+		Category string `json:"category"`
+		Rank     int    `json:"rank"`
+		Spoiler  bool   `json:"isMediaSpoiler"`
+	}
+	m := &anilistMedia{}
+	m.Genres = []string{"Action", "Drama"}
+	if got := anilistAdvisories(m); len(got) != 1 || got[0] != "Violence" {
+		t.Errorf("Action genre: %v, want [Violence]", got)
+	}
+	m = &anilistMedia{}
+	m.Tags = append(m.Tags, tag{Name: "Military", Category: "Theme-Other-Organisations", Rank: 80})
+	if got := anilistAdvisories(m); len(got) != 1 || got[0] != "Violence" {
+		t.Errorf("Military outside Theme-Action: %v, want [Violence]", got)
+	}
+	m = &anilistMedia{}
+	m.Genres = []string{"Action"}
+	m.Tags = append(m.Tags, tag{Name: "Gore", Category: "Theme-Other", Rank: 70})
+	if got := anilistAdvisories(m); len(got) != 1 || got[0] != "Graphic Violence" {
+		t.Errorf("Gore: %v, want [Graphic Violence]", got)
+	}
+	m = &anilistMedia{}
+	m.Tags = append(m.Tags, tag{Name: "War", Category: "Theme-Other", Rank: 20})
+	if got := anilistAdvisories(m); len(got) != 0 {
+		t.Errorf("low-rank War: %v, want none", got)
+	}
+}

@@ -99,27 +99,15 @@ export function audioBadge(it: Item | null | undefined): string | null {
 }
 
 /** TV and MPAA ratings folded into Crunchyroll's short labels. */
+/**
+ * The rating as the board issued it (TV-Y7, TV-14, PG-13), not folded into short badges:
+ * "ALL" for TV-Y7 claimed a 7+ show was for everyone. Only spelling is tidied.
+ */
 export function ageLabel(rating: string): string {
-  const r = rating.toUpperCase().replace(/^US-/, '')
-  switch (r) {
-    case 'TV-Y':
-    case 'TV-Y7':
-    case 'TV-G':
-    case 'G':
-      return 'ALL'
-    case 'TV-PG':
-    case 'PG':
-      return 'PG'
-    case 'TV-14':
-    case 'PG-13':
-      return '14+'
-    case 'TV-MA':
-    case 'R':
-    case 'NC-17':
-      return '18+'
-    default:
-      return rating
-  }
+  const r = rating.trim().toUpperCase().replace(/^US-/, '')
+  if (r === 'PG13') return 'PG-13'
+  if (r === 'NC17') return 'NC-17'
+  return r.startsWith('TV') || ['G', 'PG', 'PG-13', 'R', 'NC-17', 'NR'].includes(r) ? r : rating.trim()
 }
 
 export const yearOf = (it: Item): number | null => it.year ?? (it.premiered ? Number(it.premiered.slice(0, 4)) || null : null)

@@ -609,6 +609,12 @@ func (a *AniList) Episodes(ctx context.Context, series *Result, season int) (*Se
 // AdvisoryOrder is the display order of content descriptors (Crunchyroll's vocabulary).
 var AdvisoryOrder = []string{"Sexual Content", "Nudity", "Profanity", "Violence", "Graphic Violence", "Drug/Alcohol Use", "Suicide/Self-Harm", "Horror"}
 
+// violenceTags are AniList tags that mean on-screen fighting or killing.
+var violenceTags = map[string]bool{
+	"Swordplay": true, "Guns": true, "Martial Arts": true, "Military": true, "Battle Royale": true,
+	"War": true, "Terrorism": true, "Assassins": true, "Archery": true, "Spearplay": true, "Death Game": true,
+}
+
 // anilistAdvisories turns the community's tags into content descriptors. A tag counts
 // when at least a third of voters agree (rank >= 35) and it is not a spoiler tag.
 func anilistAdvisories(m *anilistMedia) []string {
@@ -619,6 +625,11 @@ func anilistAdvisories(m *anilistMedia) []string {
 		}
 		if g == "Horror" {
 			seen["Horror"] = true
+		}
+		// Crunchyroll marks nearly every action series "Violence"; AniList has no plain
+		// violence tag, so the genre stands for it.
+		if g == "Action" {
+			seen["Violence"] = true
 		}
 	}
 	for _, t := range m.Tags {
@@ -636,7 +647,9 @@ func anilistAdvisories(m *anilistMedia) []string {
 			seen["Suicide/Self-Harm"] = true
 		case t.Name == "Drugs" || t.Name == "Alcohol" || t.Name == "Smoking":
 			seen["Drug/Alcohol Use"] = true
-		case t.Category == "Theme-Action" && (t.Name == "Swordplay" || t.Name == "Guns" || t.Name == "Martial Arts" || t.Name == "Military" || t.Name == "Battle Royale" || t.Name == "War" || t.Name == "Terrorism" || t.Name == "Assassins"):
+		// By name, not category: AniList files Military and War outside "Theme-Action", so
+		// the old category check never let them count.
+		case violenceTags[t.Name]:
 			seen["Violence"] = true
 		}
 	}

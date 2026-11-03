@@ -463,13 +463,18 @@ internal fun AgePill(text: String, small: Boolean = false) {
     }
 }
 
-/** TV and MPAA ratings folded into Crunchyroll's short labels; anything unknown shows as is. */
-internal fun ageLabel(rating: String): String = when (rating.uppercase().removePrefix("US-")) {
-    "TV-Y", "TV-Y7", "TV-G", "G" -> "ALL"
-    "TV-PG", "PG" -> "PG"
-    "TV-14", "PG-13" -> "14+"
-    "TV-MA", "R", "NC-17" -> "18+"
-    else -> rating
+/**
+ * The rating as the board issued it (TV-Y7, TV-14, PG-13), not folded into short badges:
+ * "ALL" for TV-Y7 claimed a 7+ show was for everyone. Only spelling is tidied.
+ */
+internal fun ageLabel(rating: String): String {
+    val r = rating.trim().uppercase().removePrefix("US-")
+    return when {
+        r == "PG13" -> "PG-13"
+        r == "NC17" -> "NC-17"
+        r.startsWith("TV") || r in setOf("G", "PG", "PG-13", "R", "NC-17", "NR") -> r
+        else -> rating.trim()
+    }
 }
 
 /** A 44 dp white glyph for the title page header (no circle behind it, like Crunchyroll's). */
