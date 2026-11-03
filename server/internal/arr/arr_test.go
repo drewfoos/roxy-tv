@@ -3,8 +3,10 @@ package arr
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -191,5 +193,26 @@ func TestAddSeriesLeavesUnmonitoredAlone(t *testing.T) {
 		if call != "GET /api/v3/series" {
 			t.Errorf("unexpected call %s", call)
 		}
+	}
+}
+
+// Sonarr's one-line-per-episode "unexpected considering the folder name" becomes one sentence.
+func TestMessagesFoldsUnexpectedFolder(t *testing.T) {
+	folder := "[Judas] Sono Bisque Doll wa Koi o Suru (My Dress-Up Darling) (Season 02) [1080p]"
+	var msgs []string
+	for e := 1; e <= 12; e++ {
+		msgs = append(msgs, fmt.Sprintf("Episode 2x%02d was unexpected considering the %s folder name", e, folder))
+	}
+	q := QueueItem{ErrorMessage: "One or more episodes expected in this release were not imported or missing from the release", StatusMessages: []StatusMessage{{Title: "x.mkv", Messages: msgs}}}
+	got := q.Messages()
+	if !strings.Contains(got, "S2E1–E12") || strings.Contains(got, "2x05") || !strings.Contains(got, "Manual Import") {
+		t.Errorf("got %q", got)
+	}
+	if got := episodeRange(1, []int{5, 1, 3}); got != "S1E1, E3, E5" {
+		t.Errorf("gaps: %q", got)
+	}
+	// Other messages are untouched.
+	if got := (QueueItem{ErrorMessage: "No files found"}).Messages(); got != "No files found" {
+		t.Errorf("plain: %q", got)
 	}
 }

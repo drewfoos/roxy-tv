@@ -2,8 +2,10 @@ package arr
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,7 +59,64 @@ func (q QueueItem) Messages() string {
 			parts = append(parts, m.Title)
 		}
 	}
+	if s := unexpectedForFolder(parts); s != "" {
+		return s
+	}
 	return strings.Join(parts, " ")
+}
+
+// "Episode 2x01 was unexpected considering the <release> folder name": Sonarr read the
+// episodes from the file names but could not match the batch's folder name (Judas's
+// "(Season 02)", say), so it stops for a manual import. One line per episode made a wall
+// of text; this says it once.
+var unexpectedRe = regexp.MustCompile(`Episode (\d+)x(\d+) was unexpected considering the .+? folder name`)
+
+func unexpectedForFolder(parts []string) string {
+	seasons := map[int][]int{}
+	for _, p := range parts {
+		for _, m := range unexpectedRe.FindAllStringSubmatch(p, -1) {
+			s, _ := strconv.Atoi(m[1])
+			e, _ := strconv.Atoi(m[2])
+			seasons[s] = append(seasons[s], e)
+		}
+	}
+	if len(seasons) == 0 {
+		return ""
+	}
+	var keys []int
+	for s := range seasons {
+		keys = append(keys, s)
+	}
+	sort.Ints(keys)
+	var eps []string
+	for _, s := range keys {
+		eps = append(eps, episodeRange(s, seasons[s]))
+	}
+	return "Sonarr couldn't match the release's folder name to " + strings.Join(eps, ", ") +
+		" (the files themselves are named right), so it is waiting for a manual import: Sonarr → Activity → Queue → Manual Import."
+}
+
+// episodeRange: "S2E1–E12" for a run, "S2E1, E3, E5" otherwise.
+func episodeRange(season int, eps []int) string {
+	sort.Ints(eps)
+	run := true
+	for i := 1; i < len(eps); i++ {
+		if eps[i] != eps[i-1]+1 {
+			run = false
+		}
+	}
+	if len(eps) > 1 && run {
+		return fmt.Sprintf("S%dE%d–E%d", season, eps[0], eps[len(eps)-1])
+	}
+	out := make([]string, len(eps))
+	for i, e := range eps {
+		if i == 0 {
+			out[i] = fmt.Sprintf("S%dE%d", season, e)
+		} else {
+			out[i] = fmt.Sprintf("E%d", e)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // TimeLeftSeconds parses the TimeSpan string ("1.02:03:04", "00:12:34"); -1 when unknown.
