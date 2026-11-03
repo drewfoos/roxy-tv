@@ -11,8 +11,8 @@ import (
 // Handles TRaSH-style names and the common anime shapes. Webhook ingest supersedes this.
 
 var (
-	reSxxExx  = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-?E?(\d{1,4}))?\b`)
-	reAbsDash = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`) // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
+	reSxxExx  = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-?E?(\d{1,4}))?(?:v\d)?\b`) // "S02E01v2": a release-version suffix glued on
+	reAbsDash = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`)                            // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
 	// "[Group] Title S2 - 01 (1080p)", "Title 2nd Season - 03", "Title Season 2 - 03": a
 	// season token before the dash makes the number an episode of that season, not an
 	// absolute number.

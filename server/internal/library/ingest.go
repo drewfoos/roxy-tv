@@ -12,6 +12,12 @@ import (
 // IngestPath handles a path reported by Sonarr/Radarr (file or folder): it finds the
 // library whose root contains it and ingests the file, or every video under the folder.
 func (l *Library) IngestPath(ctx context.Context, path string) error {
+	return l.IngestPathHinted(ctx, path, nil)
+}
+
+// IngestPathHinted is IngestPath with the season and episode(s) the arr app assigned a
+// single file (see EpisodeHint). The hint is ignored for folders.
+func (l *Library) IngestPathHinted(ctx context.Context, path string, hint *EpisodeHint) error {
 	path = filepath.Clean(path)
 	libs, err := l.store.ListLibraries(ctx)
 	if err != nil {
@@ -33,7 +39,7 @@ func (l *Library) IngestPath(ctx context.Context, path string) error {
 			if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(info.Name()) != "" {
 				return nil
 			}
-			return l.addFileSafe(ctx, lib, path)
+			return l.addFileSafeHinted(ctx, lib, path, hint)
 		}
 		return filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {

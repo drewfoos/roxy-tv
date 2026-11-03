@@ -72,6 +72,15 @@ type payload struct {
 	Message             string `json:"message"`
 }
 
+// episodeHint: the season/episode(s) in the payload, for a single-file import.
+func (p *payload) episodeHint() *library.EpisodeHint {
+	pairs := make([][2]int, 0, len(p.Episodes))
+	for _, e := range p.Episodes {
+		pairs = append(pairs, [2]int{e.SeasonNumber, e.EpisodeNumber})
+	}
+	return library.NewEpisodeHint(pairs)
+}
+
 func (p *payload) title() string {
 	switch {
 	case p.Series != nil && len(p.Episodes) > 0:
@@ -141,6 +150,11 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 			ev.Result = "ignored: no file in payload"
 			break
 		}
+		// Sonarr's episode list describes the file only when there is exactly one.
+		var hint *library.EpisodeHint
+		if len(files) == 1 && p.EpisodeFile != nil {
+			hint = p.episodeHint()
+		}
 		var results []string
 		for _, f := range files {
 			local, ok := s.resolve(ctx, p.absolute(f))
@@ -149,7 +163,7 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 				results = append(results, "error: path not under a library ("+p.absolute(f)+")")
 				continue
 			}
-			if err := s.lib.IngestPath(ctx, local); err != nil {
+			if err := s.lib.IngestPathHinted(ctx, local, hint); err != nil {
 				results = append(results, "error: "+err.Error())
 			} else {
 				results = append(results, "ingested")
@@ -160,11 +174,15 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 		renamed := append(p.RenamedEpisodeFiles, p.RenamedMovieFiles...)
 		n := 0
 		for _, f := range renamed {
+			// Keep the episode the old name had: the new name may be one the parser
+			// cannot read, and the payload carries no episode list for renames.
+			var hint *library.EpisodeHint
 			if old, ok := s.resolveKnownFile(ctx, f.PreviousPath); ok {
+				hint = s.lib.HintForPath(ctx, old)
 				s.removePath(ctx, old)
 			}
 			local, ok := s.resolve(ctx, p.absolute(f))
-			if ok && s.lib.IngestPath(ctx, local) == nil {
+			if ok && s.lib.IngestPathHinted(ctx, local, hint) == nil {
 				n++
 			}
 			ev.Path = local

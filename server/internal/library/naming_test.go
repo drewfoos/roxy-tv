@@ -69,6 +69,10 @@ func TestParseEpisodeFilePatterns(t *testing.T) {
 		{"[DB]Tokyo Magnitude 8.0_-_01_(Dual Audio_10bit_BD1080p_x265).mkv", want{0, 0, 1}, "Tokyo Magnitude 8.0"},
 		{"[DB]Tokyo Magnitude 8.0_-_11_(Dual Audio_10bit_BD1080p_x265).mkv", want{0, 0, 11}, ""},
 		{"Some_Show_-_07v2_[720p].mkv", want{0, 0, 7}, ""},
+		// SxxExx with a release-version suffix glued on (Judas batches), as Jellyfin and Sonarr read it.
+		{"[Judas] KiseKoi - S02E01v2.mkv", want{2, 1, 0}, ""},
+		{"[Judas] KiseKoi - S02E12v2.mkv", want{2, 12, 0}, ""},
+		{"Show.S01E05v3.1080p.WEB.mkv", want{1, 5, 0}, ""},
 		// "Episode N - Title".
 		{"Episode 1 - The Golden Age.mkv", want{0, 1, 0}, ""},
 		{"Episode 13 - Vow of Retaliation.mkv", want{0, 13, 0}, ""},

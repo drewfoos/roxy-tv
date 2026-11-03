@@ -929,8 +929,18 @@ func (s *Service) searchMissing(ctx context.Context, c *arr.Client, r *store.Req
 	var busy, recent, picked int
 	var soonest time.Duration
 	now := time.Now()
+	seasons := map[int]*seasonTally{}
 	for _, ep := range eps {
-		if !inScope(r, ep) || !ep.Aired(now) || ep.HasFile || !pick(ep) {
+		if !inScope(r, ep) || !ep.Aired(now) || !pick(ep) {
+			continue
+		}
+		t := seasons[ep.SeasonNumber]
+		if t == nil {
+			t = &seasonTally{}
+			seasons[ep.SeasonNumber] = t
+		}
+		t.aired++
+		if ep.HasFile {
 			continue
 		}
 		picked++
@@ -948,6 +958,7 @@ func (s *Service) searchMissing(ctx context.Context, c *arr.Client, r *store.Req
 			}
 		default:
 			ids = append(ids, ep.ID)
+			t.ids = append(t.ids, ep.ID)
 		}
 	}
 	if len(ids) == 0 {
@@ -960,7 +971,37 @@ func (s *Service) searchMissing(ctx context.Context, c *arr.Client, r *store.Req
 			return fmt.Errorf("Sonarr is already on it: downloading or searching right now")
 		}
 	}
-	return c.SearchEpisodes(ctx, ids)
+	// A season with every aired episode missing gets one SeasonSearch: episode searches
+	// never match a season pack, so they grab single episodes (often bigger, or a stray
+	// that then blocks the pack as a downgrade).
+	whole, rest := splitSeasonSearches(seasons)
+	for _, n := range whole {
+		if err := c.SearchSeason(ctx, r.ArrID, n); err != nil {
+			return err
+		}
+	}
+	return c.SearchEpisodes(ctx, rest)
+}
+
+// seasonTally: a season's aired, requested episodes, and the ones free to search now.
+type seasonTally struct {
+	aired int
+	ids   []int
+}
+
+// splitSeasonSearches returns the seasons to search whole (more than one aired episode,
+// every one of them missing and searchable) and the episode ids left to search singly.
+func splitSeasonSearches(seasons map[int]*seasonTally) (whole []int, rest []int) {
+	for n, t := range seasons {
+		if n > 0 && t.aired > 1 && len(t.ids) == t.aired {
+			whole = append(whole, n)
+		} else {
+			rest = append(rest, t.ids...)
+		}
+	}
+	sort.Ints(whole)
+	sort.Ints(rest)
+	return whole, rest
 }
 
 // movieSearchable: the same rules for a movie.

@@ -251,6 +251,11 @@ func (c *Client) SearchEpisodes(ctx context.Context, episodeIDs []int) error {
 	return c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "EpisodeSearch", "episodeIds": episodeIDs}, nil)
 }
 
+// SearchSeason asks Sonarr to search one whole season (matches season packs).
+func (c *Client) SearchSeason(ctx context.Context, seriesID, season int) error {
+	return c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeasonSearch", "seriesId": seriesID, "seasonNumber": season}, nil)
+}
+
 func (c *Client) SearchMovie(ctx context.Context, movieID int) error {
 	return c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "MoviesSearch", "movieIds": []int{movieID}}, nil)
 }

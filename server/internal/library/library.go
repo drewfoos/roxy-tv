@@ -223,20 +223,29 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 }
 
 // addFileSafe wraps AddFile so a parser bug on one odd filename cannot take down a scan.
-func (l *Library) addFileSafe(ctx context.Context, lib model.Library, path string) (err error) {
+func (l *Library) addFileSafe(ctx context.Context, lib model.Library, path string) error {
+	return l.addFileSafeHinted(ctx, lib, path, nil)
+}
+
+func (l *Library) addFileSafeHinted(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic ingesting %s: %v", filepath.Base(path), r)
 		}
 	}()
-	return l.AddFile(ctx, lib, path)
+	return l.AddFileHinted(ctx, lib, path, hint)
 }
 
 // AddFile ingests one video file: resolves (or creates) its item from the folder
 // structure and filename, probes it, extracts attachments and text subtitles, attaches
 // sidecar subtitles, and stores everything.
 func (l *Library) AddFile(ctx context.Context, lib model.Library, path string) error {
-	item, err := l.resolveItem(ctx, lib, path)
+	return l.AddFileHinted(ctx, lib, path, nil)
+}
+
+// AddFileHinted is AddFile with the arr app's season/episode for the file (may be nil).
+func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) error {
+	item, err := l.resolveItemHinted(ctx, lib, path, hint)
 	if err != nil {
 		return err
 	}
@@ -347,6 +356,10 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 
 // resolveItem maps a file to its item using folder structure and filename (fallback mode).
 func (l *Library) resolveItem(ctx context.Context, lib model.Library, path string) (*model.Item, error) {
+	return l.resolveItemHinted(ctx, lib, path, nil)
+}
+
+func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) (*model.Item, error) {
 	rel, err := filepath.Rel(lib.Root, path)
 	if err != nil {
 		return nil, err
@@ -354,6 +367,14 @@ func (l *Library) resolveItem(ctx context.Context, lib model.Library, path strin
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	fileName := parts[len(parts)-1]
 	parsed := ParseEpisodeFile(fileName)
+	// A name with no episode number at all: take the arr app's numbers, or keep the ones
+	// this file already has (a hint from an earlier import), so a rescan of a name the
+	// parser cannot read does not turn a numbered episode back into a bare filename.
+	if lib.Kind != model.KindMovies && parsed.Episode == nil && parsed.Absolute == nil {
+		if h := l.episodeHintFor(ctx, path, hint); h != nil {
+			parsed.applyHint(h)
+		}
+	}
 
 	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	dir := ""
