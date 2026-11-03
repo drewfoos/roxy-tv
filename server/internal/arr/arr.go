@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -383,9 +384,38 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 		return 0, err
 	}
 	if c.cfg.searchOnAdd() && added.ID != 0 {
-		c.searchSeasons(ctx, added.ID, want)
+		go c.searchWhenReady(added.ID, want)
 	}
 	return added.ID, nil
+}
+
+// How often, and for how long, a new series is checked for its episode list before the
+// first search. Variables so tests can shorten them.
+var (
+	readyPoll    = 2 * time.Second
+	readyTimeout = 2 * time.Minute
+)
+
+// searchWhenReady waits until Sonarr has loaded a new series' episodes, then searches.
+// Sonarr adds the series first and fills in its episodes from TVDB a moment later; a
+// search sent straight after the add runs against no episodes and finds nothing ("Series
+// search completed. 0 reports downloaded.", and no episode ever marked searched).
+func (c *Client) searchWhenReady(seriesID int, want map[int]bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
+	defer cancel()
+	for {
+		if eps, err := c.Episodes(ctx, seriesID); err == nil && len(eps) > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			slog.Warn("sonarr: episodes never loaded; searching anyway", "series", seriesID)
+			c.searchSeasons(context.Background(), seriesID, want)
+			return
+		case <-time.After(readyPoll):
+		}
+	}
+	c.searchSeasons(ctx, seriesID, want)
 }
 
 // olderSeries: Sonarr's lookup says the series first aired before OldAnimeBefore and has ended.

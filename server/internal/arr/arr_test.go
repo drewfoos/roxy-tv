@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeSonarr answers the calls AddSeries makes and records the series it was sent and
@@ -28,9 +31,18 @@ func fakeSonarr(t *testing.T, sent *map[string]any, commands ...*[]map[string]an
 			var cmd map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&cmd)
 			if len(commands) > 0 {
+				cmdMu.Lock()
 				*commands[0] = append(*commands[0], cmd)
+				cmdMu.Unlock()
 			}
 			w.Write([]byte(`{"id":1}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/episode":
+			// No episodes for the first call, as right after an add; then some.
+			if episodeCalls.Add(1) == 1 {
+				w.Write([]byte(`[]`))
+			} else {
+				w.Write([]byte(`[{"id":1,"seasonNumber":1,"episodeNumber":1}]`))
+			}
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
@@ -70,6 +82,28 @@ func TestAddSeriesAnimeTypeDefaultsToStandard(t *testing.T) {
 	}
 }
 
+var (
+	cmdMu        sync.Mutex
+	episodeCalls atomic.Int32
+)
+
+// commandsAfter waits briefly for the background search to send its commands.
+func commandsAfter(cmds *[]map[string]any, want int) []map[string]any {
+	for i := 0; i < 200; i++ {
+		cmdMu.Lock()
+		n := len(*cmds)
+		cmdMu.Unlock()
+		if n >= want {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // and nothing more
+	cmdMu.Lock()
+	defer cmdMu.Unlock()
+	return append([]map[string]any(nil), (*cmds)...)
+}
+
 // A new series is added with Sonarr's per-episode search off (it grabs a stray episode
 // that then blocks the season pack) and searched by season instead.
 func TestAddSeriesSearchesBySeason(t *testing.T) {
@@ -83,12 +117,18 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 	} {
 		var sent map[string]any
 		var cmds []map[string]any
+		readyPoll = time.Millisecond
+		episodeCalls.Store(0)
 		srv := fakeSonarr(t, &sent, &cmds)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
 		if _, err := c.AddSeries(context.Background(), 424536, false, tc.seasons); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
+		cmds = commandsAfter(&cmds, 1)
 		srv.Close()
+		if episodeCalls.Load() < 2 {
+			t.Errorf("%s: searched before the episodes loaded", tc.name)
+		}
 		opts, _ := sent["addOptions"].(map[string]any)
 		if opts["searchForMissingEpisodes"] != false {
 			t.Errorf("%s: searchForMissingEpisodes %v, want false", tc.name, opts["searchForMissingEpisodes"])
@@ -106,6 +146,7 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 	if _, err := c.AddSeries(context.Background(), 424536, false, nil); err != nil {
 		t.Fatal(err)
 	}
+	cmds = commandsAfter(&cmds, 0)
 	srv.Close()
 	if len(cmds) != 0 {
 		t.Errorf("search off: commands %v, want none", cmds)
