@@ -337,7 +337,9 @@ export function CardMenu({ item, played, onPlayedChange, onOpenChange }: { item:
  * Click and drag a row sideways with the mouse (touch and trackpads scroll natively).
  * A press that moves less than a few pixels is still a click; a real drag swallows the
  * click that follows, so letting go over a card doesn't open it. Snapping is off while
- * dragging (it fights the pointer) and settles on a card after.
+ * dragging (it fights the pointer). On release the row glides to a card, carried on by
+ * the drag's speed, and snapping comes back only once it has stopped there; turning it
+ * straight back on made the row jump to the nearest card.
  */
 function useDragScroll(track: { current: HTMLDivElement | null }) {
   useEffect(() => {
@@ -347,13 +349,46 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
     let startLeft = 0
     let dragging = false
     let pressed = false
+    let settle = 0
+    // The last moves, for the release speed (px per ms; positive = scrolling right).
+    let samples: { t: number; left: number }[] = []
     const move = (e: PointerEvent) => {
       if (!pressed) return
       const dx = e.clientX - startX
       if (!dragging && Math.abs(dx) < 6) return
-      dragging = true
-      el.classList.add('row__track--dragging')
+      if (!dragging) {
+        dragging = true
+        window.clearTimeout(settle)
+        el.classList.add('row__track--dragging', 'row__track--free')
+      }
       el.scrollLeft = startLeft - dx
+      const now = performance.now()
+      samples.push({ t: now, left: el.scrollLeft })
+      samples = samples.filter((p) => now - p.t < 100)
+    }
+    // Where a card starts, as a scroll position (cards snap to the gutter, scroll-padding).
+    const stops = () => {
+      const pad = parseFloat(getComputedStyle(el).scrollPaddingLeft) || 0
+      const base = el.getBoundingClientRect().left + pad - el.scrollLeft
+      const max = el.scrollWidth - el.clientWidth
+      return Array.from(el.children).map((c) => Math.min(max, Math.max(0, (c as HTMLElement).getBoundingClientRect().left - base)))
+    }
+    const glide = () => {
+      const now = performance.now()
+      const recent = samples.filter((p) => now - p.t < 100)
+      const v = recent.length > 1 ? (recent[recent.length - 1].left - recent[0].left) / Math.max(1, recent[recent.length - 1].t - recent[0].t) : 0
+      // Carry on as if the row coasted for ~250 ms, then stop at the nearest card.
+      const aim = el.scrollLeft + v * 250
+      const all = stops()
+      const target = all.length ? all.reduce((a, b) => (Math.abs(b - aim) < Math.abs(a - aim) ? b : a)) : el.scrollLeft
+      el.scrollTo({ left: target, behavior: 'smooth' })
+      const done = () => {
+        window.clearTimeout(settle)
+        el.removeEventListener('scrollend', done)
+        el.classList.remove('row__track--free')
+      }
+      el.addEventListener('scrollend', done, { once: true })
+      settle = window.setTimeout(done, 700) // browsers without scrollend, or no scroll needed
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
@@ -370,6 +405,7 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
       window.setTimeout(() => el.removeEventListener('click', swallow, { capture: true }), 0)
       el.classList.remove('row__track--dragging')
       dragging = false
+      glide()
     }
     const down = (e: PointerEvent) => {
       if (e.pointerType !== 'mouse' || e.button !== 0) return
@@ -378,6 +414,7 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
       pressed = true
       startX = e.clientX
       startLeft = el.scrollLeft
+      samples = [{ t: performance.now(), left: el.scrollLeft }]
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
     }
@@ -386,6 +423,7 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
     el.addEventListener('pointerdown', down)
     el.addEventListener('dragstart', noNativeDrag)
     return () => {
+      window.clearTimeout(settle)
       el.removeEventListener('pointerdown', down)
       el.removeEventListener('dragstart', noNativeDrag)
       window.removeEventListener('pointermove', move)

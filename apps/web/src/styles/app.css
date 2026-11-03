@@ -174,7 +174,8 @@ img { display: block; }
   scrollbar-width: none;
 }
 .row__track::-webkit-scrollbar { display: none; }
-.row__track--dragging { scroll-snap-type: none; cursor: grabbing; user-select: none; }
+.row__track--free { scroll-snap-type: none; }
+.row__track--dragging { cursor: grabbing; user-select: none; }
 .row__track--dragging * { cursor: grabbing !important; }
 .row__track > * { scroll-snap-align: start; }
 .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 2.35 * var(--card-gap)) / 3.35); }
