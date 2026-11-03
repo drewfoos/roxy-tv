@@ -56,9 +56,21 @@ func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, st
 	if format == "" {
 		return fmt.Errorf("unsupported text subtitle codec %q", codec)
 	}
-	_, err := ff.Run(ctx, "", "-y", "-v", "error", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-c:s", "copy", "-f", format, dst)
-	return err
+	_, err := ff.Run(ctx, "", "-y", "-v", "error", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-c:s", "copy", "-fs", fmt.Sprint(MaxTextSubtitle), "-f", format, dst)
+	if err != nil {
+		return err
+	}
+	// Real tracks are a few MB even with karaoke; one at the cap is a planted bomb (an
+	// 88 MB track was copied to /config whole and read into memory). Not kept truncated.
+	if fi, err := os.Stat(dst); err == nil && fi.Size() >= MaxTextSubtitle {
+		_ = safefs.Remove(dst)
+		return fmt.Errorf("subtitle track is larger than %d MB", MaxTextSubtitle>>20)
+	}
+	return nil
 }
+
+// MaxTextSubtitle caps an extracted text subtitle track.
+const MaxTextSubtitle = 32 << 20
 
 func safeName(name string) string {
 	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))

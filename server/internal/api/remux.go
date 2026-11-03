@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"log/slog"
 	"math"
 	"net/http"
@@ -76,7 +77,7 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "the server is already remuxing as much as it can")
 		return
 	}
-	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, transcode.RemuxArgs(req)...)
+	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, ffmpeg.LocalInputs(transcode.RemuxArgs(req))...)
 	stderr := &tailBuffer{max: 64 << 10} // only the end is logged; a chatty ffmpeg cannot grow it
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/roxy-media/roxy/server/internal/safefs"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -350,7 +351,8 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 				}
 			}
 		}
-		b, err := os.ReadFile(textPath)
+		// A sample is all language detection needs; a sidecar can be any size.
+		b, err := readHead(textPath, 64<<10)
 		if err != nil {
 			continue
 		}
@@ -663,4 +665,14 @@ func stableID(kind, path string) string {
 func hashHex(s string) string {
 	sum := sha256.Sum256([]byte(filepath.ToSlash(s)))
 	return hex.EncodeToString(sum[:8])
+}
+
+// readHead reads at most n bytes from the start of a file.
+func readHead(path string, n int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, n))
 }

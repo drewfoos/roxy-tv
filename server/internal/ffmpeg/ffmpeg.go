@@ -68,13 +68,31 @@ func resolve(explicit, name string) (string, error) {
 
 // Run executes ffmpeg with args and returns stdout; stderr is included in the error.
 func (f *FFmpeg) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return runBin(ctx, f.FFmpeg, dir, args...)
+	return runBin(ctx, f.FFmpeg, dir, LocalInputs(args)...)
+}
+
+// localProtocols: what an input may be opened through. A media file is opened from disk
+// (pipe for stdin). A crafted file that is really a playlist or concat script must not
+// reach http/tcp/subfile and friends: the bundled jellyfin-ffmpeg already refuses the
+// known tricks, but a different ffmpeg (ROXY_FFMPEG_PATH) might not.
+const localProtocols = "file,pipe"
+
+// LocalInputs puts -protocol_whitelist file,pipe before every -i in an ffmpeg command.
+func LocalInputs(args []string) []string {
+	out := make([]string, 0, len(args)+4)
+	for _, a := range args {
+		if a == "-i" {
+			out = append(out, "-protocol_whitelist", localProtocols)
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // RunCombined executes ffmpeg and returns stdout and stderr together (for filters such
 // as silencedetect that report on stderr).
 func (f *FFmpeg) RunCombined(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, f.FFmpeg, args...)
+	cmd := exec.CommandContext(ctx, f.FFmpeg, LocalInputs(args)...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -86,7 +104,8 @@ func (f *FFmpeg) RunCombined(ctx context.Context, args ...string) ([]byte, error
 
 // Probe executes ffprobe with args and returns stdout.
 func (f *FFmpeg) Probe(ctx context.Context, args ...string) ([]byte, error) {
-	return runBin(ctx, f.FFprobe, "", args...)
+	// ffprobe takes one input; the option applies to it wherever it stands.
+	return runBin(ctx, f.FFprobe, "", append([]string{"-protocol_whitelist", localProtocols}, args...)...)
 }
 
 func runBin(ctx context.Context, bin, dir string, args ...string) ([]byte, error) {

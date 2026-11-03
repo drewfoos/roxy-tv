@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"log/slog"
 	"math"
 	"net/http"
@@ -85,7 +86,7 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args := s.transcoder.Args(req)
-	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, args...)
+	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, ffmpeg.LocalInputs(args)...)
 	stderr := &tailBuffer{max: 64 << 10} // only the end is logged; a chatty ffmpeg cannot grow it
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
