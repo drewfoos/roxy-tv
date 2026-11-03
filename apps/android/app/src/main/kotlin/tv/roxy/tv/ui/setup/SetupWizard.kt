@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
@@ -298,6 +300,7 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
                     runCatching { app.api.setupAdmin(serverUrl, name.trim(), pw, "${Build.MANUFACTURER} ${Build.MODEL}", deviceId, BuildConfig.VERSION_NAME) }
                         .onSuccess { resp ->
                             val terms = runCatching { app.api.legalAt(serverUrl, "terms").version }.getOrDefault("")
+                            tv.roxy.tv.ui.login.rememberServerIdentity(app, serverUrl.trimEnd('/'))
                             app.prefs.saveSession(Session(serverUrl = serverUrl.trimEnd('/'), token = resp.token, userName = resp.user.name, isAdmin = true, acceptedTerms = terms, setupInProgress = true))
                             onDone()
                         }
@@ -359,7 +362,17 @@ private fun DetailsStep(onNext: () -> Unit) {
         }
     }
     Spacer(Modifier.height(16.dp))
-    RoxyTextField(key, { key = it.trim(); err = null }, label = "TMDB API key", imeAction = ImeAction.Done)
+    // Masked like a password (the screen may be streamed); the eye shows it to check a paste.
+    var showKey by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.Bottom) {
+        RoxyTextField(key, { key = it.trim(); err = null }, label = "TMDB API key", password = !showKey, imeAction = ImeAction.Done, modifier = Modifier.weight(1f))
+        Box(modifier = Modifier.padding(start = 8.dp).size(46.dp).clip(RoundedCornerShape(10.dp)).clickable { showKey = !showKey }, contentAlignment = Alignment.Center) {
+            Icon(
+                if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = if (showKey) "Hide key" else "Show key",
+                tint = RoxyColors.muted, modifier = Modifier.size(22.dp),
+            )
+        }
+    }
     err?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error, modifier = Modifier.padding(top = 8.dp)) }
     Tip("Anime details come from AniList, which needs no key at all.")
     PlayButton(

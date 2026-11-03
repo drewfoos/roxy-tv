@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +41,13 @@ data class Session(
     val isLoggedIn: Boolean get() = token != null && serverUrl.isNotEmpty()
     val hasProfile: Boolean get() = profileId != null
 }
+
+/**
+ * A server this app has signed in to: its id (from /v1/system/info) for the address and
+ * name it had then. A later answer with the same address or name but another id is not
+ * the same server, and the login screen says so.
+ */
+data class ServerPin(val id: String, val name: String, val url: String)
 
 /** Player preferences (Settings screen). Persisted. */
 data class PlayerSettings(
@@ -160,6 +168,33 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
     val dismissedUpdate: StateFlow<Int> get() = _dismissedUpdate
     private val _dismissedUpdate: MutableStateFlow<Int>
 
+    /** Servers signed in to before (see [ServerPin]); a handful at most. */
+    val serverPins: StateFlow<List<ServerPin>> get() = _serverPins
+    private val _serverPins: MutableStateFlow<List<ServerPin>>
+
+    /** Remember [id] as the server at [url] called [name]; replaces an older pin for that address or id. */
+    suspend fun pinServer(url: String, id: String, name: String) {
+        if (id.isBlank()) return
+        val u = url.trim().trimEnd('/').lowercase()
+        val next = (_serverPins.value.filterNot { it.url == u || it.id == id } + ServerPin(id.replace(PIN_SEP, ""), name.trim().replace(PIN_SEP, " "), u.replace(PIN_SEP, ""))).takeLast(MAX_PINS)
+        _serverPins.value = next
+        ds.edit { it[KEY_SERVER_PINS] = next.map { p -> listOf(p.id, p.name, p.url).joinToString(PIN_SEP) }.toSet() }
+    }
+
+    /**
+     * True when a server answering at [url] as [name] with [id] is not the one signed in to
+     * before under that address or that name. An id seen before (any address) is fine, as is
+     * an answer with no id (an older server) or nothing pinned yet.
+     */
+    fun pinConflict(url: String, id: String, name: String): Boolean {
+        if (id.isBlank()) return false
+        val pins = _serverPins.value
+        if (pins.any { it.id == id }) return false
+        val u = url.trim().trimEnd('/').lowercase()
+        val n = name.trim()
+        return pins.any { it.url == u || (n.isNotEmpty() && it.name.equals(n, ignoreCase = true)) }
+    }
+
     suspend fun setDismissedUpdate(code: Int) {
         _dismissedUpdate.value = code
         ds.edit { it[KEY_DISMISSED_UPDATE] = code }
@@ -173,6 +208,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         _downloadsWifiOnly = MutableStateFlow(seed[KEY_DL_WIFI] ?: true)
         _cachedProfiles = MutableStateFlow(seed[KEY_PROFILES_CACHE])
         _dismissedUpdate = MutableStateFlow(seed[KEY_DISMISSED_UPDATE] ?: 0)
+        _serverPins = MutableStateFlow(seed.toPins())
         scope.launch {
             ds.data.collect { p ->
                 _session.value = p.toSession()
@@ -180,6 +216,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
                 _downloadsWifiOnly.value = p[KEY_DL_WIFI] ?: true
                 _cachedProfiles.value = p[KEY_PROFILES_CACHE]
                 _dismissedUpdate.value = p[KEY_DISMISSED_UPDATE] ?: 0
+                _serverPins.value = p.toPins()
             }
         }
     }
@@ -292,6 +329,12 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         setupInProgress = this[KEY_SETUP] ?: false,
     )
 
+    private fun Preferences.toPins(): List<ServerPin> =
+        this[KEY_SERVER_PINS].orEmpty().mapNotNull { e ->
+            val parts = e.split(PIN_SEP)
+            if (parts.size == 3 && parts[0].isNotBlank()) ServerPin(parts[0], parts[1], parts[2]) else null
+        }
+
     private fun Preferences.toSettings(): PlayerSettings {
         val d = PlayerSettings()
         return PlayerSettings(
@@ -347,5 +390,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_DL_WIFI = booleanPreferencesKey("downloads_wifi_only")
         val KEY_PROFILES_CACHE = stringPreferencesKey("profiles_cache")
         val KEY_DISMISSED_UPDATE = intPreferencesKey("dismissed_update")
+        val KEY_SERVER_PINS = stringSetPreferencesKey("server_pins")
+        const val PIN_SEP = "\u001f"
+        const val MAX_PINS = 8
     }
 }

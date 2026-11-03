@@ -3,6 +3,7 @@ package tv.roxy.tv.ui.phone
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,11 +75,17 @@ fun PhoneWebhooks(onBack: () -> Unit) {
     }
     LaunchedEffect(Unit) { reload() }
 
-    fun copy(label: String, text: String) {
+    fun copy(label: String, text: String, sensitive: Boolean = false) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText(label, text))
+        val clip = ClipData.newPlainText(label, text)
+        // A key: Android 13+ hides its preview in the clipboard pop-up (and keyboards' clipboard
+        // strips). The extra's literal name works below API 33 too, where some keyboards honour it.
+        if (sensitive) clip.description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        cm.setPrimaryClip(clip)
         Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
     }
+    // The new key is dotted out unless asked for: the owner streams this screen.
+    var revealToken by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -99,8 +108,12 @@ fun PhoneWebhooks(onBack: () -> Unit) {
             Column(modifier = Modifier.padding(horizontal = PhonePad).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).padding(12.dp)) {
                 Text("New key (shown once, copy it now)", fontSize = 12.sp, color = RoxyColors.accent, fontWeight = FontWeight.SemiBold)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                    Text(t, fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Color.White, modifier = Modifier.padding(start = 8.dp).size(22.dp).clickable { copy("API key", t) })
+                    Text(if (revealToken) t else "•".repeat(minOf(t.length, 24)), fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Icon(
+                        if (revealToken) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = if (revealToken) "Hide key" else "Show key",
+                        tint = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp).size(22.dp).clickable { revealToken = !revealToken },
+                    )
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Color.White, modifier = Modifier.padding(start = 12.dp).size(22.dp).clickable { copy("API key", t, sensitive = true) })
                 }
             }
         }

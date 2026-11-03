@@ -2,6 +2,9 @@ package tv.roxy.tv.data
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +20,7 @@ import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.api.RoxyApi
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 
 /** A newer build published on the server (see server/internal/api/apps.go). */
 @Serializable
@@ -27,6 +31,8 @@ data class AppUpdate(
     val publishedAt: String = "",
     val size: Long = 0,
     val url: String = "",
+    /** Hex SHA-256 of the APK (newer servers). When present the download must match it. */
+    val sha256: String? = null,
 )
 
 /** Where an update stands: offered, downloading, ready to install, or failed. */
@@ -42,7 +48,12 @@ sealed interface UpdateState {
  * Checks the server for a newer build of this app (same applicationId, higher
  * versionCode) once per launch, downloads it on request and hands it to Android's
  * installer. Self-hosted apps have no store, so the server is the update channel:
- * `apps/android/tools/publish-apk.ps1` puts a build there after `gradlew assembleDebug`.
+ * `apps/android/tools/publish-apk.sh` puts a build there after `gradlew assemblePerf`.
+ *
+ * The server is not trusted with what gets installed: the download URL must be one of the
+ * server's own /v1/apps/ paths, a published SHA-256 must match, and before the installer
+ * opens, the APK must be this app (same package), signed with the same certificate as the
+ * installed one, and newer. Anything else is deleted and refused.
  */
 class Updates(private val context: Context, private val api: RoxyApi, private val prefs: Prefs, private val scope: CoroutineScope) {
 
@@ -108,7 +119,14 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
         val u = when (val s = _state.value) {
             is UpdateState.Available -> s.update
             is UpdateState.Failed -> s.update
-            is UpdateState.Ready -> { launchInstaller(s.file); return }
+            is UpdateState.Ready -> {
+                // Checked again: the file sat in the cache since the last look.
+                scope.launch {
+                    val why = withContext(Dispatchers.IO) { verifyApk(s.file) }
+                    if (why == null) launchInstaller(s.file) else { s.file.delete(); _state.value = UpdateState.Failed(s.update, why) }
+                }
+                return
+            }
             else -> return
         }
         _state.value = UpdateState.Downloading(u, 0f)
@@ -119,11 +137,19 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
         }
     }
 
+    /** Refused updates say why in the bar; the message is the exception's. */
+    private class UpdateRejected(message: String) : IOException(message)
+
     private suspend fun download(u: AppUpdate): File = withContext(Dispatchers.IO) {
+        val path = safeAppPath(u.url) ?: throw UpdateRejected("The server offered an update from an unexpected address; not downloading it.")
+        val expectSha = u.sha256?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        if (expectSha != null && !expectSha.matches(Regex("[0-9a-f]{64}"))) throw UpdateRejected("The update's checksum is malformed; not downloading it.")
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
-        val target = File(dir, "roxy-tv-${u.versionName}.apk")
-        val req = Request.Builder().url(api.baseUrl + u.url).get().build()
+        // A fixed name: the server's versionName is not a safe file name.
+        val target = File(dir, "roxy-tv-update.apk")
+        val digest = MessageDigest.getInstance("SHA-256")
+        val req = Request.Builder().url(api.baseUrl + path).get().build()
         api.http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
             val total = resp.body.contentLength().takeIf { it > 0 } ?: u.size
@@ -136,6 +162,7 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)
+                        digest.update(buf, 0, n)
                         done += n
                         val now = System.currentTimeMillis()
                         if (total > 0 && now - last > 200) { last = now; _state.value = UpdateState.Downloading(u, (done.toFloat() / total).coerceIn(0f, 1f)) }
@@ -143,7 +170,76 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
                 }
             }
         }
+        if (expectSha != null) {
+            val got = digest.digest().joinToString("") { "%02x".format(it) }
+            if (got != expectSha) {
+                target.delete()
+                Timber.w("update checksum mismatch: expected %s got %s", expectSha, got)
+                throw UpdateRejected("The download doesn't match the server's checksum; not installing.")
+            }
+        }
+        verifyApk(target)?.let { why -> target.delete(); throw UpdateRejected(why) }
         target
+    }
+
+    /**
+     * Null when [file] is a newer build of this very app signed with the installed app's
+     * certificate(s); otherwise why not (shown to the person).
+     */
+    private fun verifyApk(file: File): String? {
+        val notSigned = "This update isn't signed by Roxy; not installing."
+        if (!file.isFile) return "The downloaded update is missing; try again."
+        val pm = context.packageManager
+        @Suppress("DEPRECATION")
+        val flags = PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+        val archive: PackageInfo = runCatching { pm.getPackageArchiveInfo(file.path, flags) }.getOrNull()
+            ?: return "The download isn't a valid app package; not installing."
+        if (archive.packageName != BuildConfig.APPLICATION_ID) {
+            Timber.w("update is %s, not %s", archive.packageName, BuildConfig.APPLICATION_ID)
+            return notSigned
+        }
+        val installed: PackageInfo = runCatching { pm.getPackageInfo(context.packageName, flags) }.getOrNull()
+            ?: return notSigned
+        val mine = certs(installed) ?: return notSigned
+        val theirs = certs(archive) ?: return notSigned
+        if (mine.isEmpty() || mine != theirs) {
+            Timber.w("update signer mismatch")
+            return notSigned
+        }
+        if (archive.longVersionCode <= installed.longVersionCode) {
+            return "The server's update (${archive.longVersionCode}) isn't newer than this app (${installed.longVersionCode}); not installing."
+        }
+        return null
+    }
+
+    /**
+     * The signing certificates as a set of SHA-256 hex digests: the APK's signers (v2/v3),
+     * or the legacy signature list where signingInfo is not filled in (some Android 9 builds
+     * leave it null for an archive). With no key rotation the history is just the one cert; after a rotation both sides must carry the same lineage.
+     */
+    private fun certs(info: PackageInfo): Set<String>? {
+        val si = info.signingInfo
+        @Suppress("DEPRECATION")
+        val sigs: Array<Signature> = when {
+            si != null && si.hasMultipleSigners() -> si.apkContentsSigners
+            si != null -> si.signingCertificateHistory
+            else -> info.signatures
+        } ?: return null
+        return sigs.map { s -> MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) } }.toSet()
+    }
+
+    /**
+     * [url] when it is a relative path into the server's /v1/apps/ (no scheme, host, "//",
+     * "@", "..", backslash or control characters); null otherwise. The server cannot send the
+     * app off to download from somewhere else.
+     */
+    private fun safeAppPath(url: String): String? {
+        val u = url.trim()
+        if (!u.startsWith("/v1/apps/")) return null
+        if (u.contains("//") || u.contains('@') || u.contains('\\') || u.contains("..") || u.contains("://")) return null
+        if (u.any { it.isWhitespace() || it.code < 0x20 || it.code == 0x7f }) return null
+        if (u.substringBefore('?').contains('%')) return null
+        return u
     }
 
     private fun launchInstaller(file: File) {

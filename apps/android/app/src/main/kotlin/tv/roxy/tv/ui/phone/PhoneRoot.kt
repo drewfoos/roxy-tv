@@ -112,7 +112,8 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val session by app.prefs.session.collectAsStateWithLifecycle()
     val nav = rememberNavController()
-    // A TV's sign-in link opened in the app goes to Account > Sign in a TV with its code filled in.
+    // A TV's sign-in link opened in the app goes to Account > Sign in a TV; the code is NOT filled
+    // in (PhoneLinkTv asks for the one on the TV's screen), only the "opened from a link" note.
     val linkActivity = LocalContext.current as? tv.roxy.tv.MainActivity
     val pendingLink = linkActivity?.pendingLinkCode
     LaunchedEffect(pendingLink) {

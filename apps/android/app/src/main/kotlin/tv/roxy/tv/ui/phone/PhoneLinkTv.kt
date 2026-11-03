@@ -63,7 +63,10 @@ private const val CodeLength = 6
  * Account > Sign in a TV. A header card with the TV and the three steps, then Scan (the
  * in-app scanner, with zoom) or the code typed into six boxes; once a code checks out,
  * a card names the TV asking and the account it will use, with Sign in this TV; then a
- * done state. [initialCode] comes from a scanned link opened in the app (http://server/link/CODE).
+ * done state. [initialCode] comes from a sign-in link opened in the app (http://server/link/CODE).
+ * It is deliberately NOT filled in: a link can come from anyone (a chat, a web page), and
+ * approving it would sign the sender's device in to this account. The person types the code
+ * the TV in front of them shows instead.
  */
 @Composable
 fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
@@ -71,7 +74,8 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
     val userName = app.prefs.session.value.userName
-    var code by remember { mutableStateOf(initialCode.uppercase().filter { it.isLetterOrDigit() }.take(CodeLength)) }
+    val fromLink = initialCode.isNotBlank()
+    var code by remember { mutableStateOf("") }
     var info by remember { mutableStateOf<LinkInfo?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -88,7 +92,6 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
             .onFailure { t -> error = if ((t as? ApiException)?.code == 404) "That code has expired or is wrong. The TV shows a fresh one every ten minutes." else t.message ?: "Could not check the code." }
         busy = false
     }
-    LaunchedEffect(initialCode) { if (code.length == CodeLength) lookUp() }
 
     if (scanning) {
         QrScanner(
@@ -132,6 +135,11 @@ fun PhoneLinkTv(onBack: () -> Unit, initialCode: String = "") {
                     onCancel = { info = null; code = ""; error = null },
                 )
                 else -> {
+                    if (fromLink) Text(
+                        "You opened a sign-in link. To be safe, type the code shown on the TV's screen below. Only do this for a TV you are standing in front of.",
+                        fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(RoxyColors.accent.copy(alpha = 0.14f)).padding(14.dp),
+                    )
                     StepsCard()
                     PlayButton(
                         "Scan the TV's code", icon = Icons.Outlined.QrCodeScanner, height = 52.dp, pill = true,
@@ -228,13 +236,18 @@ private fun ApproveCard(info: LinkInfo, code: String, userName: String, busy: Bo
         Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(RoxyColors.accent.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
             Icon(Icons.Outlined.Tv, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(34.dp))
         }
-        Text(info.device.ifBlank { "A TV" }, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
+        // The name is whatever the asking device says it is: shown, but not something to trust.
+        Text(info.device.take(60).ifBlank { "A TV" }, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, maxLines = 2, modifier = Modifier.padding(top = 12.dp))
         Text("wants to sign in as $userName", fontSize = 14.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 2.dp))
+        networkLine(info.network)?.let { (text, warn) ->
+            Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (warn) RoxyColors.error else RoxyColors.accent, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
+        }
         Text(
             code.chunked(3).joinToString("  "), fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 4.sp, color = RoxyColors.accent,
             modifier = Modifier.padding(top = 18.dp).clip(RoundedCornerShape(12.dp)).background(RoxyColors.background).padding(horizontal = 20.dp, vertical = 8.dp),
         )
-        Text("Make sure this matches the code on its screen.", fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
+        Text("Make sure this matches the code on its screen.", fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
+        Text("Only approve a TV you are standing in front of.", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp, bottom = 20.dp))
         PlayButton(
             when { busy -> "Signing in…"; info.approved -> "Already approved"; else -> "Sign in this TV" }, icon = Icons.Filled.Check, height = 52.dp, pill = true,
             container = if (busy || info.approved) RoxyColors.surfaceHigh else RoxyColors.accent, content = if (busy || info.approved) RoxyColors.muted else OnBrand,
@@ -242,6 +255,15 @@ private fun ApproveCard(info: LinkInfo, code: String, userName: String, busy: Bo
         )
         Text("Not this device", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted, modifier = Modifier.padding(top = 14.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onCancel).padding(horizontal = 12.dp, vertical = 6.dp))
     }
+}
+
+/** Where the asking device connected from (newer servers say), and whether to warn. */
+private fun networkLine(network: String): Pair<String, Boolean>? = when (network.lowercase()) {
+    "home" -> "From your home network" to false
+    "tailscale" -> "From Tailscale" to false
+    "server" -> "From the server machine itself" to false
+    "internet" -> "From the internet — be careful" to true
+    else -> null
 }
 
 @Composable

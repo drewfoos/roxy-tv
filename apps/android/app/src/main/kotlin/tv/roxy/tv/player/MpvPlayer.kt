@@ -51,6 +51,16 @@ class MpvPlayer(
             "auto", "" -> "mediacodec,mediacodec-copy"
             else -> setting
         }
+
+        /** ?mt= / api_key= / token= (and similar) query values, and auth headers, in a log line. */
+        private val SECRET_QUERY = Regex("""(?i)([?&;](?:mt|api_key|apikey|token|access_token|secret)=)[^&\s"'<>]+""")
+        private val SECRET_HEADER = Regex("""(?i)((?:X-Roxy-Media-Token|X-Api-Key|Authorization|X-Emby-Token)\s*:\s*)[^\s,"']+""")
+        /** ffmpeg / mpv saying the server refused the open with 400/401/403 (e.g. "HTTP error 401 Unauthorized"); not 404. */
+        private val HTTP_4XX = Regex("""(?i)(HTTP error 40[013]\b|Server returned 40[013]\b|\b40[013] (?:Unauthorized|Forbidden|Bad Request))""")
+
+        /** [line] with token values replaced by "***", for logcat, Timber and the subtitle/font diagnostics. */
+        fun redactSecrets(line: String): String =
+            if (line.isEmpty()) line else line.replace(SECRET_QUERY, "$1***").replace(SECRET_HEADER, "$1***")
     }
 
     data class Options(
@@ -308,6 +318,12 @@ class MpvPlayer(
      */
     @Volatile private var tokenInHeader = true
     @Volatile private var lastLoadUsedHeader = false
+    /**
+     * The open that is under way was refused by the server with a 4xx (401/403/...), seen in
+     * mpv's log. Only that means "an older server that wants ?mt="; a timeout, a 5xx or a
+     * broken file must not push the token into the URL (and so into the device log).
+     */
+    @Volatile private var lastOpenHttp4xx = false
 
     private fun loadPending() {
         val url = pendingUrl ?: return
@@ -322,6 +338,7 @@ class MpvPlayer(
             url.substringBefore('?') + (if (rest.isEmpty()) "" else "?" + rest.joinToString("&"))
         }
         lastLoadUsedHeader = token != null
+        lastOpenHttp4xx = false
         mpv.setPropertyString("http-header-fields", if (token != null) "X-Roxy-Media-Token: $token" else "")
         // `start` is a file-local option: set it as a property right before the load.
         mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
@@ -785,7 +802,7 @@ class MpvPlayer(
             MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
                 val failed = loading && queuedLoads.get() == 0
                 loading = false
-                if (failed && lastLoadUsedHeader && tokenInHeader) {
+                if (failed && lastLoadUsedHeader && tokenInHeader && lastOpenHttp4xx) {
                     // An older server: it only takes the token in the URL.
                     Timber.w("open with the token header failed; retrying with it in the URL")
                     tokenInHeader = false
@@ -854,8 +871,10 @@ class MpvPlayer(
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {
-        val line = text.trimEnd()
+        // Every line is scrubbed of media tokens / keys before it is kept or logged.
+        val line = redactSecrets(text.trimEnd())
         if (line.isEmpty()) return
+        if (HTTP_4XX.containsMatchIn(line)) lastOpenHttp4xx = true
         val interesting = prefix.contains("libass") || prefix.contains("sub") ||
             line.contains("fontselect") || line.contains("font provider") ||
             line.contains("Glyph") || line.contains("attachment", ignoreCase = true) ||

@@ -321,6 +321,7 @@ private fun TvAccountStep(
                 runCatching { app.api.setupAdmin(serverUrl, name.trim(), pw, "${Build.MANUFACTURER} ${Build.MODEL}", deviceId, BuildConfig.VERSION_NAME) }
                     .onSuccess { resp ->
                         val terms = runCatching { app.api.legalAt(serverUrl, "terms").version }.getOrDefault("")
+                        tv.roxy.tv.ui.login.rememberServerIdentity(app, serverUrl.trimEnd('/'))
                         app.prefs.saveSession(Session(serverUrl = serverUrl.trimEnd('/'), token = resp.token, userName = resp.user.name, isAdmin = true, acceptedTerms = terms, setupInProgress = true))
                         onDone()
                     }
@@ -446,11 +447,24 @@ private fun TvDetailsStep(onNext: () -> Unit) {
                 Text("You can type a different one below, or just continue.", fontSize = 14.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 6.dp))
             }
         }
-        TvTextField(
-            key, { key = it.trim(); err = null }, placeholder = "TMDB API key", icon = Icons.Outlined.Key, keyboardType = KeyboardType.Ascii,
-            imeAction = ImeAction.Done, modifier = Modifier.focusRequester(field),
-            onDone = { if (key.isNotEmpty()) submit() else scope.launch { focusSoon(next) } },
-        )
+        // Masked like a password (the TV may be streamed); the eye button shows it to check typing.
+        var showKey by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TvTextField(
+                key, { key = it.trim(); err = null }, placeholder = "TMDB API key", icon = Icons.Outlined.Key, keyboardType = KeyboardType.Ascii,
+                imeAction = ImeAction.Done, password = !showKey, modifier = Modifier.weight(1f).focusRequester(field),
+                onDone = { if (key.isNotEmpty()) submit() else scope.launch { focusSoon(next) } },
+            )
+            Spacer(Modifier.width(10.dp))
+            TvFocusable(onClick = { showKey = !showKey }, shape = RoundedCornerShape(12.dp), background = RoxyColors.surfaceHigh, focusedBackground = RoxyColors.accent) { focused ->
+                Box(modifier = Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showKey) "Hide key" else "Show key",
+                        tint = if (focused) OnBrand else RoxyColors.onBackground, modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+        }
         err?.let { Text(it, fontSize = 14.sp, color = RoxyColors.error) }
         val can = key.isNotEmpty() || has == true
         CardButton(

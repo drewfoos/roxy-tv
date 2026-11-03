@@ -25,8 +25,19 @@ import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
-/** A Roxy server found on the network: what the login screen lists. */
-data class FoundServer(val id: String, val name: String, val url: String, val version: String)
+/**
+ * A Roxy server found on the network: what the login screen lists. [source] is the IP the
+ * answer actually came from. [label] is what to show: the name, or the name with a short
+ * id / address when two answers share a name (see [ServerFinder.label]). [ambiguous] marks
+ * such a clash (the TV then never picks one by itself); [warning] says why to be careful.
+ */
+data class FoundServer(
+    val id: String, val name: String, val url: String, val version: String,
+    val source: String = "",
+    val label: String = name,
+    val ambiguous: Boolean = false,
+    val warning: String? = null,
+)
 
 /**
  * Finds Roxy servers on the local network, two ways at once:
@@ -63,7 +74,11 @@ object ServerFinder {
         val seen = HashSet<String>()
         val lock = Any()
         val emit: suspend (FoundServer) -> Unit = { s ->
-            val fresh = synchronized(lock) { seen.add(s.url.trimEnd('/')) }
+            // One row per server: by its id (the same server reached by broadcast and by the
+            // sweep, maybe under its advertised name) from the same machine. An id is public,
+            // so the same id answering from another machine is NOT folded into the first.
+            val key = if (s.id.isNotBlank()) "id:${s.id}@${s.source}" else "url:${s.url.trimEnd('/').lowercase()}"
+            val fresh = synchronized(lock) { seen.add(key) }
             if (fresh) send(s)
         }
         // Some Wi-Fi drivers drop broadcast replies unless a multicast lock is held.
@@ -103,11 +118,58 @@ object ServerFinder {
                 val r = runCatching { json.decodeFromString(Reply.serializer(), text) }.getOrNull() ?: continue
                 if (r.product != "roxy") continue
                 // The reply's source address is what reached us; the server's own idea of its
-                // address only wins when the admin set one on purpose.
-                val url = if (r.advertised && r.address.isNotBlank()) r.address.trimEnd('/') else "http://${p.address.hostAddress}:${r.port}"
-                emit(FoundServer(r.id, r.name.ifBlank { "Roxy Server" }, url, r.version))
+                // address only wins when the admin set one on purpose AND it points at that same
+                // machine, a private/CGNAT/link-local address or a Tailscale name. Anything else
+                // (a public host) could send the login screen anywhere: use the source instead.
+                val src = p.address.hostAddress ?: continue
+                val port = r.port.takeIf { it in 1..65535 } ?: PORT
+                val fallback = "http://${if (src.contains(':')) "[$src]" else src}:$port"
+                val url = if (r.advertised && r.address.isNotBlank()) acceptAdvertised(r.address, src) ?: fallback else fallback
+                emit(FoundServer(r.id, r.name.ifBlank { "Roxy Server" }, url, r.version, source = src))
             }
             sender.cancel()
+        }
+    }
+
+    /** [advertised] if it is a plain http(s) URL on [source] itself or a private / tailnet host; else null. */
+    internal fun acceptAdvertised(advertised: String, source: String): String? {
+        val a = advertised.trim().trimEnd('/')
+        val uri = runCatching { java.net.URI(a) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return null
+        if (uri.rawUserInfo != null) return null
+        val host = ServerAddress.hostOf(a) ?: return null
+        val src = source.lowercase().removePrefix("/").substringBefore('%')
+        return if (host == src || ServerAddress.isPrivateOrTailnet(host)) a else null
+    }
+
+    /**
+     * Labels for a list of found servers: a name shared by answers with different ids (or the
+     * same id from different machines) gets a short id or the address after it, and those rows
+     * are marked [FoundServer.ambiguous]. [conflict] says whether an answer contradicts a server
+     * signed in to before (Prefs.pinConflict).
+     */
+    fun label(servers: List<FoundServer>, conflict: (FoundServer) -> Boolean): List<FoundServer> {
+        val byName = servers.groupBy { it.name.trim().lowercase() }
+        return servers.map { s ->
+            val same = byName[s.name.trim().lowercase()].orEmpty()
+            val clash = same.size > 1
+            val idsDiffer = same.map { it.id }.distinct().size > 1 && s.id.isNotBlank()
+            val host = s.url.removePrefix("http://").removePrefix("https://")
+            val label = when {
+                !clash -> s.name
+                idsDiffer -> "${s.name}  ·  ${s.id.take(6)}"
+                else -> "${s.name}  ·  $host"
+            }
+            s.copy(
+                label = label,
+                ambiguous = clash,
+                warning = when {
+                    conflict(s) -> "This isn't the server you signed in to before"
+                    clash -> "More than one server answered with this name"
+                    else -> null
+                },
+            )
         }
     }
 
@@ -122,7 +184,7 @@ object ServerFinder {
                 gate.withPermit {
                     for (port in SWEEP_PORTS) {
                         val r = probeHttp("http://$ip:$port") ?: continue
-                        emit(FoundServer(r.id, r.name.ifBlank { "Roxy Server" }, "http://$ip:$port", r.version))
+                        emit(FoundServer(r.id, r.name.ifBlank { "Roxy Server" }, "http://$ip:$port", r.version, source = ip))
                         break
                     }
                 }

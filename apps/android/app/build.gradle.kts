@@ -30,8 +30,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 46
-        versionName = "0.5.26"
+        versionCode = 47
+        versionName = "0.5.27"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -51,15 +51,24 @@ android {
             buildConfigField("String", "DEFAULT_PASSWORD", "\"${devProp("server.password")}\"")
         }
         release {
+            // Never ship dev defaults (spike.properties) in a published build.
+            buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
+            buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
+            buildConfigField("String", "DEFAULT_PASSWORD", "\"\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
-        // The debug app (same id, key and dev defaults, so it installs over it and keeps the
+        // The debug app (same id and key, so it installs over it and keeps the
         // sign-in) built the release way: R8, no debug checks. What the TV is measured with.
         create("perf") {
             initWith(getByName("debug"))
             isDebuggable = false
+            // perf builds are what gets published to the in-app update channel: the dev
+            // defaults from spike.properties (debug only) must never end up in one.
+            buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
+            buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
+            buildConfigField("String", "DEFAULT_PASSWORD", "\"\"")
             isMinifyEnabled = true
             isShrinkResources = true
             signingConfig = signingConfigs.getByName("debug")

@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Roxy Server on the LAN is usually plain HTTP. -->
+<!--
+    Cleartext is allowed on purpose: Roxy Server is self-hosted and is normally reached over
+    plain HTTP on the home LAN (http://192.168.x.x:8097) or over Tailscale, whose WireGuard
+    tunnel already encrypts the traffic. There is no certificate to pin and no fixed host to
+    whitelist, so a domain-config allow-list cannot work here. The login screens warn when an
+    http:// server address is NOT private/CGNAT/ts.net ("Not encrypted"); see
+    ServerAddress.isPrivateHost. Revisit if Roxy ever gets built-in TLS.
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

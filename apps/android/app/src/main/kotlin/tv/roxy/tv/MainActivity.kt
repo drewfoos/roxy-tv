@@ -140,7 +140,10 @@ class MainActivity : ComponentActivity() {
     /** An item the launcher's Watch Next card asked for (roxytv://play/<id>); played once the app is signed in. */
     var pendingPlayId by mutableStateOf<String?>(null)
 
-    /** A TV's sign-in link (http://server/link/CODE) opened in the app: approved from Account once signed in. */
+    /**
+     * A TV's sign-in link (http://server/link/CODE, for the saved server only) opened in the
+     * app: opens Account > Sign in a TV, where the code must still be typed from the TV.
+     */
     var pendingLinkCode by mutableStateOf<String?>(null)
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -149,9 +152,25 @@ class MainActivity : ComponentActivity() {
         linkCodeFrom(intent.data)?.let { pendingLinkCode = it }
     }
 
+    /**
+     * The code from a sign-in link, only when the link points at the server this app uses
+     * (same host, case-insensitive). A link to any other host, or with no server saved yet,
+     * is ignored: anyone can send a link, and approving it would sign THEIR TV in to this
+     * account. The code itself is never trusted either (PhoneLinkTv makes the person type
+     * the code from the TV's screen).
+     */
     private fun linkCodeFrom(uri: android.net.Uri?): String? {
-        val segs = uri?.pathSegments ?: return null
+        uri ?: return null
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return null
+        val segs = uri.pathSegments ?: return null
         if (segs.size < 2 || segs[segs.size - 2] != "link") return null
+        val saved = tv.roxy.tv.data.ServerAddress.hostOf(RoxyApp.get(this).prefs.session.value.serverUrl)
+        val host = uri.host?.lowercase()?.removePrefix("[")?.removeSuffix("]")?.trimEnd('.')
+        if (saved == null || host == null || host != saved) {
+            Timber.w("ignoring a sign-in link for another host")
+            return null
+        }
         return segs.last().uppercase().filter { it.isLetterOrDigit() }.takeIf { it.length >= 6 }
     }
 

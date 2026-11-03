@@ -188,7 +188,7 @@ private fun TvUpdateNotice(state: UpdateState, modifier: Modifier = Modifier) {
     val hint = when (state) {
         is UpdateState.Downloading -> "You can keep watching. The installer opens when it's done."
         is UpdateState.Ready -> "Press Back to open the menu, then choose Install update."
-        is UpdateState.Failed -> "${state.message}. Press Back for the menu, then Retry update."
+        is UpdateState.Failed -> "${state.message.trimEnd('.')}. Press Back for the menu, then Retry update."
         else -> "Press Back to open the menu, then choose Update Roxy TV."
     }
     val shape = RoundedCornerShape(16.dp)

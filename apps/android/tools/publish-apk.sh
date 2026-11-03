@@ -42,8 +42,10 @@ file="roxy-tv-$name-$variant.apk"
 cp "$apk" "$dir/$file"
 
 python3 - "$dir/latest.json" "$app_id" "$code" "$name" "$file" "$notes" <<'EOF'
-import json, os, sys, datetime
+import json, os, sys, datetime, hashlib
 path, app_id, code, name, file, notes = sys.argv[1:]
+with open(os.path.join(os.path.dirname(path), file), "rb") as f:
+    sha256 = hashlib.sha256(f.read()).hexdigest()  # the app checks its download against this
 latest = {}
 if os.path.exists(path):
     with open(path, encoding="utf-8-sig") as f:  # the PowerShell version may have left a BOM
@@ -53,6 +55,7 @@ latest[app_id] = {
     "versionName": name,
     "file": file,
     "notes": notes,
+    "sha256": sha256,
     "publishedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
 with open(path, "w", encoding="utf-8") as f:

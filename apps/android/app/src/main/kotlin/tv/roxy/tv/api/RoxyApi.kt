@@ -83,6 +83,11 @@ class RoxyApi(private val prefs: Prefs) {
 
     // ---- first-time setup (before anyone is signed in) ----
 
+    /** The public identity of the server at [serverUrl] (its id, name; product "roxy"). For pinning a server once signed in. */
+    suspend fun serverInfoAt(serverUrl: String): ServerIdentity = withContext(Dispatchers.IO) {
+        execute<ServerIdentity>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/system/info").get().build())
+    }
+
     /** Whether the server at [serverUrl] still needs setting up, and whether this device may. */
     suspend fun setupStatus(serverUrl: String): SetupStatus = withContext(Dispatchers.IO) {
         execute<SetupStatus>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/setup").get().build())
@@ -606,7 +611,15 @@ data class ShowcaseCount(val count: Int = 0)
 data class LinkStart(val code: String, val secret: String, val url: String, val expiresIn: Int = 600)
 
 @Serializable
-data class LinkInfo(val code: String, val client: String = "", val device: String = "", val expiresIn: Int = 0, val approved: Boolean = false)
+data class LinkInfo(
+    val code: String, val client: String = "", val device: String = "", val expiresIn: Int = 0, val approved: Boolean = false,
+    /** Where the asking device connected from: "home" | "tailscale" | "internet" (newer servers; "" otherwise). */
+    val network: String = "",
+)
+
+/** GET /v1/system/info: public, no sign-in. */
+@Serializable
+data class ServerIdentity(val id: String = "", val name: String = "", val product: String = "", val version: String = "")
 
 @Serializable
 data class LinkResult(val status: String, val token: String? = null, val user: User? = null, val deviceId: String? = null)

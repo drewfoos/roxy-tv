@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.roxy.tv.data.FoundServer
 import tv.roxy.tv.data.ServerFinder
+import tv.roxy.tv.data.ServerAddress
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
@@ -107,10 +108,23 @@ data class LoginUiState(
     val scanning: Boolean = false,
 )
 
+/**
+ * After a sign-in: remember which server (by its id) answered at [url], so a different
+ * server later answering at that address or under that name is called out on the login
+ * screen. Never throws; an older server without an id is simply not pinned.
+ */
+suspend fun rememberServerIdentity(app: RoxyApp, url: String) {
+    runCatching { app.api.serverInfoAt(url) }
+        .onSuccess { if (it.product == "roxy" && it.id.isNotBlank()) app.prefs.pinServer(url, it.id, it.name) }
+        .onFailure { Timber.i("server identity: %s", it.message) }
+}
+
 class LoginViewModel(private val app: RoxyApp) : ViewModel() {
     private val _state = MutableStateFlow(LoginUiState())
     val state: StateFlow<LoginUiState> = _state
     private var scanJob: Job? = null
+    /** Answers as they came, before labelling. */
+    private var found = emptyList<FoundServer>()
 
     init { scan() }
 
@@ -118,10 +132,15 @@ class LoginViewModel(private val app: RoxyApp) : ViewModel() {
     fun scan() {
         scanJob?.cancel()
         scanJob = viewModelScope.launch {
+            found = emptyList()
             _state.update { it.copy(scanning = true, servers = emptyList()) }
             ServerFinder.find(app)
                 .catch { Timber.w(it, "server scan") }
-                .collect { found -> _state.update { it.copy(servers = it.servers + found) } }
+                .collect { s ->
+                    found = found + s
+                    val labelled = ServerFinder.label(found) { f -> app.prefs.pinConflict(f.url, f.id, f.name) }
+                    _state.update { it.copy(servers = labelled) }
+                }
             _state.update { it.copy(scanning = false) }
         }
     }
@@ -157,6 +176,7 @@ class LoginViewModel(private val app: RoxyApp) : ViewModel() {
                     if (r.status == "done" && r.token != null && r.user != null) {
                         Timber.i("Linked to %s as %s", url, r.user.name)
                         val version = runCatching { app.api.legalAt(url, "terms").version }.getOrDefault("")
+                        rememberServerIdentity(app, url)
                         app.prefs.saveSession(Session(serverUrl = url, token = r.token, userName = r.user.name, isAdmin = r.user.isAdmin, acceptedTerms = version))
                         return@launch
                     }
@@ -179,6 +199,7 @@ class LoginViewModel(private val app: RoxyApp) : ViewModel() {
                 Timber.i("Logged in to %s as %s", url, resp.user.name)
                 // "I agree" was ticked to sign in: record it against the current terms version.
                 val version = runCatching { app.api.legalAt(url, "terms").version }.getOrDefault("")
+                rememberServerIdentity(app, url)
                 app.prefs.saveSession(Session(serverUrl = url, token = resp.token, userName = resp.user.name, isAdmin = resp.user.isAdmin, acceptedTerms = version))
                 _state.update { it.copy(busy = false) }
             }.onFailure { t ->
@@ -228,14 +249,25 @@ fun LoginScreen() {
     // null while checking; false when nothing answered at the address.
     var reachable by remember { mutableStateOf<Boolean?>(null) }
     var openSetup by rememberSaveable { mutableStateOf(false) }
+    // The server at the address answers with another id than the one signed in to before
+    // (same address or same name): a look-alike, or the server was reinstalled. Say so.
+    var notPinned by remember { mutableStateOf(false) }
     LaunchedEffect(serverUrl) {
         setup = null
         reachable = null
+        notPinned = false
         val url = serverUrl.trim().trimEnd('/').let { if (it.isEmpty() || it.startsWith("http")) it else "http://$it" }
         if (url.isEmpty()) return@LaunchedEffect
         kotlinx.coroutines.delay(500) // typing: wait for a pause
         setup = runCatching { app.api.setupStatus(url) }.getOrNull()
         reachable = setup != null
+        val who = runCatching { app.api.serverInfoAt(url) }.getOrNull()
+        notPinned = who != null && app.prefs.pinConflict(url, who.id, who.name)
+    }
+    val serverWarning = when {
+        notPinned -> "This isn't the server you signed in to before. Only continue if you trust it."
+        ServerAddress.cleartextOutsideHome(serverUrl) -> "Not encrypted. Only use this on your home network."
+        else -> null
     }
     val needsSetup = setup?.required == true
     if (openSetup && needsSetup && setup?.allowed == true) {
@@ -258,7 +290,7 @@ fun LoginScreen() {
         TvLogin(
             state = state,
             serverUrl = serverUrl, onServerUrl = { serverUrl = it },
-            serverName = setup?.serverName?.ifEmpty { null }, serverReachable = reachable,
+            serverName = setup?.serverName?.ifEmpty { null }, serverReachable = reachable, serverWarning = serverWarning,
             username = username, onUsername = { username = it },
             password = password, onPassword = { password = it },
             agreed = agreed, onAgreed = { agreed = it },
@@ -286,6 +318,9 @@ fun LoginScreen() {
             Text("Sign in to your server", fontSize = 14.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp, bottom = 32.dp))
 
             LoginField(serverUrl, { serverUrl = it }, placeholder = "Server address", icon = Icons.Outlined.Dns, keyboardType = KeyboardType.Uri)
+            serverWarning?.let {
+                Text(it, color = RoxyColors.error, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 4.dp, end = 4.dp))
+            }
             FoundServers(state, selectedUrl = serverUrl, onPick = { serverUrl = it.url }, onRescan = vm::scan)
             // A brand-new server: offer setup instead of a sign-in it can't answer yet.
             if (needsSetup && setup?.allowed == true) {
@@ -387,15 +422,15 @@ private fun FoundServers(state: LoginUiState, selectedUrl: String, onPick: (Foun
             val focused by interaction.collectIsFocusedAsState()
             val selected = s.url.removePrefix("http://") == picked
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(54.dp).clip(RoundedCornerShape(14.dp)).background(RoxyColors.surfaceHigh)
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(if (s.warning != null) 60.dp else 54.dp).clip(RoundedCornerShape(14.dp)).background(RoxyColors.surfaceHigh)
                     .border(1.5.dp, if (focused) RoxyColors.accent else Color.Transparent, RoundedCornerShape(14.dp))
                     .clickable(interactionSource = interaction, indication = null) { onPick(s) }.padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Outlined.Dns, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(s.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1)
-                    Text(s.url.removePrefix("http://"), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1)
+                    Text(s.label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1)
+                    Text(s.warning ?: s.url.removePrefix("http://"), fontSize = 12.sp, color = if (s.warning != null) RoxyColors.error else RoxyColors.muted, maxLines = 1)
                 }
                 if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = RoxyColors.accent, modifier = Modifier.size(20.dp))
             }

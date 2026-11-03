@@ -75,6 +75,8 @@ fun TvLogin(
     state: LoginUiState,
     serverUrl: String, onServerUrl: (String) -> Unit,
     serverName: String?, serverReachable: Boolean?,
+    /** A line to show under the card: not the server signed in to before, or plain http off the home network. */
+    serverWarning: String? = null,
     username: String, onUsername: (String) -> Unit,
     password: String, onPassword: (String) -> Unit,
     agreed: Boolean, onAgreed: (Boolean) -> Unit,
@@ -86,9 +88,11 @@ fun TvLogin(
     // else sign-in, by phone code first.
     var choosingServer by rememberSaveable { mutableStateOf(serverUrl.isBlank()) }
     var byPassword by rememberSaveable { mutableStateOf(false) }
-    // None saved and exactly one server answering: that is the one.
+    // None saved and exactly one server answering: that is the one. Not when its name clashes
+    // with another answer or it contradicts a server signed in to before: then the person picks.
     LaunchedEffect(state.servers, state.scanning) {
-        if (serverUrl.isBlank() && !state.scanning && state.servers.size == 1) {
+        val only = state.servers.singleOrNull()
+        if (serverUrl.isBlank() && !state.scanning && only != null && !only.ambiguous && only.warning == null) {
             onServerUrl(state.servers.first().url)
             choosingServer = false
         }
@@ -120,6 +124,10 @@ fun TvLogin(
                 }
             }
             if (!showServers) {
+                serverWarning?.let {
+                    Spacer(Modifier.height(16.dp))
+                    Text(it, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.error, modifier = Modifier.width(CardWidth), textAlign = TextAlign.Center)
+                }
                 Spacer(Modifier.height(20.dp))
                 ServerLine(serverName, serverUrl, onChange = { choosingServer = true })
             }
@@ -264,8 +272,8 @@ private fun ServerRow(s: FoundServer, selected: Boolean, onClick: () -> Unit, mo
         Row(modifier = Modifier.fillMaxWidth().height(56.dp).border(3.dp, if (focused) RoxyColors.accent else Color.Transparent, shape).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Dns, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(22.dp))
             Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
-                Text(s.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1)
-                Text(s.url.removePrefix("http://"), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1)
+                Text(s.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1)
+                Text(s.warning?.let { "$it  ·  ${s.url.removePrefix("http://")}" } ?: s.url.removePrefix("http://"), fontSize = 12.sp, color = if (s.warning != null) RoxyColors.error else RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = RoxyColors.accent, modifier = Modifier.size(20.dp))
         }
