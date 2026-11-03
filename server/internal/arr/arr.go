@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -89,7 +90,21 @@ type Client struct {
 	Name string // "sonarr" | "radarr"
 	cfg  Config
 	http *http.Client
+	// packFinder, when set, is asked first for each season about to be searched; true
+	// means it found (and Sonarr took) a season pack, so that season needs no search.
+	packFinder func(ctx context.Context, seriesID, season int) bool
 }
+
+// SetPackFinder installs the season-pack finder (see packs.go). Set before use.
+func (c *Client) SetPackFinder(f func(ctx context.Context, seriesID, season int) bool) {
+	if c != nil {
+		c.packFinder = f
+	}
+}
+
+// searchTimeout bounds a background search pass (the pack finder's indexer searches
+// included).
+const searchTimeout = 10 * time.Minute
 
 // New returns a client, or nil when the config is incomplete.
 func New(name string, cfg Config) *Client {
@@ -333,8 +348,14 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 					return 0, err
 				}
 			}
+			// In the background: the person asking gets an answer now, and the pack finder's
+			// searches can take a minute.
 			if c.cfg.searchOnAdd() && !episodesOnly {
-				c.searchSeasons(ctx, int(id), want)
+				go func(id int) {
+					sctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+					defer cancel()
+					c.searchSeasons(sctx, id, want)
+				}(int(id))
 			}
 			// Sonarr has the episodes already: monitor (and search) the asked-for ones now.
 			if err := c.MonitorEpisodes(ctx, int(id), episodes); err != nil {
@@ -430,7 +451,9 @@ wait:
 		}
 	}
 	if c.cfg.searchOnAdd() && seasons {
-		c.searchSeasons(ctx, seriesID, want)
+		sctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+		defer cancel()
+		c.searchSeasons(sctx, seriesID, want)
 	}
 	if err := c.MonitorEpisodes(ctx, seriesID, episodes); err != nil {
 		slog.Warn("sonarr: monitor requested episodes", "series", seriesID, "err", err)
@@ -448,11 +471,35 @@ func olderSeries(s map[string]any) bool {
 // SeriesSearch, which goes season by season) when none were named. Best effort: the
 // series is already added, and Sonarr's RSS still picks up new episodes.
 func (c *Client) searchSeasons(ctx context.Context, seriesID int, want map[int]bool) {
-	if len(want) == 0 {
-		_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeriesSearch", "seriesId": seriesID}, nil)
-		return
-	}
+	var seasons []int
 	for n := range want {
+		seasons = append(seasons, n)
+	}
+	if len(seasons) == 0 {
+		if c.packFinder == nil {
+			_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeriesSearch", "seriesId": seriesID}, nil)
+			return
+		}
+		// The whole series, season by season, so the pack finder can look at each.
+		seen := map[int]bool{}
+		if eps, err := c.Episodes(ctx, seriesID); err == nil {
+			for _, e := range eps {
+				if e.SeasonNumber > 0 && e.Monitored && !seen[e.SeasonNumber] {
+					seen[e.SeasonNumber] = true
+					seasons = append(seasons, e.SeasonNumber)
+				}
+			}
+		}
+		if len(seasons) == 0 {
+			_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeriesSearch", "seriesId": seriesID}, nil)
+			return
+		}
+	}
+	sort.Ints(seasons)
+	for _, n := range seasons {
+		if c.packFinder != nil && c.packFinder(ctx, seriesID, n) {
+			continue // a season pack is on its way
+		}
 		_ = c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "SeasonSearch", "seriesId": seriesID, "seasonNumber": n}, nil)
 	}
 }

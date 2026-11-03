@@ -114,6 +114,9 @@ type Service struct {
 	sonarr *arr.Client
 	radarr *arr.Client
 	arrCfg ArrSettings
+	// prowlarr finds season packs Sonarr cannot parse (nil when not configured).
+	prowlarr *arr.Prowlarr
+	packs    packState
 	// importHook adds files an arr app imported to the library (see SetImportHook).
 	importHook func(ctx context.Context, arrPaths []string) int
 	browse     *ttlCache[*BrowseResult]
@@ -200,12 +203,19 @@ func (s *Service) loadArr(ctx context.Context) {
 	s.arrCfg = cfg
 	s.sonarr = arr.New("sonarr", cfg.Sonarr)
 	s.radarr = arr.New("radarr", cfg.Radarr)
+	s.prowlarr = arr.NewProwlarr(s.cfg.ProwlarrURL, s.cfg.ProwlarrAPIKey)
+	if s.prowlarr != nil && s.sonarr != nil {
+		s.sonarr.SetPackFinder(s.packFinder(s.sonarr))
+	}
 	s.mu.Unlock()
 	if s.sonarr != nil {
 		slog.Info("discover: Sonarr configured", "url", cfg.Sonarr.URL)
 	}
 	if s.radarr != nil {
 		slog.Info("discover: Radarr configured", "url", cfg.Radarr.URL)
+	}
+	if s.prowlarr != nil {
+		slog.Info("discover: Prowlarr configured (season packs Sonarr can't parse)", "url", s.cfg.ProwlarrURL)
 	}
 }
 
@@ -282,6 +292,7 @@ func (s *Service) RetryPending(ctx context.Context) {
 // Start runs the pending-request retry every 10 minutes and the download tracker.
 func (s *Service) Start(ctx context.Context) {
 	s.startTracker(ctx)
+	s.startPackSweep(ctx)
 	go func() {
 		t := time.NewTicker(10 * time.Minute)
 		defer t.Stop()

@@ -227,6 +227,8 @@ type HistoryRecord struct {
 	EventType   string            `json:"eventType"` // grabbed | downloadFailed | downloadFolderImported | downloadIgnored | ...
 	DownloadID  string            `json:"downloadId"`
 	Data        map[string]string `json:"data"`
+	// The release's custom format score when it was grabbed (what the file's name may not show).
+	CustomFormatScore int `json:"customFormatScore"`
 }
 
 // History lists a series' or movie's history, newest first.

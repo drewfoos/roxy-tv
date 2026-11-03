@@ -37,6 +37,9 @@ type Config struct {
 	RadarrAPIKey         string // ROXY_RADARR_API_KEY
 	RadarrRootFolder     string // ROXY_RADARR_ROOT_FOLDER
 	RadarrQualityProfile string // ROXY_RADARR_QUALITY_PROFILE
+	// Prowlarr, optional: lets Roxy find season packs Sonarr cannot parse ("(Season 1)").
+	ProwlarrURL    string // ROXY_PROWLARR_URL
+	ProwlarrAPIKey string // ROXY_PROWLARR_API_KEY
 	// First-run admin account (only used when the users table is empty).
 	AdminUser     string // ROXY_ADMIN_USER, default roxy
 	AdminPassword string // ROXY_ADMIN_PASSWORD; unset = a random one, shown once in the log
@@ -64,6 +67,8 @@ func Load() (*Config, error) {
 		RadarrAPIKey:         env("ROXY_RADARR_API_KEY", ""),
 		RadarrRootFolder:     env("ROXY_RADARR_ROOT_FOLDER", ""),
 		RadarrQualityProfile: env("ROXY_RADARR_QUALITY_PROFILE", ""),
+		ProwlarrURL:          strings.TrimRight(env("ROXY_PROWLARR_URL", ""), "/"),
+		ProwlarrAPIKey:       env("ROXY_PROWLARR_API_KEY", ""),
 		AdminUser:            env("ROXY_ADMIN_USER", "roxy"),
 		AdminPassword:        env("ROXY_ADMIN_PASSWORD", ""),
 	}
