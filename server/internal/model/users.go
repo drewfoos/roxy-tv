@@ -32,6 +32,7 @@ type Device struct {
 	Client        string    `json:"client"`
 	ClientVersion string    `json:"clientVersion"`
 	DeviceID      string    `json:"deviceId"` // the client-chosen identifier (Jellyfin DeviceId)
+	LastIP        string    `json:"lastIp,omitempty"`
 	TokenHash     string    `json:"-"`
 	LastSeen      time.Time `json:"lastSeen"`
 	CreatedAt     time.Time `json:"createdAt"`

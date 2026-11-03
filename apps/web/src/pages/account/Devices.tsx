@@ -6,6 +6,7 @@ import { Spinner } from '../../components/Skeleton'
 
 /** Friendly names for the apps' client strings. */
 const CLIENTS: Record<string, string> = { 'roxy-web': 'Roxy web', Roxy: 'Roxy phone', 'Roxy TV': 'Roxy TV' }
+const NETWORKS: Record<string, string> = { home: 'Home network', tailscale: 'Tailscale', server: 'This server', internet: 'Internet' }
 
 /**
  * Every device signed in with this login (Crunchyroll's Device Management): this one
@@ -15,6 +16,9 @@ const CLIENTS: Record<string, string> = { 'roxy-web': 'Roxy web', Roxy: 'Roxy ph
 export function DevicesPage() {
   const { data, error, loading, reload } = useAsync('devices', () => api.devices())
   const [err, setErr] = useState<string | null>(null)
+  // Addresses stay hidden until asked for, one device at a time: this page can end up on
+  // a stream, and a public address must never be shown there by accident.
+  const [shown, setShown] = useState<Record<string, boolean>>({})
   // Online and "Playing" move: refresh while the page is open.
   useEffect(() => {
     const h = window.setInterval(() => {
@@ -59,6 +63,20 @@ export function DevicesPage() {
                   <>
                     {d.client && <div>{CLIENTS[d.client] ?? d.client}</div>}
                     {status && <div>{status}</div>}
+                    {(d.network || d.ip) && (
+                      <div className="dev-ip">
+                        {NETWORKS[d.network ?? ''] ?? 'Network unknown'}
+                        {d.ip && (
+                          <>
+                            {' · '}
+                            <span className={shown[d.id] ? 'dev-ip__addr' : 'dev-ip__addr dev-ip__addr--hidden'}>{shown[d.id] ? d.ip : '•••.•••.•••.•••'}</span>
+                            <button type="button" className="dev-ip__toggle" onClick={() => setShown((m) => ({ ...m, [d.id]: !m[d.id] }))}>
+                              {shown[d.id] ? 'Hide' : 'Show'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {d.createdAt && <div>Signed in: {formatWhen(d.createdAt)}</div>}
                   </>
                 }

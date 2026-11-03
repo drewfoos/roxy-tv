@@ -158,6 +158,11 @@ type progressMark struct {
 
 const stallAfter = 10 * time.Minute
 
+// stallQuiet: how long the client's stall warning is shown as "looking for peers" rather
+// than "stalled". Every new torrent reports "stalled, no connections" for its first
+// moments; showing that as a problem 6 s after a grab alarmed for nothing.
+const stallQuiet = 2 * time.Minute
+
 // Download returns a request's last known status (nil before the first look).
 func (s *Service) Download(requestID string) *Download {
 	s.dl.mu.Lock()
@@ -742,6 +747,10 @@ func (s *Service) queueItem(key string, recs []arr.QueueItem, byID map[int]arr.E
 		it.TimeLeftSec = t
 	}
 	it.State, it.Message = queueState(q)
+	// The client's own stall warning ("stalled with no connections"), as opposed to paused
+	// or an unreachable client: a fresh torrent shows it for its first moments while it
+	// finds peers.
+	clientWarning := it.State == DLStalled && (q.Status == "warning" || q.TrackedDownloadStatus == "warning")
 	// No bytes moved for a while: stalled, whatever the client says.
 	s.dl.mu.Lock()
 	mark, ok := s.dl.progress[key]
@@ -764,7 +773,13 @@ func (s *Service) queueItem(key string, recs []arr.QueueItem, byID map[int]arr.E
 			s.dl.stalled[key] = now
 		}
 		it.CanRetry = now.Sub(first) >= stallRetryAfter
-		if !it.CanRetry && it.Message != "" {
+		if clientWarning && now.Sub(first) < stallQuiet {
+			// Too early to call it a problem: say what is happening instead.
+			it.State, it.Message = DLQueued, "Looking for peers…"
+			if it.Progress > 0 {
+				it.State, it.Message = DLDownloading, ""
+			}
+		} else if !it.CanRetry && it.Message != "" {
 			it.Message += fmt.Sprintf(" Giving it %d more min to recover.", int((stallRetryAfter-now.Sub(first)).Minutes())+1)
 		}
 	default:

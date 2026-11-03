@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -117,6 +119,8 @@ type DeviceInfo struct {
 	CreatedAt  time.Time            `json:"createdAt"`
 	Current    bool                 `json:"current"`
 	Online     bool                 `json:"online"`
+	IP         string               `json:"ip,omitempty"`
+	Network    string               `json:"network,omitempty"` // home | tailscale | server | internet
 	NowPlaying *sessions.NowPlaying `json:"nowPlaying,omitempty"`
 }
 
@@ -135,7 +139,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	live := s.hub.Connected(p.UserID)
 	out := make([]DeviceInfo, 0, len(devs))
 	for _, d := range devs {
-		info := DeviceInfo{ID: d.ID, Name: d.Name, Client: d.Client, LastSeen: d.LastSeen, CreatedAt: d.CreatedAt, Current: d.ID == p.DeviceID}
+		info := DeviceInfo{ID: d.ID, Name: d.Name, Client: d.Client, LastSeen: d.LastSeen, CreatedAt: d.CreatedAt, Current: d.ID == p.DeviceID, IP: d.LastIP, Network: networkOf(d.LastIP)}
 		if pl, ok := live[d.ID]; ok {
 			info.Online, info.NowPlaying = true, pl.NowPlaying
 			if pl.Name != "" {
@@ -170,3 +174,22 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// networkOf names where an address is: this server, the home network, Tailscale, or the
+// internet. The page shows this always and the address itself only on request.
+func networkOf(ip string) string {
+	p := net.ParseIP(strings.Trim(ip, "[] "))
+	switch {
+	case p == nil:
+		return ""
+	case p.IsLoopback():
+		return "server"
+	case tailnet.Contains(p):
+		return "tailscale"
+	case isLocalIP(ip):
+		return "home"
+	}
+	return "internet"
+}
+
+var _, tailnet, _ = net.ParseCIDR("100.64.0.0/10")

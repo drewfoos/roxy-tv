@@ -116,6 +116,7 @@ func (s *Service) IssueToken(ctx context.Context, u *model.User, client ClientIn
 		Client:        client.Client,
 		ClientVersion: client.Version,
 		DeviceID:      client.DeviceID,
+		LastIP:        client.Address,
 		TokenHash:     HashToken(token),
 	}
 	if err := s.store.CreateDevice(ctx, d); err != nil {
@@ -136,6 +137,12 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (*model.APIKey,
 
 // Resolve turns a bearer token into a Principal, or nil if unknown.
 func (s *Service) Resolve(ctx context.Context, token string) (*model.Principal, error) {
+	return s.ResolveFrom(ctx, token, "")
+}
+
+// ResolveFrom is Resolve for a request from ip, which a device token records as the
+// device's last address (Device Management).
+func (s *Service) ResolveFrom(ctx context.Context, token, ip string) (*model.Principal, error) {
 	if token == "" {
 		return nil, nil
 	}
@@ -147,7 +154,7 @@ func (s *Service) Resolve(ctx context.Context, token string) (*model.Principal, 
 		if err != nil || u == nil || u.IsDisabled {
 			return nil, err
 		}
-		s.store.TouchDevice(ctx, d.ID)
+		s.store.TouchDevice(ctx, d.ID, ip)
 		return &model.Principal{UserID: u.ID, User: u, DeviceID: d.ID, IsAdmin: u.IsAdmin, Token: token}, nil
 	}
 	if k, err := s.store.GetAPIKeyByHash(ctx, hash); err != nil {
@@ -290,7 +297,7 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, _ := TokenFromRequest(r)
-			p, err := s.Resolve(r.Context(), token)
+			p, err := s.ResolveFrom(r.Context(), token, RemoteIP(r))
 			if err != nil {
 				http.Error(w, `{"Message":"auth lookup failed"}`, http.StatusInternalServerError)
 				return

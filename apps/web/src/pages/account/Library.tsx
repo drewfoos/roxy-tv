@@ -17,10 +17,7 @@ const KINDS = [
  */
 export function LibraryPage() {
   const manage = useAsync('library-manage', () => api.libraryManage())
-  const folders = useAsync('library-folders', () => api.folders())
   const [err, setErr] = useState<string | null>(null)
-  const [editing, setEditing] = useState<LibraryFolder | null>(null)
-  const [adding, setAdding] = useState(false)
   const [refreshOpen, setRefreshOpen] = useState(false)
   const [attention, setAttention] = useState<{ title: ManageTitle; mode: 'identify' | 'edit' } | null>(null)
 
@@ -41,7 +38,6 @@ export function LibraryPage() {
       await fn()
       after?.()
       manage.reload(true)
-      folders.reload(true)
     } catch (e) {
       setErr(errorText(e))
     }
@@ -55,38 +51,7 @@ export function LibraryPage() {
       {manage.error && <Notice kind="error">{manage.error}</Notice>}
 
       <SectionHead>Media folders</SectionHead>
-      {folders.loading && !folders.data ? (
-        <Spinner />
-      ) : (
-        <div className="acc-list">
-          {(folders.data?.libraries ?? []).map((f) => (
-            <div key={f.id}>
-              <ListRow
-                title={f.name}
-                sub={
-                  <>
-                    <div>{f.root}</div>
-                    <div>{f.reachable === false ? "The server can't see this folder right now" : `${f.kind === 'movies' ? 'Movies only' : 'Shows & movies'}${f.animeMode ? ' · anime' : ''} · ${f.series ?? 0} shows, ${f.movies ?? 0} movies`}</div>
-                  </>
-                }
-                right={<span className="link-brand">{editing?.id === f.id ? 'Close' : 'Edit'}</span>}
-                onClick={() => setEditing(editing?.id === f.id ? null : f)}
-              />
-              {editing?.id === f.id && <FolderEditor folder={f} onDone={() => setEditing(null)} run={run} />}
-            </div>
-          ))}
-          {folders.data && !folders.data.libraries?.length && <Notice>No folders yet. Add the one your downloads land in.</Notice>}
-        </div>
-      )}
-      {adding ? (
-        <AddFolder onDone={() => setAdding(false)} run={run} />
-      ) : (
-        <div className="acc-actions">
-          <button className="btn btn--brand" onClick={() => setAdding(true)}>
-            Add folder
-          </button>
-        </div>
-      )}
+      <MediaFolders onChanged={() => manage.reload(true)} />
 
       <SectionHead>Actions</SectionHead>
       <div className="acc-actions">
@@ -140,6 +105,63 @@ export function LibraryPage() {
 }
 
 type Run = (fn: () => Promise<unknown>, after?: () => void) => Promise<void>
+
+/** The media folders with Edit and Add folder (a folder browser). Also the setup wizard's media step. */
+export function MediaFolders({ onChanged }: { onChanged?: () => void }) {
+  const folders = useAsync('library-folders', () => api.folders())
+  const [err, setErr] = useState<string | null>(null)
+  const [editing, setEditing] = useState<LibraryFolder | null>(null)
+  const [adding, setAdding] = useState(false)
+  const run: Run = async (fn, after) => {
+    setErr(null)
+    try {
+      await fn()
+      after?.()
+      folders.reload(true)
+      onChanged?.()
+    } catch (e) {
+      setErr(errorText(e))
+    }
+  }
+  return (
+    <>
+      {err && <Notice kind="error">{err}</Notice>}
+      {folders.error && <Notice kind="error">{folders.error}</Notice>}
+      {folders.loading && !folders.data ? (
+        <Spinner />
+      ) : (
+        <div className="acc-list">
+          {(folders.data?.libraries ?? []).map((f) => (
+            <div key={f.id}>
+              <ListRow
+                title={f.name}
+                sub={
+                  <>
+                    <div>{f.root}</div>
+                    <div>{f.reachable === false ? "The server can't see this folder right now" : `${f.kind === 'movies' ? 'Movies only' : 'Shows & movies'}${f.animeMode ? ' · anime' : ''} · ${f.series ?? 0} shows, ${f.movies ?? 0} movies`}</div>
+                  </>
+                }
+                right={<span className="link-brand">{editing?.id === f.id ? 'Close' : 'Edit'}</span>}
+                onClick={() => setEditing(editing?.id === f.id ? null : f)}
+              />
+              {editing?.id === f.id && <FolderEditor folder={f} onDone={() => setEditing(null)} run={run} />}
+            </div>
+          ))}
+          {folders.data && !folders.data.libraries?.length && <Notice>No folders yet. Add the one your downloads land in.</Notice>}
+        </div>
+      )}
+      {adding ? (
+        <AddFolder onDone={() => setAdding(false)} run={run} />
+      ) : (
+        <div className="acc-actions">
+          <button className="btn btn--brand" onClick={() => setAdding(true)}>
+            Add folder
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
 
 function FolderEditor({ folder, onDone, run }: { folder: LibraryFolder; onDone: () => void; run: Run }) {
   const [name, setName] = useState(folder.name)

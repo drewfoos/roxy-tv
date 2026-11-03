@@ -13,6 +13,7 @@ import { Movie } from "../pages/Movie";
 import { Watch } from "../pages/Watch";
 import { Legal } from "../pages/Legal";
 import { LinkEnter, LinkTv } from "../pages/LinkTv";
+import { SetupWizard, setupInProgressFor } from "../pages/Setup";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Spinner } from "../components/Skeleton";
@@ -42,8 +43,13 @@ export default function App() {
       live = false;
     };
   }, [s?.token]);
+  // Bumped when the setup wizard finishes, so this reads its flag again.
+  const [, setSetupDone] = useState(0);
 
   if (!s) return <Login />;
+  // Signed in mid-setup (the wizard made this admin): back to the wizard, even after a reload.
+  if (s.isAdmin && setupInProgressFor() === s.userId)
+    return <SetupWizard onFinish={() => setSetupDone((n) => n + 1)} />;
   if (cookieFor !== s.token) return <Spinner />;
   // A TV's sign-in link works without a profile picked: the TV picks its own.
   if (

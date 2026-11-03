@@ -37,7 +37,7 @@ func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /v1/setup/admin {name, password, device, deviceId, version} -> sign-in response.
+// POST /v1/setup/admin {name, password, device, deviceId, version, client?} -> sign-in response.
 // Only while no account exists, and only from the home network.
 func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	if !fromHomeNetwork(r) {
@@ -50,6 +50,7 @@ func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		Device   string `json:"device"`
 		DeviceID string `json:"deviceId"`
 		Version  string `json:"version"`
+		Client   string `json:"client"` // "roxy-web" from the browser; the apps leave it out
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&b); err != nil {
 		writeError(w, 400, "invalid request body")
@@ -81,7 +82,11 @@ func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Warn("setup: admin account created", "name", u.Name, "from", peerIP(r))
-	ci := auth.ClientInfo{Client: "Roxy", Device: b.Device, DeviceID: b.DeviceID, Version: b.Version, Address: auth.RemoteIP(r)}
+	client := strings.TrimSpace(b.Client)
+	if client == "" || len(client) > 40 {
+		client = "Roxy"
+	}
+	ci := auth.ClientInfo{Client: client, Device: b.Device, DeviceID: b.DeviceID, Version: b.Version, Address: auth.RemoteIP(r)}
 	u2, d, token, err := s.authSvc.Login(r.Context(), name, b.Password, ci)
 	if err != nil {
 		writeError(w, 500, err.Error())

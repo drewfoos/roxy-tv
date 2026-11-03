@@ -84,8 +84,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]model.User, error) {
 
 func (s *Store) CreateDevice(ctx context.Context, d *model.Device) error {
 	now := Now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices (id, user_id, name, client, client_version, device_id, token_hash, last_seen, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-		d.ID, d.UserID, nullStr(d.Name), nullStr(d.Client), nullStr(d.ClientVersion), nullStr(d.DeviceID), d.TokenHash, now, now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO devices (id, user_id, name, client, client_version, device_id, token_hash, last_seen, created_at, last_ip) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		d.ID, d.UserID, nullStr(d.Name), nullStr(d.Client), nullStr(d.ClientVersion), nullStr(d.DeviceID), d.TokenHash, now, now, nullStr(d.LastIP))
 	if err == nil {
 		d.CreatedAt, d.LastSeen = ParseTime(now), ParseTime(now)
 	}
@@ -111,7 +111,7 @@ func (s *Store) GetDeviceByTokenHash(ctx context.Context, hash string) (*model.D
 
 // ListDevices: every device signed in with the user's login, most recently seen first.
 func (s *Store) ListDevices(ctx context.Context, userID string) ([]model.Device, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, name, client, client_version, device_id, last_seen, created_at FROM devices WHERE user_id = ? ORDER BY last_seen DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, name, client, client_version, device_id, last_seen, created_at, last_ip FROM devices WHERE user_id = ? ORDER BY last_seen DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -119,12 +119,12 @@ func (s *Store) ListDevices(ctx context.Context, userID string) ([]model.Device,
 	out := []model.Device{}
 	for rows.Next() {
 		var d model.Device
-		var name, client, ver, devID, seen sql.NullString
+		var name, client, ver, devID, seen, ip sql.NullString
 		var created string
-		if err := rows.Scan(&d.ID, &d.UserID, &name, &client, &ver, &devID, &seen, &created); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &name, &client, &ver, &devID, &seen, &created, &ip); err != nil {
 			return nil, err
 		}
-		d.Name, d.Client, d.ClientVersion, d.DeviceID = name.String, client.String, ver.String, devID.String
+		d.Name, d.Client, d.ClientVersion, d.DeviceID, d.LastIP = name.String, client.String, ver.String, devID.String, ip.String
 		d.LastSeen, d.CreatedAt = ParseTime(seen.String), ParseTime(created)
 		out = append(out, d)
 	}
@@ -141,8 +141,9 @@ func (s *Store) DeleteUserDevice(ctx context.Context, userID, id string) (bool, 
 	return n > 0, nil
 }
 
-func (s *Store) TouchDevice(ctx context.Context, id string) {
-	_, _ = s.db.ExecContext(ctx, `UPDATE devices SET last_seen = ? WHERE id = ?`, Now(), id)
+// TouchDevice marks a device seen now, from ip when known (empty keeps the last one).
+func (s *Store) TouchDevice(ctx context.Context, id, ip string) {
+	_, _ = s.db.ExecContext(ctx, `UPDATE devices SET last_seen = ?, last_ip = COALESCE(NULLIF(?, ''), last_ip) WHERE id = ?`, Now(), ip, id)
 }
 
 func (s *Store) DeleteDevice(ctx context.Context, id string) error {

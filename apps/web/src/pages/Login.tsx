@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { api, ApiError, APP_VERSION } from '../api/client'
-import type { LoginResponse } from '../api/types'
+import type { LoginResponse, SetupStatus } from '../api/types'
 import { session } from '../api/session'
 import { WitchHat } from '../components/Icons'
 import { LegalText } from '../components/LegalText'
+import { SetupWizard } from './Setup'
 
 type View = 'password' | 'phone' | 'server'
 
-function signIn(r: LoginResponse) {
+export function signIn(r: LoginResponse) {
   session.set({ token: r.token, userId: r.user.id, userName: r.user.name, isAdmin: !!r.user.isAdmin, profileId: null, profileName: '', profileHasAvatar: false, profileAvatarKey: '' })
 }
 
@@ -25,7 +26,7 @@ function termsAcceptedHere(): string | null {
 }
 
 /** Record the agreement on the server (the same record the apps keep) and in this browser. */
-async function recordTerms(token: string, known: string | null) {
+export async function recordTerms(token: string, known: string | null) {
   try {
     const version = known ?? (await api.legal('terms')).version
     if (!version) return
@@ -37,7 +38,7 @@ async function recordTerms(token: string, known: string | null) {
 }
 
 /** What the sign-in forms need to know about the terms. */
-interface Terms {
+export interface Terms {
   version: string | null
   /** This browser hasn't agreed to this version yet: the checkbox shows and must be ticked. */
   needed: boolean
@@ -129,7 +130,7 @@ async function probe(origin: string): Promise<string | null> {
 export function Login() {
   const [view, setView] = useState<View>('password')
   const [serverName, setServerName] = useState<string | null>(null)
-  const [needsSetup, setNeedsSetup] = useState(false)
+  const [setup, setSetup] = useState<SetupStatus | null>(null)
   const [termsVersion, setTermsVersion] = useState<string | null>(null)
   const [agreed, setAgreed] = useState(false)
   const [doc, setDoc] = useState<'terms' | 'privacy' | null>(null)
@@ -143,7 +144,7 @@ export function Login() {
         rememberServer({ origin: window.location.origin, name })
       })
       .catch(() => setServerName(null))
-    api.setupStatus().then((s) => setNeedsSetup(!!s.required)).catch(() => undefined)
+    api.setupStatus().then(setSetup).catch(() => undefined)
     api.legal('terms').then((d) => setTermsVersion(d.version)).catch(() => setTermsVersion(null))
   }, [])
 
@@ -153,6 +154,9 @@ export function Login() {
   const acceptedHere = termsAcceptedHere()
   const needed = acceptedHere == null || (termsVersion != null && termsVersion !== acceptedHere)
   const terms: Terms = { version: termsVersion, needed, agreed, setAgreed, show: setDoc }
+
+  // A brand-new server: the setup wizard instead of a sign-in nobody can use yet.
+  if (setup?.required && view !== 'server') return <SetupWizard status={setup} onCancel={() => setView('server')} />
 
   return (
     <div className="signin">
@@ -165,12 +169,7 @@ export function Login() {
           </span>
         </div>
         <div className="signin__card">
-          {needsSetup ? (
-            <>
-              <h1 className="signin__title">Almost there</h1>
-              <p className="signin__lead">This server isn't set up yet. Open the Roxy app on a phone on your home network to create the first account.</p>
-            </>
-          ) : view === 'server' ? (
+          {view === 'server' ? (
             <ChangeServer onBack={() => setView('password')} />
           ) : (
             view === 'phone' ? (
@@ -180,7 +179,7 @@ export function Login() {
             )
           )}
         </div>
-        {view === 'password' && !needsSetup && <Help />}
+        {view === 'password' && <Help />}
         <div className="signin__foot">
           {view !== 'server' && (
             <span>
@@ -281,7 +280,7 @@ function PasswordSignIn({ terms, onPhone }: { terms: Terms; onPhone: () => void 
 }
 
 /** The agreement: a checkbox until this browser has agreed to this version, then one line. */
-function TermsLine({ terms }: { terms: Terms }) {
+export function TermsLine({ terms }: { terms: Terms }) {
   const links = (
     <>
       the{' '}
@@ -312,7 +311,7 @@ function TermsLine({ terms }: { terms: Terms }) {
 }
 
 /** The Terms of Use or Privacy Policy over the sign-in page (those pages need a session). */
-function LegalDialog({ doc, onClose }: { doc: 'terms' | 'privacy'; onClose: () => void }) {
+export function LegalDialog({ doc, onClose }: { doc: 'terms' | 'privacy'; onClose: () => void }) {
   const [data, setData] = useState<{ title: string; body: string } | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -625,7 +624,7 @@ function IconServer() {
   )
 }
 
-function IconEye() {
+export function IconEye() {
   return (
     <svg {...svg}>
       <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
@@ -634,7 +633,7 @@ function IconEye() {
   )
 }
 
-function IconEyeOff() {
+export function IconEyeOff() {
   return (
     <svg {...svg}>
       <path d="M3 3l18 18" />

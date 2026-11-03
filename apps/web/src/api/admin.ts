@@ -18,6 +18,9 @@ export interface SignedInDevice {
   createdAt?: string
   current: boolean
   online: boolean
+  /** The address it last came from; shown only on request. */
+  ip?: string
+  network?: 'home' | 'tailscale' | 'server' | 'internet' | ''
   nowPlaying?: { title?: string } | null
 }
 

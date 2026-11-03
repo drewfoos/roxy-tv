@@ -309,3 +309,29 @@ func TestJustGrabbedIsQueuedNotNotFound(t *testing.T) {
 		t.Fatalf("movie with no grab: got %s, want notFound", d.State)
 	}
 }
+
+// A torrent the client calls "stalled, no connections" seconds after the grab is looking
+// for peers, not a problem; after a couple of minutes it is stalled.
+func TestFreshStallWarningIsQueued(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	past := tp(now.Add(-30 * 24 * time.Hour))
+	s := newTestService()
+	r := &store.Request{Seasons: []int{1}}
+	eps := []arr.Episode{ep(2, 1, 1, false, past, nil)}
+	q := []arr.QueueItem{{ID: 10, DownloadID: "x", EpisodeID: 2, Status: "warning", TrackedDownloadStatus: "warning", Size: 100, SizeLeft: 100,
+		StatusMessages: []arr.StatusMessage{{Title: "x", Messages: []string{"The download is stalled with no connections"}}}}}
+	d := s.seriesStatus(r, eps, q, nil, now)
+	if d.State != DLQueued || d.IsProblem {
+		t.Fatalf("fresh: got %s %q", d.State, d.Message)
+	}
+	d = s.seriesStatus(r, eps, q, nil, now.Add(3*time.Minute))
+	if d.State != DLStalled {
+		t.Fatalf("after 3 min: got %s, want stalled", d.State)
+	}
+	// Paused is a problem straight away.
+	q[0].Status, q[0].TrackedDownloadStatus = "paused", ""
+	s2 := newTestService()
+	if d := s2.seriesStatus(r, eps, q, nil, now); d.State != DLStalled {
+		t.Fatalf("paused: got %s", d.State)
+	}
+}
