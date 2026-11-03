@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/probe"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 )
 
 // GET /stream/{id} and /v1/stream/{id}: direct play with HTTP range support.
@@ -31,10 +32,18 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	part := src.Parts[0]
-	if n, err := strconv.Atoi(r.URL.Query().Get("part")); err == nil && n < len(src.Parts) {
+	if n, err := strconv.Atoi(r.URL.Query().Get("part")); err == nil {
+		if n < 0 || n >= len(src.Parts) {
+			writeError(w, 404, "no such part")
+			return
+		}
 		part = src.Parts[n]
 	}
-	f, err := os.Open(part.Path)
+	path, ok := mediaFile(w, part.Path)
+	if !ok {
+		return
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		writeError(w, 404, "file missing on disk")
 		return
@@ -48,11 +57,28 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", containerMime(src.Container))
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("ETag", fmt.Sprintf(`"%x-%x"`, fi.ModTime().UnixNano(), fi.Size()))
-	w.Header().Set("Content-Disposition", "inline; filename=\""+filepath.Base(part.Path)+"\"")
+	w.Header().Set("Content-Disposition", contentDisposition("inline", filepath.Base(part.Path)))
 	http.ServeContent(w, r, filepath.Base(part.Path), fi.ModTime(), f)
 }
 
-// GET /v1/sources/{id}/attachments/{index}: an extracted font (or any attachment).
+// mediaFile resolves a media path (video, sidecar) and refuses one that a symlink leads
+// out of the media folders: 403, and ok is false. A missing file is a 404.
+func mediaFile(w http.ResponseWriter, path string) (string, bool) {
+	real, err := safefs.MediaPath(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, 404, "file missing on disk")
+		} else {
+			writeError(w, 403, "file is outside the media folders")
+		}
+		return "", false
+	}
+	return real, true
+}
+
+// GET /v1/sources/{id}/attachments/{index}: an extracted font. The MKV names its own
+// attachments' type, so anything that is not a font is served as an opaque download:
+// an attachment tagged text/html or image/svg+xml must never run script on Roxy's origin.
 func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 	src, err := s.store.GetSource(r.Context(), chi.URLParam(r, "id"))
 	if err != nil || src == nil {
@@ -66,9 +92,17 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.ExtractedPath == "" {
 			// Extract lazily as a fallback; ingest should already have done this.
+			if len(src.Parts) == 0 {
+				writeError(w, 404, "source has no file")
+				return
+			}
+			video, ok := mediaFile(w, src.Parts[0].Path)
+			if !ok {
+				return
+			}
 			dir := filepath.Join(s.cfg.AttachmentsDir(), src.ID)
 			atts := src.Attachments
-			if err := probe.ExtractAttachments(r.Context(), s.ff, src.Parts[0].Path, dir, atts); err != nil {
+			if err := probe.ExtractAttachments(r.Context(), s.ff, video, dir, atts); err != nil {
 				writeError(w, 500, err.Error())
 				return
 			}
@@ -82,19 +116,108 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		ct := a.Mime
-		if ct == "" {
-			ct = mime.TypeByExtension(filepath.Ext(a.Filename))
+		// Extracted fonts live in the attachment cache; nothing else is served from here.
+		extracted, err := safefs.ResolveUnder(a.ExtractedPath, s.cfg.AttachmentsDir())
+		if err == nil {
+			err = safefs.Check(a.ExtractedPath)
 		}
-		if ct == "" {
-			ct = "application/octet-stream"
+		if err != nil {
+			writeError(w, 404, "attachment missing")
+			return
 		}
-		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		http.ServeFile(w, r, a.ExtractedPath)
+		f, err := os.Open(extracted)
+		if err != nil {
+			writeError(w, 404, "attachment missing")
+			return
+		}
+		defer f.Close()
+		fi, err := f.Stat()
+		if err != nil || fi.IsDir() {
+			writeError(w, 404, "attachment missing")
+			return
+		}
+		setAttachmentHeaders(w.Header(), a)
+		http.ServeContent(w, r, "", fi.ModTime(), f)
 		return
 	}
 	writeError(w, 404, "attachment not found")
+}
+
+// setAttachmentHeaders: a font type from the allow-list (else octet-stream), no sniffing,
+// always a download, and a CSP that forbids everything should a browser render it anyway.
+func setAttachmentHeaders(h http.Header, a model.Attachment) {
+	h.Set("Content-Type", attachmentMime(a.Mime, a.Filename))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Disposition", contentDisposition("attachment", safeAttachmentName(a.Filename)))
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	h.Set("Cache-Control", "public, max-age=31536000, immutable")
+}
+
+var fontMimes = map[string]bool{
+	"application/x-truetype-font":   true,
+	"application/x-font-ttf":        true,
+	"application/x-font-otf":        true,
+	"application/vnd.ms-opentype":   true,
+	"application/font-sfnt":         true,
+	"application/font-woff":         true,
+	"application/x-font-truetype":   true,
+	"application/x-font-opentype":   true,
+	"application/vnd.ms-fontobject": true,
+}
+
+var fontExts = map[string]string{
+	".ttf": "font/ttf", ".otf": "font/otf", ".ttc": "font/collection", ".otc": "font/collection",
+	".woff": "font/woff", ".woff2": "font/woff2",
+}
+
+// attachmentMime returns the attachment's declared type only when it is a font;
+// everything else (and anything malformed) is application/octet-stream.
+func attachmentMime(declared, filename string) string {
+	m := strings.ToLower(strings.TrimSpace(declared))
+	if i := strings.IndexByte(m, ';'); i >= 0 {
+		m = strings.TrimSpace(m[:i])
+	}
+	if m != "" {
+		for _, c := range m {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '/' || c == '-' || c == '.' || c == '+') {
+				return "application/octet-stream"
+			}
+		}
+		if strings.Count(m, "/") == 1 && (strings.HasPrefix(m, "font/") && len(m) > len("font/") || strings.HasPrefix(m, "application/x-font-") || fontMimes[m]) {
+			return m
+		}
+		return "application/octet-stream"
+	}
+	// No declared type: trust only a font extension (never mime.TypeByExtension, which
+	// would happily answer text/html for "x.html").
+	if t, ok := fontExts[strings.ToLower(filepath.Ext(filename))]; ok {
+		return t
+	}
+	return "application/octet-stream"
+}
+
+func safeAttachmentName(name string) string {
+	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	if name == "" || name == "." || name == "/" {
+		return "attachment"
+	}
+	return name
+}
+
+// contentDisposition builds "<kind>; filename=..." with the name quoted and escaped (RFC
+// 2231 filename*= for non-ASCII), so a quote or newline in a file name cannot break or
+// add headers. Falls back to the bare kind if the name cannot be encoded.
+func contentDisposition(kind, name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if v := mime.FormatMediaType(kind, map[string]string{"filename": name}); v != "" {
+		return v
+	}
+	return kind
 }
 
 // GET /v1/sources/{id}/subtitles/{index}: a text subtitle track, byte for byte.
@@ -121,19 +244,47 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 415, "image subtitles are not served as files yet")
 		return
 	}
-	path := st.ExternalPath
-	if path == "" {
+	var path string
+	if st.ExternalPath != "" {
+		// A sidecar next to the media: must really be inside a media folder (a symlink to
+		// /config/roxy.db is refused).
+		p, ok := mediaFile(w, st.ExternalPath)
+		if !ok {
+			return
+		}
+		path = p
+	} else {
 		ext := map[string]string{"ass": ".ass", "ssa": ".ass", "subrip": ".srt", "srt": ".srt", "webvtt": ".vtt", "vtt": ".vtt"}[st.Codec]
 		path = filepath.Join(s.cfg.SubtitlesDir(), src.ID, fmt.Sprintf("%d%s", st.Index, ext))
 		if _, err := os.Stat(path); err != nil {
-			if err := probe.ExtractTextSubtitle(r.Context(), s.ff, src.Parts[0].Path, st.Index, st.Codec, path); err != nil {
+			if len(src.Parts) == 0 {
+				writeError(w, 404, "source has no file")
+				return
+			}
+			video, ok := mediaFile(w, src.Parts[0].Path)
+			if !ok {
+				return
+			}
+			if err := probe.ExtractTextSubtitle(r.Context(), s.ff, video, st.Index, st.Codec, path); err != nil {
 				writeError(w, 500, err.Error())
 				return
 			}
 		}
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeError(w, 404, "subtitle file missing")
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.IsDir() {
+		writeError(w, 404, "subtitle file missing")
+		return
+	}
 	w.Header().Set("Content-Type", subtitleMime(st.Codec))
-	http.ServeFile(w, r, path)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, "", fi.ModTime(), f)
 }
 
 func containerMime(c string) string {

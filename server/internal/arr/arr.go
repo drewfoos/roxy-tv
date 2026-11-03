@@ -113,7 +113,7 @@ func New(name string, cfg Config) *Client {
 	}
 	cfg.URL = strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
-	return &Client{Name: name, cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
+	return &Client{Name: name, cfg: cfg, http: noRedirects(30 * time.Second)}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body any, out any) error {
@@ -151,10 +151,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		return fmt.Errorf("%s: the API key was rejected", c.Name)
 	}
 	if resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(data))
-		if len(msg) > 300 {
-			msg = msg[:300]
-		}
+		msg := arrMessage(data)
 		return fmt.Errorf("%s: HTTP %d %s %s: %s", c.Name, resp.StatusCode, method, path, msg)
 	}
 	if out != nil && len(data) > 0 {
@@ -580,4 +577,45 @@ func CheckVersion(name, version string) (bool, string) {
 		return false, "Radarr v" + version + " is older than Roxy is tested with (Radarr v5 or v6). Requests may work, but download status needs v5 or newer."
 	}
 	return true, ""
+}
+
+// noRedirects: an HTTP client that never follows a redirect. Go strips Authorization on a
+// cross-host redirect but not X-Api-Key, so following one could hand the key to any host.
+func noRedirects(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// arrMessage: the arr app's own error words from a JSON error body ({"message"} or a
+// validation list of {"errorMessage"}), never the raw body: an address that is not an
+// arr app (a mistyped or internal one) must not have its page echoed back.
+func arrMessage(data []byte) string {
+	var one struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(data, &one) == nil && one.Message != "" {
+		return clip(one.Message)
+	}
+	var list []struct {
+		ErrorMessage string `json:"errorMessage"`
+	}
+	if json.Unmarshal(data, &list) == nil {
+		var msgs []string
+		for _, l := range list {
+			if l.ErrorMessage != "" {
+				msgs = append(msgs, l.ErrorMessage)
+			}
+		}
+		if len(msgs) > 0 {
+			return clip(strings.Join(msgs, "; "))
+		}
+	}
+	return "(no details)"
+}
+
+func clip(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 300 {
+		s = s[:300]
+	}
+	return s
 }

@@ -38,7 +38,11 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bad start")
 		return
 	}
-	req := transcode.RemuxRequest{Path: src.Parts[0].Path, StartSec: start, AudioIndex: -1}
+	video, ok := mediaFile(w, src.Parts[0].Path)
+	if !ok {
+		return
+	}
+	req := transcode.RemuxRequest{Path: video, StartSec: start, AudioIndex: -1}
 	if a := q.Get("audio"); a != "" {
 		idx, err := strconv.Atoi(a)
 		if err != nil {
@@ -73,8 +77,8 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, transcode.RemuxArgs(req)...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
+	stderr := &tailBuffer{max: 64 << 10} // only the end is logged; a chatty ffmpeg cannot grow it
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		writeError(w, 500, err.Error())

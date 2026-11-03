@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { ArrConfig, ArrSettings, ArrTest } from '../../api/admin'
 import { useAsync } from '../../hooks/useAsync'
-import { ActionButton, Field, Notice, PanelHead, Select, TextInput, ToggleRow, errorText, formatBytes } from '../../components/Form'
+import { ActionButton, Field, Notice, PanelHead, SecretInput, Select, TextInput, ToggleRow, errorText, formatBytes } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
 
 type Kind = 'sonarr' | 'radarr'
@@ -100,7 +100,7 @@ export function ArrPage() {
           </>
         }
       >
-        <TextInput type="password" value={cfg.apiKey} onChange={(v) => patch({ apiKey: v })} autoComplete="off" />
+        <SecretInput label={`${name} API key`} value={cfg.apiKey} onChange={(v) => patch({ apiKey: v })} />
       </Field>
       <div className="acc-actions">
         <ActionButton kind="grey" onClick={runTest} disabled={!cfg.url.trim()}>

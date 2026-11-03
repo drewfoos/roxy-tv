@@ -40,15 +40,28 @@ func TestFromHomeNetwork(t *testing.T) {
 
 func TestTrustedRealIP(t *testing.T) {
 	var seen string
-	h := trustedRealIP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { seen = peerIP(r) }))
-	// A direct internet client can't choose its address with a header.
+	var home bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { seen, home = peerIP(r), fromHomeNetwork(r) })
+	// No proxy configured: nobody picks their address with a header, a LAN or IPv6-via-
+	// Docker client included (it used to rotate addresses past the sign-in throttle).
+	h := trustedRealIP(nil)(next)
 	h.ServeHTTP(httptest.NewRecorder(), req("203.0.113.9:5000", map[string]string{"X-Forwarded-For": "1.2.3.4"}))
 	if seen != "203.0.113.9" {
 		t.Errorf("spoofed header believed: %s", seen)
 	}
-	// Behind a local proxy the proxy's (last) entry is the client.
+	h.ServeHTTP(httptest.NewRecorder(), req("172.30.0.1:5000", map[string]string{"X-Forwarded-For": "203.0.113.77"}))
+	if seen != "172.30.0.1" {
+		t.Errorf("LAN peer chose its address: %s", seen)
+	}
+	// A configured proxy: its (last) entry is the client, and an internet client behind it
+	// is not "home".
+	h = trustedRealIP(parseNets([]string{"127.0.0.1"}))(next)
 	h.ServeHTTP(httptest.NewRecorder(), req("127.0.0.1:5000", map[string]string{"X-Forwarded-For": "1.2.3.4, 198.51.100.7"}))
-	if seen != "198.51.100.7" {
-		t.Errorf("proxy client: got %s", seen)
+	if seen != "198.51.100.7" || home {
+		t.Errorf("proxy client: got %s home=%v", seen, home)
+	}
+	h.ServeHTTP(httptest.NewRecorder(), req("127.0.0.1:5000", map[string]string{"X-Forwarded-For": "192.168.1.5"}))
+	if seen != "192.168.1.5" || !home {
+		t.Errorf("LAN client through proxy: got %s home=%v", seen, home)
 	}
 }

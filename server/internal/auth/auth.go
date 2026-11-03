@@ -72,7 +72,11 @@ func HashToken(token string) string {
 // Login verifies credentials and issues a device token.
 // Wrong passwords are throttled per account and per address (ErrTooManyAttempts).
 func (s *Service) Login(ctx context.Context, username, password string, client ClientInfo) (*model.User, *model.Device, string, error) {
-	uk, ak := userKey(username), addrKey(client.Address)
+	// The account's count is per address: wrong guesses from elsewhere must not lock the
+	// owner out (5 misses from anywhere used to block even the right password, for up to
+	// 15 minutes at a time). The address's own count still stops one place guessing.
+	ak := addrKey(client.Address)
+	uk := userKey(username) + "|" + ak
 	if wait := s.throttle.wait(uk, ak); wait > 0 {
 		return nil, nil, "", &RetryError{After: wait}
 	}
@@ -154,13 +158,18 @@ func (s *Service) ResolveFrom(ctx context.Context, token, ip string) (*model.Pri
 		if err != nil || u == nil || u.IsDisabled {
 			return nil, err
 		}
+		// A sign-in nobody has used for half a year is a lost or forgotten device: it ends.
+		if !d.LastSeen.IsZero() && time.Since(d.LastSeen) > DeviceIdleExpiry {
+			_ = s.store.DeleteDevice(ctx, d.ID)
+			return nil, nil
+		}
 		s.store.TouchDevice(ctx, d.ID, ip)
 		return &model.Principal{UserID: u.ID, User: u, DeviceID: d.ID, IsAdmin: u.IsAdmin, Token: token}, nil
 	}
 	if k, err := s.store.GetAPIKeyByHash(ctx, hash); err != nil {
 		return nil, err
 	} else if k != nil {
-		return &model.Principal{IsAPIKey: true, IsAdmin: true, Token: token}, nil
+		return &model.Principal{IsAPIKey: true, Token: token}, nil
 	}
 	return nil, nil
 }
@@ -225,9 +234,13 @@ func TokenFromRequest(r *http.Request) (string, ClientInfo) {
 			return t, ci
 		}
 	}
-	for _, q := range []string{"api_key", "ApiKey", "apiKey"} {
-		if t := r.URL.Query().Get(q); t != "" {
-			return t, ci
+	// A token in the URL (Jellyfin clients' ?api_key=) for reads only: URLs end up in
+	// proxy logs and browser history, and a change should never ride on a link.
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		for _, q := range []string{"api_key", "ApiKey", "apiKey"} {
+			if t := r.URL.Query().Get(q); t != "" {
+				return t, ci
+			}
 		}
 	}
 	// Roxy Web: the browser loads posters and video on its own and cannot add a header,
@@ -302,6 +315,11 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 				http.Error(w, `{"Message":"auth lookup failed"}`, http.StatusInternalServerError)
 				return
 			}
+			// API keys exist for the Sonarr / Radarr webhooks and do nothing else: a key read
+			// out of an arr app's settings used to open the whole library and its streams.
+			if p != nil && p.IsAPIKey && !APIKeyPath(r.URL.Path) {
+				p = nil
+			}
 			// A media token opens one source's stream and what plays with it, nothing else. It
 			// comes as ?mt= (the browser's <video> cannot send headers) or as the
 			// X-Roxy-Media-Token header (the TV player: it keeps the token out of URLs, which
@@ -352,3 +370,11 @@ func newID() string {
 	h := hex.EncodeToString(b)
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
+
+// APIKeyPath: the routes an integration API key may call (the arr webhooks).
+func APIKeyPath(path string) bool {
+	return strings.HasPrefix(path, "/v1/webhooks/") && path != "/v1/webhooks/events" || strings.HasPrefix(path, "/v1/ingest/")
+}
+
+// DeviceIdleExpiry: a device token unused this long stops working.
+const DeviceIdleExpiry = 180 * 24 * time.Hour

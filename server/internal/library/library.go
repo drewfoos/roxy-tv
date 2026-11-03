@@ -176,6 +176,11 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 		if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(d.Name()) != "" {
 			return nil
 		}
+		if _, err := safefs.ResolveUnder(path, lib.Root); err != nil {
+			// A symlink out of the library: never ingested, and dropped if it was before.
+			slog.Warn("skipping file outside the library", "path", path, "err", err)
+			return nil
+		}
 		seen[path] = true
 		info, err := d.Info()
 		if err != nil {
@@ -245,6 +250,10 @@ func (l *Library) AddFile(ctx context.Context, lib model.Library, path string) e
 
 // AddFileHinted is AddFile with the arr app's season/episode for the file (may be nil).
 func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) error {
+	// The file must really be inside the library: a symlink out of it is not media.
+	if _, err := safefs.ResolveUnder(path, lib.Root); err != nil {
+		return err
+	}
 	item, err := l.resolveItemHinted(ctx, lib, path, hint)
 	if err != nil {
 		return err
@@ -289,7 +298,7 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	}
 
 	// Sidecar subtitles next to the file (Bazarr naming).
-	src.Streams = append(src.Streams, sidecarSubtitles(path, len(src.Streams)+len(src.Attachments)+1)...)
+	src.Streams = append(src.Streams, sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1)...)
 
 	// Eager text-subtitle extraction + language sniffing. Extracted files land where the
 	// subtitle endpoint looks for them, so this also warms that cache.
@@ -576,7 +585,9 @@ func allDigits(s string) bool {
 }
 
 // sidecarSubtitles finds <base>.<lang>[.forced][.hi|.cc|.sdh][.tags].<ext> next to the file.
-func sidecarSubtitles(videoPath string, startIndex int) []model.MediaStream {
+// A sidecar that is a symlink out of the library root is skipped: it is served as-is to
+// any signed-in user, so one pointing at /config/roxy.db would leak the database.
+func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStream {
 	dir := filepath.Dir(videoPath)
 	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
 	entries, err := os.ReadDir(dir)
@@ -592,6 +603,10 @@ func sidecarSubtitles(videoPath string, startIndex int) []model.MediaStream {
 		name := e.Name()
 		ext := strings.ToLower(filepath.Ext(name))
 		if !subtitleExts[ext] || !strings.HasPrefix(strings.ToLower(name), strings.ToLower(base)) {
+			continue
+		}
+		if _, err := safefs.ResolveUnder(filepath.Join(dir, name), root); err != nil {
+			slog.Warn("skipping sidecar outside the library", "path", filepath.Join(dir, name), "err", err)
 			continue
 		}
 		rest := strings.TrimSuffix(name[len(base):], filepath.Ext(name))

@@ -22,8 +22,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
+	"github.com/roxy-media/roxy/server/internal/imaging"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/netguard"
 	"github.com/roxy-media/roxy/server/internal/stills"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
@@ -103,7 +105,7 @@ func New(st *store.Store, cfg *config.Config) *Service {
 	s := &Service{
 		store:      st,
 		cfg:        cfg,
-		images:     &http.Client{Timeout: 30 * time.Second},
+		images:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: netguard.CheckRedirect},
 		queue:      make(chan job, queueSize),
 		pending:    map[string]bool{},
 		failed:     map[string]time.Time{},
@@ -1308,6 +1310,10 @@ func (s *Service) readImageSource(ctx context.Context, srcURL string) ([]byte, e
 		if i := strings.LastIndex(local, "#"); i > 0 {
 			local = local[:i]
 		}
+		// Artwork symlinked out of the media folders is not read (or cached and served).
+		if err := safefs.NoEscape(local); err != nil {
+			return nil, err
+		}
 		f, err := os.Open(local)
 		if err != nil {
 			return nil, err
@@ -1355,7 +1361,7 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 		slog.Warn("metadata: image download failed", "url", srcURL, "err", err)
 		return
 	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, format, err := imaging.CheckConfig(data) // refuses decompression bombs before decoding
 	if err != nil {
 		slog.Warn("metadata: undecodable image", "url", srcURL, "err", err)
 		return

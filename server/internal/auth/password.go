@@ -42,7 +42,8 @@ func (s *Service) ChangePassword(ctx context.Context, userID, keepDevice, addres
 	if u == nil {
 		return ErrInvalidCredentials
 	}
-	uk, ak := userKey(u.Name), addrKey(address)
+	ak := addrKey(address)
+	uk := userKey(u.Name) + "|" + ak // per address, as at sign-in
 	if wait := s.throttle.wait(uk, ak); wait > 0 {
 		return &RetryError{After: wait}
 	}

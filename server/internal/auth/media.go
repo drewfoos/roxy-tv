@@ -52,14 +52,15 @@ func (s *Service) mediaSecret(ctx context.Context) ([]byte, error) {
 	return s.mk.key, s.mk.err
 }
 
-// NewMediaToken signs a token for userID to play sourceID until now + MediaTokenTTL.
-func (s *Service) NewMediaToken(ctx context.Context, sourceID, userID string) (string, time.Time, error) {
+// NewMediaToken signs a token for userID to play sourceID until now + MediaTokenTTL. It
+// names the device that asked (deviceID), so signing that device out voids it at once.
+func (s *Service) NewMediaToken(ctx context.Context, sourceID, userID, deviceID string) (string, time.Time, error) {
 	key, err := s.mediaSecret(ctx)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	exp := time.Now().Add(MediaTokenTTL)
-	payload := sourceID + "." + userID + "." + strconv.FormatInt(exp.Unix(), 10)
+	payload := sourceID + "." + userID + "." + deviceID + "." + strconv.FormatInt(exp.Unix(), 10)
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + hex.EncodeToString(mac.Sum(nil)), exp, nil
@@ -89,12 +90,25 @@ func (s *Service) verifyMediaToken(ctx context.Context, tok string) (sourceID, u
 		return "", "", errBadMediaToken
 	}
 	parts := strings.Split(string(raw), ".")
-	if len(parts) != 3 {
+	device := ""
+	switch len(parts) {
+	case 3: // issued before tokens named their device; they expire within a day
+	case 4:
+		device = parts[2]
+		parts = []string{parts[0], parts[1], parts[3]}
+	default:
 		return "", "", errBadMediaToken
 	}
 	exp, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
 		return "", "", errBadMediaToken
+	}
+	// The device that asked must still be signed in (logout, Device Management's sign
+	// out and a password change all end its streams too).
+	if device != "" {
+		if ok, err := s.store.DeviceExists(ctx, device); err != nil || !ok {
+			return "", "", errBadMediaToken
+		}
 	}
 	return parts[0], parts[1], nil
 }

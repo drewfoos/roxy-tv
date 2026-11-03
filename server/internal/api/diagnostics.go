@@ -15,7 +15,7 @@ func (s *Server) clientCrash(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Report string `json:"report"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 128<<10)).Decode(&body); err != nil || body.Report == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&body); err != nil || body.Report == "" {
 		writeError(w, 400, "invalid request body")
 		return
 	}

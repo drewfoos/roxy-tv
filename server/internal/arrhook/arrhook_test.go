@@ -55,3 +55,19 @@ func TestPayloadShapes(t *testing.T) {
 		t.Errorf("movie: %q %q", m.title(), m.absolute(*m.MovieFile))
 	}
 }
+
+// A webhook must not name a library root (or "/") as a series folder, nor climb out of
+// a root with "..".
+func TestResolveRefusesRootsAndDotDot(t *testing.T) {
+	roots := []string{"/mnt/media/TV"}
+	exists := func(string) bool { return true }
+	if got, ok := Resolve("/", nil, roots, exists); ok && got == "/mnt/media/TV" {
+		t.Fatalf("\"/\" resolved to the root")
+	}
+	if _, ok := Resolve("/mnt/media/TV/../../etc/passwd", nil, roots, func(p string) bool { return p == "/mnt/media/TV/../../etc/passwd" }); ok {
+		t.Fatal("dot-dot escaped the root")
+	}
+	if !rootOrAbove("/mnt/media/TV", roots) || !rootOrAbove("/mnt/media", roots) || rootOrAbove("/mnt/media/TV/Show", roots) {
+		t.Fatal("rootOrAbove")
+	}
+}

@@ -26,10 +26,50 @@ import (
 // locks serialises grabs per item, so a page of cards asking at once runs ffmpeg once.
 var locks sync.Map
 
+// slots caps how many ffmpeg frame grabs run at once across all items: a page of a
+// hundred thumb-less episodes must not start a hundred decoders.
+var slots = make(chan struct{}, 2)
+
+// failures remembers items whose grab failed, so a broken file is not re-decoded on
+// every page view. Entries expire after failTTL.
+var (
+	failMu   sync.Mutex
+	failures = map[string]time.Time{}
+)
+
+const failTTL = time.Hour
+
+func failedRecently(id string) bool {
+	failMu.Lock()
+	defer failMu.Unlock()
+	at, ok := failures[id]
+	if ok && time.Since(at) > failTTL {
+		delete(failures, id)
+		return false
+	}
+	return ok
+}
+
+func markFailed(id string) {
+	failMu.Lock()
+	defer failMu.Unlock()
+	if len(failures) > 10000 { // bounded: drop the expired, or everything if none are
+		for k, at := range failures {
+			if time.Since(at) > failTTL {
+				delete(failures, k)
+			}
+		}
+		if len(failures) > 10000 {
+			failures = map[string]time.Time{}
+		}
+	}
+	failures[id] = time.Now()
+}
+
 // Grab makes and records the thumb for id when it is an episode or movie with a file and
 // no thumb yet; it returns the thumb either way, or nil when there is nothing to grab from.
 func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.Config, id string) (*store.ItemImage, error) {
-	if ff == nil {
+	if ff == nil || failedRecently(id) {
 		return nil, nil
 	}
 	it, err := st.GetItem(ctx, id)
@@ -48,6 +88,17 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 	if existing, err := st.GetItemImage(ctx, id, "thumb"); err != nil || existing != nil {
 		return existing, err
 	}
+	video, err := safefs.MediaPath(src.Parts[0].Path) // never decode a file a symlink leads out of media
+	if err != nil {
+		markFailed(id)
+		return nil, err
+	}
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	at := src.DurationMs / 5 / 1000
 	if at < 5 {
 		at = 5
@@ -58,11 +109,15 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 	}
 	path := filepath.Join(dir, "thumb.jpg")
 	tmp := filepath.Join(dir, "thumb.frame.tmp.jpg")
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := ff.Run(ctx, dir, "-y", "-v", "error", "-ss", strconv.FormatInt(at, 10), "-i", src.Parts[0].Path, "-an", "-sn", "-dn",
+	if _, err := ff.Run(ctx, dir, "-y", "-v", "error", "-ss", strconv.FormatInt(at, 10), "-i", video, "-an", "-sn", "-dn",
 		"-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", "-f", "image2", tmp); err != nil {
 		safefs.Remove(tmp)
+		if parent.Err() == nil { // the viewer leaving is not the file's fault
+			markFailed(id)
+		}
 		return nil, err
 	}
 	data, err := os.ReadFile(tmp)
@@ -72,6 +127,7 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 	imgCfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		safefs.Remove(tmp)
+		markFailed(id)
 		return nil, err
 	}
 	if err := safefs.Rename(tmp, path); err != nil {

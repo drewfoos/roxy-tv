@@ -31,7 +31,7 @@ func NewProwlarr(u, key string) *Prowlarr {
 	if u == "" || key == "" {
 		return nil
 	}
-	return &Prowlarr{url: u, key: key, http: &http.Client{Timeout: 90 * time.Second}}
+	return &Prowlarr{url: u, key: key, http: noRedirects(90 * time.Second)}
 }
 
 // IndexerRelease is one Prowlarr search result.

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,7 +31,21 @@ type showcase struct {
 	at  time.Time
 }
 
+// showcaseEnabled: ROXY_PUBLIC_SHOWCASE=false (0/no/off) hides the wall, for a server
+// reachable from the internet whose library should not be guessable before sign-in. The
+// count is then 0, which every client already shows as a plain background.
+func showcaseEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ROXY_PUBLIC_SHOWCASE"))) {
+	case "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
+
 func (s *Server) showcaseIDs(r *http.Request) []string {
+	if !showcaseEnabled() {
+		return nil
+	}
 	s.show.mu.Lock()
 	defer s.show.mu.Unlock()
 	if s.show.ids == nil || time.Since(s.show.at) > showcaseRefresh {

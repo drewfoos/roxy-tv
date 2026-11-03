@@ -40,7 +40,11 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bad height, bitrate or start")
 		return
 	}
-	req := transcode.Request{Path: src.Parts[0].Path, StartSec: start, MaxHeight: height, BitrateK: bitrate, Container: src.Container}
+	video, ok := mediaFile(w, src.Parts[0].Path)
+	if !ok {
+		return
+	}
+	req := transcode.Request{Path: video, StartSec: start, MaxHeight: height, BitrateK: bitrate, Container: src.Container}
 	// web=1: one browser-safe audio track (audio=<stream index>, else the first), no
 	// subtitles, timestamps from zero at start. See transcode.Request.Web.
 	if q.Get("web") == "1" {
@@ -82,8 +86,8 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 	}
 	args := s.transcoder.Args(req)
 	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
+	stderr := &tailBuffer{max: 64 << 10} // only the end is logged; a chatty ffmpeg cannot grow it
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -213,3 +217,26 @@ func tailString(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// tailBuffer is an io.Writer that keeps only the last max bytes written (ffmpeg's stderr
+// for a long stream can be endless; only its end is ever logged).
+type tailBuffer struct {
+	max int
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= t.max {
+		t.buf = append(t.buf[:0], p[len(p)-t.max:]...)
+		return n, nil
+	}
+	if over := len(t.buf) + len(p) - t.max; over > 0 {
+		t.buf = append(t.buf[:0], t.buf[over:]...)
+	}
+	t.buf = append(t.buf, p...)
+	return n, nil
+}
+
+func (t *tailBuffer) Len() int       { return len(t.buf) }
+func (t *tailBuffer) String() string { return string(t.buf) }

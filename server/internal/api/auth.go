@@ -26,7 +26,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		DeviceID string `json:"deviceId"`
 		Version  string `json:"version"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	if len(body.Username) > 64 || len(body.Device) > 128 || len(body.Client) > 64 || len(body.DeviceID) > 128 || len(body.Version) > 64 {
 		writeError(w, 400, "invalid request body")
 		return
 	}

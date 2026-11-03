@@ -61,3 +61,30 @@ func TestMediaPathFor(t *testing.T) {
 		t.Error("dots must never pass")
 	}
 }
+
+// Wrong guesses from another address must not lock the owner out of their own account.
+func TestLockoutIsPerAddress(t *testing.T) {
+	th := &loginThrottle{keys: map[string]*attempts{}}
+	attacker := userKey("carol") + "|" + addrKey("10.0.0.66")
+	owner := userKey("carol") + "|" + addrKey("192.168.1.20")
+	for i := 0; i < freeAttempts+2; i++ {
+		th.fail(attacker, addrKey("10.0.0.66"))
+	}
+	if th.wait(attacker, addrKey("10.0.0.66")) == 0 {
+		t.Fatal("the guessing address should be locked")
+	}
+	if w := th.wait(owner, addrKey("192.168.1.20")); w != 0 {
+		t.Fatalf("owner locked out for %v by someone else's guesses", w)
+	}
+}
+
+func TestAPIKeyPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/v1/webhooks/sonarr": true, "/v1/ingest/radarr": true,
+		"/v1/webhooks/events": false, "/v1/items": false, "/v1/stream/x": false, "/v1/auth/me": false,
+	} {
+		if APIKeyPath(path) != want {
+			t.Errorf("%s: want %v", path, want)
+		}
+	}
+}

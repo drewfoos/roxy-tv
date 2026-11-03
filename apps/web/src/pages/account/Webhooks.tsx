@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../../api/client'
 import { useAsync } from '../../hooks/useAsync'
-import { ActionButton, ListRow, Notice, PanelHead, SectionHead, errorText, formatWhen } from '../../components/Form'
+import { ActionButton, ListRow, Notice, PanelHead, SecretValue, SectionHead, errorText, formatWhen } from '../../components/Form'
 import { IconCopy, IconDelete } from '../../components/Icons'
 
 function CopyRow({ label, value }: { label: string; value: string }) {
@@ -69,7 +69,7 @@ export function WebhooksPage() {
       {fresh && (
         <div className="notice notice--ok">
           <b>New key for {fresh.name} (shown once, copy it now)</b>
-          <CopyRow label="Key" value={fresh.token} />
+          <SecretValue label="Key" value={fresh.token} />
         </div>
       )}
       <div className="acc-list">

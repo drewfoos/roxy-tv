@@ -186,7 +186,10 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 	if src == nil || len(src.Parts) == 0 {
 		return fmt.Errorf("source has no file")
 	}
-	path := src.Parts[0].Path
+	path, err := safefs.MediaPath(src.Parts[0].Path) // never decode a file a symlink leads out of media
+	if err != nil {
+		return err
+	}
 	dir := s.dir(sourceID)
 	tmp := dir + ".tmp"
 	safefs.RemoveAll(tmp)

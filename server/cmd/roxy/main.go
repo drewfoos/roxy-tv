@@ -118,6 +118,9 @@ func bootstrapAdmin(ctx context.Context, db *store.Store, cfg *config.Config) er
 		slog.Warn("no accounts yet: open the Roxy app on a phone on the same network to set up this server")
 		return nil
 	}
+	if err := auth.ValidateNewPassword(pw); err != nil {
+		slog.Warn("ROXY_ADMIN_PASSWORD is weak; change it after signing in", "why", err)
+	}
 	generated := false
 	hash, err := auth.HashPassword(pw)
 	if err != nil {
@@ -190,6 +193,10 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 		Addr:              cfg.Listen,
 		Handler:           api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs),
 		ReadHeaderTimeout: 10 * time.Second,
+		// A slow client cannot hold a request open forever (bodies are capped at 32 MB). No
+		// WriteTimeout: streams legitimately run for hours.
+		ReadTimeout: 2 * time.Minute,
+		IdleTimeout: 2 * time.Minute,
 	}
 	go func() {
 		<-ctx.Done()

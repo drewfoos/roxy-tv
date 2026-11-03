@@ -23,7 +23,7 @@ func (s *Server) mediaToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "source not found")
 		return
 	}
-	tok, exp, err := s.authSvc.NewMediaToken(r.Context(), src.ID, p.UserID)
+	tok, exp, err := s.authSvc.NewMediaToken(r.Context(), src.ID, p.UserID, p.DeviceID)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

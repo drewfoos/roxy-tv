@@ -31,3 +31,23 @@ func TestHandlerRefusesWrites(t *testing.T) {
 		t.Fatalf("POST / should be 405, got %d", rec.Code)
 	}
 }
+
+func TestHandlerSetsCSP(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "frame-ancestors 'none'", "object-src 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP %q lacks %q", csp, want)
+		}
+	}
+}
+
+func TestOnlyTheSubtitleWorkerMayEval(t *testing.T) {
+	if strings.Contains(CSP, "'unsafe-eval'") {
+		t.Fatalf("the page CSP must not allow eval: %q", CSP)
+	}
+	if !isJassubWorker("/assets/jassub-worker-CpwfHrci.js") || !isJassubWorker("/assets/jassub-worker.wasm-D-S1Mcrm.js") || isJassubWorker("/assets/index-abc.js") || isJassubWorker("/jassub-worker.js") {
+		t.Fatalf("isJassubWorker matches the wrong files")
+	}
+}

@@ -52,6 +52,51 @@ export function TextInput({ value, onChange, type = 'text', placeholder, autoCom
   return <input className="finput" type={type} value={value} placeholder={placeholder} autoComplete={autoComplete} maxLength={maxLength} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
 }
 
+/**
+ * A key or password field: masked by default, with a Show/Hide toggle so a pasted key can
+ * be checked without it sitting on screen (Drew streams; a key on stream is a leaked key).
+ */
+export function SecretInput({ value, onChange, placeholder, autoComplete = 'off', inputClassName = 'finput', label = 'key' }: { value: string; onChange: (v: string) => void; placeholder?: string; autoComplete?: string; inputClassName?: string; label?: string }) {
+  const [shown, setShown] = useState(false)
+  return (
+    <span className="fsecret">
+      <input className={inputClassName || undefined} type={shown ? 'text' : 'password'} value={value} placeholder={placeholder} autoComplete={autoComplete} autoCapitalize="none" spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+      <button type="button" className="fsecret__toggle" aria-pressed={shown} aria-label={(shown ? 'Hide ' : 'Show ') + label} onClick={() => setShown((s) => !s)}>
+        {shown ? 'Hide' : 'Show'}
+      </button>
+    </span>
+  )
+}
+
+/** A secret shown once (a new API key): masked until Reveal, with Copy either way. */
+export function SecretValue({ label, value }: { label: string; value: string }) {
+  const [shown, setShown] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1400)
+    } catch {
+      setShown(true) // no clipboard (plain http on a LAN address): reveal so it can be selected
+    }
+  }
+  return (
+    <div className="copyrow">
+      <span className="ffield__label">{label}</span>
+      <div className="copyrow__line">
+        <code>{shown ? value : '•'.repeat(Math.min(value.length, 32))}</code>
+        <button type="button" className="fsecret__toggle" aria-pressed={shown} onClick={() => setShown((s) => !s)}>
+          {shown ? 'Hide' : 'Reveal'}
+        </button>
+        <button type="button" className="fsecret__toggle" onClick={() => void copy()} aria-label={`Copy ${label}`}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function TextArea({ value, onChange, rows = 4, placeholder }: { value: string; onChange: (v: string) => void; rows?: number; placeholder?: string }) {
   return <textarea className="finput finput--area" rows={rows} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
 }

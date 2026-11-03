@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,8 @@ type appBuild struct {
 	File        string `json:"file"`
 	Notes       string `json:"notes,omitempty"`
 	PublishedAt string `json:"publishedAt,omitempty"`
+	// SHA-256 of the APK (hex): the app checks the download against it before installing.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 func (s *Server) appsDir(app string) string { return filepath.Join(s.cfg.DataDir, "apps", app) }
@@ -72,7 +75,8 @@ func (s *Server) appLatest(w http.ResponseWriter, r *http.Request) {
 		"notes":       b.Notes,
 		"publishedAt": b.PublishedAt,
 		"size":        size,
-		"url":         "/v1/apps/" + app + "/download?package=" + pkg,
+		"sha256":      b.SHA256,
+		"url":         "/v1/apps/" + app + "/download?package=" + url.QueryEscape(pkg),
 	})
 }
 
@@ -103,7 +107,7 @@ func (s *Server) appDownload(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	fi, _ := f.Stat()
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(path)+"\"")
+	w.Header().Set("Content-Disposition", contentDisposition("attachment", filepath.Base(path)))
 	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }
 

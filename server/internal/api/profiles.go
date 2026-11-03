@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 	"hash/fnv"
-	"image"
 	"image/jpeg"
 	"io"
 	"log/slog"
@@ -20,8 +19,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/auth"
+	"github.com/roxy-media/roxy/server/internal/imaging"
 	"github.com/roxy-media/roxy/server/internal/metadata"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/netguard"
 )
 
 // Profiles (docs/api/native.md "Profiles"): several viewers on one login. Clients send
@@ -200,7 +201,7 @@ func allowedAvatar(u string) bool {
 	return u == "" || strings.HasPrefix(u, "https://s4.anilist.co/") || strings.HasPrefix(u, "https://img.anili.st/")
 }
 
-var avatarClient = &http.Client{Timeout: 15 * time.Second}
+var avatarClient = &http.Client{Timeout: 15 * time.Second, CheckRedirect: netguard.CheckRedirect}
 
 // fetchAvatar caches the profile's picture as a JPEG under <images>/profiles. Best effort.
 func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
@@ -226,7 +227,7 @@ func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
 	if err != nil {
 		return
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, _, err := imaging.Decode(data) // refuses decompression bombs
 	if err != nil {
 		slog.Warn("profile avatar undecodable", "url", prof.AvatarURL, "err", err)
 		return

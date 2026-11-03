@@ -40,6 +40,9 @@ type Config struct {
 	// Prowlarr, optional: lets Roxy find season packs Sonarr cannot parse ("(Season 1)").
 	ProwlarrURL    string // ROXY_PROWLARR_URL
 	ProwlarrAPIKey string // ROXY_PROWLARR_API_KEY
+	// TrustedProxies: addresses / CIDRs of reverse proxies whose X-Forwarded-For is
+	// believed (ROXY_TRUSTED_PROXIES, comma separated). Empty: the headers are ignored.
+	TrustedProxies []string
 	// First-run admin account (only used when the users table is empty).
 	AdminUser     string // ROXY_ADMIN_USER, default roxy
 	AdminPassword string // ROXY_ADMIN_PASSWORD; unset = a random one, shown once in the log
@@ -69,6 +72,7 @@ func Load() (*Config, error) {
 		RadarrQualityProfile: env("ROXY_RADARR_QUALITY_PROFILE", ""),
 		ProwlarrURL:          strings.TrimRight(env("ROXY_PROWLARR_URL", ""), "/"),
 		ProwlarrAPIKey:       env("ROXY_PROWLARR_API_KEY", ""),
+		TrustedProxies:       splitList(env("ROXY_TRUSTED_PROXIES", "")),
 		AdminUser:            env("ROXY_ADMIN_USER", "roxy"),
 		AdminPassword:        env("ROXY_ADMIN_PASSWORD", ""),
 	}
@@ -148,4 +152,15 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// splitList splits a comma-separated setting, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

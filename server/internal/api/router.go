@@ -66,10 +66,12 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	}
 
 	r := chi.NewRouter()
-	r.Use(trustedRealIP)
+	r.Use(trustedRealIP(parseNets(cfg.TrustedProxies)))
+	r.Use(limitBodies)
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors)
+	r.Use(securityHeaders)
 	r.Use(newRateLimiter(20, 60).middleware)
 
 	r.Get("/healthz", s.healthz)
@@ -253,12 +255,17 @@ func cleanError(msg string) string {
 	return msg
 }
 
+// cors lets other origins read only the public probe endpoints (corsPublic), with no
+// credentials. Every other path sends no CORS headers, so a web page elsewhere cannot
+// read Roxy's API with a token it has stolen or a cookie the browser holds.
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !corsPublic(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, X-Roxy-Profile")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

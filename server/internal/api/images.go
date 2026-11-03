@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -54,12 +53,7 @@ func (s *Server) getItemImage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, img *store.ItemImage, typ string) {
 	path := img.Path
 	if width, _ := strconv.Atoi(r.URL.Query().Get("w")); width > 0 {
-		if width < 16 {
-			width = 16
-		}
-		if width > 4096 {
-			width = 4096
-		}
+		width = snapWidth(width) // a few fixed sizes, so ?w= cannot fill the disk with variants
 		if img.Width == 0 || width < img.Width {
 			// Logos keep their transparency (PNG); photos are JPEG.
 			ext := "jpg"
@@ -105,13 +99,25 @@ func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, img *store.I
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 }
 
+// imageWidths are the only resized variants made: a request snaps up to the next one.
+var imageWidths = []int{160, 320, 480, 640, 960, 1280, 1920, 2560, 3840}
+
+func snapWidth(w int) int {
+	for _, b := range imageWidths {
+		if w <= b {
+			return b
+		}
+	}
+	return imageWidths[len(imageWidths)-1]
+}
+
 // resizeToFile writes a resized copy; PNG (alpha kept) when dst ends in .png, else JPEG.
 func resizeToFile(src, dst string, width int) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, _, err := imaging.Decode(data) // refuses decompression bombs
 	if err != nil {
 		return err
 	}

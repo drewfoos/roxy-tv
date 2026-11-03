@@ -570,6 +570,8 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 /* /link/:code — approving a TV's sign-in from a phone. */
 .linktv__title { font-size: 20px; font-weight: 700; margin: 0; }
 .linktv__code { font-size: 34px; font-weight: 800; letter-spacing: 6px; font-variant-numeric: tabular-nums; padding: 12px 0; text-align: center; background: var(--surface-high); border-radius: 8px; }
+.linktv__warn { text-align: left; }
+.linktv__only { margin: 0; text-align: center; }
 .linktv__cancel { text-align: center; text-decoration: underline; }
 .linktv b { color: var(--fg); }
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -658,6 +660,10 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .fselect svg { position: absolute; right: 6px; top: 12px; pointer-events: none; color: #fff; }
 .finput { width: 100%; height: 44px; padding: 0 6px; background: transparent; color: #fff; border: 0; border-bottom: 1px solid #4a4a4a; font-size: 16px; outline: 0; border-radius: 0; }
 .finput:focus { border-bottom-color: #fff; }
+.fsecret { display: flex; align-items: center; gap: 8px; width: 100%; }
+.fsecret > input { flex: 1; min-width: 0; }
+.fsecret__toggle { flex: none; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.fsecret__toggle:hover, .fsecret__toggle:focus-visible { background: rgba(255, 255, 255, 0.08); color: #fff; }
 .finput--area { height: auto; padding: 8px 6px; line-height: 20px; resize: vertical; }
 .trow { display: flex; flex-direction: column; gap: 8px; padding: 6px 0; }
 .trow__top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

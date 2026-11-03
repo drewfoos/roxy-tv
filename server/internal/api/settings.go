@@ -61,11 +61,19 @@ func (s *Server) arrSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bad body: "+err.Error())
 		return
 	}
-	if body.Sonarr.APIKey == maskedKey {
-		body.Sonarr.APIKey = cur.Sonarr.APIKey
-	}
-	if body.Radarr.APIKey == maskedKey {
-		body.Radarr.APIKey = cur.Radarr.APIKey
+	// The saved key is kept only for the saved address: kept for a new one, it would be
+	// sent to whatever server that is.
+	for _, k := range []struct {
+		name     string
+		new, old *arr.Config
+	}{{"Sonarr", &body.Sonarr, &cur.Sonarr}, {"Radarr", &body.Radarr, &cur.Radarr}} {
+		if k.new.APIKey == maskedKey || k.new.APIKey == k.old.APIKey {
+			if !sameArrURL(k.new.URL, k.old.URL) && k.old.APIKey != "" && strings.TrimSpace(k.new.URL) != "" {
+				writeError(w, 400, "Type the "+k.name+" API key again: the address changed.")
+				return
+			}
+			k.new.APIKey = k.old.APIKey
+		}
 	}
 	for _, c := range []*arr.Config{&body.Sonarr, &body.Radarr} {
 		c.URL = strings.TrimSpace(c.URL)
@@ -98,11 +106,17 @@ func (s *Server) arrSettingsTest(w http.ResponseWriter, r *http.Request) {
 	}
 	cur := s.discover.ArrSettings()
 	if body.APIKey == maskedKey {
+		saved := cur.Sonarr
 		if body.Kind == "radarr" {
-			body.APIKey = cur.Radarr.APIKey
-		} else {
-			body.APIKey = cur.Sonarr.APIKey
+			saved = cur.Radarr
 		}
+		// The saved key only goes to the saved address (a test against another URL sent
+		// it there, and echoed what came back).
+		if !sameArrURL(body.URL, saved.URL) {
+			writeError(w, 400, "Type the API key again to test a different address.")
+			return
+		}
+		body.APIKey = saved.APIKey
 	}
 	p, err := s.discover.TestArr(r.Context(), body.Kind, arr.Config{URL: body.URL, APIKey: body.APIKey})
 	if err != nil {
@@ -178,4 +192,10 @@ func (s *Server) discoverGenres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"genres": s.discover.Genres(r.Context(), r.URL.Query().Get("type"))})
+}
+
+// sameArrURL: the same arr address, ignoring case, spaces and a trailing slash.
+func sameArrURL(a, b string) bool {
+	norm := func(s string) string { return strings.ToLower(strings.TrimRight(strings.TrimSpace(s), "/")) }
+	return norm(a) == norm(b)
 }

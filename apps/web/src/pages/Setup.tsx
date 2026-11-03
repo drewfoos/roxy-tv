@@ -4,6 +4,7 @@ import type { SetupStatus } from '../api/types'
 import { session } from '../api/session'
 import { WitchHat } from '../components/Icons'
 import { MediaFolders } from './account/Library'
+import { SecretInput } from '../components/Form'
 import { IconEye, IconEyeOff, LegalDialog, TermsLine, recordTerms, signIn, type Terms } from './Login'
 
 // The phone app's first-time setup (ui/setup/SetupWizard.kt), in the browser: Welcome,
@@ -323,7 +324,7 @@ function DetailsStep({ onNext }: { onNext: () => void }) {
       <form className="signin__form" onSubmit={submit} noValidate>
         <label className="signin__field">
           <span>TMDB API key</span>
-          <input value={key} onChange={(e) => (setKey(e.target.value.trim()), setErr(null))} autoComplete="off" autoCapitalize="none" spellCheck={false} />
+          <SecretInput inputClassName="" label="TMDB key" value={key} onChange={(v) => (setKey(v.trim()), setErr(null))} />
         </label>
         {err && (
           <div className="signin__error" role="alert">

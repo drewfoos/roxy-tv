@@ -48,6 +48,10 @@ type linkEntry struct {
 	user     *model.User
 	deviceID string
 	done     chan struct{}
+	// claimed: an approval is under way (or done). Checked and set under the store's lock,
+	// so two approvals racing can't both issue a token and both close done (which panicked
+	// while holding the lock and left every later /link request hanging).
+	claimed bool
 }
 
 type linkStore struct {
@@ -113,7 +117,11 @@ func (s *Server) linkStart(w http.ResponseWriter, r *http.Request) {
 		DeviceID string `json:"deviceId"`
 		Version  string `json:"version"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body)
+	if len(body.Device) > 128 || len(body.Client) > 64 || len(body.DeviceID) > 128 || len(body.Version) > 64 {
+		writeError(w, 400, "invalid request body")
+		return
+	}
 	if body.Client == "" {
 		body.Client = "Roxy TV"
 	}
@@ -195,12 +203,18 @@ func (s *Server) linkInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "This code has expired. Ask the TV for a new one.")
 		return
 	}
+	s.links.mu.Lock()
+	approved := e.token != ""
+	s.links.mu.Unlock()
 	writeJSON(w, 200, map[string]any{
 		"code":      e.code,
 		"client":    e.client.Client,
 		"device":    e.client.Device,
 		"expiresIn": int((linkTTL - time.Since(e.createdAt)).Seconds()),
-		"approved":  e.token != "",
+		"approved":  approved,
+		// Where the device asking is (home / tailscale / internet): a code started from the
+		// internet and sent to someone as a link is the phishing case.
+		"network": networkOf(e.client.Address),
 	})
 }
 
@@ -217,21 +231,25 @@ func (s *Server) linkApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.links.mu.Lock()
-	already := e.token != ""
-	s.links.mu.Unlock()
-	if already {
+	if e.claimed {
+		s.links.mu.Unlock()
 		writeError(w, 409, "already approved")
 		return
 	}
+	e.claimed = true
+	s.links.mu.Unlock()
 	d, token, err := s.authSvc.IssueToken(r.Context(), p.User, e.client)
 	if err != nil {
+		s.links.mu.Lock()
+		e.claimed = false
+		s.links.mu.Unlock()
 		writeError(w, 500, err.Error())
 		return
 	}
 	s.links.mu.Lock()
 	e.token, e.user, e.deviceID = token, p.User, d.ID
-	close(e.done)
 	s.links.mu.Unlock()
+	close(e.done) // once: only the one claim gets here
 	slog.Info("device linked", "user", p.User.Name, "device", e.client.Device, "client", e.client.Client, "by", auth.RemoteIP(r))
 	w.WriteHeader(204)
 }

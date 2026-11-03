@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -62,29 +64,80 @@ func forwardedChain(r *http.Request) []string {
 	return out
 }
 
-// trustedRealIP replaces chi's RealIP: forwarding headers count only from a private peer.
-func trustedRealIP(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		peer := peerIP(r)
-		if isLocalIP(peer) {
-			xff := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-			client := strings.TrimSpace(xff[len(xff)-1])
-			if client == "" {
-				client = strings.TrimSpace(r.Header.Get("X-Real-IP"))
-			}
-			if net.ParseIP(client) != nil {
-				r.RemoteAddr = net.JoinHostPort(client, "0")
+// peerKey carries the connection's own address, before any forwarding header.
+type peerKey struct{}
+
+// parseNets reads "10.0.0.5" / "10.0.0.0/8" entries; bad ones are skipped.
+func parseNets(list []string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, v := range list {
+		if !strings.Contains(v, "/") {
+			if ip := net.ParseIP(v); ip != nil {
+				bits := 32
+				if ip.To4() == nil {
+					bits = 128
+				}
+				v = fmt.Sprintf("%s/%d", v, bits)
 			}
 		}
-		next.ServeHTTP(w, r)
-	})
+		if _, n, err := net.ParseCIDR(v); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func inNets(ip string, nets []*net.IPNet) bool {
+	p := net.ParseIP(strings.Trim(ip, "[] "))
+	if p == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// trustedRealIP replaces chi's RealIP. Forwarding headers count only when the connection
+// comes from a configured reverse proxy (ROXY_TRUSTED_PROXIES); anyone else could write
+// them. (Believing every private peer let any LAN, Tailscale, container or IPv6-via-Docker
+// client pick its own address: past the sign-in throttle and the rate limit, and into
+// "home network".) The real peer is kept for fromHomeNetwork.
+func trustedRealIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			peer := peerIP(r)
+			r = r.WithContext(context.WithValue(r.Context(), peerKey{}, peer))
+			if len(trusted) > 0 && inNets(peer, trusted) {
+				xff := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+				client := strings.TrimSpace(xff[len(xff)-1])
+				if client == "" {
+					client = strings.TrimSpace(r.Header.Get("X-Real-IP"))
+				}
+				if net.ParseIP(client) != nil {
+					r.RemoteAddr = net.JoinHostPort(client, "0")
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// connPeer: the connection's own address (before trustedRealIP), else RemoteAddr's.
+func connPeer(r *http.Request) string {
+	if p, ok := r.Context().Value(peerKey{}).(string); ok {
+		return p
+	}
+	return peerIP(r)
 }
 
 // fromHomeNetwork reports whether a request comes from the local network: the connection
 // and every address in the forwarding headers must be private. A request relayed from
 // the internet by a proxy names its public address in the chain and fails.
 func fromHomeNetwork(r *http.Request) bool {
-	if !isLocalIP(peerIP(r)) {
+	if !isLocalIP(connPeer(r)) || !isLocalIP(peerIP(r)) {
 		return false
 	}
 	for _, a := range forwardedChain(r) {
@@ -93,4 +146,17 @@ func fromHomeNetwork(r *http.Request) bool {
 		}
 	}
 	return true
+}
+
+// maxBody caps every request body (a 300 MB sign-in body took the server to 1.9 GB and
+// wrote a 268 MB log line). Image uploads are the largest legitimate bodies.
+const maxBody = 32 << 20
+
+func limitBodies(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		}
+		next.ServeHTTP(w, r)
+	})
 }

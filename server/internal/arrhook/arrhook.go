@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -261,10 +262,28 @@ func (s *Service) resolveKnownFolder(ctx context.Context, p string) (string, boo
 	if !ok {
 		return "", false
 	}
-	return Resolve(p, cfg.PathMappings, roots, func(path string) bool {
+	local, found := Resolve(p, cfg.PathMappings, roots, func(path string) bool {
 		n, err := s.store.CountSourcesUnder(ctx, path)
 		return err == nil && n > 0
 	})
+	// A series or movie folder sits inside a library root. A root itself (or anything
+	// above one) would drop a whole library from the index on a "delete" webhook.
+	if found && rootOrAbove(local, roots) {
+		return "", false
+	}
+	return local, found
+}
+
+// rootOrAbove: path is one of the roots or contains one.
+func rootOrAbove(p string, roots []string) bool {
+	clean := filepath.Clean(p)
+	for _, r := range roots {
+		r = filepath.Clean(r)
+		if clean == r || strings.HasPrefix(r, clean+string(filepath.Separator)) || clean == string(filepath.Separator) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) mappingsAndRoots(ctx context.Context) (settings, []string, bool) {
@@ -335,7 +354,11 @@ func (s *Service) resolve(ctx context.Context, p string) (string, bool) {
 // that exists. Pure, so it is unit-tested with a fake filesystem.
 func Resolve(p string, mappings []PathMapping, roots []string, exists func(string) bool) (string, bool) {
 	norm := func(s string) string { return strings.ReplaceAll(s, `\`, "/") }
-	src := norm(p)
+	// Cleaned before any check: "/root/../x" must not pass as under "/root".
+	src := path.Clean("/" + strings.TrimLeft(norm(p), "/"))
+	if strings.Contains(norm(p), ":") && !strings.HasPrefix(norm(p), "/") {
+		src = path.Clean(norm(p)) // a Windows drive path ("D:/media/...")
+	}
 	best := ""
 	for _, m := range mappings {
 		from := strings.TrimRight(norm(m.From), "/")
@@ -361,6 +384,9 @@ func Resolve(p string, mappings []PathMapping, roots []string, exists func(strin
 	parts := strings.Split(strings.Trim(src, "/"), "/")
 	for i := 0; i < len(parts); i++ {
 		tail := strings.Join(parts[i:], "/")
+		if tail == "" || tail == "." || strings.Contains("/"+tail+"/", "/../") {
+			continue // "/" would map onto a root itself
+		}
 		for _, r := range roots {
 			candidate := filepath.FromSlash(strings.TrimRight(norm(r), "/") + "/" + tail)
 			if exists(candidate) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/safefs"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
 
@@ -61,6 +62,12 @@ type nfoDoc struct {
 // readNFO parses an .nfo file. Kodi allows a URL line after the XML; anything after the
 // root element is ignored. A missing file returns (nil, nil).
 func readNFO(path string) (*nfoDoc, error) {
+	if err := safefs.NoEscape(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err // symlinked out of the media folders: not read
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -145,7 +152,7 @@ func dateOnly(s string) string {
 func firstFile(dir string, names ...string) string {
 	for _, n := range names {
 		p := filepath.Join(dir, n)
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && safefs.NoEscape(p) == nil {
 			return "file://" + p + "#" + strconv.FormatInt(st.ModTime().Unix(), 10)
 		}
 	}
