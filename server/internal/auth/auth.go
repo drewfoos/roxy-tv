@@ -77,8 +77,17 @@ func (s *Service) Login(ctx context.Context, username, password string, client C
 	// 15 minutes at a time). The address's own count still stops one place guessing.
 	ak := addrKey(client.Address)
 	uk := userKey(username) + "|" + ak
+	gk := globalKey(username)
 	if wait := s.throttle.wait(uk, ak); wait > 0 {
 		return nil, nil, "", &RetryError{After: wait}
+	}
+	// Many addresses guessing one account: each try waits a little longer (no lockout).
+	if d := s.throttle.accountDelay(gk); d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, nil, "", ctx.Err()
+		}
 	}
 	u, err := s.store.GetUserByName(ctx, strings.TrimSpace(username))
 	if err != nil {
@@ -86,14 +95,15 @@ func (s *Service) Login(ctx context.Context, username, password string, client C
 	}
 	if u == nil || u.IsDisabled || u.PasswordHash == "" {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password)) // same time as a real check
-		s.throttle.fail(uk, ak)
+		s.throttle.fail(uk, ak, gk)
 		return nil, nil, "", ErrInvalidCredentials
 	}
 	if !CheckPassword(u.PasswordHash, password) {
-		s.throttle.fail(uk, ak)
+		s.throttle.fail(uk, ak, gk)
 		return nil, nil, "", ErrInvalidCredentials
 	}
 	s.throttle.succeed(uk)
+	s.throttle.succeed(gk)
 	// Upgrade an older, cheaper hash now that we know the password.
 	if cost, err := bcrypt.Cost([]byte(u.PasswordHash)); err == nil && cost < PasswordCost {
 		if h, err := HashPassword(password); err == nil {
@@ -234,9 +244,11 @@ func TokenFromRequest(r *http.Request) (string, ClientInfo) {
 			return t, ci
 		}
 	}
-	// A token in the URL (Jellyfin clients' ?api_key=) for reads only: URLs end up in
-	// proxy logs and browser history, and a change should never ride on a link.
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+	// A token in the URL only on the webhook routes, where Sonarr / Radarr may be set up
+	// with ?api_key= and only the webhook key works anyway. Anywhere else a URL token is
+	// a full account token waiting in a proxy log or browser history; no Roxy client
+	// sends one (the web app has its cookie, players have media tokens).
+	if APIKeyPath(r.URL.Path) {
 		for _, q := range []string{"api_key", "ApiKey", "apiKey"} {
 			if t := r.URL.Query().Get(q); t != "" {
 				return t, ci

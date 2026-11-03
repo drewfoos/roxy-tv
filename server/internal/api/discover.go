@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/roxy-media/roxy/server/internal/auth"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -131,6 +132,14 @@ func (s *Server) discoverDetail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		upstreamError(w, "discover detail", err)
 		return
+	}
+	// Who asked is the requester's and the admins' business: others see the request's
+	// state, not the account behind it. (A copy: the detail is cached and shared.)
+	if p := auth.PrincipalFrom(r.Context()); d.Request != nil && (p == nil || (!p.IsAdmin && p.UserID != d.Request.UserID)) {
+		dd, rq := *d, *d.Request
+		rq.UserID, rq.UserName, rq.ArrID = "", "", 0
+		dd.Request = &rq
+		d = &dd
 	}
 	writeJSON(w, 200, d)
 }

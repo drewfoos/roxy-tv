@@ -1,6 +1,9 @@
 package api
 
 import (
+	"unicode/utf8"
+	"unicode"
+	"errors"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -82,8 +85,12 @@ func (s *Server) createProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body profileBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
 		writeError(w, 400, "a profile name is required")
+		return
+	}
+	if err := checkProfileName(body.Name); err != nil {
+		writeError(w, 400, err.Error())
 		return
 	}
 	if !allowedAvatar(body.AvatarURL) {
@@ -107,9 +114,15 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = p
 	var body profileBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
 		writeError(w, 400, "invalid request body")
 		return
+	}
+	if body.Name != "" {
+		if err := checkProfileName(body.Name); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
 	}
 	if body.AvatarURL != "" && body.AvatarURL != "-" && !allowedAvatar(body.AvatarURL) {
 		writeError(w, 400, "avatarUrl must be an AniList image")
@@ -284,3 +297,18 @@ func (s *Server) avatarSuggested(w http.ResponseWriter, r *http.Request) {
 }
 
 var _ = auth.PrincipalFrom
+
+// checkProfileName: 1-40 characters, no control characters (a name is shown on every
+// screen and on the TV; it was stored verbatim at any size).
+func checkProfileName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > 40 {
+		return errors.New("a profile name is 1 to 40 characters")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return errors.New("a profile name cannot contain control characters")
+		}
+	}
+	return nil
+}

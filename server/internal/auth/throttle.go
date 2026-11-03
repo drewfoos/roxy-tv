@@ -90,6 +90,33 @@ func (t *loginThrottle) fail(keys ...string) {
 	}
 }
 
+// globalKey: an account's misses from every address together. It never locks (that would
+// let anyone lock the owner out); it only slows each attempt down (accountDelay).
+func globalKey(name string) string { return "g:" + strings.ToLower(strings.TrimSpace(name)) }
+
+// accountDelay: how long to hold a sign-in for this account before checking it. Free for
+// the first globalFree misses in the window, then a second more per miss, up to
+// maxAccountDelay: guessing one account from many addresses gets slow, and the owner with
+// the right password is only ever delayed, never refused.
+func (t *loginThrottle) accountDelay(key string) time.Duration {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	a := t.keys[key]
+	if a == nil || time.Since(a.lastFail) > failWindow || a.fails < globalFree {
+		return 0
+	}
+	d := time.Duration(a.fails-globalFree+1) * time.Second
+	if d > maxAccountDelay {
+		d = maxAccountDelay
+	}
+	return d
+}
+
+const (
+	globalFree      = 10
+	maxAccountDelay = 5 * time.Second
+)
+
 func (t *loginThrottle) succeed(userK string) {
 	t.mu.Lock()
 	delete(t.keys, userK)

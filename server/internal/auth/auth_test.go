@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -86,5 +87,44 @@ func TestAPIKeyPath(t *testing.T) {
 		if APIKeyPath(path) != want {
 			t.Errorf("%s: want %v", path, want)
 		}
+	}
+}
+
+// Misses from many addresses slow the account down but never refuse it.
+func TestAccountDelayNeverLocks(t *testing.T) {
+	th := &loginThrottle{keys: map[string]*attempts{}}
+	g := globalKey("carol")
+	for i := 0; i < globalFree-1; i++ {
+		th.fail(g)
+	}
+	if th.accountDelay(g) != 0 {
+		t.Fatal("delayed before globalFree misses")
+	}
+	for i := 0; i < 50; i++ {
+		th.fail(g)
+	}
+	if d := th.accountDelay(g); d != maxAccountDelay {
+		t.Fatalf("delay %v, want the cap", d)
+	}
+	if th.wait(userKey("carol")+"|"+addrKey("192.168.1.20"), addrKey("192.168.1.20")) != 0 {
+		t.Fatal("the owner's address must not be locked by global misses")
+	}
+}
+
+// A token in the URL counts only on the webhook routes.
+func TestURLTokenOnlyOnWebhooks(t *testing.T) {
+	for path, want := range map[string]string{
+		"/v1/webhooks/sonarr?api_key=k": "k",
+		"/v1/items?api_key=k":           "",
+		"/v1/auth/keys?api_key=k":       "",
+	} {
+		r := httptest.NewRequest("GET", path, nil)
+		if got, _ := TokenFromRequest(r); got != want {
+			t.Errorf("%s: got %q want %q", path, got, want)
+		}
+	}
+	r := httptest.NewRequest("POST", "/v1/webhooks/radarr?api_key=k", nil)
+	if got, _ := TokenFromRequest(r); got != "k" {
+		t.Errorf("webhook POST with ?api_key=: got %q", got)
 	}
 }
