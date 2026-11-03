@@ -71,7 +71,11 @@ internal fun PollWhileResumed(intervalMs: Long, key: Any? = null, block: suspend
     LaunchedEffect(lifecycle, intervalMs, key) {
         if (intervalMs <= 0) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) { delay(intervalMs); latest() }
+            while (true) {
+                delay(intervalMs)
+                // A poll that throws (server gone mid-call) must not end the loop or crash the screen.
+                try { latest() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (t: Throwable) { timber.log.Timber.w(t, "poll") }
+            }
         }
     }
 }

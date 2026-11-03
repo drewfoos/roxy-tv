@@ -81,6 +81,7 @@ import tv.roxy.tv.BuildConfig
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.data.Session
+import tv.roxy.tv.isTelevision
 import tv.roxy.tv.ui.components.RoxyTextField
 import tv.roxy.tv.ui.phone.GreyButton
 import tv.roxy.tv.ui.phone.MediaFoldersCard
@@ -90,13 +91,13 @@ import tv.roxy.tv.ui.phone.PlayButton
 import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
 
-private const val STEP_WELCOME = 0
-private const val STEP_ACCOUNT = 1
-private const val STEP_DETAILS = 2
-private const val STEP_MEDIA = 3
-private const val STEP_DONE = 4
+internal const val STEP_WELCOME = 0
+internal const val STEP_ACCOUNT = 1
+internal const val STEP_DETAILS = 2
+internal const val STEP_MEDIA = 3
+internal const val STEP_DONE = 4
 
-private fun apiError(t: Throwable): String {
+internal fun apiError(t: Throwable): String {
     val m = t.message ?: return "Something went wrong."
     return Regex(""""error":"([^"]+)"""").find(m)?.groupValues?.get(1)?.replaceFirstChar { it.uppercase() }
         ?: if (t is ApiException) m else "Can't reach the server: $m"
@@ -111,7 +112,13 @@ private fun apiError(t: Throwable): String {
  */
 @Composable
 fun SetupWizard(serverUrl: String, serverName: String, onCancel: (() -> Unit)? = null) {
-    val app = RoxyApp.get(LocalContext.current)
+    val context = LocalContext.current
+    // A TV gets its own layout for the remote (TvSetupWizard.kt): same steps, same calls.
+    if (remember { isTelevision(context) }) {
+        TvSetupWizard(serverUrl, serverName, onCancel)
+        return
+    }
+    val app = RoxyApp.get(context)
     val session = app.prefs.session.value
     val signedIn = session.isLoggedIn && session.setupInProgress
     var step by rememberSaveable { mutableIntStateOf(if (signedIn) STEP_DETAILS else STEP_WELCOME) }
@@ -303,7 +310,7 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
 }
 
 @Composable
-private fun PasswordHint(pw: String, pw2: String) {
+internal fun PasswordHint(pw: String, pw2: String) {
     val (text, color) = when {
         pw.isEmpty() -> "At least 8 characters. A short sentence is easy to remember and hard to guess." to RoxyColors.muted
         pw.length < 8 -> "${8 - pw.length} more character${if (8 - pw.length == 1) "" else "s"}" to RoxyColors.muted
@@ -454,7 +461,7 @@ private fun DoneStep(onFinish: () -> Unit) {
 }
 
 @Composable
-private fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Column(
         modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(RoxyColors.surface)
             .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp)).padding(18.dp),
@@ -462,7 +469,7 @@ private fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit)
 }
 
 @Composable
-private fun Numbered(n: Int, text: String) {
+internal fun Numbered(n: Int, text: String) {
     Row(modifier = Modifier.padding(top = 10.dp), verticalAlignment = Alignment.Top) {
         Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(RoxyColors.accent.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
             Text("$n", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent)
@@ -472,7 +479,7 @@ private fun Numbered(n: Int, text: String) {
 }
 
 @Composable
-private fun Bullet(text: String) {
+internal fun Bullet(text: String) {
     Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.Top) {
         Text("•", fontSize = 14.sp, color = RoxyColors.accent, modifier = Modifier.padding(end = 8.dp))
         Text(text, fontSize = 13.sp, lineHeight = 19.sp, color = RoxyColors.onBackground.copy(alpha = 0.85f))
@@ -480,12 +487,12 @@ private fun Bullet(text: String) {
 }
 
 @Composable
-private fun Tip(text: String) {
+internal fun Tip(text: String) {
     Text(text, fontSize = 12.sp, lineHeight = 17.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp))
 }
 
 @Composable
-private fun Check(ok: Boolean, text: String) {
+internal fun Check(ok: Boolean, text: String) {
     Row(modifier = Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(if (ok) Icons.Filled.CheckCircle else Icons.Outlined.Circle, null, tint = if (ok) Color(0xFF4ADE80) else RoxyColors.muted, modifier = Modifier.size(20.dp))
         Text(text, fontSize = 14.sp, color = if (ok) RoxyColors.onBackground else RoxyColors.muted, modifier = Modifier.padding(start = 10.dp))
@@ -494,7 +501,7 @@ private fun Check(ok: Boolean, text: String) {
 
 /** A folder tree in a monospaced box; files in the brand colour. */
 @Composable
-private fun Tree(lines: List<Pair<Int, String>>) {
+internal fun Tree(lines: List<Pair<Int, String>>) {
     Column(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(12.dp),
     ) {

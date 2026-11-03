@@ -144,7 +144,7 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
 
     val series = state.series
     if (series == null) {
-        if (state.loading) Box(Modifier.fillMaxSize()) else PageMessage(state.error ?: "Not found", color = RoxyColors.error)
+        if (state.loading) Box(Modifier.fillMaxSize()) else tv.roxy.tv.ui.components.LoadError(state.error ?: "Not found", onRetry = { vm.load() })
         return
     }
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
@@ -194,7 +194,7 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
 
     val movie = state.movie
     if (movie == null) {
-        if (state.loading) Box(Modifier.fillMaxSize()) else PageMessage(state.error ?: "Not found", color = RoxyColors.error)
+        if (state.loading) Box(Modifier.fillMaxSize()) else tv.roxy.tv.ui.components.LoadError(state.error ?: "Not found", onRetry = { vm.load() })
         return
     }
     fun play(fromStart: Boolean = false) = scope.launch { playItem(context, movie, fromStart).onFailure { Timber.w(it, "play failed") } }

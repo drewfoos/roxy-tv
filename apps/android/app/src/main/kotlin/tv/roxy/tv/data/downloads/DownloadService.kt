@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.Request
 import timber.log.Timber
@@ -44,11 +45,17 @@ class DownloadService : Service() {
         private const val NOTIFICATION_ID = 41
         private const val NOTIFY_INTERVAL_MS = 1000L
         private const val PROGRESS_INTERVAL_MS = 400L
+        /** How long the service waits for a server that went away before it stops (the queue stays). */
+        private const val MAX_SERVER_WAIT_MS = 30 * 60_000L
+        /** Failures in a row, with the server answering, before an item is marked Failed. */
+        private const val MAX_TRANSIENT_FAILURES = 5
+        /** Shown on an entry that is queued because the server is away. */
+        const val WAITING_FOR_SERVER = "Waiting for Roxy"
 
         fun startIntent(context: Context): Intent = Intent(context, DownloadService::class.java).setAction(ACTION_START)
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, t -> Timber.e(t, "download service") })
     private var worker: Job? = null
     private lateinit var app: RoxyApp
     private lateinit var downloads: Downloads
@@ -80,16 +87,61 @@ class DownloadService : Service() {
         super.onDestroy()
     }
 
+    /** What became of one attempt at an item. */
+    private enum class Outcome { Done, Stopped, Retry, Failed }
+
     private suspend fun runQueue() {
+        // Failures in a row per item, so one that keeps failing on a working server gives up.
+        val failures = HashMap<String, Int>()
         try {
             while (true) {
                 val next = downloads.nextToFetch() ?: break
-                fetch(next)
+                val outcome = try { fetch(next) } catch (t: Throwable) {
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                    Timber.e(t, "download %s crashed", next.itemId) // never take the app down with it
+                    downloads.update(next.itemId) { if (it.state == DownloadState.Downloading) it.copy(state = DownloadState.Queued, error = t.message) else it }
+                    Outcome.Retry
+                }
+                if (outcome != Outcome.Retry) { failures.remove(next.itemId); continue }
+                val n = (failures[next.itemId] ?: 0) + 1
+                failures[next.itemId] = n
+                if (app.api.reachable()) {
+                    if (n >= MAX_TRANSIENT_FAILURES) {
+                        downloads.update(next.itemId) { if (it.state == DownloadState.Queued) it.copy(state = DownloadState.Failed, error = it.error ?: "Download kept failing") else it }
+                        continue
+                    }
+                    delay(2_000L * n) // a hiccup on a working server: a short pause, then again
+                    continue
+                }
+                // The server went away (restart, Wi-Fi drop): keep the bytes and wait for it.
+                if (!waitForServer(next)) break
             }
         } finally {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
+    }
+
+    /**
+     * Wait for the server to answer again, checking every 5 s growing to a minute, with a
+     * "waiting" notification; true when it is back. After [MAX_SERVER_WAIT_MS] it stops and
+     * the queue waits for the next kick (network change, the server seen again, app start).
+     */
+    private suspend fun waitForServer(e: DownloadEntry): Boolean {
+        Timber.w("download %s waiting for the server", e.itemId)
+        downloads.update(e.itemId) { if (it.state == DownloadState.Queued) it.copy(error = WAITING_FOR_SERVER) else it }
+        notifyText("Waiting for Roxy", "Downloads continue when the server is back")
+        val started = System.currentTimeMillis()
+        var wait = 5_000L
+        while (System.currentTimeMillis() - started < MAX_SERVER_WAIT_MS) {
+            delay(wait)
+            wait = (wait * 2).coerceAtMost(60_000L)
+            // Paused or deleted meanwhile: nothing to wait for unless something else is queued.
+            if (downloads.index.value.entries.values.none { it.state == DownloadState.Queued || it.state == DownloadState.WaitingForWifi }) return false
+            if (app.api.reachable()) { Timber.i("server back; downloads resume"); return true }
+        }
+        Timber.w("server still away after %d min; downloads stay queued", MAX_SERVER_WAIT_MS / 60_000)
+        return false
     }
 
     private fun startInForeground(n: Notification) {
@@ -100,7 +152,7 @@ class DownloadService : Service() {
     /** Current state of [itemId] in the index; null when it was deleted. */
     private fun live(itemId: String): DownloadEntry? = downloads.entry(itemId)
 
-    private suspend fun fetch(start: DownloadEntry) {
+    private suspend fun fetch(start: DownloadEntry): Outcome {
         val itemId = start.itemId
         downloads.update(itemId) { it.copy(state = DownloadState.Downloading, error = null) }
         val dir = downloads.dir(itemId).apply { mkdirs() }
@@ -115,7 +167,7 @@ class DownloadService : Service() {
         val final = downloads.videoFile(start)
         if (final.exists() && start.bytesTotal > 0 && final.length() == start.bytesTotal) {
             downloads.update(itemId) { it.copy(state = DownloadState.Done, bytesDone = it.bytesTotal, completedAt = System.currentTimeMillis()) }
-            return
+            return Outcome.Done
         }
         var offset = part.length()
         val url = app.api.streamUrlForHttp(start.sourceId) // the http client adds the token as a header
@@ -126,14 +178,15 @@ class DownloadService : Service() {
                     part.delete(); offset = 0
                     throw IOException("range rejected; restarting")
                 }
-                if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+                // 4xx (gone, no access) will not get better by retrying; 5xx and the rest may.
+                if (!resp.isSuccessful) throw if (resp.code in 400..499 && resp.code != 408 && resp.code != 429) PermanentFailure("HTTP ${resp.code}") else IOException("HTTP ${resp.code}")
                 if (resp.code == 200 && offset > 0) { part.delete(); offset = 0 } // server ignored the range
                 val total = when {
                     resp.code == 206 -> resp.header("Content-Range")?.substringAfter('/')?.toLongOrNull() ?: (offset + (resp.body.contentLength().takeIf { it >= 0 } ?: 0))
                     else -> resp.body.contentLength().takeIf { it >= 0 } ?: start.bytesTotal
                 }
                 if (total > 0) downloads.update(itemId) { it.copy(bytesTotal = total) }
-                if (total > 0 && downloads.freeBytes() < total - offset + (64L shl 20)) throw IOException("Not enough free space")
+                if (total > 0 && downloads.freeBytes() < total - offset + (64L shl 20)) throw PermanentFailure("Not enough free space")
 
                 RandomAccessFile(part, "rw").use { out ->
                     out.seek(offset)
@@ -151,8 +204,8 @@ class DownloadService : Service() {
                             if (now - lastProgress >= PROGRESS_INTERVAL_MS) {
                                 lastProgress = now
                                 val cur = live(itemId)
-                                if (cur == null) { Timber.i("download %s deleted while running", itemId); return }
-                                if (cur.state != DownloadState.Downloading) { Timber.i("download %s %s", itemId, cur.state); return }
+                                if (cur == null) { Timber.i("download %s deleted while running", itemId); return Outcome.Stopped }
+                                if (cur.state != DownloadState.Downloading) { Timber.i("download %s %s", itemId, cur.state); return Outcome.Stopped }
                                 downloads.update(itemId) { it.copy(bytesDone = done) }
                                 if (now - lastNotify >= NOTIFY_INTERVAL_MS) { lastNotify = now; notify(label, start.item, if (total > 0) done.toFloat() / total else 0f) }
                             }
@@ -161,29 +214,33 @@ class DownloadService : Service() {
                     if (total > 0 && done != total) throw IOException("Stream ended early ($done of $total bytes)")
                 }
             }
-            if (live(itemId) == null) { dir.deleteRecursively(); return }
-            if (!part.renameTo(final)) throw IOException("Could not move the finished file into place")
+            if (live(itemId) == null) { dir.deleteRecursively(); return Outcome.Stopped }
+            if (!part.renameTo(final)) throw PermanentFailure("Could not move the finished file into place")
             downloads.update(itemId) { it.copy(state = DownloadState.Done, bytesDone = final.length(), bytesTotal = final.length(), completedAt = System.currentTimeMillis()) }
             Timber.i("downloaded %s (%s)", label, formatBytes(final.length()))
+            return Outcome.Done
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) {
                 downloads.update(itemId) { if (it.state == DownloadState.Downloading) it.copy(state = DownloadState.Queued, bytesDone = part.length()) else it }
                 throw t
             }
-            val cur = live(itemId) ?: run { dir.deleteRecursively(); return }
-            if (cur.state != DownloadState.Downloading) return // paused or deleted mid-stream
-            val reachable = app.api.reachable()
-            if (!reachable) {
-                // Lost the server: keep the bytes, put it back in the queue and stop; the
-                // network callback or the next app start kicks the queue again.
-                Timber.w("download %s interrupted (%s); server unreachable, will resume later", label, t.message)
-                downloads.update(itemId) { it.copy(state = DownloadState.Queued, bytesDone = part.length()) }
-                throw IOException("server unreachable")
+            val cur = live(itemId) ?: run { dir.deleteRecursively(); return Outcome.Stopped }
+            if (cur.state != DownloadState.Downloading) return Outcome.Stopped // paused or deleted mid-stream
+            if (t is PermanentFailure) {
+                Timber.w(t, "download %s failed", label)
+                downloads.update(itemId) { it.copy(state = DownloadState.Failed, bytesDone = part.length(), error = t.message) }
+                return Outcome.Failed
             }
-            Timber.w(t, "download %s failed", label)
-            downloads.update(itemId) { it.copy(state = DownloadState.Failed, bytesDone = part.length(), error = t.message ?: t::class.simpleName) }
+            // Connection lost, server restarting, stream cut short: keep the bytes (the .part
+            // file is only renamed once complete) and queue it again; runQueue decides when.
+            Timber.w("download %s interrupted at %s: %s", label, formatBytes(part.length()), t.message)
+            downloads.update(itemId) { it.copy(state = DownloadState.Queued, bytesDone = part.length(), error = t.message ?: t::class.simpleName) }
+            return Outcome.Retry
         }
     }
+
+    /** A failure that retrying will not fix (not found, no space). */
+    private class PermanentFailure(message: String) : IOException(message)
 
     /** Poster, backdrop and logo of the show (once), and the episode's thumb. Failures are ignored. */
     private suspend fun fetchImages(e: DownloadEntry) {
@@ -254,6 +311,11 @@ class DownloadService : Service() {
             if (queued > 0) append("  ·  $queued more queued")
         }
         runCatching { nm.notify(NOTIFICATION_ID, notification(label, sub, fraction, indeterminate = false)) }
+    }
+
+    private fun notifyText(title: String, text: String) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        runCatching { nm.notify(NOTIFICATION_ID, notification(title, text, 0f, indeterminate = true)) }
     }
 
     private fun notification(title: String, text: String?, fraction: Float, indeterminate: Boolean): Notification {

@@ -106,8 +106,9 @@ private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) 
     suspend fun load() {
         runCatching { app.api.favorites().items }
             .onSuccess { items = it; error = null }
-            .onFailure { if (items == null) error = it.message ?: "Could not load the watchlist" }
+            .onFailure { if (items == null) error = tv.roxy.tv.data.friendlyError(it, "the watchlist") }
     }
+    tv.roxy.tv.ui.components.OnServerBack { if (items == null) scope.launch { load() } }
     // The page's scope, not the app's: leaving the page cancels the request.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { load() } }
     OnUserDataChanged { scope.launch { load() } }
@@ -135,8 +136,9 @@ private fun HistoryTab(memory: FocusMemory, upKey: String, onFirst: (String?) ->
     suspend fun load() {
         runCatching { app.api.history(100).items }
             .onSuccess { items = it; error = null }
-            .onFailure { if (items == null) error = it.message ?: "Could not load the history" }
+            .onFailure { if (items == null) error = tv.roxy.tv.data.friendlyError(it, "the history") }
     }
+    tv.roxy.tv.ui.components.OnServerBack { if (items == null) scope.launch { load() } }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { load() } }
     OnUserDataChanged { scope.launch { load() } }
     val dateFormat = remember { DateFormat.getDateInstance(DateFormat.SHORT) }

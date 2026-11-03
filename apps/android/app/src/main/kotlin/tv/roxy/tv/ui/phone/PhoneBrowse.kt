@@ -157,7 +157,7 @@ class LibraryViewModel(private val api: RoxyApi, private val favoritesOnly: Bool
                 else api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items
             }
                 .onSuccess { loadedAt = System.currentTimeMillis(); _state.value = LibraryUiState(items = it) }
-                .onFailure { t -> Timber.e(t, "library load failed"); _state.value = _state.value.copy(error = t.message, refreshing = false) }
+                .onFailure { t -> Timber.e(t, "library load failed"); _state.value = _state.value.copy(error = tv.roxy.tv.data.friendlyError(t, "the library"), refreshing = false) }
         }
     }
 
@@ -185,7 +185,7 @@ fun PhoneBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onSea
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         TabHeader("Browse", onSearch = onSearch)
         if (state.items == null && state.error != null) {
-            Text(state.error ?: "", color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
+            tv.roxy.tv.ui.components.LoadError(state.error ?: "", onRetry = { vm.load(force = true) })
             return@Column
         }
         if (browse.categories.isEmpty()) {
@@ -275,14 +275,14 @@ private fun HistoryGrid(bottomInset: Dp) {
     fun reload() = scope.launch {
         runCatching { app.api.history(200).items }
             .onSuccess { items = it; error = null }
-            .onFailure { Timber.w(it, "history"); error = it.message }
+            .onFailure { Timber.w(it, "history"); error = tv.roxy.tv.data.friendlyError(it, "your history") }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { reload() }
     OnUserDataChanged { reload() }
     val list = items
     val tileWidth = (LocalConfiguration.current.screenWidthDp.dp - PhonePad * 2 - 10.dp) / 2
     when {
-        list == null && error != null -> Text(error ?: "", color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
+        list == null && error != null -> tv.roxy.tv.ui.components.LoadError(error ?: "", onRetry = { reload() })
         list == null -> Column(modifier = Modifier.padding(start = PhonePad, end = PhonePad, top = 14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             repeat(3) { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(2) { Bone(Modifier.weight(1f).aspectRatio(16f / 9f)) } } }
         }

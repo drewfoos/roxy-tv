@@ -128,7 +128,10 @@ fun PhoneSeries(
 
     val series = state.series
     if (series == null) {
-        if (state.loading) DetailSkeleton(onBack) else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(state.error ?: "Not found", color = RoxyColors.error) }
+        if (state.loading) DetailSkeleton(onBack) else Box(Modifier.fillMaxSize().statusBarsPadding()) {
+            tv.roxy.tv.ui.components.LoadError(state.error ?: "Not found", onRetry = { vm.load() })
+            BackCircle(onBack, modifier = Modifier.padding(12.dp))
+        }
         return
     }
 

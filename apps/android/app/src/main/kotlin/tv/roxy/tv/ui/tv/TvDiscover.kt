@@ -102,6 +102,7 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
     val vm: DiscoverViewModel = viewModel(viewModelStoreOwner = activity, key = "tv-discover") { DiscoverViewModel(app.api, rowsFreshMs = 30 * 60_000L) }
     val state by vm.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
+    tv.roxy.tv.ui.components.OnServerBack { vm.load() }
     // "Your requests" moves while the page shows: fast while something downloads.
     val anyActive = state.requests.any { it.download?.isActive == true }
     PollWhileResumed(if (anyActive) PollFastMs else PollSlowMs) { vm.refreshRequests() }

@@ -49,9 +49,19 @@ class RoxyApi(private val prefs: Prefs) {
             if (s.token != null && req.header("Authorization") == null) b.header("Authorization", "Bearer ${s.token}")
             // Watch state, favourites and Home are per profile (docs/api/native.md "Profiles").
             s.profileId?.let { b.header("X-Roxy-Profile", it) }
-            chain.proceed(b.build())
+            // Any answer means the server is there; a failed connection (not one we cancelled)
+            // tells ServerStatus to check, which drives the "Can't reach Roxy" banner.
+            val resp = try { chain.proceed(b.build()) } catch (e: IOException) {
+                if (!chain.call().isCanceled()) onReachability?.invoke(false)
+                throw e
+            }
+            onReachability?.invoke(true)
+            resp
         })
         .build()
+
+    /** Told whether each call to the server got an answer (set by ServerStatus; any thread). */
+    @Volatile var onReachability: ((Boolean) -> Unit)? = null
 
     val baseUrl: String get() = prefs.session.value.serverUrl.trimEnd('/')
     private val token: String? get() = prefs.session.value.token
@@ -552,7 +562,11 @@ class RoxyApi(private val prefs: Prefs) {
                 Timber.w("HTTP %d %s %s", resp.code, req.method, req.url.encodedPath)
                 throw ApiException(resp.code, serverMessage(text) ?: "HTTP ${resp.code} ${req.method} ${req.url.encodedPath}: ${text.take(200)}")
             }
-            return json.decodeFromString(text)
+            // A 200 that is not our JSON (a captive portal, a half-started server) is a
+            // network-style failure, not a bug: an IOException like the rest.
+            return try { json.decodeFromString(text) } catch (e: IllegalArgumentException) { // SerializationException is one
+                throw IOException("Unexpected answer from the server at ${req.url.encodedPath}", e)
+            }
         }
     }
 

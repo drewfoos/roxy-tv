@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -67,7 +68,10 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
     val movie = state.movie
     if (movie == null) {
         if (state.loading) DetailSkeleton(onBack)
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(state.error ?: "Not found", color = RoxyColors.error) }
+        else Box(Modifier.fillMaxSize().statusBarsPadding()) {
+            tv.roxy.tv.ui.components.LoadError(state.error ?: "Not found", onRetry = { vm.load() })
+            BackCircle(onBack, modifier = Modifier.padding(12.dp))
+        }
         return
     }
 

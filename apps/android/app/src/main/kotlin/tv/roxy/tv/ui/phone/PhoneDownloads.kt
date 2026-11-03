@@ -299,6 +299,7 @@ fun MovieDownloadButton(movie: Item, modifier: Modifier = Modifier, onDownload: 
         DownloadState.Failed -> "Download failed  ·  Retry"
         DownloadState.Paused -> "Download paused  ·  ${(entry.fraction * 100).toInt()}%"
         DownloadState.WaitingForWifi -> "Waiting for Wi-Fi"
+        DownloadState.Queued if entry.error != null -> "${queuedWord(entry)}  ·  ${(entry.fraction * 100).toInt()}%"
         else -> "Downloading  ·  ${(entry.fraction * 100).toInt()}%"
     }
     Row(modifier = modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(4.dp)).background(ButtonGrey), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
@@ -474,10 +475,17 @@ private fun DownloadedEpisodeRow(e: DownloadEntry, onPlay: () -> Unit) {
     }
 }
 
+/** A queued entry says why it waits: the server is away, or it is retrying after a dropped connection. */
+private fun queuedWord(e: DownloadEntry): String = when {
+    e.error == tv.roxy.tv.data.downloads.DownloadService.WAITING_FOR_SERVER -> "Waiting for Roxy"
+    e.error != null -> "Retrying"
+    else -> "Queued"
+}
+
 private fun entryLine(e: DownloadEntry): String = when (e.state) {
     DownloadState.Done -> formatBytes(e.bytesTotal)
     DownloadState.Downloading -> "Downloading  ·  ${(e.fraction * 100).toInt()}%"
-    DownloadState.Queued -> if (e.bytesDone > 0) "Queued  ·  ${(e.fraction * 100).toInt()}%" else "Queued"
+    DownloadState.Queued -> queuedWord(e) + if (e.bytesDone > 0) "  ·  ${(e.fraction * 100).toInt()}%" else ""
     DownloadState.Paused -> "Paused  ·  ${(e.fraction * 100).toInt()}%"
     DownloadState.WaitingForWifi -> "Waiting for Wi-Fi"
     DownloadState.Failed -> "Failed"

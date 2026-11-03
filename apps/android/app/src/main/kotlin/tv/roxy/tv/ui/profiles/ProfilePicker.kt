@@ -123,10 +123,12 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
             .onFailure { t ->
                 Timber.w(t, "profiles failed")
                 val cached = app.prefs.cachedProfiles.value?.let { runCatching { Json.decodeFromString(ListSerializer(Profile.serializer()), it) }.getOrNull() }
-                if (!cached.isNullOrEmpty() && t !is ApiException) { profiles = cached; error = null } else error = t.message
+                if (!cached.isNullOrEmpty() && t !is ApiException) { profiles = cached; error = null } else error = tv.roxy.tv.data.friendlyError(t, "profiles")
             }
     }
     LaunchedEffect(Unit) { reload() }
+    // Opened while the server was away: the real list replaces the cached one once it answers.
+    tv.roxy.tv.ui.components.OnServerBack { scope.launch { reload() } }
 
     val last = profiles?.firstOrNull { it.id == session.lastProfileId }
 

@@ -24,7 +24,7 @@ class MovieViewModel(private val api: RoxyApi, private val movieId: String, init
                     Timber.e(t, "movie load failed")
                     // A failed reload keeps the page; only a first load shows the error.
                     _state.value = if (_state.value.movie != null && !_state.value.loading) _state.value
-                    else MovieUiState(loading = false, error = t.message)
+                    else MovieUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this movie"))
                 }
             // The series this movie belongs to (AniList relations), if it is in the library:
             // once per page, not on every return from the player.

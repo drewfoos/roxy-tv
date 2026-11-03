@@ -183,12 +183,23 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
 
     LaunchedEffect(episodeId) {
         val seed = app.items[episodeId] ?: Item(id = episodeId, type = "episode", title = fallbackTitle)
-        playRequest(context, seed)
-            .onSuccess { r ->
-                episode = r.item
-                if (session == null) session = PlayerSession(context, app, PlayerSession.Params.from(r, app.prefs.settings.value), scope, host)
+        // Server away (restart, Wi-Fi drop): say so and keep trying, instead of a dead box.
+        var wait = 3_000L
+        while (true) {
+            val r = playRequest(context, seed)
+            r.onSuccess { req ->
+                error = null
+                episode = req.item
+                if (session == null) session = PlayerSession(context, app, PlayerSession.Params.from(req, app.prefs.settings.value), scope, host)
             }
-            .onFailure { t -> Timber.w(t, "episode"); error = t.message }
+            val t = r.exceptionOrNull() ?: break
+            Timber.w(t, "episode")
+            val retry = t is java.io.IOException && t !is tv.roxy.tv.api.ApiException
+            error = tv.roxy.tv.data.friendlyError(t) + if (retry) " Retrying…" else ""
+            if (!retry) break
+            kotlinx.coroutines.delay(wait)
+            wait = (wait * 2).coerceAtMost(30_000L)
+        }
     }
     var cast by remember { mutableStateOf<List<CastMember>>(emptyList()) }
     LaunchedEffect(episode?.id, episode?.isMovie) {
@@ -235,7 +246,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
             val s = session
             when {
                 s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize())
-                error != null -> Text(error ?: "", color = RoxyColors.error, modifier = Modifier.align(Alignment.Center).background(Color.Black))
+                error != null -> Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                    Text(error ?: "", color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                }
                 ep != null -> RoxyImage(app.api.imageUrl(ep, "thumb", widthPx(420.dp) * 2) ?: app.api.imageUrl(ep, "backdrop", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             }
         }

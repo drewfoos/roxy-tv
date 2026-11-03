@@ -103,8 +103,13 @@ class PlayerSession(
         private const val NEXT_COUNTDOWN_S = 10
         /** A scrub commits this long after the last Left/Right press. */
         private const val SCRUB_COMMIT_MS = 650L
-        /** Waits between reconnect attempts after the stream drops (then it gives up). */
+        /** Waits between reconnect attempts after the stream drops (then it waits for the server). */
         private val RECONNECT_DELAYS_MS = longArrayOf(0, 2_000, 4_000, 8_000, 15_000, 30_000)
+        private const val LOST_CONNECTION = "Lost connection to Roxy. Reconnecting…"
+        private const val WAITING_FOR_SERVER = "Can't reach Roxy. Playback resumes when it's back (or press play to retry)."
+        /** Ticks (500 ms) of buffering before the stall is looked into, and before a reachable server gets a fresh stream. */
+        private const val STALL_CHECK_TICKS = 16
+        private const val STALL_RESTART_TICKS = 90
     }
 
     val player: MpvPlayer
@@ -204,6 +209,12 @@ class PlayerSession(
     private var reconnectAttempts = 0
     private var reconnecting = false
     private var reconnectJob: Job? = null
+    /** After the quick attempts: waits for the server to answer, then reopens at [waitingAt]. */
+    private var waitJob: Job? = null
+    private var waitingAt: Double? = null
+    /** Half-second ticks the stream has been buffering with nothing else going on. */
+    private var stallTicks = 0
+    private var stallShown = false
 
     // D-pad scrubbing: Left/Right move a preview position (trickplay), one seek on release.
     private var scrubTarget: Double? = null
@@ -262,6 +273,7 @@ class PlayerSession(
                 switching = false
                 endReported = false
                 if (reconnecting) { reconnecting = false; flashOsd(null) }
+                stallTicks = 0; stallShown = false; waitingAt = null
                 reconnectAttempts = 0
                 applyTrackPicks()
                 // Ask the display for the film's rate (24p on a TV that has it).
@@ -272,6 +284,15 @@ class PlayerSession(
 
             override fun onEndFile() {
                 if (switching || endReported) return // the old file giving way to the next one
+                // A stream that ends with an error well before the end of the file (server
+                // restarted, connection reset) is a dropped connection, not the end.
+                val dur = knownDuration()
+                val pos = player.timePosSeconds() ?: ui.positionSec
+                if (!local && dur != null && pos < dur - 10.0) {
+                    Timber.w("stream closed at %.1f of %.1f s: reconnecting", pos, dur)
+                    reconnect(pos)
+                    return
+                }
                 Timber.i("end of file")
                 endReported = true
                 reportProgress("end")
@@ -303,7 +324,7 @@ class PlayerSession(
             }
         }
         glue = PlaybackGlue(context, object : PlaybackGlue.Controls {
-            override fun play() { player.setPaused(false); refreshUi(forceGlue = true) }
+            override fun play() { if (!retryAfterGivingUp()) player.setPaused(false); refreshUi(forceGlue = true) }
             override fun pause() { player.setPaused(true); refreshUi(forceGlue = true) }
             override fun seekTo(seconds: Double) = actions.seekTo(seconds)
             override fun seekBy(seconds: Int) = actions.seekBy(seconds)
@@ -317,9 +338,11 @@ class PlayerSession(
         prepareAndPlay(params.url, params.sourceId, params.local, params.startSeconds)
         showAdvisory(params.itemId)
         app.remote.activePlayer = this
+        app.server.playerActive.value = true
 
         actions = object : PlayerActions {
-            override fun togglePause() = player.togglePause()
+            // While waiting for the server, Play means "try now".
+            override fun togglePause() { if (!retryAfterGivingUp()) player.togglePause() }
             override fun seekTo(seconds: Double) {
                 cancelScrub()
                 // A manual seek backwards into a segment re-arms its auto-skip.
@@ -374,6 +397,7 @@ class PlayerSession(
                 delay(500)
                 tick++
                 refreshUi()
+                watchStall()
                 if (tick % 2 != 0) continue
                 if (showStats) {
                     val cores = Runtime.getRuntime().availableProcessors()
@@ -590,7 +614,7 @@ class PlayerSession(
         app.scope.launch {
             reportLock.withLock {
                 val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
-                if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
+                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
             }
         }
     }
@@ -626,32 +650,40 @@ class PlayerSession(
         if (autoplay && next != null) playNext()
     }
 
-    /** Reopen the stream at [at] after a short wait, a few times, then say so and stop. */
+    /**
+     * Reopen the stream at [at] after a short wait, a few times (about a minute in all, enough
+     * for a server restart). Then pause, say so, and wait for the server to answer again,
+     * however long that takes; it picks up at [at] by itself, or at once on play.
+     */
     private fun reconnect(at: Double) {
+        if (destroyed) return
         reconnectJob?.cancel()
+        waitJob?.cancel(); waitingAt = null
         if (reconnectAttempts >= RECONNECT_DELAYS_MS.size) {
-            Timber.w("giving up reconnecting at %.1f s", at)
+            Timber.w("reconnects used up at %.1f s; waiting for the server", at)
             reconnecting = false
             switching = false
             reloadTarget = null
             reconnectAttempts = 0
-            flashOsd("Lost the connection to the server. Press play to try again.", 0)
-            player.setPaused(true)
-            showControls()
+            waitForServer(at)
             return
         }
         val wait = RECONNECT_DELAYS_MS[reconnectAttempts++]
         reconnecting = true
         switching = true // the dropped stream's end events are not the end of the episode
         reloadTarget = at
-        flashOsd("Reconnecting…", 0)
+        flashOsd(LOST_CONNECTION, 0)
         refreshUi(forceGlue = true)
+        // The last position goes in now (kept locally if the server is away), so leaving
+        // the player while it reconnects still resumes here.
+        reportProgress("reconnect", at)
         reconnectJob = scope.launch {
             delay(wait)
             if (destroyed) return@launch
             Timber.i("reconnect %d at %.1f s", reconnectAttempts, at)
             if (transcoding) { restartTranscode(at); return@launch }
-            // A fresh media token: a long session can outlive the one in the old URL.
+            // A fresh media token: a long session can outlive the one in the old URL, and a
+            // restarted server has forgotten the old one.
             val sid = sourceId
             val url = if (sid != null && !local) runCatching { app.api.streamUrl(sid, app.api.mediaToken(sid)) }.getOrNull() ?: directUrl else directUrl
             directUrl = url
@@ -659,12 +691,69 @@ class PlayerSession(
         }
     }
 
-    /** "Press play to try again" after the reconnects gave up. */
-    private fun retryAfterGivingUp(): Boolean {
-        if (reconnecting || osd?.startsWith("Lost the connection") != true) return false
+    /** Paused on [at] until the server answers (checked every 5 s), then reopened there. */
+    private fun waitForServer(at: Double) {
+        waitJob?.cancel()
+        waitingAt = at
+        player.setPaused(true)
+        flashOsd(WAITING_FOR_SERVER, 0)
+        showControls()
+        waitJob = scope.launch {
+            while (!destroyed) {
+                delay(5_000)
+                if (app.api.reachable()) {
+                    Timber.i("server back; resuming at %.1f s", at)
+                    resumeAfterWaiting()
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun resumeAfterWaiting() {
+        val at = waitingAt ?: return
+        waitJob?.cancel()
+        waitingAt = null
         flashOsd(null)
-        reconnect(ui.positionSec)
+        player.setPaused(false)
+        reconnect(at)
+    }
+
+    /** Play pressed while waiting for the server: try at once. */
+    private fun retryAfterGivingUp(): Boolean {
+        if (reconnecting || waitingAt == null) return false
+        resumeAfterWaiting()
         return true
+    }
+
+    /**
+     * A stream that sits buffering: mpv's ffmpeg retries a dead server quietly for minutes.
+     * After 8 s, ask the server: if it is gone say so; if it stays stuck for 45 s while the
+     * server answers (a restarted server dropped the transcode), open a fresh stream.
+     */
+    private fun watchStall() {
+        val stalled = !local && !reconnecting && !switching && waitingAt == null && !player.isPaused() && player.isBuffering() && player.timePosSeconds() != null
+        if (!stalled) {
+            if (stallShown) { stallShown = false; if (osd == LOST_CONNECTION) flashOsd(null) }
+            stallTicks = 0
+            return
+        }
+        stallTicks++
+        if (stallTicks == STALL_CHECK_TICKS) scope.launch {
+            if (!app.api.reachable() && stallTicks >= STALL_CHECK_TICKS) {
+                Timber.w("stream stalled and the server is unreachable")
+                stallShown = true
+                flashOsd(LOST_CONNECTION, 0)
+            }
+        }
+        if (stallTicks == STALL_RESTART_TICKS) scope.launch {
+            if (app.api.reachable() && stallTicks >= STALL_RESTART_TICKS) {
+                val at = player.timePosSeconds() ?: return@launch
+                Timber.w("stream stuck at %.1f s with the server up: reopening", at)
+                stallTicks = 0
+                reconnect(at)
+            }
+        }
     }
 
     // ---- the viewer's track picks, across episodes ----
@@ -843,7 +932,11 @@ class PlayerSession(
             scope.launch {
                 runCatching { app.api.mediaToken(sid) }
                     .onSuccess { player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at, it), 0, transcoded = true) }
-                    .onFailure { Timber.w(it, "media token") }
+                    .onFailure {
+                        Timber.w(it, "media token")
+                        // Server still away: count it as a failed attempt rather than sit "reconnecting".
+                        if (reconnecting && !destroyed) reconnect(at)
+                    }
             }
         }
         watchReload(at)
@@ -934,10 +1027,10 @@ class PlayerSession(
     }
 
     /** POST /v1/me/progress with the current position. Runs on the app scope so a final report survives the host. */
-    fun reportProgress(reason: String) {
+    fun reportProgress(reason: String, atSec: Double? = null) {
         val id = itemId ?: return
         if (!app.prefs.session.value.isLoggedIn) return
-        val pos = runCatching { player.timePosSeconds() }.getOrNull() ?: return
+        val pos = atSec ?: runCatching { player.timePosSeconds() }.getOrNull() ?: return
         val positionMs = (pos * 1000).toLong()
         if (positionMs <= 0) return
         if (reason == "tick" && positionMs == lastReportedMs) return
@@ -963,8 +1056,11 @@ class PlayerSession(
                     }
                     .isSuccess
                 // Downloaded items keep their position locally too (Downloads page offline); a
-                // failed report is queued and replayed when the server is back.
-                if (app.downloads.entry(id) != null || !ok) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
+                // failed report is queued and replayed when the server is back. A success
+                // clears this item's queued one, so an older position never replays over it.
+                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
+                // The server answers again: send what was saved while it was away.
+                if (ok) app.downloads.syncProgress(app.api)
             }
         }
     }
@@ -997,7 +1093,8 @@ class PlayerSession(
         if (destroyed) return
         destroyed = true
         if (app.remote.activePlayer === this) { app.remote.activePlayer = null; app.remote.reportState(null, "", 0, false) }
-        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); zoomHudJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel()
+        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); zoomHudJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel()
+        app.server.playerActive.value = false
         runCatching { displayManager?.unregisterDisplayListener(displayListener) }
         glue.release()
         player.listener = null

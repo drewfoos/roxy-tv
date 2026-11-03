@@ -62,7 +62,13 @@ suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false): 
     }
     // The phone has one player, the page's; the TV keeps the full-screen activity.
     app.openPlayerPage?.let { open -> open(item); return Result.success(Unit) }
-    val req = playRequest(context, item, fromStart).getOrElse { return Result.failure(it) }
+    val req = playRequest(context, item, fromStart).getOrElse { t ->
+        // Server away: say so, rather than a Play button that does nothing.
+        if (t !is kotlinx.coroutines.CancellationException) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            android.widget.Toast.makeText(context.applicationContext, tv.roxy.tv.data.friendlyError(t), android.widget.Toast.LENGTH_LONG).show()
+        }
+        return Result.failure(t)
+    }
     Timber.i("play %s item=%s source=%s start=%ds local=%s", req.item.displayLabel, req.item.id, req.sourceId, req.startSeconds, req.local)
     val intent = PlayerActivity.intent(context, req, app.prefs.settings.value)
     if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // started from the command poll, not a screen

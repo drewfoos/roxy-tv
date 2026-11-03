@@ -72,7 +72,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 // A reload that fails (back from the player during a Wi-Fi drop) keeps the
                 // page that is showing; only a first load turns into the error.
                 if (_state.value.series != null) _state.value = _state.value.copy(loading = false)
-                else _state.value = SeriesUiState(loading = false, error = t.message)
+                else _state.value = SeriesUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this series"))
             }
         }
     }

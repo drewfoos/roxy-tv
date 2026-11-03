@@ -231,6 +231,7 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
     val anyActive = state.requests.any { it.download?.isActive == true }
     PollWhileResumed(if (anyActive) PollFastMs else PollSlowMs) { vm.refreshRequests() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
+    tv.roxy.tv.ui.components.OnServerBack { vm.load(force = true) }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         TabHeader("Discover")

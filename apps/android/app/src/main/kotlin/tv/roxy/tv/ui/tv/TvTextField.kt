@@ -74,6 +74,10 @@ fun TvTextField(
     placeholderColor: Color = RoxyColors.muted,
     fontSize: androidx.compose.ui.unit.TextUnit = 16.sp,
     onDone: () -> Unit = {},
+    /** The keyboard's Next key: finish here and call this (say, bump the next field's [editRequest]). Null keeps the platform's default. */
+    onNext: (() -> Unit)? = null,
+    /** Raise it to focus this field and open the keyboard at once (the field before it pressed Next). */
+    editRequest: Int = 0,
 ) {
     val fieldFocus = remember { FocusRequester() }
     val wrapperFocus = remember { FocusRequester() }
@@ -85,6 +89,7 @@ fun TvTextField(
     // Typing starts on an OK press that began here. The release of the press that opened the
     // page (OK on a profile, on the rail) used to land on a field focused at once and pop the keyboard.
     var okDownHere by remember { mutableStateOf(false) }
+    LaunchedEffect(editRequest) { if (editRequest > 0) { runCatching { wrapperFocus.requestFocus() }; editing = true } }
     LaunchedEffect(editing) { if (editing) { runCatching { fieldFocus.requestFocus() }; keyboard?.show() } }
     val ring = if (wrapperFocused || editing) RoxyColors.accent else Color.Transparent
     Row(
@@ -140,6 +145,8 @@ fun TvTextField(
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
                 // Every action key finishes typing: the Search key did nothing before.
                 keyboardActions = KeyboardActions(
+                    // The keyboard stays up: the next field takes it over.
+                    onNext = if (onNext != null) ({ editing = false; onNext() }) else null,
                     onDone = { editing = false; keyboard?.hide(); onDone() },
                     onSearch = { editing = false; keyboard?.hide(); onDone() },
                     onGo = { editing = false; keyboard?.hide(); onDone() },

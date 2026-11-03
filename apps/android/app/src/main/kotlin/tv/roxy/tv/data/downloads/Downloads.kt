@@ -272,13 +272,22 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         }
     }
 
+    /** Whether a position for [itemId] (this profile) is waiting to be sent. */
+    fun hasPendingProgress(itemId: String): Boolean {
+        val profile = prefs.session.value.profileId
+        return _index.value.pendingProgress.any { it.itemId == itemId && it.profileId == profile }
+    }
+
     /** Replay positions (and "watched" marks) recorded offline. Only the active profile's are sent (the header is per request). */
     suspend fun syncProgress(api: RoxyApi) {
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
         for (p in mine) {
-            val ok = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs, at = p.at) }.isSuccess
-            if (!ok) return
+            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs, at = p.at) }
+            result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+            // A 4xx (the title was deleted meanwhile) will never succeed: drop it rather than block the rest.
+            val rejected = (result.exceptionOrNull() as? tv.roxy.tv.api.ApiException)?.let { it.code in 400..499 && !it.isUnauthorized } == true
+            if (result.isFailure && !rejected) return
             _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
             Timber.i("synced offline progress item=%s pos=%dms", p.itemId, p.positionMs)
         }

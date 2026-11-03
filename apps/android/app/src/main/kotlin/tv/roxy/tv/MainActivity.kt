@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import tv.roxy.tv.ui.Splash
+import tv.roxy.tv.ui.components.ServerBanner
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -154,8 +155,8 @@ class MainActivity : ComponentActivity() {
         return segs.last().uppercase().filter { it.isLetterOrDigit() }.takeIf { it.length >= 6 }
     }
 
-    override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true) }
-    override fun onStop() { RoxyApp.get(this).remote.setForeground(false); super.onStop() }
+    override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true); RoxyApp.get(this).server.setForeground(true) }
+    override fun onStop() { RoxyApp.get(this).remote.setForeground(false); RoxyApp.get(this).server.setForeground(false); super.onStop() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -174,7 +175,11 @@ class MainActivity : ComponentActivity() {
                 // The Surface paints the page colour itself; a second background modifier
                 // would be another full-screen fill on every frame.
                 Surface(modifier = Modifier.fillMaxSize(), colors = SurfaceDefaults.colors(containerColor = RoxyColors.background)) {
-                    AppRoot(tv)
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                        AppRoot(tv)
+                        // Above every page: "Can't reach Roxy" while the server is away.
+                        ServerBanner(tv)
+                    }
                 }
             }
         }

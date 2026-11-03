@@ -140,12 +140,15 @@ fun PhoneHome(
             CircularProgressIndicator(color = RoxyColors.accent, strokeWidth = 3.dp, strokeCap = StrokeCap.Round, modifier = Modifier.size(40.dp))
         }
         is HomeUiState.Error -> when {
+            // The server restarted or the Wi-Fi dropped: reload once it answers again.
             s.offline -> {
+                tv.roxy.tv.ui.components.OnServerBack { vm.load() }
                 val index by app.downloads.index.collectAsStateWithLifecycle()
                 val titles = remember(index) { app.downloads.titles().filter { it.doneCount > 0 } }
                 OfflineState(serverUrl = app.api.baseUrl, titles = titles, bottomInset = bottomInset, onRetry = { vm.load() }, onDownloads = onDownloads, onOpenTitle = onOpenDownloadedTitle)
             }
             else -> Column(modifier = Modifier.fillMaxSize().padding(PhonePad), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                if (!s.unauthorized) tv.roxy.tv.ui.components.OnServerBack { vm.load() }
                 Text(if (s.unauthorized) "Your session has expired." else "Could not load the library", color = RoxyColors.error, fontSize = 16.sp)
                 Text(s.message, color = RoxyColors.muted, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
                 if (s.unauthorized) GreyButton("Sign in again", onClick = onUnauthorized) else GreyButton("Retry", onClick = { vm.load() })

@@ -94,17 +94,20 @@ private fun rememberLibrary(): Pair<List<Item>?, String?> {
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf(LibraryCache.items) }
     var error by remember { mutableStateOf<String?>(null) }
+    fun fetch() = scope.launch {
+        runCatching { app.api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items }
+            .onSuccess { items = it; error = null; LibraryCache.items = it; LibraryCache.at = System.currentTimeMillis() }
+            .onFailure { if (items == null) error = tv.roxy.tv.data.friendlyError(it, "the library") }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (LibraryCache.items != null && System.currentTimeMillis() - LibraryCache.at < LibraryCache.FRESH_MS) {
             items = LibraryCache.items
             return@LifecycleEventEffect
         }
-        scope.launch {
-            runCatching { app.api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items }
-                .onSuccess { items = it; error = null; LibraryCache.items = it; LibraryCache.at = System.currentTimeMillis() }
-                .onFailure { if (items == null) error = it.message ?: "Could not load the library" }
-        }
+        fetch()
     }
+    // Failed while the server was away: fill in once it answers again.
+    tv.roxy.tv.ui.components.OnServerBack { if (items == null) fetch() }
     return items to error
 }
 

@@ -310,7 +310,7 @@ private fun TermsLine(onShowTerms: () -> Unit) {
 
 /** A card's button: the accent pill (primary) or an outlined one; the focused one is filled with a white ring. */
 @Composable
-private fun CardButton(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+internal fun CardButton(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
     val shape = RoundedCornerShape(24.dp)
     TvFocusable(onClick = onClick, shape = shape, modifier = modifier.fillMaxWidth()) { focused ->
         val bg = when {

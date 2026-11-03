@@ -7,7 +7,9 @@ import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import timber.log.Timber
@@ -22,8 +24,11 @@ import java.io.File
 
 class RoxyApp : Application(), SingletonImageLoader.Factory {
 
-    /** Process-wide scope for work that must outlive an activity (final progress report, logout). */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * Process-wide scope for work that must outlive an activity (final progress report, logout).
+     * A failure in one launch is logged, never fatal: a server restart mid-call must not crash the app.
+     */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + CoroutineExceptionHandler { _, t -> Timber.e(t, "uncaught in app scope") })
 
     lateinit var prefs: Prefs
         private set
@@ -37,6 +42,10 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
 
     /** App updates published on the server (bar above the nav, install through the system). */
     lateinit var updates: Updates
+        private set
+
+    /** Whether Roxy Server is answering (the "Can't reach Roxy" banner, reloads when it is back). */
+    lateinit var server: tv.roxy.tv.data.ServerStatus
         private set
 
     /** Items the lists have shown, so a detail page can draw its header before its own fetch lands. */
@@ -74,6 +83,9 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
         downloads = Downloads(this, prefs, scope)
         updates = Updates(this, api, prefs, scope)
         remote = RemotePlay(this, api, prefs, scope)
+        server = tv.roxy.tv.data.ServerStatus(this, api, prefs, scope)
+        // Back after a restart or a Wi-Fi drop: positions saved meanwhile go up, waiting downloads resume.
+        server.onBack = { scope.launch { downloads.syncProgress(api); downloads.kick() } }
         if (prefs.session.value.isLoggedIn) tv.roxy.tv.diagnostics.CrashReports.sendPending(this, api, scope)
         Timber.i("Roxy TV started. server=%s user=%s fontsDir=%s", prefs.session.value.serverUrl, prefs.session.value.userName, fontsDir)
     }
