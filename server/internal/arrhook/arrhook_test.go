@@ -41,7 +41,7 @@ func TestPayloadShapes(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.title() != "Show S01E03" {
+	if p.title() != "Show S1 E3" {
 		t.Errorf("title = %q", p.title())
 	}
 	if got := p.absolute(*p.EpisodeFile); got != "/data/tv/Show/Season 01/Show - S01E03.mkv" {
