@@ -36,7 +36,7 @@ func TestSeriesStatus(t *testing.T) {
 		if d.State != DLDownloading || d.Have != 1 || d.Wanted != 3 || d.Upcoming != 1 {
 			t.Fatalf("got %+v", d)
 		}
-		if d.Progress != 0.75 || d.TimeLeftSec != 300 || len(d.Items) != 1 || d.Items[0].Label != "S01E02–E03" {
+		if d.Progress != 0.75 || d.TimeLeftSec != 300 || len(d.Items) != 1 || d.Items[0].Label != "S1 E2–E3" {
 			t.Fatalf("progress/items: %+v", d)
 		}
 		if d.NextAir == nil || !d.NextAir.Equal(*future) {

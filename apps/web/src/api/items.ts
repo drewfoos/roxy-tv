@@ -14,14 +14,13 @@ export function primarySource(it: Item): MediaSource | undefined {
   return s.find((x) => x.isPrimary) ?? s[0]
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0')
 
-/** "S01E03" for episodes ("S01" when the episode number is unknown), "" otherwise. */
+/** "S1 E3" for episodes ("S1" when the episode number is unknown), "" otherwise. */
 export function episodeCode(it: Item): string {
   if (!isEpisode(it)) return ''
   const e = it.indexAired ?? it.indexAbsolute
   const s = it.seasonAired ?? 0
-  return e != null ? `S${pad2(s)}E${pad2(e)}` : `S${pad2(s)}`
+  return e != null ? `S${s} E${e}` : `S${s}`
 }
 
 /** "E3" style number for the episode page header. */

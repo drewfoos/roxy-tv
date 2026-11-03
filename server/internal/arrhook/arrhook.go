@@ -85,7 +85,7 @@ func (p *payload) title() string {
 	switch {
 	case p.Series != nil && len(p.Episodes) > 0:
 		e := p.Episodes[0]
-		return fmt.Sprintf("%s S%02dE%02d", p.Series.Title, e.SeasonNumber, e.EpisodeNumber)
+		return fmt.Sprintf("%s S%d E%d", p.Series.Title, e.SeasonNumber, e.EpisodeNumber)
 	case p.Series != nil:
 		return p.Series.Title
 	case p.Movie != nil:

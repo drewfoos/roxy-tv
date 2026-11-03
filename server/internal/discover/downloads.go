@@ -130,7 +130,7 @@ type DownloadGroup struct {
 
 // DownloadItem is one download in the client (or one failed / missing episode).
 type DownloadItem struct {
-	Label       string  `json:"label"` // "S01E03", "Season 1 · 12 episodes", the movie title
+	Label       string  `json:"label"` // "S1 E3", "Season 1 · 12 episodes", the movie title
 	Release     string  `json:"release,omitempty"`
 	State       string  `json:"state"`
 	Progress    float64 `json:"progress"`
@@ -909,13 +909,13 @@ func latestEvents(history []arr.HistoryRecord) map[int]arr.HistoryRecord {
 	return out
 }
 
-// episodesLabel: "S01E03", "S01E03–E05", "Season 1 · 12 episodes", "14 episodes".
+// episodesLabel: "S1 E3", "S1 E3–E5", "Season 1 · 12 episodes", "14 episodes".
 func episodesLabel(eps []arr.Episode) string {
 	switch len(eps) {
 	case 0:
 		return ""
 	case 1:
-		return fmt.Sprintf("S%02dE%02d", eps[0].SeasonNumber, eps[0].EpisodeNumber)
+		return fmt.Sprintf("S%d E%d", eps[0].SeasonNumber, eps[0].EpisodeNumber)
 	}
 	sort.Slice(eps, func(i, j int) bool {
 		if eps[i].SeasonNumber != eps[j].SeasonNumber {
@@ -931,7 +931,7 @@ func episodesLabel(eps []arr.Episode) string {
 	}
 	consecutive := eps[len(eps)-1].EpisodeNumber-eps[0].EpisodeNumber == len(eps)-1
 	if consecutive && len(eps) <= 3 {
-		return fmt.Sprintf("S%02dE%02d–E%02d", season, eps[0].EpisodeNumber, eps[len(eps)-1].EpisodeNumber)
+		return fmt.Sprintf("S%d E%d–E%d", season, eps[0].EpisodeNumber, eps[len(eps)-1].EpisodeNumber)
 	}
 	return fmt.Sprintf("Season %d · %d episodes", season, len(eps))
 }
