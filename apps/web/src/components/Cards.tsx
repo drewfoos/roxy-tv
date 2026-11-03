@@ -4,7 +4,7 @@ import { Link } from 'react-router'
 import { api, px } from '../api/client'
 import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
-import { IconBookmark, IconBookmarkOutline, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
+import { IconBookmark, IconBookmarkOutline, IconCalendar, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
 /** Where a card goes: a show to its page, a film to its page, an episode straight to the player. */
 export function itemPath(it: Item): string {
@@ -178,7 +178,11 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
           <Link to={itemPath(item)} className="card__hover-body">
             <h3>{name}</h3>
             {epLine && <div className="card__hover-ep">{epLine}</div>}
-            {date && <div className="card__hover-meta">{date}</div>}
+            {date && (
+              <div className="card__hover-meta card__hover-date">
+                <IconCalendar size={16} /> {date}
+              </div>
+            )}
             {item.overview && <p>{item.overview}</p>}
           </Link>
           <div className="card__hover-actions card__hover-actions--split">

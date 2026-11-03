@@ -212,6 +212,8 @@ img { display: block; }
 .card__hover-ep { font-size: 14px; line-height: 20px; font-weight: 600; color: #fff; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .card__hover--thumb .card__hover-body p { -webkit-line-clamp: 4; }
 .card__hover-actions--split { justify-content: space-between; }
+.card__hover-date { align-items: center; gap: 6px; }
+.card__hover-date svg { flex: none; }
 .card__hover-cta { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
 .card__hover-cta:hover { color: var(--accent-light); }
 .card__hover .card__menu { opacity: 1; }
