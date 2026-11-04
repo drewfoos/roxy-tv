@@ -14,6 +14,22 @@ you -> Roxy Discover -> Sonarr / Radarr -> download client -> /data/media -> Rox
 
 *Roxy TV on a TCL Google TV: Home, with the show you are watching in the hero and the side menu (Back opens it).*
 
+## Why
+
+Fansub and official anime releases carry ASS/SSA subtitles: not just dialogue, but
+translated signs placed over the sign they translate, colours and fonts per character, and
+karaoke that sweeps across the opening and ending lyrics in time with the song. Plex and
+Jellyfin render that on a computer (Jellyfin Web, Jellyfin Desktop, Plex HTPC), but their
+TV and phone apps play video through ExoPlayer, which cannot draw ASS. Those apps either
+flatten the track to plain text at the bottom of the screen (the signs land mid-dialogue,
+the karaoke turns into a block of lyrics) or make the server burn the subtitles into the
+picture, which means a full video transcode for every play. `docs/research/` has the
+client-by-client survey with sources.
+
+Roxy puts libass in every client instead: libmpv on Android phones and Android TV, jassub
+(libass in WebAssembly) in the browser. The MKV is played as it is, the fonts packed inside
+it are used, and the server never has to transcode for subtitles.
+
 ## Repository map
 
 One repository, three deliverables that version together:
@@ -30,25 +46,35 @@ One repository, three deliverables that version together:
 `.github/workflows/ci.yml` vets and tests the server, builds the web app and assembles the
 Android debug APK on every push.
 
-## What works today (2026-11-02)
+## What works today (2026-11-04)
 
 **Roxy Server** (`server/`, Go 1.27, SQLite, jellyfin-ffmpeg shelled out)
 
 - Library scan of TRaSH-style folders (series/year/tvdb tag, SxxExx and absolute numbers,
-  specials, sidecar subtitles), ffprobe of every file, eager font and attachment extraction,
+  specials, sidecar subtitles, `S02E01v2`-style revisions, "<folder name> NN" files such as
+  fan-edit arcs), ffprobe of every file, eager font and attachment extraction,
   range-streamed direct play, subtitle serving with language sniffing for mislabelled tracks.
 - Metadata from TMDB and AniList with a local image cache and on-the-fly resizing; AniList
-  sequel chains become seasons; missing and unaired episodes show as placeholders; an art
+  sequel chains become seasons; missing and unaired episodes show as placeholders (an
+  announced season or an episode with no air date yet reads "Not out yet"); age ratings
+  are shown as issued (TV-Y7, TV-14, PG-13), with content reasons from TMDB or AniList
+  tags; an art
   picker lets an admin choose any TMDB or fanart.tv banner, poster or logo, and the pick is
   locked against refreshes.
 - Intro and outro markers from chapter markers, else by audio fingerprint across a season
   (Chromaprint, Intro Skipper's method); seek-preview thumbnails (trickplay).
+- First-time setup like Jellyfin's: a new server has no accounts, and the first person to
+  open the app or the web page on the home network creates the admin (account, TMDB key,
+  media folders). After that the setup door is shut.
 - Users with device tokens, profiles with AniList character avatars, per-profile watch
-  state, favourites, Continue Watching, a Home feed.
+  state, favourites, Continue Watching, a Home feed. Device Management lists every device
+  signed in with the login (online or not, what it is playing, home network / Tailscale /
+  internet, the address only behind Show) and can sign any of them out.
 - Discover: trending, seasonal anime, search, filters, title pages with per-season and
   per-episode requests sent to Sonarr and Radarr, with live download status (progress,
   time left, stalled, failed with the reason, nothing found yet) and Search again / Try
-  another release; until Sonarr and Radarr are connected the app offers to set them up. Sonarr and Radarr webhooks keep the library in step without a rescan.
+  another release; until Sonarr and Radarr are connected the app offers to set them up.
+  Sonarr and Radarr webhooks keep the library in step without a rescan.
 - Transcoding for lower qualities: H.264 in Matroska with every subtitle track, font and
   chapter kept, audio chosen per track (5.1 kept where it can be), on NVIDIA NVENC, Intel
   Quick Sync, VAAPI, AMD AMF or the CPU. Auto picks the best one; an admin can choose in
@@ -70,7 +96,22 @@ Android debug APK on every push.
     refused rather than turning on downloads for the whole series.
   - A finished import shows up in seconds, from the webhook or from the request tracker
     noticing the new files.
+  - With Prowlarr configured (`ROXY_PROWLARR_URL`, `ROXY_PROWLARR_API_KEY`), Roxy finds
+    the season packs Sonarr cannot parse (fansub batches named "(Season 1)"): it rewrites
+    the name, has Sonarr score it, and pushes it only when it beats both Sonarr's best pack
+    and its episode-by-episode result. Twice a day it looks again at finished seasons whose
+    grabs were all sub-only, because dubs often land weeks after the subs and Sonarr never
+    goes back to look. Sonarr still decides every push.
+  - Status reads what is happening: a just-added series is "loading the episode list",
+    a release grabbed a moment ago is queued, a complete season with one upgrade in
+    flight is complete ("Upgrading S1 E2 to a better release").
 - Saving settings from an older app never wipes a setting it does not know about.
+- Security-audited (2026-11-03): MKV attachments served only as fonts, symlinks out of the
+  media folders refused at scan and serve, API keys good only for the webhook and ingest
+  endpoints, `X-Forwarded-For` believed only from `ROXY_TRUSTED_PROXIES`, capped request
+  bodies and subtitle extraction, ffmpeg inputs limited to local files, a strict CSP on the
+  web app, device tokens that expire after 180 days unused, an account-wide slowdown on
+  wrong passwords that never locks the owner out.
 - Sign-in by phone: a TV or browser shows a QR code and a six-letter code, and a signed-in
   phone approves it. The sign-in page's poster wall comes from the server's own library
   (`/v1/showcase`, public, posters only).
@@ -78,7 +119,7 @@ Android debug APK on every push.
   worker (AniList for anime; TMDB's cast for live action; none for other animation), so the
   editor opens instantly and a thousand new shows are looked up over hours, not at once.
 
-**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.5.20)
+**Roxy Android app** (`apps/android/`, Kotlin, Jetpack Compose, libmpv; minSdk 28; version 0.5.27)
 
 - One APK with two layouts, shown on the launcher as **Roxy TV**: a phone layout (portrait,
   Crunchyroll-style title pages, a Netflix-style hero carousel, bottom bar Home / Discover /
@@ -97,7 +138,14 @@ Android debug APK on every push.
   connections; the TV app sends Dolby and DTS untouched to a soundbar when it finds one.
 - Offline downloads (Netflix model): per episode, per season, or a whole title, with
   resume, Wi-Fi-only, a storage check, offline playback and progress that syncs later.
-- The login screen lists servers found on the network; tap one to fill the address.
+- The login screen lists servers found on the network; tap one to fill the address. A
+  found server must advertise its own or a private / tailnet address, and the app pins the
+  server it signed in to.
+- Setup wizard on the phone and a separate one on the TV built for the remote.
+- Survives server restarts: downloads wait and resume by range, the player pauses at the
+  position and carries on when the server is back, progress is queued and sent later.
+- Updates install only when the APK is this app, signed with the same certificate, newer,
+  and matches the sha256 the server published.
 - Browse on the phone: categories (Newly Added, A-Z, Series, Movies, genres) as chips over a
   poster grid with the title and year under each poster.
 
@@ -108,6 +156,8 @@ a TCL Q77K (Google TV).
 
 - The computer client: Crunchyroll's layout at desktop width (`docs/design/roxy-look.md`),
   the same `/v1` API as the Android app, served by the server itself at `/`.
+- First-time setup in the browser (the same steps as the phone), Device Management, card
+  menus and hover panels with the synopsis on every row, rows that drag sideways.
 - Sign-in over a poster wall (password, or approve from a phone), "Who's watching?" as on
   the apps, Browse with a category list and genres, Discover with title pages, request
   status and download progress, and the Sonarr / Radarr settings for admins.
@@ -127,9 +177,11 @@ go build -o bin/roxy ./cmd/roxy
 ROXY_MEDIA_ROOTS=/data/media ROXY_DATA_DIR=./data ROXY_LISTEN=0.0.0.0:8096 ./bin/roxy serve
 ```
 
-The first start creates an admin account named `ROXY_ADMIN_USER` (default `roxy`) with
-the password in `ROXY_ADMIN_PASSWORD`; leave it unset and a random password is generated
-and printed once in the server log. Put a TMDB key in `ROXY_TMDB_API_KEY` or in
+A new server has no accounts: open the Roxy app or `http://<server>:8096/` from the same
+network and the setup wizard creates the admin. Setup only answers from the home network
+(the real connection; `X-Forwarded-For` counts only from `ROXY_TRUSTED_PROXIES`). To skip
+the wizard, set `ROXY_ADMIN_PASSWORD` (and optionally `ROXY_ADMIN_USER`, default `roxy`)
+and the admin is created at start; a weak password logs a warning. Put a TMDB key in `ROXY_TMDB_API_KEY` or in
 `<data dir>/tmdb.key`; a fanart.tv key, and the Sonarr and Radarr settings, are entered in
 the app under Account → Server and stored in the database. Every setting is an environment
 variable with a `ROXY_` prefix; `server/internal/config/config.go` lists them all. Port
@@ -155,8 +207,10 @@ docker logs roxy 2>&1 | grep "transcode: encoder"
 NVIDIA needs the nvidia-container-toolkit on the host (`nvidia-ctk runtime configure
 --runtime=docker`). Use `"8097:8096"` while Jellyfin still owns 8096. Docker's port
 mapping does not pass UDP broadcasts, so on a bridge network the apps find the server by
-their HTTP sweep (or use `network_mode: host`). Tested on WSL2 with NVENC; VAAPI on an
-AMD card is next.
+their HTTP sweep (or use `network_mode: host`). Tested on WSL2 with NVENC, and in daily
+use on Linux with VAAPI on an AMD RX 550. `deploy/pookiebox-deploy.sh` is the one-step
+deploy for a Linux box that builds from this checkout: web build, `go vet` and tests,
+Compose rebuild, then it waits for `/healthz`.
 
 ### On Windows (WSL2)
 
@@ -193,8 +247,9 @@ The debug build can prefill a server URL and login through `BuildConfig`; see
 `apps/android/app/build.gradle.kts`. For a TV, build the `perf` variant (`./gradlew
 assemblePerf`): the debug app's id, key and sign-in, built the release way. A plain debug
 build is debuggable, so Android never compiles it ahead of time and a TV feels slow. Bump
-`versionCode`, then `apps/android/tools/publish-apk.ps1` (perf by default) copies the build to
-the server's `apps/tv` folder so installed phones and TVs offer the update. `apps/android/FONTS.md` explains the fallback
+`versionCode`, then `apps/android/tools/publish-apk.sh` (or `publish-apk.ps1` on Windows)
+copies the perf build to the server's `apps/tv` folder and writes its sha256 into
+`latest.json`, so installed phones and TVs offer the update. `apps/android/FONTS.md` explains the fallback
 font set and how to fetch it (fonts are not in the repository).
 
 ## Documents
