@@ -23,7 +23,7 @@ Status: draft v1, 2026-10-13. Based on the research in `docs/research/`.
 7. **Explainable playback decisions.** Every playback response says why it chose direct
    play, remux or transcode, per rule.
 8. **Container-first deployment.** Roxy Server ships as a Docker image that slots into the
-   existing compose stack next to request app, Sonarr, Radarr and download client, with the same
+   existing compose stack next to Sonarr and Radarr, with the same
    `/data` mount and GPU device passthrough. Bare-metal is supported but secondary.
 
 ### Priorities
@@ -43,42 +43,24 @@ app, then the server (which the player keeps working against Jellyfin until it e
 ## 2. System context
 
 ```
-                    +-----------+     +-----------+
-   request ───────► |   request app   | ──► | Prowlarr  |
-                    +-----┬-----+     +-----┬-----+
-                          │ (availability   │ indexers
-                          │  via Roxy's     ▼
-                          │  Jellyfin-     +-----------+   +-----------+
-                          │  compat API)   | Radarr    |   | Sonarr    |
-                          │                +-----┬-----+   +-----┬-----+
-                          │                      │ grab          │ grab
-                          │                      ▼               ▼
-                          │                +---------------------------+
-                          │                |       download client         |
-                          │                |  /data/torrents/{movies,tv}|
-                          │                +-------------┬-------------+
-                          │                              │ import (hardlink)
-                          │                              ▼
-                          │                +---------------------------+
-                          │                |   /data/media/{movies,tv} |
-                          │                +-------------┬-------------+
-                          │   webhook (Download/Rename/Delete, with IDs)│  fs watcher (Bazarr sidecars)
-                          ▼                              ▼
+   Roxy Discover ── request ──► Sonarr / Radarr ──► /data/media/{movies,tv}
+                                      │
+                                      │ webhook (import / rename / delete, with IDs)
+                                      ▼
                     +=============================================+
                     |                 Roxy Server                 |
                     |  ingest ─ probe ─ metadata ─ decide ─ serve |
                     +======┬==================┬==================+
-                           │ direct play /     │ HLS transcode (fallback)
+                           │ direct play /     │ transcode (slow connections)
                            ▼ range requests    ▼
-                    +-------------+     +-------------+     +-------------+
-                    | Roxy TV app |     |  Roxy Web   |     | other/weak  |
-                    | libmpv+libass|    | jassub      |     | burn-in     |
-                    +-------------+     +-------------+     +-------------+
+                    +---------------+     +-------------+
+                    | Roxy Android  |     |  Roxy Web   |
+                    | libmpv+libass |     |  jassub     |
+                    +---------------+     +-------------+
 ```
 
-Every arrow into Roxy Server from the arr apps is either a webhook or a poll Roxy makes.
-Roxy never writes to `/data/media`; the files it serves are hardlinked twins of seeding
-torrents.
+Every arrow into Roxy Server from Sonarr and Radarr is either a webhook or a poll Roxy
+makes. Roxy never writes to `/data/media`; it only reads the library.
 
 ## 3. Repository layout
 
@@ -108,7 +90,7 @@ roxy/
     web/                  Roxy Web, the browser client (TypeScript, React, Vite, jassub);
                           its build is embedded in the server (server/internal/web)
   deploy/
-    docker-compose.yml    Roxy + arr stack reference
+    docker-compose.yml    Roxy Server
   docs/
 ```
 
@@ -483,9 +465,8 @@ Image design:
   WSL2 with a GTX 1650: NVENC about 6.5x realtime for 1080p HEVC to 720p, software x264
   about 2x. VAAPI on real AMD hardware is still to be checked on the server.
 
-Conventions (TRaSH): `/data/torrents/{movies,tv}` for download client categories,
-`/data/media/{movies,tv}` for the library, hardlinks enabled in Sonarr/Radarr, Roxy mounts
-`/data` read-only. The Sonarr/Radarr webhook URLs point at the `roxy` service name on the
+Conventions (TRaSH): `/data/media/{movies,tv}` for the library, Roxy mounts `/data`
+read-only. The Sonarr/Radarr webhook URLs point at the `roxy` service name on the
 compose network.
 
 Development loop: `docker compose -f deploy/docker-compose.dev.yml up` mounts the source,

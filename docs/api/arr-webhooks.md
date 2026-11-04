@@ -48,7 +48,7 @@ Fields Roxy uses:
     "size": 1400000000, "languages": [{"id":8,"name":"Japanese"}],
     "mediaInfo": { "audioChannels": 2.0, "audioCodec": "FLAC", "audioLanguages": ["jpn"], "height": 1080, "width": 1920,
                    "subtitles": ["eng"], "videoCodec": "x265", "videoDynamicRangeType": "" },
-    "sourcePath": "/data/torrents/tv/..."
+    "sourcePath": "/data/downloads/tv/..."
   },
   "deletedFiles": [ { "id": 4, "path": "...", "relativePath": "..." } ],   // present on upgrades
   "renamedEpisodeFiles": [ { "previousPath": "...", "path": "...", "relativePath": "..." } ]  // Rename only

@@ -1,7 +1,10 @@
-# Only server/ and deploy/ go into the build context.
+# Only server/, apps/web/ and deploy/ go into the build context.
 .git
 .gitignore
-apps
+apps/android
+apps/web/node_modules
+apps/web/dist
+server/internal/web/dist
 docs
 testdata
 server/bin

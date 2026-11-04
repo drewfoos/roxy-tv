@@ -9,11 +9,20 @@
 ARG GO_VERSION=1.27
 ARG JELLYFIN_FFMPEG_VERSION=8.1.3-1
 
+# Roxy Web: the browser app, embedded in the server binary (server/internal/web/dist).
+FROM node:24-bookworm-slim AS web
+WORKDIR /src/apps/web
+COPY apps/web/package.json apps/web/package-lock.json ./
+RUN npm ci
+COPY apps/web ./
+RUN npm run build
+
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server ./
+COPY --from=web /src/server/internal/web/dist ./internal/web/dist
 # Pure Go (modernc.org/sqlite), so a static binary runs on any base image.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/roxy ./cmd/roxy
 

@@ -1,12 +1,11 @@
-# Reference stack: Roxy Server alongside the arr apps.
-# Assumes the TRaSH layout: /data/torrents/{movies,tv} and /data/media/{movies,tv}
-# on one filesystem so Sonarr/Radarr hardlinks work.
+# Roxy Server. Point the /data volume at your library and list its folders in
+# ROXY_MEDIA_ROOTS (example: /data/media/{movies,tv}). Roxy only reads media.
 #
 # Roxy keeps Jellyfin's port (8096) so request app, Sonarr and Radarr only need a new
 # host/token when switching over. Run both side by side on different ports first
 # (e.g. "8097:8096" while Jellyfin still has 8096).
 #
-# There is no published image yet, so Compose builds it from this repo:
+# Compose builds the image from this repo (server and web app together):
 #   cd roxy/deploy && docker compose up -d --build roxy
 # AMD / Intel (VAAPI, /dev/dri) is the default below. For an NVIDIA card add the override:
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build roxy
@@ -35,7 +34,7 @@ services:
       - "8096:8096/udp"
     volumes:
       - ./config/roxy:/config        # roxy.db + caches (ROXY_DATA_DIR=/config in the image)
-      - /data:/data:ro               # TRaSH root; Roxy only reads media
+      - /data:/data:ro               # your library; Roxy only reads media
       - ./fonts:/fonts:ro            # optional extra fonts (ROXY_FONTS_DIR)
     devices:
       # RX 550 (or Intel iGPU): VAAPI transcodes via jellyfin-ffmpeg's bundled radeonsi/iHD
@@ -51,16 +50,18 @@ services:
       # encode at startup. Force one with nvenc | qsv | vaapi | amf | none.
       ROXY_HWACCEL: "auto"
       # ROXY_VAAPI_DEVICE: "/dev/dri/renderD128"   # if the AMD card is not the first render node
-      # First run only (empty database): the admin account. Defaults are roxy / roxy.
+      # Leave the password unset and the first person to open http://<server>:8096/ (or the
+      # app) from the home network creates the admin in the setup wizard. Set it to skip
+      # the wizard: the admin is then created at the first start.
       ROXY_ADMIN_USER: "${ROXY_ADMIN_USER:-roxy}"
-      # Unset: the first start makes a random admin password and prints it once in the log.
       ROXY_ADMIN_PASSWORD: "${ROXY_ADMIN_PASSWORD:-}"
       # ROXY_ADVERTISE_URL: "http://192.168.1.10:8096"  # what clients should use if the LAN address is wrong
-      ROXY_TMDB_API_KEY: "${TMDB_API_KEY:-}" # or drop a tmdb.key file in ./config/roxy; release images carry a project default
-      ROXY_SONARR_URL: "http://sonarr:8989"
-      ROXY_SONARR_API_KEY: "${SONARR_API_KEY}"
-      ROXY_RADARR_URL: "http://radarr:7878"
-      ROXY_RADARR_API_KEY: "${RADARR_API_KEY}"
+      ROXY_TMDB_API_KEY: "${TMDB_API_KEY:-}" # or enter it in the setup wizard (free key from themoviedb.org)
+      # Optional: Sonarr / Radarr for Discover requests (or set them up in the app).
+      # ROXY_SONARR_URL: "http://sonarr:8989"
+      # ROXY_SONARR_API_KEY: "${SONARR_API_KEY}"
+      # ROXY_RADARR_URL: "http://radarr:7878"
+      # ROXY_RADARR_API_KEY: "${RADARR_API_KEY}"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8096/healthz"]
       interval: 30s
@@ -81,38 +82,3 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu, video, compute, utility]
-
-  # ---- existing arr stack (shown for the mount convention; keep your own definitions) ----
-  request app:
-    <<: *common
-    image: ghcr.io/request app-team/request app:latest
-    ports: ["5055:5055"]
-    volumes:
-      - ./config/request app:/app/config
-
-  prowlarr:
-    <<: *common
-    image: lscr.io/linuxserver/prowlarr:latest
-    volumes:
-      - ./config/prowlarr:/config
-
-  sonarr:
-    <<: *common
-    image: lscr.io/linuxserver/sonarr:latest
-    volumes:
-      - ./config/sonarr:/config
-      - /data:/data
-
-  radarr:
-    <<: *common
-    image: lscr.io/linuxserver/radarr:latest
-    volumes:
-      - ./config/radarr:/config
-      - /data:/data
-
-  download client:
-    <<: *common
-    image: lscr.io/linuxserver/download client:latest
-    volumes:
-      - ./config/download client:/config
-      - /data/torrents:/data/torrents
