@@ -395,8 +395,8 @@ fun MinutesBadge(text: String, modifier: Modifier = Modifier) {
 
 /** A 2:3 poster with the dark caption box under it (home rows, browse, search). */
 @Composable
-fun PosterCard(item: Item, api: RoxyApi, width: Dp, captionHeight: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null) {
-    TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused) {
+fun PosterCard(item: Item, api: RoxyApi, width: Dp, captionHeight: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null) {
+    TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick) {
         Column(modifier = Modifier.width(width)) {
             RoxyImage(api.imageUrl(item, "poster", widthPx(width)), item.title, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f))
             Box(modifier = Modifier.fillMaxWidth().height(captionHeight).background(RoxyColors.surface).padding(horizontal = 8.dp, vertical = 8.dp)) {
@@ -431,11 +431,11 @@ fun UrlPosterCard(title: String, url: String?, width: Dp, captionHeight: Dp, onC
 fun ThumbCard(
     item: Item, api: RoxyApi, width: Dp, captionHeight: Dp, titleLines: Int, secondLine: String?,
     onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null,
-    badge: String? = minutesLabel(item), progress: Float? = item.progressFraction,
+    badge: String? = minutesLabel(item), progress: Float? = item.progressFraction, onLongClick: (() -> Unit)? = null,
 ) {
     val imageType = if (item.isEpisode) "thumb" else "backdrop"
     val url = api.imageUrl(item, imageType, widthPx(width)) ?: api.imageUrl(item, "backdrop", widthPx(width)) ?: api.imageUrl(item, "poster", widthPx(width))
-    TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused) {
+    TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick) {
         Column(modifier = Modifier.width(width)) {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
                 val watched = item.isWatched && (item.isEpisode || item.isMovie)
@@ -470,6 +470,7 @@ fun TvRow(
     title: String, rowKey: String, items: List<Item>, api: RoxyApi, memory: FocusMemory,
     onClick: (Item) -> Unit, onRowFocused: (itemKey: String) -> Unit, modifier: Modifier = Modifier, thumbs: Boolean = false,
     upKey: () -> String? = { null }, downKey: () -> String? = { null },
+    onLongClick: ((Item) -> Unit)? = null,
 ) {
     // Up / Down targets are resolved when the remote moves focus, not in composition: the
     // rows above and below remember their last card in a plain map, and a focus move in one
@@ -477,6 +478,7 @@ fun TvRow(
     val upTarget by rememberUpdatedState(upKey)
     val downTarget by rememberUpdatedState(downKey)
     val click by rememberUpdatedState(onClick)
+    val longClick by rememberUpdatedState(onLongClick)
     val rowFocused by rememberUpdatedState(onRowFocused)
     // Three cards of a row about to scroll into view are composed ahead of it.
     val rowState = rememberLazyListState(prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 3) })
@@ -499,10 +501,12 @@ fun TvRow(
                 }
                 val focused = remember(key, i) { { pivot.value = i to pivot.value.second + 1; rowFocused(key) } }
                 val clicked = remember(item) { { click(item) } }
+                // Hold OK: the options menu, for what can be played (episodes and films).
+                val held: (() -> Unit)? = if (onLongClick != null && item.isPlayable) remember(item) { { longClick?.invoke(item); Unit } } else null
                 if (thumbs || item.isEpisode) {
-                    ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = clicked, modifier = focusMod, onFocused = focused)
+                    ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = clicked, modifier = focusMod, onFocused = focused, onLongClick = held)
                 } else {
-                    PosterCard(item, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = clicked, modifier = focusMod, onFocused = focused)
+                    PosterCard(item, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = clicked, modifier = focusMod, onFocused = focused, onLongClick = held)
                 }
             }
         }

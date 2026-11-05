@@ -122,6 +122,9 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
         repeat(6) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
     }
     OnUserDataChanged { vm.load(silent = true) }
+    // Hold OK on an episode or film in a row: play from the start, go to its show / film,
+    // mark it watched, file info.
+    var menuFor by remember { mutableStateOf<Item?>(null) }
 
     fun open(item: Item) {
         when {
@@ -132,6 +135,18 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
         }
     }
 
+    menuFor?.let { item ->
+        TvItemMenu(
+            item,
+            onPlayFromStart = { scope.launch { playItem(context, item, fromStart = true).onFailure { Timber.w(it, "play failed") } } },
+            onGoTo = when {
+                item.isEpisode -> item.seriesId?.let { sid -> { onOpenSeries(Item(id = sid, type = "series", title = item.seriesTitle ?: item.title)) } }
+                item.isMovie -> { { onOpenMovie(item) } }
+                else -> null
+            },
+            onDismiss = { menuFor = null },
+        )
+    }
     when (val s = state) {
         HomeUiState.Loading -> HomeSkeleton()
         is HomeUiState.Error -> Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.ContentStart, top = 160.dp)) {
@@ -184,6 +199,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         title = row.title, rowKey = row.key, items = row.items, api = app.api, memory = memory,
                         onClick = ::open, onRowFocused = { key -> lastInRow[row.key] = key; focusedRow.value = i + 1 }, thumbs = row.key == "continue",
                         upKey = { if (i == 0) "hero/play" else lastKey(i - 1) }, downKey = { lastKey(i + 1) },
+                        onLongClick = { menuFor = it },
                     )
                 }
                 item(key = "footer") {
