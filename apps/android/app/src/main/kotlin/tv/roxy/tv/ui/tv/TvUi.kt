@@ -292,18 +292,41 @@ fun TvFocusable(
  * so cards in a row touch frame to frame and sit 8 dp apart.
  */
 @Composable
-fun TvCard(onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
+fun TvCard(onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
     // Focus only changes what is drawn, so it is read in the draw phase: moving focus along
     // a row redraws two frames and recomposes nothing. No touch handler: a remote drives it.
     val focused = remember { mutableStateOf(false) }
     val onFocusedNow by rememberUpdatedState(onFocused)
     val onClickNow by rememberUpdatedState(onClick)
+    val onLongClickNow by rememberUpdatedState(onLongClick)
+    // With a long-press action, OK acts on release: a press held until the system's first
+    // key repeat (the long-press timeout) is a long press; a shorter one is a click.
+    val press = remember { BooleanArray(2) } // [0] OK is down on this card, [1] the long press fired
     Box(
         modifier = modifier
-            .onFocusChanged { val f = it.isFocused; if (f && !focused.value) onFocusedNow?.invoke(); focused.value = f }
+            .onFocusChanged { val f = it.isFocused; if (f && !focused.value) onFocusedNow?.invoke(); focused.value = f; if (!f) press[0] = false }
             .onKeyEvent { ev ->
                 val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
-                if (ok && ev.type == KeyEventType.KeyDown && (ev.nativeKeyEvent as NativeKeyEvent).repeatCount == 0) { onClickNow(); true } else false
+                if (!ok) return@onKeyEvent false
+                val native = ev.nativeKeyEvent as NativeKeyEvent
+                val long = onLongClickNow
+                if (long == null) {
+                    return@onKeyEvent if (ev.type == KeyEventType.KeyDown && native.repeatCount == 0) { onClickNow(); true } else false
+                }
+                when {
+                    ev.type == KeyEventType.KeyDown && native.repeatCount == 0 -> { press[0] = true; press[1] = false; true }
+                    ev.type == KeyEventType.KeyDown -> {
+                        if (press[0] && !press[1]) { press[1] = true; long() }
+                        true
+                    }
+                    ev.type == KeyEventType.KeyUp -> {
+                        val wasDown = press[0]
+                        press[0] = false
+                        if (wasDown && !press[1]) onClickNow()
+                        wasDown
+                    }
+                    else -> false
+                }
             }
             .focusable()
             .drawWithContent {

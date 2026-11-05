@@ -98,6 +98,7 @@ import tv.roxy.tv.ui.phone.OnUserDataChanged
 import tv.roxy.tv.ui.phone.audioBadge
 import tv.roxy.tv.ui.phone.languageName
 import tv.roxy.tv.ui.phone.setWatchlist
+import tv.roxy.tv.ui.phone.markWatched
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
@@ -212,7 +213,10 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
                 // No seasons on a movie: the film takes the seasons' place at the left, under its tab.
                 Spacer(Modifier.width(PageStart - TvDims.FocusBorder))
                 Column(modifier = Modifier.padding(top = 27.dp)) {
-                    EpisodeRow(movie, app.api, index = 0, onClick = { play() }, modifier = Modifier.focusRequester(first))
+                    var menu by remember { mutableStateOf(false) }
+                    if (menu) WatchedMenu(movie, season = null, onDismiss = { menu = false })
+                    EpisodeRow(movie, app.api, index = 0, onClick = { play() }, onLongClick = { if (movie.isPlayable) menu = true }, modifier = Modifier.focusRequester(first))
+                    if (movie.isPlayable) Text("Hold OK to mark it watched", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = TvDims.FocusBorder, top = 10.dp))
                 }
             }
             1 -> DetailsTab(movie, app.api, first)
@@ -359,6 +363,11 @@ private fun TitlePage(
 @Composable
 private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester) {
     val firstEpisode = remember { FocusRequester() }
+    var menuFor by remember { mutableStateOf<Item?>(null) }
+    menuFor?.let { ep ->
+        val season = seasons.getOrNull(selected)?.takeIf { ep.parentId == it.id }
+        WatchedMenu(ep, season = season, onDismiss = { menuFor = null })
+    }
     // Keyed by the season ids: a reload brings new Item objects (fresh watch state) for the
     // same seasons, and counting them again cost one request per season every time.
     val seasonIds = remember(seasons) { seasons.joinToString(",") { it.id } }
@@ -385,6 +394,7 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
                         .then(if (i == selected) Modifier.focusRequester(first) else Modifier),
                 )
             }
+            if (episodes.any { it.isPlayable }) Text("Hold OK on an episode to mark it watched", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = 16.dp, top = 14.dp))
         }
         if (episodes.isEmpty()) {
             Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
@@ -393,7 +403,7 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             // for a new season). It used to aim at episode 1 only, a dead end once scrolled.
             LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp).focusRestorer(firstEpisode), contentPadding = PaddingValues(bottom = 24.dp)) {
                 itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
-                    EpisodeRow(ep, api, index = i, onClick = { if (ep.isPlayable) onPlay(ep) }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
+                    EpisodeRow(ep, api, index = i, onClick = { if (ep.isPlayable) onPlay(ep) }, onLongClick = { if (ep.isPlayable) menuFor = ep }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
                 }
             }
         }
@@ -402,13 +412,13 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
 
 /** One episode (or the movie itself): still with minutes and progress, "E1 - Title", the audio, two lines of synopsis. */
 @Composable
-private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
     val placeholder = !ep.isPlayable
     val imageType = if (ep.isEpisode) "thumb" else "backdrop"
     val code = if (ep.isEpisode) episodeShort(ep) else ""
     val name = if (code.isEmpty()) ep.title else "$code - ${ep.title}"
     val audio = audioBadge(ep) ?: ep.availability?.takeIf { placeholder }?.replaceFirstChar { it.uppercase() }
-    TvCard(onClick = onClick, modifier = modifier.alpha(if (placeholder) 0.5f else 1f)) {
+    TvCard(onClick = onClick, onLongClick = onLongClick, modifier = modifier.alpha(if (placeholder) 0.5f else 1f)) {
         Row(modifier = Modifier.width(EpisodeThumbWidth + 12.dp + 326.dp)) {
             Box(modifier = Modifier.width(EpisodeThumbWidth).aspectRatio(16f / 9f)) {
                 // Watched, as on the phone: the still dimmed, a replay arrow, "Watched" in the corner.
@@ -429,6 +439,41 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, 
             }
         }
     }
+}
+
+/**
+ * Hold OK on an episode (or the film): mark it watched or unwatched, or its whole season.
+ * Goes through markWatched, so the page and every list reload, as on the phone.
+ */
+@Composable
+private fun WatchedMenu(item: Item, season: Item?, onDismiss: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    val first = remember { FocusRequester() }
+    val watched = item.isWatched // a rewatch under way is in progress, not watched
+    fun mark(id: String, on: Boolean) { onDismiss(); scope.launch { app.markWatched(id, on) } }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.width(440.dp).background(RoxyColors.surfaceHigh).padding(vertical = 18.dp)) {
+            val code = if (item.isEpisode) episodeShort(item) else ""
+            Text(
+                listOf(code, item.title).filter { it.isNotBlank() }.joinToString(" - "),
+                color = RoxyColors.onBackground, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
+            )
+            TvListRow(
+                label = if (watched) "Mark as unwatched" else "Mark as watched",
+                icon = if (watched) Icons.Filled.Replay else Icons.Outlined.Check, selected = true,
+                onClick = { mark(item.id, !watched) },
+                modifier = Modifier.fillMaxWidth().focusRequester(first),
+            )
+            if (season != null) {
+                val name = season.title.ifEmpty { "this season" }
+                TvListRow(label = "Mark $name as watched", icon = Icons.Outlined.Check, selected = true, onClick = { mark(season.id, true) }, modifier = Modifier.fillMaxWidth())
+                TvListRow(label = "Mark $name as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { mark(season.id, false) }, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+    LaunchedEffect(Unit) { repeat(10) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
 }
 
 /**
