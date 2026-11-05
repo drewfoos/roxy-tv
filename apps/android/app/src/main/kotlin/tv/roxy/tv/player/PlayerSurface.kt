@@ -51,13 +51,18 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
             factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(player); session.surfaceView = this } },
         )
         // Tap: toggle the controls. Double-tap: seek -10 s on the left half, +10 s on
-        // the right (YouTube), with a flash saying how far.
+        // the right (YouTube), with a flash saying how far. Pinch zoom only in fullscreen:
+        // it was buggy in the phone page's inline 16:9 box, so that box has none. Rotating
+        // back from fullscreen resets any zoom (applySurfaceSize in MpvPlayer).
+        val inline = session.ui.fullscreen == false
         Box(
-            modifier = Modifier.fillMaxSize().pinchZoom(
-                onZoom = { f, x, y -> session.onZoom(f, x, y) },
-                onLevel = { level, active -> session.onZoomLevel(level, active) },
-                onPinchStart = { session.onPinchStart() },
-                videoAspect = { if (player.isFill()) null else player.videoAspect()?.toFloat() },
+            modifier = Modifier.fillMaxSize().then(
+                if (inline) Modifier else Modifier.pinchZoom(
+                    onZoom = { f, x, y -> session.onZoom(f, x, y) },
+                    onLevel = { level, active -> session.onZoomLevel(level, active) },
+                    onPinchStart = { session.onPinchStart() },
+                    videoAspect = { if (player.isFill()) null else player.videoAspect()?.toFloat() },
+                ),
             ).pointerInput(Unit) {
                 // Compose's tap detector fires on the up even after a long drag (it only
                 // checks consumption), so a swipe from the top edge for the status bar
@@ -74,7 +79,7 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
             },
         )
         // Zoom readout: "1.5×" at the top while pinching and briefly after.
-        if (session.zoomHud) {
+        if (session.zoomHud && !inline) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Text(
                     "%.1f×".format(session.zoomLevel),
