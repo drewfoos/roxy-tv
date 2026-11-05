@@ -468,7 +468,8 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
             val target = if (item.isEpisode) item.seriesId ?: item.id else item.id
             var saved by remember(target, item.userData?.isFavorite) { mutableStateOf(if (item.isEpisode) null else item.userData?.isFavorite == true) }
             LaunchedEffect(open, target) {
-                if (open && saved == null) saved = runCatching { api.item(target).userData?.isFavorite == true }.getOrNull()
+                // An episode's show can be saved or removed elsewhere: look it up on every open.
+                if (open && (saved == null || item.isEpisode)) runCatching { api.item(target).userData?.isFavorite == true }.getOrNull()?.let { saved = it }
             }
             val isSaved = saved == true
             DropdownMenuItem(

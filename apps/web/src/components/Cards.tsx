@@ -305,6 +305,18 @@ export function CardMenu({ item, played, onPlayedChange, onOpenChange }: { item:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
   const target = isEpisode(item) ? (item.seriesId ?? item.id) : item.id
+  // A title's own Watchlist flag follows fresh data. An episode's menu saves its show,
+  // whose flag the card doesn't carry: look it up each time the menu opens (it used to
+  // stay unknown, so the menu always said "Add" and could never remove the show).
+  useEffect(() => {
+    if (!isEpisode(item)) setSaved(item.userData?.isFavorite ?? false)
+  }, [item.id, item.userData?.isFavorite]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!open || !isEpisode(item)) return
+    let live = true
+    api.item(target).then((s) => { if (live) setSaved(s.userData?.isFavorite ?? false) }).catch(() => {})
+    return () => { live = false }
+  }, [open, target]) // eslint-disable-line react-hooks/exhaustive-deps
   const toggleSave = async () => {
     const want = !(saved ?? false)
     setSaved(want)

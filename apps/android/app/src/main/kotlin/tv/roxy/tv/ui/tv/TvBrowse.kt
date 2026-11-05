@@ -108,6 +108,8 @@ private fun rememberLibrary(): Pair<List<Item>?, String?> {
     }
     // Failed while the server was away: fill in once it answers again.
     tv.roxy.tv.ui.components.OnServerBack { if (items == null) fetch() }
+    // A film finished or marked: its "Watched" badge must not wait out the cache.
+    tv.roxy.tv.ui.phone.OnUserDataChanged { LibraryCache.at = 0; fetch() }
     return items to error
 }
 

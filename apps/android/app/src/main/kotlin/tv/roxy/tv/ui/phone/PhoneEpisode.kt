@@ -213,6 +213,14 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
         series = app.items[seriesId] ?: runCatching { app.api.item(seriesId) }.getOrNull()
     }
     val seriesRating = series?.officialRating
+    // The page's own episode (or film) was loaded once, for the player; its watched state
+    // changes under it (its menu, finishing or rewatching it here). Refresh just that, so
+    // its menu offers the right "Mark as watched / unwatched".
+    LaunchedEffect(watchedKey) {
+        if (watchedKey == 0) return@LaunchedEffect
+        val id = episode?.id ?: return@LaunchedEffect
+        runCatching { app.api.item(id) }.onSuccess { fresh -> if (episode?.id == id) episode = episode?.copy(userData = fresh.userData) }
+    }
     LaunchedEffect(episode?.seriesId, watchedKey) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
         runCatching { app.api.items(type = "episode", parent = seriesId, recursive = true, includeSources = true, sort = "index").items }
