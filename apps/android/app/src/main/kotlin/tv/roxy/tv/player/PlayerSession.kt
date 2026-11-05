@@ -129,8 +129,6 @@ class PlayerSession(
     private var hideJob: Job? = null
     var trickplay by mutableStateOf<TrickplayPreview?>(null); private set
     var doubleTapFlash by mutableStateOf(0); private set // -10 / +10 while the ripple shows
-    var zoomLevel by mutableStateOf(1f); private set
-    var zoomHud by mutableStateOf(false); private set // "1.5×" readout shown (fingers down, or just after)
     /** The SurfaceView the video draws into (set by [PlayerSurface]); null for a host without one yet. */
     @Volatile var surfaceView: android.view.SurfaceView? = null
 
@@ -146,7 +144,6 @@ class PlayerSession(
         val sv = surfaceView ?: return
         if (on) { if (sv.width > 0 && sv.height > 0) sv.holder.setFixedSize(sv.width, sv.height) } else sv.holder.setSizeFromLayout()
     }
-    private var zoomHudJob: Job? = null
     private var flashJob: Job? = null
     private var lastSid = 0
     private var autoSkip = false
@@ -422,17 +419,6 @@ class PlayerSession(
         flashJob = scope.launch { delay(700); doubleTapFlash = 0 }
     }
 
-    fun onZoom(factor: Double, x: Double, y: Double) = player.setZoom(factor, x, y)
-
-    fun onZoomLevel(level: Float, active: Boolean) {
-        zoomLevel = level
-        zoomHud = true
-        zoomHudJob?.cancel()
-        if (!active) zoomHudJob = scope.launch { delay(1400); zoomHud = false }
-    }
-
-    fun onPinchStart() = hideControls()
-
     fun openSheet(s: Sheet) { sheet = s; showControls() }
 
     /** The stats overlay; mpv logs verbosely only while it is up. */
@@ -614,6 +600,7 @@ class PlayerSession(
         app.scope.launch {
             reportLock.withLock {
                 val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
+                if (ok) app.items.userDataChanged()
                 if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
             }
         }
@@ -1061,6 +1048,9 @@ class PlayerSession(
                 if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
                 // The server answers again: send what was saved while it was away.
                 if (ok) app.downloads.syncProgress(app.api)
+                // Watched state may have changed (finished, or a rewatch made it "in
+                // progress"): every list and menu on screen reloads, like a menu action.
+                if (ok && (reason == "stop" || reason == "end")) app.items.userDataChanged()
             }
         }
     }
@@ -1093,7 +1083,7 @@ class PlayerSession(
         if (destroyed) return
         destroyed = true
         if (app.remote.activePlayer === this) { app.remote.activePlayer = null; app.remote.reportState(null, "", 0, false) }
-        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); zoomHudJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel()
+        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel()
         app.server.playerActive.value = false
         runCatching { displayManager?.unregisterDisplayListener(displayListener) }
         glue.release()

@@ -33,8 +33,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.Text
 
 /**
- * The video and every layer over it: tap/double-tap/pinch handling, the zoom and
- * double-tap readouts, the transport controls, the next-episode card, the OSD and the
+ * The video and every layer over it: tap/double-tap handling, the double-tap readout, the transport controls, the next-episode card, the OSD and the
  * stats overlay. Draws wherever it is put: the whole screen in [PlayerActivity], a box
  * on the phone's episode page.
  */
@@ -51,19 +50,10 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
             factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(player); session.surfaceView = this } },
         )
         // Tap: toggle the controls. Double-tap: seek -10 s on the left half, +10 s on
-        // the right (YouTube), with a flash saying how far. Pinch zoom only in fullscreen:
-        // it was buggy in the phone page's inline 16:9 box, so that box has none. Rotating
-        // back from fullscreen resets any zoom (applySurfaceSize in MpvPlayer).
-        val inline = session.ui.fullscreen == false
+        // the right (YouTube), with a flash saying how far. No pinch zoom anywhere: it was
+        // buggy, inline and fullscreen alike (removed in 0.5.29; the Fill button crops).
         Box(
-            modifier = Modifier.fillMaxSize().then(
-                if (inline) Modifier else Modifier.pinchZoom(
-                    onZoom = { f, x, y -> session.onZoom(f, x, y) },
-                    onLevel = { level, active -> session.onZoomLevel(level, active) },
-                    onPinchStart = { session.onPinchStart() },
-                    videoAspect = { if (player.isFill()) null else player.videoAspect()?.toFloat() },
-                ),
-            ).pointerInput(Unit) {
+            modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                 // Compose's tap detector fires on the up even after a long drag (it only
                 // checks consumption), so a swipe from the top edge for the status bar
                 // or shade would count as a tap and pop the controls. Require the finger
@@ -78,16 +68,6 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
                 )
             },
         )
-        // Zoom readout: "1.5×" at the top while pinching and briefly after.
-        if (session.zoomHud && !inline) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Text(
-                    "%.1f×".format(session.zoomLevel),
-                    color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).background(Color(0x99000000), RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 5.dp),
-                )
-            }
-        }
         if (session.doubleTapFlash != 0) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Row(

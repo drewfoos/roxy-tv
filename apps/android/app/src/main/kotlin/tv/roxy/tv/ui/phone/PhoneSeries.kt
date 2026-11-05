@@ -724,7 +724,7 @@ internal fun EpisodeMenu(ep: Item, api: RoxyApi, onMarkWatched: (Boolean) -> Uni
     Box(modifier) {
         Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = RoxyColors.muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { open = true }.padding(6.dp))
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
-            val watched = ep.userData?.played == true
+            val watched = ep.isWatched // a rewatch under way is in progress, not watched
             DropdownMenuItem(
                 text = { Text(if (watched) "Mark as unwatched" else "Mark as watched", color = Color.White) },
                 leadingIcon = { Icon(if (watched) Icons.Outlined.RemoveDone else Icons.Filled.Check, null, tint = Color.White) },

@@ -44,14 +44,26 @@ func (s *Store) GetUserItemData(ctx context.Context, userID, guid string) (*User
 	return &d, nil
 }
 
+// RewatchMinMs is how far into a watched item a new viewing must get before it counts
+// as a rewatch. Past it, the item stops being watched and becomes "in progress" at the
+// new position (its play count is kept; finishing it again counts another play).
+// Before it, the report is a peek: the item stays watched with no resume point, so an
+// episode opened by mistake doesn't lose its tick.
+const RewatchMinMs = 30_000
+
 // SetProgress records a playback position (and track selections) for a user/item.
+// On a watched item it follows [RewatchMinMs]: a watched item is never also part-way,
+// which used to show "Watched" in the episode list and "Resume" on Home at once.
 func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
 		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = excluded.position_ms, last_played_at = excluded.last_played_at,
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
+			position_ms = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.position_ms ELSE excluded.position_ms END,
+			last_played_at = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
+			played = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN 1 ELSE 0 END,
 			audio_stream_index = COALESCE(excluded.audio_stream_index, user_item_data.audio_stream_index),
 			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`,
-		userID, guid, positionMs, Now(), intPtrNull(audio), intPtrNull(sub))
+		userID, guid, positionMs, Now(), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs)
 	return err
 }
 

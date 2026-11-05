@@ -4,7 +4,7 @@ import { api, px } from '../api/client'
 import { audioBadge, episodeCode, isPlayable, nextToPlay, playLabel, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
-import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard, isWatched, withPlayed } from '../components/Cards'
+import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard, isWatched, useWatchedState, withPlayed } from '../components/Cards'
 import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
@@ -219,7 +219,7 @@ function SeasonSelect({ seasons, index, onSelect }: { seasons: Item[]; index: nu
  * it watched from the menu redraws the card at once.
  */
 export function EpisodeCard({ ep: given, seriesTitle }: { ep: Item; seriesTitle?: string }) {
-  const [played, setPlayed] = useState(!!given.userData?.played)
+  const [played, setPlayed] = useWatchedState(given)
   const ep = useMemo(() => withPlayed(given, played), [given, played])
   const playable = isPlayable(ep)
   const left = timeLeftLabel(ep)

@@ -481,7 +481,7 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
                 },
             )
             if (item.isPlayable) {
-                val watched = item.userData?.played == true
+                val watched = item.isWatched // a rewatch under way is in progress, not watched
                 DropdownMenuItem(
                     text = { Text(if (watched) "Mark as unwatched" else "Mark as watched", color = Color.White) },
                     leadingIcon = { Icon(if (watched) Icons.Outlined.RemoveDone else Icons.Filled.CheckCircle, null, tint = Color.White) },

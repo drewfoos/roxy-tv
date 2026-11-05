@@ -136,7 +136,7 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
   const movie = isMovie(item)
   const url = movie ? (api.imageUrl(item, 'backdrop', px(width)) ?? api.imageUrl(item, 'poster', px(width))) : api.imageUrl(item, 'thumb', px(width))
   const badge = audioBadge(item)
-  const [played, setPlayed] = useState(!!item.userData?.played)
+  const [played, setPlayed] = useWatchedState(item)
   const shown = useMemo(() => withPlayed(item, played), [item, played])
   const left = timeLeftLabel(shown)
   const watched = isWatched(shown)
@@ -228,7 +228,7 @@ function formatAirDate(v?: string | null): string | null {
 
 /** The item as it looks once marked watched / unwatched (the server resets the position too). */
 export function withPlayed(item: Item, played: boolean): Item {
-  if (played === !!item.userData?.played) return item
+  if (played === isWatched(item)) return item
   return { ...item, userData: { ...(item.userData ?? { positionMs: 0, playCount: 0, played: false, isFavorite: false }), played, positionMs: 0 } }
 }
 
@@ -239,6 +239,19 @@ export function withPlayed(item: Item, played: boolean): Item {
  */
 export function isWatched(item: Item): boolean {
   return !!item.userData?.played && (item.userData?.positionMs ?? 0) <= 0
+}
+
+/**
+ * A card's own copy of "watched", so the menu can flip it at once. It starts from
+ * isWatched (a rewatch under way is in progress, so the menu offers "Mark as watched")
+ * and follows the item when a reload brings newer watch state for the same card.
+ */
+export function useWatchedState(item: Item): [boolean, (v: boolean) => void] {
+  const [watched, setWatched] = useState(isWatched(item))
+  const played = !!item.userData?.played
+  const positionMs = item.userData?.positionMs ?? 0
+  useEffect(() => setWatched(isWatched(item)), [played, positionMs]) // eslint-disable-line react-hooks/exhaustive-deps
+  return [watched, setWatched]
 }
 
 /**
@@ -266,7 +279,7 @@ export function CardMenu({ item, played, onPlayedChange, onOpenChange }: { item:
     })
   }
   const [saved, setSaved] = useState<boolean | null>(isEpisode(item) ? null : (item.userData?.isFavorite ?? false))
-  const [ownWatched, setOwnWatched] = useState(item.userData?.played ?? false)
+  const [ownWatched, setOwnWatched] = useWatchedState(item)
   const watched = played ?? ownWatched
   const setWatched = (v: boolean) => {
     setOwnWatched(v)

@@ -402,17 +402,6 @@ class MpvPlayer(
 
     fun isFill(): Boolean = (dbl("panscan") ?: 0.0) > 0.5
 
-    /**
-     * Pinch zoom: [factor] 1..8 (mpv's video-zoom is log2), [panX]/[panY] as fractions of
-     * the scaled video size. Reset with (1, 0, 0).
-     */
-    fun setZoom(factor: Double, panX: Double, panY: Double) {
-        if (destroyed) return
-        mpv.setPropertyDouble("video-zoom", kotlin.math.log2(factor.coerceIn(1.0, 8.0)))
-        mpv.setPropertyDouble("video-pan-x", panX)
-        mpv.setPropertyDouble("video-pan-y", panY)
-    }
-
     /** Display aspect (width/height) of the current video, or null before it is known. */
     fun videoAspect(): Double? = dbl("video-params/aspect")?.takeIf { it > 0.0 }
 
@@ -693,13 +682,11 @@ class MpvPlayer(
         surface = null
     }
 
+    /** The last size handed to mpv; [redrawAfterResize] sets it again. */
     private var lastSurface: Pair<Int, Int>? = null
 
     private fun applySurfaceSize(width: Int, height: Int) {
         mpv.setPropertyString("android-surface-size", "${width}x$height")
-        // A new size (the page's 16:9 box <-> the whole screen) starts from a plain fit: a
-        // pinch zoom or pan from the old size would scale the picture wrongly in the new one.
-        if (lastSurface != null && lastSurface != width to height) setZoom(1.0, 0.0, 0.0)
         lastSurface = width to height
     }
 
