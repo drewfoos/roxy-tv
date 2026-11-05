@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -216,7 +217,7 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
                     var menu by remember { mutableStateOf(false) }
                     if (menu) WatchedMenu(movie, season = null, onDismiss = { menu = false })
                     EpisodeRow(movie, app.api, index = 0, onClick = { play() }, onLongClick = { if (movie.isPlayable) menu = true }, modifier = Modifier.focusRequester(first))
-                    if (movie.isPlayable) Text("Hold OK to mark it watched", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = TvDims.FocusBorder, top = 10.dp))
+                    if (movie.isPlayable) Text("Hold OK for options", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = TvDims.FocusBorder, top = 10.dp))
                 }
             }
             1 -> DetailsTab(movie, app.api, first)
@@ -394,7 +395,7 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
                         .then(if (i == selected) Modifier.focusRequester(first) else Modifier),
                 )
             }
-            if (episodes.any { it.isPlayable }) Text("Hold OK on an episode to mark it watched", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = 16.dp, top = 14.dp))
+            if (episodes.any { it.isPlayable }) Text("Hold OK on an episode for options", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = 16.dp, top = 14.dp))
         }
         if (episodes.isEmpty()) {
             Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
@@ -442,38 +443,81 @@ private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, 
 }
 
 /**
- * Hold OK on an episode (or the film): mark it watched or unwatched, or its whole season.
- * Goes through markWatched, so the page and every list reload, as on the phone.
+ * Hold OK on an episode (or the film): mark it watched or unwatched, or its whole season,
+ * and File info (codec, resolution, tracks, size), since episodes come from different
+ * releases. Marking goes through markWatched, so the page and every list reload.
  */
 @Composable
 private fun WatchedMenu(item: Item, season: Item?, onDismiss: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
-    val first = remember { FocusRequester() }
+    var info by remember { mutableStateOf(false) }
     val watched = item.isWatched // a rewatch under way is in progress, not watched
     fun mark(id: String, on: Boolean) { onDismiss(); scope.launch { app.markWatched(id, on) } }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.width(440.dp).background(RoxyColors.surfaceHigh).padding(vertical = 18.dp)) {
+        Column(modifier = Modifier.width(520.dp).background(RoxyColors.surfaceHigh).padding(vertical = 18.dp)) {
             val code = if (item.isEpisode) episodeShort(item) else ""
             Text(
                 listOf(code, item.title).filter { it.isNotBlank() }.joinToString(" - "),
                 color = RoxyColors.onBackground, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
             )
-            TvListRow(
-                label = if (watched) "Mark as unwatched" else "Mark as watched",
-                icon = if (watched) Icons.Filled.Replay else Icons.Outlined.Check, selected = true,
-                onClick = { mark(item.id, !watched) },
-                modifier = Modifier.fillMaxWidth().focusRequester(first),
-            )
-            if (season != null) {
-                val name = season.title.ifEmpty { "this season" }
-                TvListRow(label = "Mark $name as watched", icon = Icons.Outlined.Check, selected = true, onClick = { mark(season.id, true) }, modifier = Modifier.fillMaxWidth())
-                TvListRow(label = "Mark $name as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { mark(season.id, false) }, modifier = Modifier.fillMaxWidth())
+            if (info) {
+                FileInfo(item, onBack = { info = false })
+            } else {
+                val first = remember { FocusRequester() }
+                TvListRow(
+                    label = if (watched) "Mark as unwatched" else "Mark as watched",
+                    icon = if (watched) Icons.Filled.Replay else Icons.Outlined.Check, selected = true,
+                    onClick = { mark(item.id, !watched) },
+                    modifier = Modifier.fillMaxWidth().focusRequester(first),
+                )
+                if (season != null) {
+                    val name = season.title.ifEmpty { "this season" }
+                    TvListRow(label = "Mark $name as watched", icon = Icons.Outlined.Check, selected = true, onClick = { mark(season.id, true) }, modifier = Modifier.fillMaxWidth())
+                    TvListRow(label = "Mark $name as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { mark(season.id, false) }, modifier = Modifier.fillMaxWidth())
+                }
+                TvListRow(label = "File info", icon = Icons.Outlined.Info, selected = true, onClick = { info = true }, modifier = Modifier.fillMaxWidth())
+                LaunchedEffect(Unit) { repeat(10) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
             }
         }
     }
-    LaunchedEffect(Unit) { repeat(10) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+}
+
+/** The file's facts, as on the phone's File info: video, tracks, size, container, notes. Back returns to the menu. */
+@Composable
+private fun FileInfo(given: Item, onBack: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    // Episode lists carry the file; a film's page item may not.
+    var item by remember(given.id) { mutableStateOf(given) }
+    LaunchedEffect(given.id) {
+        if (given.mediaSources.isEmpty()) runCatching { app.api.item(given.id) }.onSuccess { item = it }
+    }
+    val e = with(app.api) { item.toEpisode() }
+    val src = item.primarySource
+    Column(modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (item.mediaSources.isEmpty()) Text("Loading…", color = TvSubtle, fontSize = 16.sp)
+        else {
+            InfoLine("Video", e.videoLine)
+            InfoLine("Tracks", e.tracksLine)
+            InfoLine("Size", src?.size?.takeIf { it > 0 }?.let { tv.roxy.tv.data.downloads.formatBytes(it) })
+            InfoLine("Container", src?.container)
+            val flags = listOfNotNull(if (e.isHi10p) "Hi10P" else null, if (e.hasAss) "ASS subtitles" else null).joinToString(", ")
+            if (flags.isNotEmpty()) InfoLine("Notes", flags)
+        }
+    }
+    val back = remember { FocusRequester() }
+    TvListRow(label = "Back", icon = Icons.Filled.ArrowBack, selected = true, onClick = onBack, modifier = Modifier.fillMaxWidth().focusRequester(back))
+    LaunchedEffect(Unit) { repeat(10) { withFrameNanos { }; if (runCatching { back.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Column {
+        Text(label, fontSize = 14.sp, color = TvSubtle)
+        Text(value, fontSize = 17.sp, lineHeight = 23.sp, color = RoxyColors.onBackground, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+    }
 }
 
 /**
