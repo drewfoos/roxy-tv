@@ -98,9 +98,16 @@ func (s *Store) UpdateProfile(ctx context.Context, id, name, avatarURL, avatarNa
 	return nil
 }
 
-func (s *Store) SetProfileAvatarPath(ctx context.Context, id, path string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE profiles SET avatar_path = ? WHERE id = ?`, path, id)
-	return err
+// SetProfileAvatarPath records the cached file for the profile's picture, only if url is
+// still the picture the profile has chosen (checked in the same statement). False when it
+// is not: a newer choice came in while this one was downloading.
+func (s *Store) SetProfileAvatarPath(ctx context.Context, id, url, path string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE profiles SET avatar_path = ? WHERE id = ? AND avatar_url = ?`, path, id, url)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DeleteProfile removes a profile and its watch state. Deleting the default promotes the

@@ -253,17 +253,47 @@ func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
 	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
-	path := filepath.Join(dir, prof.ID+".jpg")
-	if err := safefs.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	// One file per picture (<profile>-<hash of its URL>.jpg), written whole (temp file, then
+	// rename), and recorded only if that URL is still the profile's choice. It used to be
+	// <profile>.jpg for every picture and recorded unconditionally, so of two overlapping
+	// changes the slower download overwrote the newer picture, and the profile showed one
+	// picture under the other's URL.
+	base := prof.ID + "-" + avatarKey(prof.AvatarURL)
+	path := filepath.Join(dir, base+".jpg")
+	tmp := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
+	if err := safefs.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
 		return
 	}
-	// Drop stale resized variants from a previous avatar.
-	matches, _ := filepath.Glob(filepath.Join(dir, prof.ID+".w*.jpg"))
-	for _, m := range matches {
-		safefs.Remove(m)
+	if err := safefs.Rename(tmp, path); err != nil {
+		safefs.Remove(tmp)
+		return
 	}
-	if err := s.store.SetProfileAvatarPath(ctx, prof.ID, path); err == nil {
-		prof.AvatarPath = path
+	current, err := s.store.SetProfileAvatarPath(ctx, prof.ID, prof.AvatarURL, path)
+	if err != nil || !current {
+		// Another picture was chosen meanwhile (or the profile is gone): this one is not
+		// wanted. Its file goes; the newer choice's file has another name and is untouched.
+		removeAvatarFiles(dir, base, "")
+		return
+	}
+	prof.AvatarPath = path
+	// The profile's earlier pictures and their resized variants, and the old <profile>.jpg.
+	removeAvatarFiles(dir, prof.ID, base)
+}
+
+// removeAvatarFiles deletes the cached pictures in dir whose names start with prefix
+// (followed by ".", "-" or nothing else), except those of keep (a picture's base name).
+func removeAvatarFiles(dir, prefix, keep string) {
+	matches, _ := filepath.Glob(filepath.Join(dir, prefix+"*.jpg"))
+	for _, m := range matches {
+		name := filepath.Base(m)
+		rest := strings.TrimPrefix(name, prefix)
+		if rest != ".jpg" && !strings.HasPrefix(rest, ".") && !strings.HasPrefix(rest, "-") {
+			continue // another profile whose id merely starts the same way
+		}
+		if keep != "" && (name == keep+".jpg" || strings.HasPrefix(name, keep+".")) {
+			continue
+		}
+		safefs.Remove(m)
 	}
 }
 
