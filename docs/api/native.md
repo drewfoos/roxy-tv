@@ -269,13 +269,15 @@ is only for files named `S00Exx`, and nothing is auto-moved.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/v1/me/resume?limit=` | `{items: [Item]}` with `userData.positionMs > 0` and not played, most recent first (default 20) |
-| POST | `/v1/me/progress` | `{itemId, positionMs, audioIndex?, subtitleIndex?}` → 204. Marks played (and resets the position) at >= 90 % of runtime. On a played item, a position past 30 s makes it in progress again (play count kept); a shorter one is ignored, so it stays played. 404 for an unknown item. |
+| POST | `/v1/me/progress` | `{itemId, positionMs, audioIndex?, subtitleIndex?}` → 204. Marks played (and resets the position) at >= 90 % of runtime. On a played item, a position past 30 s makes it in progress again (play count kept); a shorter one is ignored, so it stays played. `audioIndex` / `subtitleIndex` are the stream indexes chosen; omitted means unchanged, and `subtitleIndex: -1` means subtitles turned off (stored, so they stay off next time; any other negative is read as -1). 404 for an unknown item. |
 | POST / DELETE | `/v1/me/played/{itemId}` | set / clear played, returns `{itemId, userData}`. On a series or season it applies to every episode beneath it, all or nothing. Setting played on an unplayed item counts one play now; an item already played keeps its `playCount` and `lastPlayedAt`, so marking a half-seen season watched does not count the seen half again. |
 | POST / DELETE | `/v1/me/favorite/{itemId}` | set / clear favourite, returns `{itemId, userData}` |
 
 Every Item in a list, detail, home or resume response for a user token carries
 `userData: {positionMs, played, playCount, isFavorite, lastPlayedAt?, audioIndex?,
-subtitleIndex?}` (one batched query per response). API-key callers get no `userData`,
+subtitleIndex?}` (one batched query per response). `subtitleIndex: -1` means the viewer
+turned subtitles off: start playback with none, never treat it as a stream index; absent
+means no choice saved. API-key callers get no `userData`,
 and the `/v1/me/*` endpoints answer them 401.
 
 ## Profiles

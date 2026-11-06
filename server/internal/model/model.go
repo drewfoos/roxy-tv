@@ -91,6 +91,7 @@ type Item struct {
 }
 
 // UserData is the per-user watch state as the native API renders it.
+// SubtitleIndex -1 means the viewer turned subtitles off; it is never a stream index.
 type UserData struct {
 	PositionMs    int64      `json:"positionMs"`
 	Played        bool       `json:"played"`

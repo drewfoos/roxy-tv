@@ -69,6 +69,10 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items})
 }
 
+// SubtitlesOff is the subtitleIndex a client sends, and gets back in userData, for
+// "subtitles turned off". It is never a stream index.
+const SubtitlesOff = -1
+
 // POST /v1/me/progress {itemId, positionMs, audioIndex?, subtitleIndex?} -> 204
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	p := userFrom(w, r)
@@ -90,6 +94,13 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.PositionMs < 0 {
 		body.PositionMs = 0
+	}
+	// subtitleIndex -1 means "subtitles off" and is stored as such, so the choice sticks
+	// (omitting it keeps the saved one, which used to bring subtitles back next time).
+	// Any other negative is read as off too, so a stored index is a real stream or -1.
+	if body.SubtitleIndex != nil && *body.SubtitleIndex < 0 {
+		off := SubtitlesOff
+		body.SubtitleIndex = &off
 	}
 	it, err := s.store.GetItem(r.Context(), body.ItemID)
 	if err != nil {
