@@ -71,3 +71,34 @@ func TestResolveRefusesRootsAndDotDot(t *testing.T) {
 		t.Fatal("rootOrAbove")
 	}
 }
+
+// Exactly one mapping applies, the longest From matching the path as sent, whatever the
+// list order; a later mapping never matches the rewritten path.
+func TestResolveMappingsLongestOnlyAnyOrder(t *testing.T) {
+	roots := []string{"/mnt/media/tv", "/mnt/a", "/mnt/x"}
+	all := func(string) bool { return true }
+	overlapping := []PathMapping{{From: "/data", To: "/mnt/a"}, {From: "/data/tv", To: "/mnt/media/tv"}}
+	chaining := []PathMapping{{From: "/data", To: "/mnt/x"}, {From: "/mnt/x/tv", To: "/mnt/media/tv"}}
+	reversed := func(m []PathMapping) []PathMapping { return []PathMapping{m[1], m[0]} }
+	cases := []struct {
+		name     string
+		mappings []PathMapping
+		want     string
+	}{
+		{"overlapping", overlapping, "/mnt/media/tv/Show/x.mkv"},
+		{"overlapping reversed", reversed(overlapping), "/mnt/media/tv/Show/x.mkv"},
+		{"chaining", chaining, "/mnt/x/tv/Show/x.mkv"},
+		{"chaining reversed", reversed(chaining), "/mnt/x/tv/Show/x.mkv"},
+	}
+	for _, c := range cases {
+		got, ok := Resolve("/data/tv/Show/x.mkv", c.mappings, roots, all)
+		if !ok || got != filepath.FromSlash(c.want) {
+			t.Errorf("%s: got %q ok=%v, want %q", c.name, got, ok, c.want)
+		}
+	}
+	// A From must end on a folder boundary: /data/tvshows is not under /data/tv.
+	got, ok := Resolve("/data/tvshows/x.mkv", overlapping, roots, all)
+	if !ok || got != filepath.FromSlash("/mnt/a/tvshows/x.mkv") {
+		t.Errorf("boundary: got %q ok=%v", got, ok)
+	}
+}

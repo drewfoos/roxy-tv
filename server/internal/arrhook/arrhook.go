@@ -349,7 +349,7 @@ func (s *Service) resolve(ctx context.Context, p string) (string, bool) {
 	return Resolve(p, cfg.PathMappings, roots, func(path string) bool { _, err := os.Stat(path); return err == nil })
 }
 
-// Resolve applies the mappings (longest prefix first), then checks the result is under a
+// Resolve applies the longest matching mapping (one only), then checks the result is under a
 // root; otherwise it tries every suffix of the path under every root and keeps the first
 // that exists. Pure, so it is unit-tested with a fake filesystem.
 func Resolve(p string, mappings []PathMapping, roots []string, exists func(string) bool) (string, bool) {
@@ -359,13 +359,18 @@ func Resolve(p string, mappings []PathMapping, roots []string, exists func(strin
 	if strings.Contains(norm(p), ":") && !strings.HasPrefix(norm(p), "/") {
 		src = path.Clean(norm(p)) // a Windows drive path ("D:/media/...")
 	}
-	best := ""
+	// One mapping at most: the longest From that is the path or a folder above it, compared
+	// against the path as the arr app sent it. Rewriting as the loop went made the result
+	// depend on list order, and let a later mapping match the already rewritten path.
+	best, bestTo := "", ""
 	for _, m := range mappings {
 		from := strings.TrimRight(norm(m.From), "/")
 		if from != "" && (src == from || strings.HasPrefix(src, from+"/")) && len(from) > len(best) {
-			best = from
-			src = strings.TrimRight(norm(m.To), "/") + strings.TrimPrefix(src, from)
+			best, bestTo = from, strings.TrimRight(norm(m.To), "/")
 		}
+	}
+	if best != "" {
+		src = bestTo + strings.TrimPrefix(src, best)
 	}
 	under := func(path string) (string, bool) {
 		for _, r := range roots {
