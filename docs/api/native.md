@@ -268,22 +268,21 @@ is only for files named `S00Exx`, and nothing is auto-moved.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/v1/me/resume?limit=` | `{items: [Item]}` with `userData.positionMs > 0` and not played, most recent first (default 20) |
-| POST | `/v1/me/progress` | `{itemId, positionMs, audioIndex?, subtitleIndex?}` → 204. Marks played (and resets the position) at >= 90 % of runtime. 404 for an unknown item. |
+| POST | `/v1/me/progress` | `{itemId, positionMs, audioIndex?, subtitleIndex?}` → 204. Marks played (and resets the position) at >= 90 % of runtime. On a played item, a position past 30 s makes it in progress again (play count kept); a shorter one is ignored, so it stays played. 404 for an unknown item. |
 | POST / DELETE | `/v1/me/played/{itemId}` | set / clear played, returns `{itemId, userData}` |
 | POST / DELETE | `/v1/me/favorite/{itemId}` | set / clear favourite, returns `{itemId, userData}` |
 
 Every Item in a list, detail, home or resume response for a user token carries
 `userData: {positionMs, played, playCount, isFavorite, lastPlayedAt?, audioIndex?,
 subtitleIndex?}` (one batched query per response). API-key callers get no `userData`,
-and the `/v1/me/*` endpoints answer them 401. The same store backs the Jellyfin-compat
-session endpoints, so progress reported either way is one record.
+and the `/v1/me/*` endpoints answer them 401.
 
 ## Profiles
 
 Several viewers on one login (Netflix-style). Watch state, favourites, `/v1/me/resume`
 and `/v1/home` are **per profile**. Clients send `X-Roxy-Profile: <id>` on every request;
 without it (or with a profile that is not the caller's) the user's default profile is
-used, which is also what the Jellyfin-compat surface writes to. Migration 0007 gave every
+used. Migration 0007 gave every
 existing user a default profile that inherited their history. At most 6 per account.
 
 | Method | Path | Notes |

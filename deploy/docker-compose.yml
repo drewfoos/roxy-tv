@@ -1,9 +1,8 @@
 # Roxy Server. Point the /data volume at your library and list its folders in
 # ROXY_MEDIA_ROOTS (example: /data/media/{movies,tv}). Roxy only reads media.
 #
-# Roxy keeps Jellyfin's port (8096) so request app, Sonarr and Radarr only need a new
-# host/token when switching over. Run both side by side on different ports first
-# (e.g. "8097:8096" while Jellyfin still has 8096).
+# Roxy listens on 8096 (HTTP) and 8096/udp (LAN discovery). If another server already
+# has 8096 on this host, publish a different host port (e.g. "8097:8096").
 #
 # Compose builds the image from this repo (server and web app together):
 #   cd roxy/deploy && docker compose up -d --build roxy

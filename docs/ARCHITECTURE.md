@@ -1,496 +1,385 @@
 # Roxy TV architecture
 
-> **2026-10-26:** the Jellyfin-compatible API described below was removed (ADR-0008). Roxy's
-> clients, Discover and the arr webhooks use the native `/v1` API; compat mentions here are history.
+How Roxy is built today: the server, the Android app (phone and TV) and Roxy Web. This
+document describes the code on `main` and is kept in step with it. Why each big choice was
+made is in `docs/adr/`; the API is specified in `docs/api/native.md`; the dated history of
+the work is in `docs/ROADMAP.md`.
 
-Status: draft v1, 2026-10-13. Based on the research in `docs/research/`.
+Earlier drafts of this document described a Jellyfin-compatible API and a request app
+integration. Both are gone: the compat API was removed in ADR-0008, and requests are
+handled by Roxy's own Discover (section 4.10). Section 9 lists other ideas from those drafts
+that were never built.
 
 ## 1. Goals and non-goals
 
 ### Goals
 
-1. **Styled ASS subtitles render correctly on the TV.** Full libass fidelity (typesetting,
-   signs, karaoke, embedded MKV fonts) on Android TV, with no server transcode.
-2. **Direct play first.** Hi10P H.264, HEVC Main10, AV1, FLAC/Opus/EAC3/TrueHD audio all
-   play untouched. The client decodes; the server only serves bytes.
-3. **Transcode only as a fallback**, with libass burn-in, for devices that cannot keep up.
-4. **Per-user accounts** with device tokens, TV-friendly device-code login, watch state,
-   library-scoped access, and parental caps.
-5. **Drop-in for the arr pipeline.** request app, Sonarr and Radarr work unchanged by pointing
-   them at Roxy Server as if it were Jellyfin.
-6. **Anime-aware library.** Aired, absolute and AniDB numbering stored side by side;
-   ingest keyed by TVDb/TMDb/AniDB IDs from Sonarr/Radarr, not filename regexes.
-7. **Explainable playback decisions.** Every playback response says why it chose direct
-   play, remux or transcode, per rule.
-8. **Container-first deployment.** Roxy Server ships as a Docker image that slots into the
-   existing compose stack next to Sonarr and Radarr, with the same
-   `/data` mount and GPU device passthrough. Bare-metal is supported but secondary.
+1. **Styled ASS subtitles render correctly everywhere.** Full libass fidelity (typesetting,
+   signs, karaoke, the MKV's embedded fonts): libmpv on Android, jassub in the browser.
+   Subtitles are never burned in or converted.
+2. **Direct play first.** Hi10P H.264, HEVC Main10, FLAC, Opus, E-AC3 and TrueHD play
+   untouched on the Android app. The client decodes; the server serves bytes.
+3. **Re-encode only when asked.** A remux for browsers that cannot decode an audio track,
+   and an H.264 transcode when the viewer picks a lower quality. Both keep the subtitles
+   client-side.
+4. **Accounts for a household.** Logins with several viewer profiles each, per-device
+   tokens, TV sign-in by code or QR, and watch state per profile.
+5. **Part of the arr pipeline.** Requests from Discover go straight to Sonarr and Radarr;
+   their webhooks tell Roxy about imports, renames and deletes, with the IDs and
+   episode numbers they already know.
+6. **Anime-aware.** Episode numbering hints from Sonarr, AniList metadata, intro and outro
+   detection, and help with the anime release habits that trip other servers (`v2` files,
+   `(Season N)` batches, dubs that arrive weeks after the subs).
+7. **Container-first.** One Docker image next to Sonarr and Radarr, with the same media
+   mount (read-only) and GPU passthrough.
 
-### Priorities
-
-The player and its libass rendering are the reason the project exists. Everything else
-is in service of that, so the build order is: player spike on the real TV, then the TV
-app, then the server (which the player keeps working against Jellyfin until it exists).
-
-### Non-goals (for v1)
+### Non-goals
 
 - Live TV, DVR, DLNA, music, photos, books.
 - SyncPlay / watch together.
-- Plex-compatible API.
-- Roku, webOS, Tizen native apps (they will be served burn-in via the web client later).
-- Ordered chapters / segment linking. FFmpeg cannot demux them; remux such releases.
+- Jellyfin- or Plex-compatible APIs.
+- Roku, webOS and Tizen apps.
+- Ordered chapters / segment linking (FFmpeg cannot demux them; remux such releases).
 
 ## 2. System context
 
 ```
-   Roxy Discover ── request ──► Sonarr / Radarr ──► /data/media/{movies,tv}
-                                      │
-                                      │ webhook (import / rename / delete, with IDs)
-                                      ▼
+   Roxy Discover ── request ──► Sonarr / Radarr ──► media folders
+        │                          ▲   │
+        │   season packs           │   │ webhook: import / upgrade / rename / delete,
+        └──► Prowlarr ── push ─────┘   │          with series, season and episode
+                                       ▼
                     +=============================================+
                     |                 Roxy Server                 |
-                    |  ingest ─ probe ─ metadata ─ decide ─ serve |
-                    +======┬==================┬==================+
-                           │ direct play /     │ transcode (slow connections)
-                           ▼ range requests    ▼
-                    +---------------+     +-------------+
-                    | Roxy Android  |     |  Roxy Web   |
-                    | libmpv+libass |     |  jassub     |
-                    +---------------+     +-------------+
+                    |  scan / ingest ─ probe ─ metadata ─ serve   |
+                    +======┬=======================┬==============+
+                           │ direct play, remux,    │ direct play, remux,
+                           ▼ transcode (Matroska)   ▼ transcode (Matroska)
+                    +----------------+       +-------------+
+                    | Roxy Android   |       |  Roxy Web   |
+                    | phone and TV   |       |  React,     |
+                    | libmpv+libass  |       |  jassub     |
+                    +----------------+       +-------------+
 ```
 
-Every arrow into Roxy Server from Sonarr and Radarr is either a webhook or a poll Roxy
-makes. Roxy never writes to `/data/media`; it only reads the library.
+Roxy never writes into the media folders. Everything it learns comes from scanning them,
+the arr webhooks, and the metadata providers. Its own data (database, caches, extracted
+fonts and subtitles, trickplay images) lives under `ROXY_DATA_DIR`.
 
 ## 3. Repository layout
 
 ```
 roxy/
-  server/                 Go module: github.com/roxy-media/roxy/server
-    cmd/roxy/             main: config, DI, HTTP server
+  server/                    Go module github.com/roxy-media/roxy/server
+    cmd/roxy/                main: config, wiring, HTTP server
+    cmd/arrsim/              a fake Sonarr/Radarr for local testing
     internal/
-      store/              SQLite schema, migrations, sqlc queries
-      library/            ingest pipeline, fs watcher, reconciliation
-      probe/              ffprobe wrapper -> MediaStream/Attachment rows
-      metadata/           provider interface + TMDB, TVDB, anime-lists, AniList
-      playback/           decision engine (profile evaluation), stream URL builder
-      stream/             direct play (range), remux, HLS transcode job manager
-      ffmpeg/             argument builders per hwaccel vendor, process supervisor
-      subtitle/           extraction cache, attachment extraction, font store
-      session/            in-memory sessions, progress, websocket pushes
-      auth/               users, device tokens, API keys, device-code login, OIDC (later)
-      api/
-        compat/           Jellyfin-compatible subset (request app/Sonarr/Radarr + TV app v1)
-        v1/               Roxy native API (superset, explainable decisions, etc.)
-      integrations/
-        arr/              Sonarr/Radarr webhook receiver + /api/v3 reconciliation
-    migrations/
+      api/                   the /v1 HTTP API (router.go lists every route)
+      auth/                  passwords, device tokens, media tokens, API keys, throttling
+      store/                 SQLite access; migrations/ holds the schema (embedded)
+      library/               scanning, ingest, file naming, episode hints, sidecar subtitles
+      probe/                 ffprobe wrapper, attachment and subtitle extraction
+      ffmpeg/                locating and running the jellyfin-ffmpeg binaries
+      metadata/              TMDB, AniList, fanart.tv, local .nfo files
+      arrhook/               Sonarr/Radarr webhook receiver
+      arr/                   Sonarr/Radarr/Prowlarr clients (add titles, search, packs)
+      discover/              Discover: TMDB browsing, requests, download tracking
+      transcode/             remux and transcode command lines, encoder detection
+      segments/              intro / outro / preview detection
+      trickplay/, stills/    seek-preview sprites; generated episode stills
+      sessions/              "Play on": remote control of a signed-in player
+      beacon/                LAN discovery (UDP)
+      langdetect/            language of subtitle text (mislabelled tracks)
+      netguard/, safefs/     guarded outbound fetches; the only file-writing path
+      imaging/, model/, config/, web/ (Roxy Web, embedded)
   apps/
-    android/              Android app, phone and TV layouts in one APK (Kotlin, Compose, libmpv)
-    web/                  Roxy Web, the browser client (TypeScript, React, Vite, jassub);
-                          its build is embedded in the server (server/internal/web)
-  deploy/
-    docker-compose.yml    Roxy Server
-  docs/
+    android/                 one APK, phone and TV layouts (Kotlin, Compose, libmpv)
+    web/                     Roxy Web (TypeScript, React, Vite, jassub)
+  deploy/                    Dockerfile, docker-compose.yml (+ NVIDIA override), dev stack
+  docs/                      this file, adr/, api/, design/, research/
 ```
 
-Single monorepo. The server and the two clients version together; the compat API is
-pinned to a documented Jellyfin API version (12.x shapes).
+One monorepo. The server and both clients change together; there is no other API
+surface to keep stable.
 
 ## 4. Roxy Server
 
 ### 4.1 Stack
 
-- **Go 1.23+**, single static binary, `net/http` + chi router.
-- **SQLite** via `modernc.org/sqlite` (pure Go, no cgo), WAL mode, foreign keys on,
-  FTS5 for title search. Schema managed with `goose` migrations; queries via `sqlc`.
-- **jellyfin-ffmpeg portable builds** (v8.1.x) invoked as subprocesses for `ffprobe`
-  and `ffmpeg`. Never linked. Path configurable; the Docker image bundles it.
-- **Fonts**: the image ships Noto Sans CJK and a configurable extra fonts dir. These
-  feed libass burn-in and are exposed to clients as fallback fonts.
+- **Go 1.27**, one static binary (`CGO_ENABLED=0`), `net/http` with the chi router.
+- **SQLite** via `modernc.org/sqlite` (pure Go): WAL, foreign keys on, a 5 s busy
+  timeout. Plain SQL migrations embedded from `internal/store/migrations`; queries are
+  written by hand in `internal/store`.
+- **jellyfin-ffmpeg** 8.1 (`ffprobe` and `ffmpeg`) run as subprocesses, never linked.
+  It is used because its build bundles libass, VAAPI/AMF/QSV and the NVENC loader.
+- Passwords are bcrypt; tokens are opaque random values stored as hashes.
 
-See ADR-0002 for the rationale.
+See ADR-0002.
 
 ### 4.2 Data model
 
-Four-level media hierarchy, converged from Jellyfin and Plex:
+Four levels, as most media servers have them:
 
 ```
-Library (1) ──< Item (movie | series | season | episode) ──< MediaSource ──< MediaPart ──< MediaStream
-                 │                                              │
-                 ├──< ItemProviderId (source, value)            └──< Attachment (fonts)
-                 ├──< ItemImage
-                 ├──< Person / Genre / Tag (via join tables)
-                 └──< UserItemData (per user, keyed by item GUID)
+Library ──< Item (movie | series | season | episode) ──< MediaSource ──< MediaPart
+                │                                            ├──< MediaStream
+                ├──< ItemProviderId, ItemImage, ItemRelation  └──< Attachment (fonts)
+                └── user data per profile, keyed by the item's GUID
 ```
 
-Core tables (abridged):
+| Tables | Role |
+|---|---|
+| `libraries` | The media folders (movies, series; anime flag), from `ROXY_MEDIA_ROOTS` or added in the app |
+| `items`, `item_provider_ids`, `item_images`, `item_relations` | Titles and their tree. An item's `guid` (`tmdb:…`, `tvdb:…`, else a content hash) is its stable identity; aired, absolute and season numbers are separate columns |
+| `media_sources`, `media_parts`, `media_streams`, `attachments` | Files, their tracks (codec, bit depth, HDR type, language, flags, `is_text_format`) and their fonts |
+| `media_segments`, `segment_detection`, `audio_fingerprints` | Intro / outro / preview ranges and the data used to find them |
+| `users`, `profiles`, `devices`, `api_keys`, `device_codes` | Logins, up to six viewer profiles each, signed-in devices (a token is a device row), webhook keys, TV sign-in codes |
+| `user_item_data` | Position, played, play count, favourite (Watchlist), chosen tracks. **Keyed by profile and item GUID**, so a re-import or re-match keeps history |
+| `requests` | Discover requests and their state |
+| `webhook_events`, `ingest_events` | What the arr apps sent, for the Webhooks page and debugging |
+| `settings`, `series_characters*` | Admin settings (arr, TMDB, fanart.tv, transcoding); AniList characters for profile avatars |
 
-| Table | Key columns | Notes |
-|---|---|---|
-| `libraries` | id, name, kind (movies/series), paths[], anime_mode | One per Sonarr/Radarr root |
-| `items` | id (uuid), guid (stable external key), library_id, type, parent_id, title, sort_title, year, overview, premiere_date, rating, index_aired, index_absolute, index_anidb, season_aired, season_anidb, runtime_ms, date_created, date_modified | `guid` is `tmdb:movie:123`, `tvdb:series:456`, `tvdb:episode:789`, falling back to a content hash |
-| `item_provider_ids` | item_id, provider (tmdb/tvdb/imdb/anidb/anilist/mal), value | Indexed both directions |
-| `media_sources` | id, item_id, name, path_root, container, size, duration_ms, bitrate, version_label, is_primary | One per file version (e.g. 1080p and 4K) |
-| `media_parts` | id, source_id, index, path, size, duration_ms, inode, mtime | Multiple for stacked parts |
-| `media_streams` | id, source_id, index, type (video/audio/subtitle), codec, profile, level, bit_depth, pix_fmt, width, height, fps, color_primaries, color_transfer, range_type (SDR/HDR10/HLG/DV/HDR10+), dv_profile, channels, channel_layout, sample_rate, language, title, is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format | Mirrors Jellyfin's `MediaStream`; `is_text_format` is the subtitle classifier |
-| `attachments` | id, source_id, index, filename, mime, extracted_path, extracted_at | **Extracted eagerly at ingest**, never lazily |
-| `subtitle_cache` | source_id, stream_index, path, format, mtime | Extracted embedded text tracks |
-| `users` | id, name, password_hash, is_admin, is_disabled, max_parental_rating, remote_bitrate_cap, subtitle_mode, subtitle_lang, audio_lang, remember_track_selection, created_at | |
-| `user_library_access` | user_id, library_id | Library-scoped sharing |
-| `devices` | id, user_id, name, client, client_version, device_id, token_hash, last_seen, capabilities_json | A token is a device row; revoke by delete |
-| `api_keys` | id, name, token_hash, created_at | For request app/Sonarr/Radarr |
-| `user_item_data` | user_id, item_guid, position_ms, play_count, played, is_favorite, last_played_at, audio_stream_index, subtitle_stream_index | **Keyed by `item_guid`**, so re-matching preserves history |
-| `device_codes` | code, secret, device_id, user_id (nullable until approved), expires_at | Quick-Connect-style login |
-| `transcode_jobs` | id, session_id, source_id, params_json, state, started_at, last_ping | Also mirrored in memory |
-| `ingest_events` | id, source (sonarr/radarr/fs/reconcile), payload_json, received_at, processed_at, error | Audit + replay |
+`users.max_parental_rating`, `users.remote_bitrate_cap` and `user_library_access` exist in
+the schema but nothing enforces them yet (section 9).
 
-Ordering is explicit: an episode stores `index_aired`/`season_aired`, `index_absolute`,
-and `index_anidb`/`season_anidb` as separate columns. The library has a default display
-order (aired, absolute, or anidb) and a user can override it per series.
+### 4.3 Ingest
 
-### 4.3 Ingest pipeline
+Two ways in, both ending in the same per-file ingest:
 
-Primary source of truth is the Sonarr/Radarr webhook, which carries IDs and paths.
-Filename parsing is the fallback for manual drops only. See ADR-0005 and
-`docs/api/arr-webhooks.md`.
+- **Scanning.** Every library folder on start (`ROXY_SCAN_ON_START`, default on), and on
+  demand from the app (scan, refresh, per-title refresh). File and folder names give the
+  title, year, season and episode (`library/naming.go`; anime habits such as `S02E01v2`
+  and absolute numbering included).
+- **Arr webhooks** (`POST /v1/webhooks/sonarr|radarr`, API key in `X-Api-Key`; see
+  `docs/api/arr-webhooks.md`). Imports and upgrades are ingested at once, renames
+  re-ingested, deleted files and titles removed. Sonarr's season and episode numbers are
+  kept as a hint for files whose names carry none, and survive later rescans. Paths are
+  translated from the arr app's view of the disk to Roxy's.
 
-```
-webhook (Download / Rename / *Delete)  ──┐
-fs watcher (/data/media, debounced)    ──┼──► ingest queue ──► handler ──► tx:
-reconciliation poll (Sonarr/Radarr v3) ──┘                                  upsert item by ID
-POST /Library/Media/Updated (compat)   ──┘                                  upsert source/part
-                                                                            probe (ffprobe JSON)
-                                                                            extract attachments
-                                                                            extract text subs
-                                                                            resolve anime IDs
-                                                                            enqueue metadata refresh
-                                                                            publish LibraryChanged
-```
-
-Rules:
-
-- **Idempotent.** Every handler keys on (`path`, `inode`, `mtime`, `size`). Re-delivering a
-  webhook is harmless.
-- **Upgrades are atomic.** A Sonarr `Download` with `deletedFiles[]` removes the old source
-  and adds the new one in one transaction, so watch state (keyed by GUID) is untouched.
-- **Rename never re-probes.** `renamedEpisodeFiles[]` re-keys paths in place.
-- **Anime ID resolution.** Given `series.tvdbId` (+ season/episode) or `malIds`/`aniListIds`
-  from Sonarr, look up Fribb/anime-lists (cached locally, refreshed weekly) to obtain
-  `anidb_id`, `anilist_id`, `mal_id`, and the TVDb season/episode offset. Store all of them
-  as provider IDs. request app reads `ProviderIds.AniDB` for its anime path.
-- **Sidecars.** The fs watcher attaches `.ass/.srt/.ssa/.sup/.sub/.idx` files to the
-  matching source using Bazarr's naming (`<base>.<lang>[.forced][.hi|.cc|.sdh][.tags].<ext>`).
-- **Reconciliation** runs hourly against `/api/v3/series`, `/api/v3/episodefile`,
-  `/api/v3/movie`, `/api/v3/moviefile` with the arr API keys and repairs anything missed.
-- **Path mapping.** Roxy mounts `/data` at the same path as Sonarr/Radarr. A prefix map is
-  available for setups that cannot.
+Per file: probe (4.5), extract the attachments (fonts) and text subtitle tracks into the
+cache **at ingest**, attach sidecar subtitles named the Bazarr way
+(`<base>.<lang>[.forced][.hi|.sdh].<ext>`), then fetch metadata. There is no filesystem
+watcher and no reconciliation poll: a file the arr apps did not report and that arrived
+after the last scan appears with the next scan. Re-ingesting the same file is harmless.
 
 ### 4.4 Metadata
 
-`metadata.Provider` interface: `Match(item) -> candidates`, `Fetch(ids) -> ItemMetadata`,
-`Images(ids) -> []ImageRef`. Providers run out of process from the request path, in a
-worker pool, rate limited per provider.
-
-| Provider | Role |
+| Source | Role |
 |---|---|
-| TMDB | Movies and series canonical metadata, images, season/episode numbering that request app expects |
-| TVDB | Episode-level data for series Sonarr keyed by TVDb |
-| anime-lists (Fribb) | ID mapping TVDb <-> AniDB <-> AniList <-> MAL, season/episode offsets |
-| AniList (optional) | Anime titles, romaji/english/native, cover art, airing schedule |
-| Local NFO (read-only) | Kodi/Jellyfin NFO sidecars if present |
+| TMDB | Movies and series: titles, overviews, images, seasons and episodes, ratings, cast, recommendations |
+| AniList | Anime: titles, descriptions, characters (profile avatars), MAL and AniList links |
+| fanart.tv (optional) | Logos and extra artwork |
+| Local `.nfo` and artwork | Kodi-style sidecars, for titles no provider lists (fan edits, home video) |
 
-Because Sonarr/Radarr already give us the right IDs, Roxy almost never has to *match*;
-it only *fetches*. That removes the whole class of "wrong show" bugs.
+Matching uses the IDs and names that ingest found; admins can fix a match (Identify),
+refresh a title, pick other images or edit its metadata from the app. Outside images
+are fetched through `netguard`, which refuses private addresses.
 
 ### 4.5 Probe
 
-`ffprobe -v quiet -print_format json -show_format -show_streams -show_chapters -show_frames
--read_intervals %+#1 -select_streams v:0` at ingest. Output is normalized into
-`media_streams` rows, with:
+`ffprobe` at ingest, normalised into `media_streams`: HDR type from the colour data,
+`is_text_format` true for ASS, SSA, SubRip, WebVTT and mov_text (false for PGS, DVD and
+DVB bitmaps). Mislabelled subtitle languages are corrected by `langdetect` from the text
+itself. Attachments are dumped with ffmpeg into the cache, so every client gets the
+release's fonts.
 
-- `range_type` derived from color transfer / side data (HDR10, HLG, DV with profile, HDR10+).
-- `is_text_format` true for `ass`, `ssa`, `subrip`, `webvtt`, `mov_text`; false for
-  `hdmv_pgs_subtitle`, `dvd_subtitle`, `dvb_subtitle`.
-- Attachments (`codec_type == "attachment"`) recorded, then dumped with
-  `ffmpeg -dump_attachment:t "" -i file -t 0 -f null -` into `cache/attachments/<source_id>/`.
+### 4.6 Playback and streaming
 
-### 4.6 Playback decision engine
+There is no server-side playback decision. Each client knows what it can play and asks
+for one of three streams; the server only serves them.
 
-Server-authoritative. The client posts a **versioned capability profile**; the server
-evaluates each media source and returns a decision plus the reasons.
-
-Profile schema (v1):
-
-```jsonc
-{
-  "profileVersion": 1,
-  "maxBitrate": 120000000,
-  "directPlay": [                       // container x video x audio tuples
-    { "containers": ["mkv","mp4","webm"], "video": ["h264","hevc","av1","vp9"], "audio": ["aac","flac","opus","eac3","ac3","truehd","dts","vorbis"] }
-  ],
-  "codecConditions": [                  // reject direct play when a condition fails
-    { "codec": "h264", "bitDepth": { "max": 10 }, "level": { "max": 52 } },
-    { "codec": "hevc", "bitDepth": { "max": 10 }, "rangeTypes": ["SDR","HDR10","HLG"] }
-  ],
-  "audio": { "maxChannels": 8, "passthrough": ["eac3","truehd","dts"] },
-  "subtitles": [                        // first-class delivery axis per format
-    { "format": "ass", "delivery": "native", "fetchesAttachments": true },
-    { "format": "ssa", "delivery": "native", "fetchesAttachments": true },
-    { "format": "subrip", "delivery": "native" },
-    { "format": "pgs", "delivery": "native" }
-  ],
-  "transcodeTargets": [
-    { "protocol": "hls", "container": "fmp4", "video": ["hevc","h264"], "audio": ["aac","eac3"], "maxChannels": 6 }
-  ],
-  "softwareDecode": { "h264_hi10p": true, "maxHeight": 1080 }   // client declares what it can do on CPU
-}
-```
-
-Delivery values: `native` (client renders, fetching attachments if it says so),
-`sidecar` (raw file download), `hlsText` (WebVTT segments; never for ASS/SSA),
-`embed` (remux into MKV), `burn`.
-
-Evaluation order per media source:
-
-1. Direct play: container tuple matches, every codec condition passes, every chosen
-   subtitle has a non-`burn` delivery. -> `DirectPlay` with a range-request URL.
-2. Direct stream (remux): video passes, container or audio fails and a transcode target
-   accepts video copy. -> `Remux` (HLS fMP4, `-c:v copy`, audio transcoded if needed).
-   Subtitles still delivered natively or as sidecar if the client can render them. This is
-   the "audio-only incompatibility with libass client" path that Plex never shipped.
-3. Transcode: everything else. Subtitles burn in only if no non-`burn` delivery exists
-   for the chosen track, or policy says always burn when transcoding.
-
-Response includes `decision`, `reasons[]` (every rule evaluated and its outcome),
-`streams` with `deliveryMethod` and `deliveryUrl` per subtitle, `attachments[]` with URLs,
-and the `playSessionId`. The native API returns the full trace; the compat API maps it
-onto Jellyfin's `PlaybackInfoResponse` with `TranscodeReasons`.
-
-Policies (server-wide, overridable per user and per device): `burnWhenTranscoding`,
-`burnComplexAss`, `preferRemuxOverTranscode`, `maxConcurrentBurnIn`, `remoteBitrateCap`.
-
-### 4.7 Streaming
-
-| Mode | Endpoint | Mechanism |
+| Stream | Endpoint (`/v1`) | What it is |
 |---|---|---|
-| Direct play | `GET /stream/{sourceId}` (+ compat `/Videos/{id}/stream`) | `http.ServeContent` with ranges; `ETag` from inode+mtime; no buffering in Go beyond kernel sendfile |
-| Attachments | `GET /sources/{id}/attachments/{index}` (+ compat `/Videos/{id}/{sourceId}/Attachments/{index}`) | Serves pre-extracted fonts |
-| Sidecar subs | `GET /sources/{id}/subtitles/{streamIndex}` (+ compat `/Videos/{id}/{sourceId}/Subtitles/{index}/Stream.{ext}`) | Serves extracted text track untouched; never converts SSA<->ASS or to VTT |
-| Transcode for libmpv clients | `GET /v1/sources/{id}/transcode?height=&bitrate=&start=` | Matroska from ffmpeg's stdout, piped to the response; section 4.8 |
-| Remux / transcode (planned, browsers and Cast) | `GET /hls/{sessionId}/master.m3u8`, `main.m3u8`, `seg/{n}.m4s` | Section 4.8 |
+| Direct play | `GET /stream/{id}` | The file itself, with range requests |
+| Remux | `GET /sources/{id}/remux?audio=&start=` | Video copied, one chosen audio track (re-encoded to AAC only if a browser cannot decode it), timestamps from `start`; Matroska on stdout. 8 slots |
+| Transcode | `GET /sources/{id}/transcode?height=&bitrate=&start=` | H.264 at the chosen height and bitrate (tone-mapped to SDR for HDR), audio copied when compact, every subtitle track, font and chapter copied; Matroska on stdout. 4 slots |
+| Subtitles | `GET /sources/{id}/subtitles/{index}` | An extracted text track, untouched (ASS stays ASS) |
+| Fonts | `GET /sources/{id}/attachments/{index}` | An extracted attachment, served as a font only |
+| Seek previews | `GET /sources/{id}/trickplay`, `/trickplay/{n}` | A manifest and sprite sheets |
 
-### 4.8 Transcoding
+Media URLs carry a short-lived **media token** for that device and source
+(`GET /sources/{id}/token`), so a player never needs the device token in a URL; signing a
+device out stops its streams. Remux and transcode write nothing to disk: ffmpeg's output
+is the response, and a disconnect (stop, seek) kills it.
 
-**Shipped (2026-10-20): the Matroska path for Roxy's own players.** The phone and TV play
-through libmpv with libass, so they never need subtitles burned in or converted. When the
-player's Quality menu asks for 1080p / 720p / 480p, the server
-(`internal/transcode`, `api/transcode.go`) runs one jellyfin-ffmpeg per request:
+The encoder is chosen by test-encoding one second with NVENC, Quick Sync, VAAPI and AMF,
+falling back to libx264; admins can pin one (Account > Server > Transcoding).
+`ROXY_HWACCEL` is only the default.
 
-- `-ss start -copyts -i file`, video re-encoded to H.264 (scaled, tone-mapped to SDR
-  with `tonemapx` for HDR, capped at the requested bitrate), every subtitle track,
-  attachment and chapter copied, `-f matroska pipe:1`. The response is that pipe; no
-  files, no playlist, no job table. A disconnect (stop or seek) kills ffmpeg through the
-  request context. Four slots; a fifth request gets 503.
-- HLS/MPEG-TS cannot carry ASS or fonts, which is why this is Matroska: the player keeps
-  libass rendering, dub/sub switching and skip markers exactly as in direct play.
-- Audio is decided per track (copy compact AAC/AC3/E-AC3/Opus; FLAC/TrueHD/DTS to AAC,
-  keeping 5.1; stereo AAC for 480p-class) so surround and soundbar passthrough survive.
-- The encoder: a `Detector` test-encodes one second with NVENC, Quick Sync, VAAPI (Linux),
-  AMF, else uses libx264, and caches the results. Admins pick Auto or one encoder in the
-  app (Account -> Server -> Transcoding; `GET/PUT /v1/settings/transcoding`), saved in the
-  settings table; `ROXY_HWACCEL` is only the default. NVIDIA decodes on the GPU too
-  (`-hwaccel cuda`, falling back for Hi10P); the others decode on the CPU and upload.
-- Player side (`PlayerSession`): the stream starts at the wanted position and keeps the
-  file's clock (`rebase-start-time=no`); the duration comes from the source; a seek
-  inside the buffer is local, anything else reloads the stream at the target; a reload
-  that does not start in 20 s gives up with a message.
+Who asks for what:
 
-**Planned for browsers and Chromecast (Roxy Web, Cast): HLS.** Copy Jellyfin's HLS
-design because it is correct:
+- **Android:** always direct play through libmpv, unless the viewer picks a lower
+  quality, which switches to the transcode at the same position.
+- **Web:** direct play when the browser can decode the chosen audio track, the remux when
+  it cannot (or another track is picked), the transcode for a lower quality.
 
-- Synthesize the full VOD `main.m3u8` from duration (or keyframes when available) before
-  starting ffmpeg.
-- Serve segments lazily. A request for segment `n` either returns the file or restarts a
-  single ffmpeg at `n * segmentLength` with `-ss`, `-copyts -avoid_negative_ts disabled`,
-  `-f hls -hls_time N -hls_list_size 0 -start_number n`, fMP4 segments with
-  `-hls_segment_type fmp4 -movflags +frag_discont+skip_sidx`.
-- Kill and restart when the requested segment is behind the encoder or far ahead.
-- Garbage-collect jobs after 60 s without a ping or progress report.
-- Hardware chains built per vendor (VAAPI/AMF for the RX 550, QSV, NVENC, VideoToolbox),
-  with the libass burn-in path using `alphasrc` + `subtitles=...:alpha=1:fontsdir=<attachments>`
-  + `hwupload` + `overlay_<vendor>` so decoded frames stay on the GPU. `original_size` is
-  passed so font scaling survives resolution changes.
-- **Admission control**: burn-in jobs count against `maxConcurrentBurnIn` separately from
-  GPU encode slots, because libass rasterization is always CPU-bound.
+### 4.7 Skip segments
 
-### 4.9 Sessions and watch state
+Intro, outro and preview ranges per episode, found without anyone marking them: AniSkip
+where it knows the show, otherwise Chromaprint fingerprints of the first and last minutes
+of every episode in a season are compared to find the shared opening and ending. Clients
+show a Skip button or skip automatically (a viewer preference).
 
-- In-memory session map keyed by device token; not persisted (clients re-report).
-- `POST /sessions/playing`, `/progress` (every 10 s and on pause/seek), `/stopped`, `/ping`.
-- Progress writes `user_item_data` (position, played at >= 90% or configurable).
-- WebSocket at `/ws` pushes `LibraryChanged`, `UserDataChanged`, `SessionEnded`, and
-  (later) remote-control commands.
-- Idle sessions dropped after 5 minutes.
+### 4.8 Watch state
 
-### 4.10 Auth
+- `POST /v1/me/progress` every ~10 s and on pause and stop. At 90 % of the runtime an item
+  is marked played and its position reset.
+- Rewatching a played item past 30 s makes it "in progress" again at the new position
+  (play count kept); a shorter peek leaves it played with no resume point. So an item is
+  never both played and part-way.
+- `GET /v1/home` builds Continue Watching (one entry per show: the episode under way, or
+  the next one after the last finished) and the other rows; `/v1/me/history` and the
+  Watchlist (`favorite`) come from the same table.
+- Everything is per profile (`X-Roxy-Profile`).
 
-- Local accounts, bcrypt/argon2 passwords, per-device opaque tokens (`devices.token_hash`).
-- `Authorization: MediaBrowser Client=..., Device=..., DeviceId=..., Version=..., Token=...`
-  accepted on the compat surface; `Authorization: Bearer <token>` on the native API.
-- API keys for integrations (`/Auth/Keys` compat, `/v1/api-keys` native).
-- **Device-code login** for TVs: the app shows a 6-character code, the user approves it
-  on a phone or in Roxy Web, the TV polls and receives its device token. Wire-compatible
-  with Jellyfin Quick Connect on the compat surface.
-- Managed child profiles with PIN switch, parental rating caps, library scoping.
-- OIDC federation is a later phase and is never required for playback.
+### 4.9 Accounts and sign-in
 
-### 4.11 API surfaces
+- **First run:** the setup wizard creates the admin (from the LAN only).
+- **Logins** with bcrypt passwords and sign-in throttling; each has up to six profiles with
+  AniList-character avatars.
+- **Devices:** every sign-in is a device with its own opaque token
+  (`Authorization: Bearer`), idle-expiring after 180 days and revocable from the app.
+  Roxy Web uses the same token in an HttpOnly session cookie.
+- **TV sign-in:** the TV shows a code and a QR; a signed-in phone or browser approves it
+  (`/v1/link/*`) and the TV receives its own device token.
+- **API keys** are only for the arr webhooks and ingest endpoints.
+- `X-Forwarded-For` is believed only from `ROXY_TRUSTED_PROXIES`.
 
-1. **Compat (`/`, Jellyfin-shaped)**: the subset in `docs/api/jellyfin-compat.md`. Serves
-   request app, Sonarr, Radarr, and the Roxy TV app v1 (ADR-0006). Shapes follow Jellyfin 12.x.
-2. **Native (`/v1`)**: Roxy's own API. Superset: explainable decisions, ordering
-   preferences, ingest events, policies, admin. OpenAPI generated from code; the TV and
-   web clients generate their SDKs from it once they move off compat.
+### 4.10 Discover and requests
+
+Roxy's own request flow, replacing request app. Discover browses and searches TMDB, marks what is
+already in the library, and lets a profile request a movie, a show or single seasons.
+Requests from non-admins wait for an admin's approval. Approved requests are added to
+Radarr or Sonarr (configured root folder and quality profile, with optional separate
+profiles for anime and for older anime), searching by season, and their download progress is tracked from the arr
+queue. For finished seasons Roxy also searches Prowlarr for whole-season packs that Sonarr
+cannot parse (`(Season N)`), scores them through Sonarr and pushes the best one, and every
+12 hours looks again for seasons that only got subtitled releases, so a later dub is
+picked up.
+
+### 4.11 Other services
+
+- **Play on** (`sessions`): a phone lists the players signed in to the same login and
+  tells one to play something from a position; the TV plays it with its own player.
+- **LAN discovery** (`beacon`): UDP on 8096 answers "who is roxy?", so apps list servers on
+  the network; `ROXY_ADVERTISE_URL` sets the address it gives out.
+- **App updates:** the server hosts the Android APK and a `latest.json` (package, version,
+  sha256); the app verifies the package, signing certificate and hash before installing.
+- **Crash reports** from the apps (`/v1/diagnostics/crash`), and terms and privacy pages.
 
 ### 4.12 Configuration and operations
 
-- Single `roxy.yaml` plus env overrides. Paths: `data_dir` (db, cache), `media_roots`,
-  `ffmpeg_path`, `fonts_dir`, `hwaccel` (auto/vaapi/amf/qsv/nvenc/none), `arr[]` (url, api key).
-- Health: `/healthz`; metrics: Prometheus `/metrics` (ingest lag, probe duration,
-  active sessions, transcode slots, burn-in slots).
-- Structured logs (slog JSON). Every playback decision logs its trace at debug.
+- Environment variables only (`internal/config`): `ROXY_LISTEN`, `ROXY_DATA_DIR`,
+  `ROXY_MEDIA_ROOTS`, `ROXY_FFMPEG_PATH`, `ROXY_FFPROBE_PATH`, `ROXY_HWACCEL`,
+  `ROXY_VAAPI_DEVICE`, `ROXY_SCAN_ON_START`, `ROXY_DISCOVERY_PORT`, `ROXY_ADVERTISE_URL`,
+  `ROXY_TRUSTED_PROXIES`, `ROXY_TMDB_API_KEY`, the Sonarr / Radarr / Prowlarr URLs, keys,
+  quality profiles and root folders, `ROXY_ADMIN_USER` / `ROXY_ADMIN_PASSWORD`,
+  `ROXY_DEBUG`. Most arr and provider settings can also be set from the app (admin).
+- `GET /healthz` for health checks. Logs are structured (`slog`).
 
-## 5. Roxy TV app (Android TV)
+## 5. Roxy Android app
 
 ### 5.1 Stack
 
-Kotlin, Jetpack Compose for TV, Hilt, Coroutines, Coil, `jellyfin-sdk-kotlin` for the
-compat API in v1 (replaced by a generated Roxy SDK later). Min SDK 28 (Android 9), target
-Android TV 14. Builds for Android TV, Google TV, Fire TV.
+One APK for phones and TVs (`tv.roxy.tv`), choosing the phone or TV layout at start.
+Kotlin, Jetpack Compose (Compose for TV on the TV), coroutines, OkHttp with
+kotlinx.serialization for a hand-written API client (`api/RoxyApi.kt`), Coil for images,
+DataStore for preferences, CameraX and ML Kit for the QR scanner, Timber for logs. Min SDK
+28 (Android 9), target 36.
 
-### 5.2 Player engines
+### 5.2 Player
 
-Two engines behind one `PlayerEngine` interface; chosen per file by a small rule set,
-overridable per device and per playback.
+One engine: **libmpv with libass**, from a self-built AAR (`app/libs/`). `PlayerSession`
+drives it for both layouts.
 
-| Engine | Use | Decode | Subtitles | Notes |
-|---|---|---|---|---|
-| **libmpv** (primary) | Anything with ASS/SSA; Hi10P; anything the Media3 path fails on | `hwdec=mediacodec-copy` with software fallback (FFmpeg) | libass built in; reads MKV attachments natively | Reference: mpv-android `MPVLib`, or jarnedemeulemeester's `libmpv-android` AAR. 20-40 MB native payload |
-| **Media3/ExoPlayer** (secondary) | Plain H.264/HEVC with SRT/PGS or no subs; HDR/DV passthrough; tunneled playback | MediaCodec | `ass-media` libass overlay (OpenGL mode, raised glyph cache) for ASS; fonts fetched explicitly | Keeps Google's HDR and audio passthrough behaviour |
+- Decoding: MediaCodec zero-copy (`hwdec=auto`), copy mode as the fallback, software
+  for what the hardware cannot do (Hi10P).
+- Subtitles: libass, reading the fonts from the MKV itself, with a bundled fallback font
+  set (`apps/android/FONTS.md`) for releases that do not carry theirs.
+- Audio passthrough (AC3, E-AC3, DTS, TrueHD) when the TV or soundbar takes it; display
+  refresh-rate switching to the video's frame rate; optional frame blending
+  ("Smooth motion").
+- Quality menu: Original (direct play) or a server transcode at 1080p, 720p or 480p.
+- Phone extras: inline player on the episode page, picture-in-picture, downloads for
+  offline viewing (progress is queued and replayed when the server is reachable again).
+- TV extras: the launcher's Watch Next row, and a hold-OK menu on episodes and films
+  (play from start, go to show, mark watched, file info).
 
-Rule of thumb for v1: **ASS present or Hi10P -> libmpv; otherwise Media3.** Measure on
-the actual TV and adjust.
-
-### 5.3 Capability profile
-
-The app builds its profile at startup from `MediaCodecList` (hardware codecs, max
-resolution, HDR types), audio passthrough probing, and a static declaration that
-`h264` at bit depth 10 is supported via software decode up to 1080p. It declares
-`ass`/`ssa`/`subrip`/`pgs` as `native` with `fetchesAttachments: true`. On the compat API
-this is a Jellyfin `DeviceProfile` with `SubtitleProfiles` of `{Format:"ass", Method:"External"}`
-and no bit-depth condition on H.264, which is what makes Jellyfin direct play Hi10P.
-
-### 5.4 Font handling
-
-- libmpv: pass the media URL; mpv reads attachments from the MKV stream itself. Also set
-  `sub-fonts-dir` to the app's font cache, pre-populated with Noto CJK.
-- Media3 + ass-media: download `attachments[]` from the playback response to the font
-  cache before starting playback, then hand the directory to libass. Never assume the
-  extension parses MKV attachments.
-
-### 5.5 Runtime fallback
-
-The engine reports dropped-frame rate. If sustained above threshold for 10 s during
-software decode, the app re-requests playback with `forceTranscode: true` (compat:
-re-POST `PlaybackInfo` with a profile that omits the software-decode claim) and switches
-to the HLS stream at the same position. This is the one feature that makes the app
-strictly better than Kodi on weak hardware.
-
-### 5.6 App structure
+### 5.3 Layout
 
 ```
-apps/android/
-  app/                 Compose for TV screens: Home, Library, Series, Season, Player, Login (device code), Settings
-  core/api/            backend adapter interface + Jellyfin-compat implementation (+ Roxy native later)
-  core/player/         PlayerEngine interface, MpvEngine, Media3Engine, engine selector
-  core/profile/        capability probing, profile builder
-  core/fonts/          font cache, attachment downloader
-  core/data/           repositories, Room cache for offline browsing of the library
+apps/android/app/src/main/kotlin/tv/roxy/tv/
+  api/          RoxyApi: the /v1 client and its models
+  data/         preferences, item cache, server discovery, updates, downloads/
+  player/       MpvPlayer (libmpv), PlayerSession, controls, trickplay, passthrough
+  ui/           screens: phone/, tv/, login/, setup/, profiles/, settings/, components/
+  tv/           Android TV launcher integration (Watch Next, images)
+  diagnostics/  crash reports, device report
 ```
 
 ## 6. Roxy Web
 
-TypeScript + Vite + React, HLS.js for transcoded streams, native `<video>` for direct
-play of browser-compatible containers (MP4/WebM), **jassub** for ASS rendering (WebGL,
-embedded-font support, actively maintained), fonts from the attachments endpoint plus a
-server fallback-font list capped in size. Tizen/webOS browsers are tested, not promised.
+TypeScript, React 19, react-router and Vite, built into the server binary
+(`server/internal/web`). The player (`src/player/`) is a `<video>` element fed by the
+direct, remux or transcode stream (section 4.6), with **jassub** (libass in WebAssembly)
+drawing ASS/SSA from the extracted track and the release's fonts. It has the same pages as
+the apps: Home, Browse, title pages, Discover and requests, Lists, account and admin.
 
-**Look and feel: Netflix-style.** Dark theme, a full-bleed hero banner at the top of
-Home (backdrop, logo/title, synopsis, Play/Resume and Info actions), horizontal rows
-below it ("Continue watching", "Recently added", "Next up", per-library and per-genre
-rows) with landscape cards that scale on hover/focus, a details page with a backdrop
-hero, season tabs and an episode list with thumbnails, and a top nav bar that fades
-on scroll. The same visual language is used by the Roxy TV app so the two feel like one
-product; the TV app is the DPAD-focus version of the same screens. Browsing a library
-should never show a grid of posters as the primary view; rows first, grid as a secondary
-"see all".
+Look and feel follow `docs/design/roxy-look.md` (Crunchyroll-like rows of cards, dark
+theme); the TV app is the D-pad version of the same screens.
 
-## 7. Deployment (Docker first)
+## 7. Deployment
 
-Roxy Server is built and tested as a container from the first commit. The reference
-stack lives in `deploy/docker-compose.yml` and `deploy/Dockerfile`.
+The image is built from this repo (`deploy/Dockerfile`, `deploy/docker-compose.yml`); no
+image is published to a registry yet.
 
-Image design:
-
-- Multi-stage build: Go build stage (Go 1.27) -> runtime stage on `debian:bookworm-slim`.
-- Runtime stage installs the **jellyfin-ffmpeg** `.deb`, which bundles libass, libva with
-  the radeonsi / iHD / i965 drivers, Quick Sync, AMF and the NVENC loader; no separate
-  driver packages are needed. About 550 MB.
-- Runs as a non-root user with `PUID`/`PGID` (linuxserver-style) so files in `/config`
-  keep the owner's UID; the entrypoint adds the user to whatever groups own `/dev/dri/*`.
-- `ROXY_DATA_DIR=/config`. Volumes: `/config` (db, cache, extracted attachments and
-  subtitles), `/data` (media, read-only), optional `/fonts` (extra fonts). Transcodes
-  stream from ffmpeg's stdout and write nothing to disk.
-- Ports: `8096` (keep Jellyfin's port so request app/arr configs only change host and token)
-  and `8096/udp` for LAN discovery (the beacon answers "who is roxy?"; `ROXY_DISCOVERY_PORT`,
-  0 to turn off). On a bridge network the reply carries the container's address, so set
-  `ROXY_ADVERTISE_URL` to the host's URL, or the clients' HTTP sweep finds it anyway.
-- Healthcheck: `GET /healthz`.
-- Published as `ghcr.io/roxy-media/roxy-server:<semver>` and `:latest`, multi-arch
-  (`linux/amd64`, `linux/arm64`), from CI on every tag.
-- GPUs: AMD/Intel pass `/dev/dri` (the compose default, for the RX 550); NVIDIA uses the
-  same image with `--gpus all` (`deploy/docker-compose.nvidia.yml`; the image sets
-  `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`). Tested 2026-10-20 in Docker on
-  WSL2 with a GTX 1650: NVENC about 6.5x realtime for 1080p HEVC to 720p, software x264
-  about 2x. VAAPI on real AMD hardware is still to be checked on the server.
-
-Conventions (TRaSH): `/data/media/{movies,tv}` for the library, Roxy mounts `/data`
-read-only. The Sonarr/Radarr webhook URLs point at the `roxy` service name on the
-compose network.
-
-Development loop: `docker compose -f deploy/docker-compose.dev.yml up` mounts the source,
-runs `air` for hot reload, and shares the same `/data` mount as the production stack.
+- Multi-stage: Node builds Roxy Web, Go builds the server, the runtime is
+  `debian:bookworm-slim` with the **jellyfin-ffmpeg** `.deb` (libass, libva with the
+  radeonsi / iHD / i965 drivers, Quick Sync, AMF, the NVENC loader).
+- Runs as a non-root user with `PUID` / `PGID`; the entrypoint joins the groups that own
+  `/dev/dri/*`.
+- Volumes: `/config` (`ROXY_DATA_DIR`: database and caches) and the media, mounted
+  read-only.
+- Ports: `8096/tcp` (HTTP) and `8096/udp` (LAN discovery). On a bridge network set
+  `ROXY_ADVERTISE_URL` to the host's URL so the discovery reply points at the right place.
+- GPUs: AMD and Intel pass `/dev/dri` (the compose default); NVIDIA uses
+  `docker-compose.nvidia.yml` (`--gpus all`).
+- CI (`.github/workflows/ci.yml`) runs `go vet`, `go test` and a build for the server, the
+  type check and build for the web app, and the Android build.
 
 ## 8. Cross-cutting decisions
 
-- **Stable GUIDs for everything user-facing.** Items are addressed by `guid` in user data
-  and in URLs exposed to clients; the row id is internal. Re-matching never loses history.
-- **Never convert subtitle formats.** SSA/ASS are served byte-for-byte. VTT conversion only
-  ever happens for SRT, and only for `hlsText` delivery.
-- **Eager extraction.** Attachments and text tracks are extracted at ingest, so burn-in and
-  clients always find fonts. This is the single most common Jellyfin anime bug, removed.
-- **No server-side profile registry by User-Agent.** Clients own their profile; the server
-  validates and evaluates it. Plex's registry rotted; Jellyfin's model is right.
-- **Ship fonts.** Noto CJK in the image, served to clients as fallback fonts.
+- **Stable GUIDs.** Watch state and URLs use an item's GUID, never its row id, so
+  re-matching or re-importing keeps history.
+- **Never convert subtitles.** ASS/SSA are served byte for byte; remux leaves them for the
+  client, transcode copies them. No WebVTT, no burn-in.
+- **Extract at ingest.** Fonts and text tracks are extracted when a file arrives, so no
+  client ever plays a release without its fonts.
+- **Clients own their capabilities.** No server-side device profiles or User-Agent rules.
+- **One way to touch files** (`safefs`) and **one way to fetch from outside** (`netguard`).
 
-## 9. Risks
+## 9. Not built
+
+Ideas from earlier drafts, kept here so they are not mistaken for features:
+
+- A server-side playback decision engine (clients posting a capability profile).
+- HLS streaming and Chromecast.
+- Subtitle burn-in for clients without libass.
+- A second Android engine (Media3/ExoPlayer).
+- Parental rating caps, per-library access and a remote bitrate cap (schema columns
+  exist, unused).
+- Fallback fonts shipped in the image (`ROXY_FONTS_DIR` is read but not used yet).
+- A filesystem watcher or a periodic reconciliation with Sonarr/Radarr.
+- OIDC sign-in, Prometheus metrics, a WebSocket push channel.
+- A published, multi-arch container image.
+
+## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| libmpv on the specific Costco TV SoC stutters with hwdec | Try `mediacodec-copy`, then software decode; keep Media3 engine; runtime fallback to transcode |
-| Jellyfin compat API drift (12.x removed legacy prefixes; future majors may change shapes) | Pin to 12.x shapes; integration tests replay real request app/Sonarr/Radarr requests |
-| request app never marks seasons AVAILABLE for anime | Expose seasons with TMDb numbering and `ProviderIds.AniDB`; test with real anime series |
-| ass-media single maintainer | libmpv is the primary engine; ass-media is the hedge |
-| Go SQLite performance on large libraries | WAL, prepared statements, FTS5, indices on provider ids and paths; benchmark at 50k items |
-| Scope creep into a full Jellyfin clone | Non-goals list; ROADMAP exit criteria per phase |
+| A TV's chip cannot decode a file (Hi10P at high bitrates, AV1 on older SoCs) | The Quality menu falls back to a server transcode |
+| The libmpv AAR is our own build, checked into `app/libs/` | Pinned by version in its file name; libmpv and libass are long-lived upstream projects. Its build steps are not yet written down |
+| Sonarr / Radarr API changes | All arr calls live in `internal/arr` (API v3); `cmd/arrsim` fakes both apps for local testing |
+| Browser codec gaps (no AC3/E-AC3/DTS/TrueHD, limited Matroska) | The remux re-encodes only the audio; the transcode is H.264 |
+| SQLite on large libraries | WAL, indices on provider IDs and paths; one writer |
+| Scope creep into a full Jellyfin clone | The non-goals above |
