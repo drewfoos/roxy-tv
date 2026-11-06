@@ -196,6 +196,14 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   useEffect(() => {
     reportRef.current = report
   }, [report])
+  // Closing the tab or going to another site unmounts nothing, so without this the last
+  // up to 10 s of watching were lost. The report is sent with keepalive, so it outlives
+  // the page.
+  useEffect(() => {
+    const onHide = () => reportRef.current(true)
+    window.addEventListener('pagehide', onHide)
+    return () => window.removeEventListener('pagehide', onHide)
+  }, [])
 
   /** Decide direct play or remux for the chosen audio track, and load the stream at a position. */
   const load = useCallback(
