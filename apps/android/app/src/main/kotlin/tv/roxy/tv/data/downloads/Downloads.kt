@@ -75,7 +75,16 @@ data class TitleSnapshot(val item: Item, val images: List<String> = emptyList())
 
 /** A watch position reported while the server was unreachable; replayed by [Downloads.syncProgress]. */
 @Serializable
-data class PendingProgress(val profileId: String? = null, val itemId: String, val positionMs: Long, val at: Long, val played: Boolean = false)
+data class PendingProgress(
+    val profileId: String? = null,
+    val itemId: String,
+    val positionMs: Long,
+    val at: Long,
+    val played: Boolean = false,
+    val audioIndex: Int? = null,
+    /** -1 = subtitles off, as in POST /v1/me/progress; null = unchanged. */
+    val subtitleIndex: Int? = null,
+)
 
 @Serializable
 data class DownloadIndex(
@@ -279,16 +288,22 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
      * Playback position for a downloaded item: shown on the Downloads page straight away
      * and, when [reportedToServer] is false, kept for [syncProgress] once the server answers.
      */
-    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false) {
+    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null) {
         val profile = prefs.session.value.profileId
         _index.update { idx ->
             val e = idx.entries[itemId]
             val entries = if (e == null) idx.entries else {
-                val ud = (e.item.userData ?: UserData()).copy(positionMs = positionMs, played = played || (e.item.userData?.played == true && positionMs == 0L))
+                val old = e.item.userData ?: UserData()
+                val ud = old.copy(
+                    positionMs = positionMs,
+                    played = played || (old.played && positionMs == 0L),
+                    // Kept for offline playback: a saved -1 starts the download with subtitles off.
+                    subtitleIndex = subtitleIndex ?: old.subtitleIndex,
+                )
                 idx.entries + (itemId to e.copy(item = e.item.copy(userData = ud)))
             }
             val pending = if (reportedToServer) idx.pendingProgress.filterNot { it.itemId == itemId && it.profileId == profile }
-            else idx.pendingProgress.filterNot { it.itemId == itemId && it.profileId == profile } + PendingProgress(profile, itemId, positionMs, System.currentTimeMillis(), played)
+            else idx.pendingProgress.filterNot { it.itemId == itemId && it.profileId == profile } + PendingProgress(profile, itemId, positionMs, System.currentTimeMillis(), played, audioIndex, subtitleIndex)
             idx.copy(entries = entries, pendingProgress = pending)
         }
     }
@@ -304,7 +319,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
         for (p in mine) {
-            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs, at = p.at) }
+            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at) }
             result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
             // A 4xx (the title was deleted meanwhile) will never succeed: drop it rather than block the rest.
             val rejected = (result.exceptionOrNull() as? tv.roxy.tv.api.ApiException)?.let { it.code in 400..499 && !it.isUnauthorized } == true

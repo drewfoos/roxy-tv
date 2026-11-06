@@ -64,7 +64,9 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
         else -> runCatching { app.api.item(item.id) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
     }
     val full = when {
-        entry != null -> entry.item
+        // The snapshot's sources play from disk; the server's watch state (position,
+        // subtitle choice) replaces the snapshot's when it answered.
+        entry != null -> fresh?.userData?.let { entry.item.copy(userData = it) } ?: entry.item
         else -> fresh ?: item
     }
     val source = full.primarySource ?: return Result.failure(IllegalStateException("No media source for ${full.title}"))

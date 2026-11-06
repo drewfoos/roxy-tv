@@ -716,6 +716,8 @@ data class UserData(
     val playCount: Int = 0,
     val isFavorite: Boolean = false,
     val lastPlayedAt: String? = null,
+    /** The subtitle stream last chosen for this item; -1 = subtitles off, null = none saved. */
+    val subtitleIndex: Int? = null,
 )
 
 @Serializable

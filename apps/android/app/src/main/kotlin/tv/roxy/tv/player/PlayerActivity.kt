@@ -45,6 +45,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_LOCAL = "local"      // url is a downloaded file: segments and sub languages come from the download snapshot
         const val EXTRA_ANIME = "anime"      // the title is anime: smart subtitles pair a dub with signs & songs
         const val EXTRA_SLANG = "slang"      // preferred subtitle language, ISO 639-2
+        const val EXTRA_SUBS_OFF = "subsOff" // the item was last watched with subtitles off
 
         fun intent(
             context: Context,
@@ -58,7 +59,9 @@ class PlayerActivity : ComponentActivity() {
             local: Boolean = false,
             anime: Boolean = false,
             explicitStart: Boolean = false,
+            subtitlesOff: Boolean = false,
         ): Intent = Intent(context, PlayerActivity::class.java)
+            .putExtra(EXTRA_SUBS_OFF, subtitlesOff)
             .putExtra(EXTRA_START_EXPLICIT, explicitStart)
             .putExtra(EXTRA_ANIME, anime)
             .putExtra(EXTRA_SLANG, settings.subLang)
@@ -76,7 +79,8 @@ class PlayerActivity : ComponentActivity() {
             .putExtra(EXTRA_STATS, settings.showStats)
 
         fun intent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
-            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime, explicitStart = req.explicitStart)
+            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime, explicitStart = req.explicitStart,
+                subtitlesOff = req.item.userData?.subtitleIndex == -1)
     }
 
     private lateinit var app: RoxyApp
@@ -160,6 +164,7 @@ class PlayerActivity : ComponentActivity() {
             subLangs = Languages.mpvCodes(intent.getStringExtra(EXTRA_SLANG) ?: settings.subLang),
             anime = intent.getBooleanExtra(EXTRA_ANIME, false),
             showStats = intent.getBooleanExtra(EXTRA_STATS, settings.showStats),
+            subtitlesOff = intent.getBooleanExtra(EXTRA_SUBS_OFF, false),
         )
         val host = object : PlayerSession.Host {
             override fun back() = finish()

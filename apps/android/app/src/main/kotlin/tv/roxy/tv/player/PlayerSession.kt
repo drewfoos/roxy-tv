@@ -59,12 +59,15 @@ class PlayerSession(
         val subLangs: List<String>,
         val anime: Boolean,
         val showStats: Boolean,
+        /** The item's saved subtitle choice is "off" (userData.subtitleIndex -1): start without subtitles. */
+        val subtitlesOff: Boolean = false,
     ) {
         companion object {
             fun from(req: PlayRequest, settings: PlayerSettings) = Params(
                 url = req.url, title = req.title, subtitleLine = req.subtitleLine, itemId = req.item.id, sourceId = req.sourceId,
                 startSeconds = req.startSeconds, local = req.local, hwdec = settings.hwdec, vo = settings.vo, subMode = settings.subMode,
                 forceSid = 0, audioLangs = settings.mpvAudioLangs, subLangs = settings.mpvSubLangs, anime = req.item.isAnime, showStats = settings.showStats,
+                subtitlesOff = req.item.userData?.subtitleIndex == -1,
             )
         }
     }
@@ -252,6 +255,8 @@ class PlayerSession(
     private data class TrackPick(val off: Boolean, val lang: String, val kind: String, val title: String)
     private var subPick: TrackPick? = null
     private var audioPick: TrackPick? = null
+    /** The current item was last watched with subtitles off; applies until the viewer picks a track. */
+    private var savedSubsOff = params.subtitlesOff
 
     private val glue: PlaybackGlue
     private var lastGlueUpdate = 0L
@@ -385,12 +390,14 @@ class PlayerSession(
                 if (id > 0) lastSid = id
                 player.setSubtitleTrack(id)
                 subPick = pickOf(id, "sub")
+                savedSubsOff = false // the viewer chose: the saved "off" no longer applies
                 refreshUi()
             }
             override fun selectAudio(id: Int) {
                 player.setAudioTrack(id)
                 audioPick = pickOf(id, "audio")
                 subPick = null // the subtitles follow the audio again (the policy just re-ran)
+                savedSubsOff = false
                 refreshUi()
             }
             override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi(forceGlue = true) }
@@ -401,6 +408,7 @@ class PlayerSession(
                 val target = if (current > 0) { lastSid = current; 0 } else lastSid.takeIf { it > 0 } ?: ui.subtitleTracks.firstOrNull()?.id ?: 0
                 player.setSubtitleTrack(target)
                 subPick = pickOf(target, "sub")
+                savedSubsOff = false
                 refreshUi()
             }
             override fun toggleAutoSkip() {
@@ -628,6 +636,7 @@ class PlayerSession(
         title = req.title
         subtitleLine = req.subtitleLine
         lastReportedMs = -1
+        savedSubsOff = req.item.userData?.subtitleIndex == -1
         skipped.clear()
         segments = emptyList()
         trickplay = null
@@ -803,6 +812,8 @@ class PlayerSession(
             val t = audio.firstOrNull { it.title == p.title } ?: audio.firstOrNull()
             if (t != null && t.id != player.currentTrackId("audio")) { Timber.i("audio pick carried over -> %d", t.id); player.setAudioTrack(t.id) }
         }
+        // The viewer's pick in this session wins; without one, the item's saved "off".
+        if (subPick == null && savedSubsOff) { Timber.i("subtitles off (saved for this item)"); player.setSubtitleTrack(0); return }
         subPick?.let { p ->
             if (p.off) { player.setSubtitleTrack(0); return }
             val subs = tracks.filter { it.type == "sub" && it.lang == p.lang && player.subtitleClass(it) == p.kind }
@@ -1070,7 +1081,16 @@ class PlayerSession(
         if (reason == "tick" && positionMs == lastReportedMs) return
         lastReportedMs = positionMs
         val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
-        val subIndex = runCatching { player.currentStreamIndex("sub") }.getOrNull()
+        // Subtitles the viewer turned off (here or on an earlier watch) are reported as -1,
+        // so the next start honours it. No track because the language policy chose none is
+        // not a choice: null leaves the saved one unchanged.
+        val subIndex = runCatching {
+            when {
+                player.currentTrackId("sub") > 0 -> player.currentStreamIndex("sub")
+                subPick?.off == true || (subPick == null && savedSubsOff) -> -1
+                else -> null
+            }
+        }.getOrNull()
         app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
         // A pause or stop is when the launcher's Watch Next row should show this title at this position.
         if (reason == "pause" || reason == "stop") {
@@ -1092,7 +1112,7 @@ class PlayerSession(
                 // Downloaded items keep their position locally too (Downloads page offline); a
                 // failed report is queued and replayed when the server is back. A success
                 // clears this item's queued one, so an older position never replays over it.
-                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok)
+                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex)
                 // The server answers again: send what was saved while it was away.
                 if (ok) app.downloads.syncProgress(app.api)
                 // Watched state may have changed (finished, or a rewatch made it "in
