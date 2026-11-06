@@ -16,14 +16,16 @@ const AVAILABILITY = [
 
 /** Sonarr & Radarr (admin): where Discover requests go. */
 export function ArrPage() {
-  const { data, error, loading, reload } = useAsync('arr-settings', () => api.arrSettings())
+  const { data, error, loading, fresh, reload } = useAsync('arr-settings', () => api.arrSettings())
   const [kind, setKind] = useState<Kind>('sonarr')
   const [draft, setDraft] = useState<ArrSettings | null>(null)
   const [tests, setTests] = useState<Partial<Record<Kind, ArrTest>>>({})
   const [err, setErr] = useState<string | null>(null)
+  // Filled from the server's answer, not the cached copy from an earlier visit: Save sends
+  // both apps' whole settings, so a draft started from old data put them back.
   useEffect(() => {
-    if (data && !draft) setDraft({ sonarr: { ...EMPTY, ...data.sonarr }, radarr: { ...EMPTY, ...data.radarr } })
-  }, [data, draft])
+    if (data && fresh && !draft) setDraft({ sonarr: { ...EMPTY, ...data.sonarr }, radarr: { ...EMPTY, ...data.radarr } })
+  }, [data, fresh, draft])
 
   if (error) return <Notice kind="error">{error}</Notice>
   if (loading || !draft) return <Spinner />

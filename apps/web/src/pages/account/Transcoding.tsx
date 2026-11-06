@@ -11,7 +11,10 @@ const HINTS: Record<string, string> = {
 
 /** Transcoding (admin): which encoder converts video for the lower qualities. */
 export function TranscodingPage() {
-  const { data, error, loading, reload } = useAsync('transcoding', () => api.transcoding())
+  const { data: latest, error, loading, fresh, reload } = useAsync('transcoding', () => api.transcoding())
+  // Shown and saved only from the server's answer, never the cached copy from an earlier
+  // visit: the choice was filled from that copy once and the refresh was ignored.
+  const data = fresh ? latest : null
   const [choice, setChoice] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   useEffect(() => {
@@ -31,7 +34,7 @@ export function TranscodingPage() {
     <section className="acc-form">
       <PanelHead title="Transcoding" sub="Which GPU converts video when a player asks for a lower quality than the file. Direct play never transcodes." />
       {error && <Notice kind="error">{error}</Notice>}
-      {loading && !data ? (
+      {!data && (loading || !error) ? (
         <Spinner />
       ) : data ? (
         <>

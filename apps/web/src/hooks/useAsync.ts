@@ -5,6 +5,12 @@ export interface AsyncState<T> {
   data: T | null
   error: string | null
   loading: boolean
+  /**
+   * True once this component's own request has answered; false while `data` is only the
+   * cached copy from an earlier visit. A form that saves every field waits for it, so it
+   * never starts from (and saves back) settings older than the server's.
+   */
+  fresh: boolean
   reload: (silent?: boolean) => void
 }
 
@@ -72,6 +78,7 @@ interface Held<T> {
   data: T | null
   error: string | null
   loading: boolean
+  fresh: boolean
 }
 
 export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unknown[] = [], freshMs = 0): AsyncState<T> {
@@ -86,6 +93,7 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
     data: key && cache.has(key) ? (cacheGet(key) as T) : null,
     error: null,
     loading: key != null && !cache.has(key),
+    fresh: false,
   }))
   const fnRef = useRef(fn)
   fnRef.current = fn
@@ -98,7 +106,7 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
       const my = ++gen.current
       const myEpoch = epoch
       if (!silent && !cache.has(key)) {
-        setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, loading: true } : { key, epoch: myEpoch, data: null, error: null, loading: true }))
+        setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, loading: true } : { key, epoch: myEpoch, data: null, error: null, loading: true, fresh: false }))
       }
       fnRef
         .current()
@@ -108,13 +116,13 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
           // (a component that stays on screen through the switch, like the footer).
           if (myEpoch !== epoch) return again.current(silent)
           cachePut(key, d)
-          setHeld({ key, epoch: myEpoch, data: d, error: null, loading: false })
+          setHeld({ key, epoch: myEpoch, data: d, error: null, loading: false, fresh: true })
         })
         .catch((e: unknown) => {
           if (my !== gen.current) return
           if (myEpoch !== epoch) return again.current(silent)
           const error = e instanceof Error ? e.message : String(e)
-          setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, error, loading: false } : { key, epoch: myEpoch, data: null, error, loading: false }))
+          setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, error, loading: false } : { key, epoch: myEpoch, data: null, error, loading: false, fresh: false }))
         })
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,20 +136,20 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   useEffect(() => {
     if (key == null) return
     if (cache.has(key)) {
-      setHeld({ key, epoch, data: cacheGet(key) as T, error: null, loading: false })
+      setHeld({ key, epoch, data: cacheGet(key) as T, error: null, loading: false, fresh: false })
       if (!(freshMs > 0 && Date.now() - (fetchedAt.get(key) ?? 0) < freshMs)) run(true)
     } else {
-      setHeld({ key, epoch, data: null, error: null, loading: true })
+      setHeld({ key, epoch, data: null, error: null, loading: true, fresh: false })
       run(false)
     }
   }, [key, run, freshMs])
 
-  if (held.key === key && held.epoch === epoch) return { data: held.data, error: held.error, loading: held.loading, reload: run }
+  if (held.key === key && held.epoch === epoch) return { data: held.data, error: held.error, loading: held.loading, fresh: held.fresh, reload: run }
   // Rendering for a new key (or after a profile switch) before the effect has caught up:
   // this key's cached result if there is one (read without reordering the cache), else
   // nothing yet. Never the previous key's.
   const cached = key != null && cache.has(key) ? (cache.get(key) as T) : null
-  return { data: cached, error: null, loading: key != null && cached == null, reload: run }
+  return { data: cached, error: null, loading: key != null && cached == null, fresh: false, reload: run }
 }
 
 /** Forget cached pages (after sign-out or a profile switch). */
