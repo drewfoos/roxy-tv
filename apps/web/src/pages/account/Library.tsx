@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../api/client'
 import type { BrowseResponse, IdentifyCandidate, LibraryFolder, ManageTitle } from '../../api/admin'
-import { useAsync } from '../../hooks/useAsync'
+import type { Item } from '../../api/types'
+import { markStale, useAsync } from '../../hooks/useAsync'
 import { ActionButton, Field, ListRow, Notice, PanelHead, RadioList, SectionHead, TextArea, TextInput, ToggleRow, errorText, formatWhen } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
 
@@ -395,16 +396,36 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
   )
 }
 
+/**
+ * Save sends every field (the server overwrites them all), so the form must start from
+ * the title as it is now: it is filled from a fresh fetch, never the page cache (which
+ * reopened the form with the values from before the last edit), and Save waits for it
+ * (saving early sent an empty synopsis, genres and studio).
+ */
 function EditDetails({ title, onDone, run }: { title: ManageTitle; onDone: () => void; run: Run }) {
-  const { data: item } = useAsync(`item:${title.id}`, () => api.item(title.id))
+  const [item, setItem] = useState<Item | null>(null)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [f, setF] = useState({ title: title.title, year: title.year ? String(title.year) : '', overview: '', genres: '', studio: '', premiered: '', locked: !!title.locked })
-  const [seeded, setSeeded] = useState(false)
   useEffect(() => {
-    if (item && !seeded) {
-      setF({ title: item.title, year: item.year ? String(item.year) : '', overview: item.overview ?? '', genres: (item.genres ?? []).join(', '), studio: item.studio ?? '', premiered: item.airDate ?? '', locked: !!title.locked })
-      setSeeded(true)
+    let live = true
+    api.item(title.id).then(
+      (it) => {
+        if (!live) return
+        setItem(it)
+        // A series or movie carries its date as premiered; airDate is only set on episodes,
+        // so reading it alone left the field empty and saving erased the date.
+        const date = it.premiered ?? it.airDate ?? ''
+        setF({ title: it.title, year: it.year ? String(it.year) : '', overview: it.overview ?? '', genres: (it.genres ?? []).join(', '), studio: it.studio ?? '', premiered: /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : date, locked: !!title.locked })
+      },
+      (e: unknown) => live && setLoadErr(errorText(e)),
+    )
+    return () => {
+      live = false
     }
-  }, [item, seeded, title.locked])
+    // Only when the title changes: the list reloads every few seconds during a scan and
+    // must not refill the form over what is being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title.id])
   const set = (k: keyof typeof f) => (v: string | boolean) => setF({ ...f, [k]: v })
   return (
     <div className="acc-sub">
@@ -427,8 +448,10 @@ function EditDetails({ title, onDone, run }: { title: ManageTitle; onDone: () =>
         <TextInput value={f.premiered} onChange={set('premiered')} />
       </Field>
       <ToggleRow title="Keep my edits" hint="Refreshes leave these fields alone." on={f.locked} onChange={set('locked')} />
+      {loadErr ? <Notice kind="error">{loadErr}</Notice> : !item && <div className="ffield__hint">Loading the current details…</div>}
       <div className="acc-actions">
         <ActionButton
+          disabled={!item}
           onClick={() =>
             run(
               () =>
@@ -444,7 +467,11 @@ function EditDetails({ title, onDone, run }: { title: ManageTitle; onDone: () =>
                   premiered: f.premiered.trim(),
                   locked: f.locked,
                 }),
-              onDone,
+              () => {
+                // The title's own page asks the server again instead of trusting its copy.
+                markStale(`item:${title.id}`)
+                onDone()
+              },
             )
           }
         >
