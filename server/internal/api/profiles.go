@@ -133,7 +133,18 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	prof, _ = s.store.GetProfile(r.Context(), prof.ID)
+	profileBeforeReload()
+	prof, err := s.store.GetProfile(r.Context(), prof.ID)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	// Deleted by another request since the update (it was checked above, but nothing
+	// holds it): answer as for any missing profile instead of dereferencing nil.
+	if prof == nil {
+		writeError(w, 404, "profile not found")
+		return
+	}
 	if prof.AvatarURL != "" && prof.AvatarPath == "" {
 		s.fetchAvatar(r.Context(), prof)
 	}
@@ -170,7 +181,10 @@ func (s *Server) profileAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := prof.AvatarPath
-	if width, _ := strconv.Atoi(r.URL.Query().Get("w")); width >= 16 && width < 1024 {
+	// Snapped to the fixed widths item images use: any width 16..1023 used to be cached
+	// as its own file, so ?w= could write a thousand files per profile.
+	if width, _ := strconv.Atoi(r.URL.Query().Get("w")); width >= 16 && snapWidth(width) < 1024 {
+		width = snapWidth(width)
 		variant := strings.TrimSuffix(path, ".jpg") + fmt.Sprintf(".w%d.jpg", width)
 		if _, err := os.Stat(variant); err != nil {
 			if err := resizeToFile(path, variant, width); err == nil {
@@ -191,6 +205,10 @@ func (s *Server) profileAvatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 }
+
+// profileBeforeReload runs between a profile update and re-reading the profile; tests
+// use it to delete the profile in that gap.
+var profileBeforeReload = func() {}
 
 // ownProfile loads the profile in the URL and checks it belongs to the caller.
 func (s *Server) ownProfile(w http.ResponseWriter, r *http.Request) (*model.Principal, *model.Profile) {

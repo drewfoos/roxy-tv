@@ -292,7 +292,7 @@ existing user a default profile that inherited their history. At most 6 per acco
 | POST | `/v1/me/profiles` | `{name, avatarUrl?, avatarName?}` → 201 Profile |
 | PATCH | `/v1/me/profiles/{id}` | `{name?, avatarUrl?, avatarName?}`; `avatarUrl: "-"` clears the picture |
 | DELETE | `/v1/me/profiles/{id}` | 204; the last profile cannot be deleted, deleting the default promotes the oldest |
-| GET | `/v1/me/profiles/{id}/avatar?w=` | the cached picture (JPEG), 404 when none |
+| GET | `/v1/me/profiles/{id}/avatar?w=` | the cached picture (JPEG), 404 when none. `w` (16 to 960) snaps up to the next of the fixed image widths (160, 320, 480, 640, 960); larger or absent serves the original |
 | GET | `/v1/avatars/search?q=` | `{characters: [{id, name, image, series}]}` from AniList |
 | GET | `/v1/avatars/suggested` | main cast of the library's series (up to 6 per show, cached an hour) |
 
