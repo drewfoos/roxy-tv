@@ -24,8 +24,11 @@ export function usePlayerKeys(actions: PlayerKeyActions) {
   ref.current = actions
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl/Cmd/Alt combinations belong to the browser and the OS (Ctrl+L, Cmd+F, Alt+Left
+      // for back): they used to seek or go fullscreen as well as doing their own job.
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
       const a = ref.current
       switch (e.key) {
         case ' ':
