@@ -21,6 +21,10 @@ import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.ui.playItem
 import java.util.Locale
 
+/** A failed "Play on" status report is sent again after this long, doubling up to the max. */
+private const val STATE_RETRY_MIN_MS = 5_000L
+private const val STATE_RETRY_MAX_MS = 60_000L
+
 /**
  * "Play on": this device as a player other devices can drive, and as a remote for them.
  *
@@ -96,8 +100,6 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
         }
     }
 
-    private var lastState: String? = null
-
     // Every report is numbered (starting from the clock, so a restarted app keeps counting
     // up) and sent by one coroutine, in order, one at a time; the queue keeps only the
     // newest unsent report. Each used to be its own coroutine, so a "playing" report could
@@ -106,20 +108,47 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
     private val stateSeq = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000)
     private val states = Channel<RemoteNow>(Channel.CONFLATED)
 
+    // The newest state asked for. It is not "sent" until the request succeeds: a failed one
+    // is sent again by itself (below) for as long as it is still the newest, so an identical
+    // report meanwhile is left out (it is in flight or waiting for its retry), and a newer
+    // one replaces it. Marking a state sent before the request (as this used to) left the
+    // server showing the old state after a failed report, until the position or pause
+    // changed; a paused or stopped player reports nothing more, so it could stay wrong.
+    private var latest: RemoteNow? = null
+    private var retryDelayMs = STATE_RETRY_MIN_MS
+
     init {
         scope.launch {
-            for (s in states) runCatching { api.sessionState(s) }.onFailure { Timber.d("remote state: %s", it.message) }
+            for (s in states) {
+                val ok = runCatching { api.sessionState(s) }.onFailure { Timber.d("remote state: %s", it.message) }.isSuccess
+                sent(s, ok)
+            }
+        }
+    }
+
+    @Synchronized
+    private fun sent(s: RemoteNow, ok: Boolean) {
+        if (ok) { retryDelayMs = STATE_RETRY_MIN_MS; return }
+        if (latest !== s) return // a newer state is already queued; it supersedes this one
+        val wait = retryDelayMs
+        retryDelayMs = (retryDelayMs * 2).coerceAtMost(STATE_RETRY_MAX_MS)
+        scope.launch {
+            delay(wait)
+            // Same report, same number: if the failed request did reach the server after all,
+            // the server ignores the repeat.
+            synchronized(this@RemotePlay) { if (latest === s && prefs.session.value.isLoggedIn) states.trySend(s) }
         }
     }
 
     /** Called by the local player on every progress report and on stop (itemId null). */
     @Synchronized
     fun reportState(itemId: String?, title: String, positionMs: Long, paused: Boolean) {
-        if (!prefs.session.value.isLoggedIn) return
-        val key = "$itemId:$positionMs:$paused"
-        if (key == lastState) return
-        lastState = key
-        states.trySend(RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet()))
+        if (!prefs.session.value.isLoggedIn) { latest = null; return }
+        val cur = latest
+        if (cur != null && cur.itemId == itemId.orEmpty() && cur.positionMs == positionMs && cur.paused == paused) return
+        val s = RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet())
+        latest = s
+        states.trySend(s)
     }
 
     // ---- as a remote ----
