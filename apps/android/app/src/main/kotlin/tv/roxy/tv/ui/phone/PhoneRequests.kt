@@ -72,7 +72,7 @@ private fun what(r: AdminRequest): String? = when {
 }
 
 /**
- * Admin: every request in one place (request app's Requests page). Waiting ones first, with
+ * Admin: every request in one place. Waiting ones first, with
  * Approve / Decline; then what is downloading, what failed, and the rest. A row opens the
  * title in Discover.
  */

@@ -14,7 +14,7 @@ import (
 // TMDB's layout would not even mean the same thing to Sonarr. TMDB's own answer is an
 // episode group: a community "Seasons" grouping in production or air-date order that
 // usually mirrors TVDB. When one splits the show into more seasons than TMDB's default,
-// Discover shows (and requests) that layout. request app shows TMDB's merged season.
+// Discover shows (and requests) that layout instead of TMDB's merged season.
 
 type tmdbGroupList struct {
 	Results []struct {

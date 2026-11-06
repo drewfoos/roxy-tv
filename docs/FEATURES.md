@@ -37,7 +37,7 @@ The full feature list, server and apps. The short version is in the [README](../
   the app. Runs in Docker with the GPU passed through.
 - LAN discovery (a UDP beacon on 8096), in-app APK updates, server-served Terms of Use and
   Privacy. (The Jellyfin-compatible API was removed; see ADR-0008.)
-- Requests go straight to Sonarr and Radarr (no request app). They are offered only once Sonarr
+- Requests go straight to Sonarr and Radarr. They are offered only once Sonarr
   or Radarr has a root folder and a quality profile chosen in the settings (an address and
   key alone, say from the environment, are not enough). Requests follow a hand-tuned arr
   setup rather than fighting it:

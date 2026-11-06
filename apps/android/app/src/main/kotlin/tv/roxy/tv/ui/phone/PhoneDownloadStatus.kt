@@ -49,8 +49,8 @@ import java.util.Locale
 
 /*
  * Download status of a request, as the server's tracker reports it from Sonarr / Radarr:
- * a card on the Discover title page and a one-line form for posters. Unlike request app it
- * says what went wrong (stalled, failed, cannot import, nothing found) in the arr app's
+ * a card on the Discover title page and a one-line form for posters. It says what
+ * went wrong (stalled, failed, cannot import, nothing found) in the arr app's
  * own words, and offers to search again or try another release.
  */
 

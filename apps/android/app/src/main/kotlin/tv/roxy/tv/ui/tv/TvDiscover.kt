@@ -84,7 +84,7 @@ import tv.roxy.tv.ui.components.tryFocus
 import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
- * Discover on the TV: the phone's Discover (Roxy's own request app) laid out for a remote. A
+ * Discover on the TV: the phone's Discover laid out for a remote. A
  * search box at the top, then "Your requests" and the TMDB rows; typing turns the rows into
  * a grid of results. A title already in the library opens its page; anything else opens the
  * TMDB title page with Request.

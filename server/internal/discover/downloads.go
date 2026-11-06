@@ -15,9 +15,8 @@ import (
 
 // Download tracking: what happened to a request after Sonarr / Radarr took it.
 //
-// request app reads the first page (10 records) of the arr queue every minute and shows a
-// progress bar on hover; it never says when a download stalls, fails, cannot be
-// imported, or when nothing was found. Here every sent request gets a status built from
+// A progress bar alone never says when a download stalls, fails, cannot be imported,
+// or when nothing was found. Here every sent request gets a status built from
 // the title's own queue (unpaged), its episodes (files, air dates, last search) and its
 // history (failed downloads), refreshed every 10 s while something is moving and every
 // 2 min otherwise, and at once when a Sonarr / Radarr webhook arrives.

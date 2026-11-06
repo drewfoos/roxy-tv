@@ -234,7 +234,7 @@ class RoxyApi(private val prefs: Prefs) {
     /** "More details" for a Discover title (it may not be in the library). */
     suspend fun discoverMoreDetails(type: String, tmdbId: Int): ItemDetails = get("/v1/discover/$type/$tmdbId/details")
 
-    // ---- discover (TMDB through the server; "our own request app") ----
+    // ---- discover (TMDB through the server; requests) ----
 
     suspend fun discover(): DiscoverResponse = get("/v1/discover")
 
@@ -1130,7 +1130,7 @@ data class Genre(val id: Int, val name: String)
 @Serializable
 data class GenresResponse(val genres: List<Genre> = emptyList())
 
-/** One arr server's connection and defaults (request app's Services page). */
+/** One arr server's connection and defaults. */
 @Serializable
 data class ArrConfig(
     val url: String = "",

@@ -141,7 +141,7 @@ func (q QueueItem) TimeLeftSeconds() int {
 }
 
 // Queue returns the download queue entries for one series (Sonarr) or movie (Radarr).
-// /queue/details is unpaged, unlike /queue (which defaults to 10 records: request app's bug).
+// /queue/details is unpaged, unlike /queue (which defaults to 10 records).
 func (c *Client) Queue(ctx context.Context, arrID int) ([]QueueItem, error) {
 	q := url.Values{}
 	if c.Name == "radarr" {

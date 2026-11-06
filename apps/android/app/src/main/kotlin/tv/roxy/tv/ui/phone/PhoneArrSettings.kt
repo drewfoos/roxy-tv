@@ -57,7 +57,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 
 /**
  * Admin page: the Sonarr and Radarr servers Discover requests go to, laid out like
- * request app's Services page. Enter the URL and API key, Test connection, then pick the root
+ * Enter the URL and API key, Test connection, then pick the root
  * folder and quality profile (and the anime ones for Sonarr) from what the server
  * reports. Save stores it on Roxy Server and pushes any pending requests.
  */

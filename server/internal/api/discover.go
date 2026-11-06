@@ -12,7 +12,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/model"
 )
 
-// Discover ("our own request app"): TMDB rows and search annotated with what the library has
+// Discover (Roxy's request flow): TMDB rows and search annotated with what the library has
 // and what was requested; requests go to Sonarr / Radarr when configured.
 
 func (s *Server) discoverGuard(w http.ResponseWriter) bool {

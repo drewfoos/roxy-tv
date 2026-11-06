@@ -1,4 +1,4 @@
-// Package discover is Roxy's own request app: TMDB browsing and search with "in your library"
+// Package discover is Roxy's request flow: TMDB browsing and search with "in your library"
 // and request state, and requests that go to Sonarr / Radarr when they are configured.
 package discover
 

@@ -45,7 +45,7 @@ media URLs the player fetches itself may carry the token as `?api_key=<token>` i
 | GET | `/v1/discover`, `/v1/discover/search?q=`, `/v1/discover/{tv|movie}/{tmdbId}` | TMDB rows / search / title with library and request state (`docs/api/native.md` "Discover") |
 | POST/GET/DELETE | `/v1/discover/request`, `/v1/discover/requests[/{id}]` | request a title (sent to Sonarr/Radarr; 412 while the matching one is not connected), list, withdraw |
 | GET | `/v1/discover/browse?...`, `/v1/discover/genres?type=` | filtered TMDB browsing (type, sort, genres, language, anime, years, rating, status; paged) |
-| GET/PUT/POST | `/v1/settings/arr`, `/v1/settings/arr/test` | admin: Sonarr / Radarr connection and defaults (request app-style), test connection lists root folders / profiles / tags |
+| GET/PUT/POST | `/v1/settings/arr`, `/v1/settings/arr/test` | admin: Sonarr / Radarr connection and defaults, test connection lists root folders / profiles / tags |
 | POST | `/v1/webhooks/sonarr`, `/v1/webhooks/radarr` | arr Webhook connections (API key): import / rename / delete without a rescan; `GET /v1/webhooks/events` (admin) |
 | GET/POST/DELETE | `/v1/auth/keys[/{id}]` | admin: API keys for the arr apps |
 | GET | `/v1/apps/tv/latest?package=` | newest published build of the app for that applicationId (`{versionCode, versionName, notes, size, url}`), from `data/apps/tv/latest.json` written by `apps/android/tools/publish-apk.ps1` |

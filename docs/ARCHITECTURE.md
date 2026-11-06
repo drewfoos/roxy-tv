@@ -5,9 +5,9 @@ document describes the code on `main` and is kept in step with it. Why each big 
 made is in `docs/adr/`; the API is specified in `docs/api/native.md`; the dated history of
 the work is in `docs/ROADMAP.md`.
 
-Earlier drafts of this document described a Jellyfin-compatible API and a request app
-integration. Both are gone: the compat API was removed in ADR-0008, and requests are
-handled by Roxy's own Discover (section 4.10). Section 9 lists other ideas from those drafts
+Earlier drafts of this document described a Jellyfin-compatible API for other apps to
+talk to. It was removed in ADR-0008; requests are handled by Roxy's own Discover
+(section 4.10). Section 9 lists other ideas from those drafts
 that were never built.
 
 ## 1. Goals and non-goals
@@ -247,7 +247,7 @@ show a Skip button or skip automatically (a viewer preference).
 
 ### 4.10 Discover and requests
 
-Roxy's own request flow, replacing request app. Discover browses and searches TMDB, marks what is
+Roxy's own request flow. Discover browses and searches TMDB, marks what is
 already in the library, and lets a profile request a movie, a show or single seasons.
 Requests from non-admins wait for an admin's approval. Approved requests are added to
 Radarr or Sonarr (configured root folder and quality profile, with optional separate

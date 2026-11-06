@@ -1,12 +1,9 @@
 // Package arr talks to Sonarr and Radarr (API v3) to add titles the household requests
 // from Discover. The arr apps do the searching and downloading; Roxy only adds the
-// series or movie, monitored, with a search kicked off. The settings model follows
-// request app's: one server each, a root folder and quality profile for new requests, separate
-// ones for anime series, optional tags, and Radarr's minimum availability.
-//
-// Untested against live instances as of 2026-10-19 (the owner's arr stack runs on a
-// server that is not reachable from the dev laptop); the calls follow the v3 API as
-// request app uses it. Verify with Test connection on deploy day.
+// series or movie, monitored, with a search kicked off. The settings: one server each,
+// a root folder and quality profile for new requests, separate ones for anime series,
+// optional tags, and Radarr's minimum availability. The calls use the v3 API; Test
+// connection in the app checks them against a live server.
 package arr
 
 import (
@@ -25,7 +22,7 @@ import (
 	"time"
 )
 
-// Config is what the admin saves for one arr server (request app's Services page, minus 4K).
+// Config is what the admin saves for one arr server.
 type Config struct {
 	URL    string `json:"url"`    // http://sonarr:8989, with any URL base included
 	APIKey string `json:"apiKey"` // Settings → General → Security in the arr app
@@ -292,7 +289,7 @@ func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []stri
 
 // AddSeries adds a series to Sonarr by TVDB id (monitored, search on add; series type
 // "anime" with the anime root / profile when asked). With seasons, only those are
-// monitored and searched (request app's per-season requests); empty means the whole series.
+// monitored and searched (per-season requests); empty means the whole series.
 // episodes ("S0E5" codes, specials) are monitored and searched one by one; seasons [-1]
 // means those episodes only, nothing else monitored. Returns the Sonarr series id. A series
 // Sonarr already has gets the requested seasons monitored and a SeasonSearch for each
@@ -511,7 +508,7 @@ func (c *Client) AddMovie(ctx context.Context, tmdbID int, anime bool) (int, err
 				continue
 			}
 			// Already in Radarr (an earlier request, or added by hand and dropped): make sure
-			// it is monitored and look for it, as request app does. Returning the id alone left a
+			// it is monitored and look for it. Returning the id alone left a
 			// re-request doing nothing.
 			if mon, _ := m["monitored"].(bool); !mon {
 				m["monitored"] = true

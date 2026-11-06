@@ -1,4 +1,4 @@
--- Discover requests ("our own request app"): a title someone wants added. Sent to Sonarr or
+-- Discover requests: a title someone wants added. Sent to Sonarr or
 -- Radarr when they are configured; otherwise kept as pending so the household can see
 -- what was asked for. `available` is not stored: it is true whenever the library has an
 -- item with the same TMDB id.

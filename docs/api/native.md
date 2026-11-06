@@ -300,7 +300,7 @@ anime characters: `avatarUrl` on create/update must be an AniList CDN image (as 
 by the two `/v1/avatars` endpoints); the server caches a copy and serves it from
 `/v1/me/profiles/{id}/avatar`. `/v1/auth/me` also returns `profileId`.
 
-## Discover (requests; "our own request app")
+## Discover (requests)
 
 TMDB through the server (the key stays there; posters are absolute `image.tmdb.org`
 URLs the app loads directly). Every item carries `libraryItemId` when the library has
@@ -373,8 +373,8 @@ yet; `nextAir`), `complete`. `have` / `wanted` count requested, aired episodes. 
 the arr app replaces a failed release on its own, `message` says "Trying another
 release: the last one failed (…)". `groups` folds `items` by state for display.
 
-The server builds it from each title's own queue (`/queue/details`, unpaged; request app reads
-only the first 10 queue records), episodes (`hasFile`, `airDateUtc`, `lastSearchTime`)
+The server builds it from each title's own queue (`/queue/details`, unpaged, not the
+first 10 queue records `/queue` returns), episodes (`hasFile`, `airDateUtc`, `lastSearchTime`)
 and history (`downloadFailed`), every 10 s while something moves and every 2 min
 otherwise, and at once when a Sonarr / Radarr webhook arrives.
 
@@ -438,7 +438,7 @@ asked when the login is shared.
 
 ### Sonarr / Radarr settings (admin)
 
-request app's Services model, saved on the server (settings key `arr`, migration 0010); the
+The arr connection settings, saved on the server (settings key `arr`, migration 0010); the
 `ROXY_SONARR_*` / `ROXY_RADARR_*` variables seed it when nothing is saved.
 
 - `GET /v1/settings/arr` → `{sonarr, radarr, requestsEnabled}` with API keys masked as `••••••••`.

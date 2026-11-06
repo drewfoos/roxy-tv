@@ -115,7 +115,7 @@ import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /*
- * Discover: Roxy's own request app. TMDB rows (trending, new anime this season, popular and
+ * Discover: Roxy's request flow. TMDB rows (trending, new anime this season, popular and
  * top-rated anime, anime movies, popular and upcoming movies, popular series) and a
  * search box, every poster marked when the library already has it or someone asked for
  * it; a title page with Watch (in the library) or Request. Requests go to Sonarr /

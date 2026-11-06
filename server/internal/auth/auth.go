@@ -139,7 +139,7 @@ func (s *Service) IssueToken(ctx context.Context, u *model.User, client ClientIn
 	return d, token, nil
 }
 
-// CreateAPIKey mints an integration key (request app, Sonarr, Radarr).
+// CreateAPIKey mints an integration key (the Sonarr and Radarr webhooks).
 func (s *Service) CreateAPIKey(ctx context.Context, name string) (*model.APIKey, error) {
 	token := NewToken()
 	k := &model.APIKey{ID: newID(), Name: name, TokenHash: HashToken(token), Token: token}
