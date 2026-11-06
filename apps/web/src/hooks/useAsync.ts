@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { session } from '../api/session'
 
 export interface AsyncState<T> {
   data: T | null
@@ -17,6 +18,28 @@ export interface AsyncState<T> {
 const CACHE_MAX = 120
 const cache = new Map<string, unknown>() // insertion order = least recently used first
 const fetchedAt = new Map<string, number>()
+
+/**
+ * The cache belongs to one login and profile. `epoch` counts clears: a request records it
+ * when it starts and its answer is dropped if the cache was cleared meanwhile, so a page
+ * for the profile just left cannot write its Continue Watching or Watchlist back under a
+ * key the next profile reads.
+ */
+let epoch = 0
+const identity = () => {
+  const s = session.get()
+  return s ? `${s.userId}|${s.token}|${s.profileId ?? ''}` : ''
+}
+let lastIdentity = identity()
+// Signing in or out (including a 401), or switching profile, clears the cache by itself;
+// sign-out used to leave the last account's pages for whoever signed in next.
+session.subscribe(() => {
+  const id = identity()
+  if (id !== lastIdentity) {
+    lastIdentity = id
+    clearAsyncCache()
+  }
+})
 
 function cacheGet(key: string): unknown {
   const v = cache.get(key)
@@ -49,16 +72,21 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   const fnRef = useRef(fn)
   fnRef.current = fn
   const gen = useRef(0)
+  const again = useRef<(silent: boolean) => void>(() => undefined)
 
   const run = useCallback(
     (silent = false) => {
       if (key == null) return
       const my = ++gen.current
+      const myEpoch = epoch
       if (!silent && !cache.has(key)) setLoading(true)
       fnRef
         .current()
         .then((d) => {
           if (my !== gen.current) return
+          // Asked for the login / profile since left: drop it, and ask again for this one
+          // (a component that stays on screen through the switch, like the footer).
+          if (myEpoch !== epoch) return again.current(silent)
           cachePut(key, d)
           setData(d)
           setError(null)
@@ -66,6 +94,7 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
         })
         .catch((e: unknown) => {
           if (my !== gen.current) return
+          if (myEpoch !== epoch) return again.current(silent)
           setError(e instanceof Error ? e.message : String(e))
           setLoading(false)
         })
@@ -73,6 +102,10 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key, ...deps],
   )
+
+  again.current = run
+  // Gone from the screen: whatever is still in flight for this component is ignored.
+  useEffect(() => () => { gen.current++ }, [])
 
   useEffect(() => {
     if (key == null) return
@@ -91,6 +124,7 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
 
 /** Forget cached pages (after sign-out or a profile switch). */
 export function clearAsyncCache() {
+  epoch++
   cache.clear()
   fetchedAt.clear()
 }
