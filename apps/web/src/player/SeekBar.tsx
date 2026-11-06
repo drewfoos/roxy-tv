@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { api } from '../api/client'
 import type { MediaSegment, TrickplayManifest } from '../api/types'
 import { fmt } from './format'
@@ -36,12 +36,32 @@ export function SeekBar({ sourceId, duration, current, buffered, segments, trick
     const row = Math.floor((tile % per) / trick.columns)
     return { sheet, x: col * trick.width, y: row * trick.height }
   }, [hover, trick])
+  // The bar is a slider for screen readers and the keyboard: arrows move 10 s (as the
+  // player's own arrow keys do), Page Up / Down a minute, Home / End to either end. The key
+  // stops here, or the player's window-wide shortcuts would seek a second time.
+  const onKey = (e: ReactKeyboardEvent) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || !duration) return
+    const to: Record<string, number> = { ArrowLeft: current - 10, ArrowDown: current - 10, ArrowRight: current + 10, ArrowUp: current + 10, PageDown: current - 60, PageUp: current + 60, Home: 0, End: duration }
+    const t = to[e.key]
+    if (t === undefined) return
+    e.preventDefault()
+    e.stopPropagation()
+    onSeek(Math.max(0, Math.min(duration, t)))
+  }
   const played = duration ? Math.min(1, current / duration) : 0
   const buff = duration ? Math.min(1, buffered / duration) : 0
   return (
     <div
       ref={ref}
       className="seek"
+      role="slider"
+      tabIndex={0}
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration)}
+      aria-valuenow={Math.round(Math.min(current, duration || current))}
+      aria-valuetext={`${fmt(current)} of ${fmt(duration)}`}
+      onKeyDown={onKey}
       onMouseMove={(e) => setHover(barTime(e))}
       onMouseLeave={() => setHover(null)}
       onClick={(e) => {
