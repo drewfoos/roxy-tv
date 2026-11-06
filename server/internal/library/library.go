@@ -209,10 +209,21 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
+	// What the walk could not read. Files recorded under an unreadable folder are unknown,
+	// not gone: they used to count as vanished and their records were deleted, so a folder
+	// that lost its permissions, or a library root that could not be read at all, emptied
+	// the library.
+	var unreadable []string
+	var rootErr error
 
 	err = filepath.WalkDir(lib.Root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if path == lib.Root {
+				rootErr = walkErr
+				return filepath.SkipAll
+			}
 			slog.Warn("walk error", "path", path, "err", walkErr)
+			unreadable = append(unreadable, path)
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -256,10 +267,19 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	if err != nil {
 		return err
 	}
+	if rootErr != nil {
+		return fmt.Errorf("the library folder %s cannot be read (%v); nothing was removed", lib.Root, rootErr)
+	}
+	// Files are recorded but the walk found none at all: the drive is most likely not
+	// mounted, and what is there is the empty folder Docker creates for a missing bind
+	// mount. Removing everything would empty the library, so nothing is.
+	if len(seen) == 0 && len(known) > 0 {
+		return fmt.Errorf("the library folder %s has no media files but %d are recorded; nothing was removed (is the drive mounted?)", lib.Root, len(known))
+	}
 
 	removed := 0
 	for path, sourceID := range known {
-		if seen[path] {
+		if seen[path] || underAny(path, unreadable) {
 			continue
 		}
 		if err := l.store.DeleteSource(ctx, sourceID); err != nil {
@@ -275,7 +295,24 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		slog.Info("pruned orphaned items", "count", n)
 	}
 	slog.Info("scan complete", "library", lib.Name, "added", added, "updated", updated, "unchanged", skipped, "removed", removed, "forced", force, "took", time.Since(start).Round(time.Millisecond))
+	if len(unreadable) > 0 {
+		shown := unreadable
+		if len(shown) > 3 {
+			shown = shown[:3]
+		}
+		return fmt.Errorf("%d folder(s) could not be read, what was recorded there was kept: %s", len(unreadable), strings.Join(shown, ", "))
+	}
 	return nil
+}
+
+// underAny: path is one of dirs or inside one of them.
+func underAny(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if path == d || strings.HasPrefix(path, d+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // addFileSafe wraps AddFile so a parser bug on one odd filename cannot take down a scan.
