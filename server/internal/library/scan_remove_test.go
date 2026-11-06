@@ -187,3 +187,25 @@ func TestScanInjectedReadFailureKeepsRecords(t *testing.T) {
 	}
 	wantRecorded(t, st, lib, paths)
 }
+
+// A file that is read but cannot be added (here: a new file, and no prober) does not
+// stop the scan: the others are kept, a file really deleted is still removed, and the
+// scan reports the failed file by name and count, not as the library being unavailable.
+func TestScanReportsFilesThatCouldNotBeAdded(t *testing.T) {
+	l, st, lib, paths := recordedLibrary(t)
+	bad := filepath.Join(lib.Root, "A", "three.mkv")
+	if err := os.WriteFile(bad, []byte("not a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths[3]); err != nil { // B/two.mkv really deleted
+		t.Fatal(err)
+	}
+	err := l.Scan(context.Background(), lib)
+	if err == nil || !strings.Contains(err.Error(), "1 file(s) could not be added") || !strings.Contains(err.Error(), "three.mkv") {
+		t.Fatalf("scan error: %v", err)
+	}
+	if strings.Contains(err.Error(), "\n") || strings.Contains(err.Error(), "nothing was removed") {
+		t.Fatalf("a file failure must read as one line, not as an unreadable library: %q", err)
+	}
+	wantRecorded(t, st, lib, paths[:3]) // the others kept, B/two removed, three.mkv not added
+}

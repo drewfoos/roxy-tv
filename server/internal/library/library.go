@@ -217,6 +217,11 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	// library root that could not be read at all, emptied the library.
 	var unreadable []string
 	var rootErr error
+	// Files that were read but could not be added or updated (a probe or parse failure):
+	// the rest of the scan goes on, and the count is reported as a partial failure. They
+	// used to be logged only, so such a scan still reported success.
+	ingestFailed := 0
+	var ingestErrs []string // the first few, "name (reason)"
 
 	err = walkDir(lib.Root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -263,6 +268,10 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		}
 		if err := l.addFileSafe(ctx, lib, path); err != nil {
 			slog.Error("ingest failed", "path", path, "err", err)
+			ingestFailed++
+			if len(ingestErrs) < 3 {
+				ingestErrs = append(ingestErrs, fmt.Sprintf("%s (%v)", filepath.Base(path), err))
+			}
 		}
 		return nil
 	})
@@ -297,12 +306,26 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		slog.Info("pruned orphaned items", "count", n)
 	}
 	slog.Info("scan complete", "library", lib.Name, "added", added, "updated", updated, "unchanged", skipped, "removed", removed, "forced", force, "took", time.Since(start).Round(time.Millisecond))
+	// One line for the library (the admin screens show a line per library): unreadable
+	// folders, then files that failed, each with its own count, so one odd file reads as
+	// that and not as the library being unavailable.
+	var problems []string
 	if len(unreadable) > 0 {
 		shown := unreadable
 		if len(shown) > 3 {
 			shown = shown[:3]
 		}
-		return fmt.Errorf("%d folder(s) could not be read, so nothing was removed this scan: %s", len(unreadable), strings.Join(shown, ", "))
+		problems = append(problems, fmt.Sprintf("%d folder(s) could not be read, so nothing was removed this scan: %s", len(unreadable), strings.Join(shown, ", ")))
+	}
+	if ingestFailed > 0 {
+		more := ""
+		if ingestFailed > len(ingestErrs) {
+			more = fmt.Sprintf("; and %d more", ingestFailed-len(ingestErrs))
+		}
+		problems = append(problems, fmt.Sprintf("%d file(s) could not be added or updated: %s%s", ingestFailed, strings.Join(ingestErrs, "; "), more))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, ". "))
 	}
 	return nil
 }

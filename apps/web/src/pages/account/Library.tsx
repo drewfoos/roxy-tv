@@ -54,7 +54,7 @@ export function LibraryPage() {
       <Notice kind={busy ? 'info' : scanErrors.length ? 'error' : 'ok'}>{status}</Notice>
       {scanErrors.length > 0 && (
         <Notice kind="error">
-          The last scan couldn't read every library:
+          The last scan had problems:
           {scanErrors.map((l) => (
             <div key={l}>{l}</div>
           ))}
