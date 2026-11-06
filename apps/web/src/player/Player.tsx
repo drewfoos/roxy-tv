@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { ageLabel, pickSubtitle, primarySource } from '../api/items'
 import { lang3, prefs } from '../api/prefs'
-import type { Item, MediaSegment, TrickplayManifest } from '../api/types'
+import type { Item, MediaSegment, MediaStream, TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
@@ -27,6 +27,32 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 /** Direct play, or a server stream (remux or transcode) whose clock starts at `offset`. */
 type Mode = { kind: 'direct' } | { kind: 'server'; audio: number | null; offset: number }
+
+/**
+ * The audio and subtitle tracks an item starts with: the choice saved on this title, else
+ * the profile's preferences (audio language; subtitles off, only with foreign audio, or
+ * always). Worked out again for every item: the Watch page keeps one Player across
+ * episodes (so fullscreen survives Autoplay Next), and the next episode must not inherit
+ * the last one's tracks.
+ */
+function initialTracks(item: Item, source: ReturnType<typeof primarySource>, audioTracks: MediaStream[], subTracks: MediaStream[]) {
+  const p = prefs.get()
+  const savedAudio = item.userData?.audioIndex
+  const audio = savedAudio != null && audioTracks.some((t) => t.index === savedAudio)
+    ? savedAudio
+    : (audioTracks.find((t) => lang3(t.language) === p.audioLang)?.index ?? audioTracks[0]?.index ?? null)
+  const savedSub = item.userData?.subtitleIndex
+  const sub = savedSub != null && subTracks.some((t) => t.index === savedSub) ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
+  let subsOn = true
+  if (savedSub == null) {
+    if (p.subMode === 'none') subsOn = false
+    else if (p.subMode === 'foreign') {
+      const a = audioTracks.find((t) => t.index === (savedAudio ?? -1)) ?? audioTracks.find((t) => lang3(t.language) === p.audioLang) ?? audioTracks[0]
+      subsOn = !!a && lang3(a.language) !== p.audioLang
+    }
+  }
+  return { audio, sub, subsOn }
+}
 
 const QUALITY_KBPS: Record<Exclude<Quality, 'original'>, number> = { 1080: 8000, 720: 4000, 480: 1500 }
 
@@ -95,29 +121,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [fontWarn, setFontWarn] = useState<string | null>(null)
   const fontWarnTimer = useRef<number | null>(null)
   const [trick, setTrick] = useState<TrickplayManifest | null>(null)
-  const [audioIndex, setAudioIndex] = useState<number | null>(() => {
-    const want = item.userData?.audioIndex
-    if (want != null && audioTracks.some((t) => t.index === want)) return want
-    const pref = audioTracks.find((t) => lang3(t.language) === prefs.get().audioLang)
-    return pref?.index ?? audioTracks[0]?.index ?? null
-  })
-  const [subIndex, setSubIndex] = useState<number | null>(() => {
-    const want = item.userData?.subtitleIndex
-    if (want != null && subTracks.some((t) => t.index === want)) return want
-    return pickSubtitle(source, prefs.get().subLang)?.index ?? null
-  })
-  const [subsOn, setSubsOn] = useState(() => {
-    // Preferences > Subtitles: off, only with foreign audio, or always; the last choice on
-    // this title (a saved subtitle index) wins over the rule.
-    if (item.userData?.subtitleIndex != null) return true
-    const p = prefs.get()
-    if (p.subMode === 'none') return false
-    if (p.subMode === 'foreign') {
-      const a = audioTracks.find((t) => t.index === (item.userData?.audioIndex ?? -1)) ?? audioTracks.find((t) => lang3(t.language) === p.audioLang) ?? audioTracks[0]
-      return !!a && lang3(a.language) !== p.audioLang
-    }
-    return true
-  })
+  // Set again for every new item in the start effect below (see initialTracks).
+  const [audioIndex, setAudioIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).audio)
+  const [subIndex, setSubIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).sub)
+  const [subsOn, setSubsOn] = useState(() => initialTracks(item, source, audioTracks, subTracks).subsOn)
 
   const absTime = useCallback(() => {
     const v = videoRef.current
@@ -243,10 +250,16 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       fontWarnTimer.current = window.setTimeout(() => setFontWarn(null), 8000)
     })
     subsRef.current = subs
+    // This item's own tracks, not the previous episode's (the Player is reused).
+    const tracks = initialTracks(item, source, audioTracks, subTracks)
+    setAudioIndex(tracks.audio)
+    setSubIndex(tracks.sub)
+    setSubsOn(tracks.subsOn)
+    setSkip(null)
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
-    load(start > 5 ? start : 0, audioIndex).catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
-    const sub = subTracks.find((s) => s.index === subIndex) ?? null
+    load(start > 5 ? start : 0, tracks.audio).catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
+    const sub = tracks.subsOn ? (subTracks.find((s) => s.index === tracks.sub) ?? null) : null
     if (sub) subs.setTrack(source.id, sub).catch(() => undefined)
     api.trickplay(source.id).then((m) => live && setTrick(m)).catch(() => undefined)
     const t = setTimeout(() => live && setAdvisory(false), 7000)
