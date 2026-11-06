@@ -260,7 +260,11 @@ picked up.
 ### 4.11 Other services
 
 - **Play on** (`sessions`): a phone lists the players signed in to the same login and
-  tells one to play something from a position; the TV plays it with its own player.
+  tells one to play something from a position; the TV plays it with its own player. A
+  handover is confirmed by its own id once the TV's playback clock is running at the asked
+  position, or fails back to the phone. Known limit: audio alone also runs that clock, so a
+  file whose video the TV cannot decode but whose audio plays counts as handed over (left
+  so on purpose, since audio-only playback is legitimate once music is supported).
 - **LAN discovery** (`beacon`): UDP on 8096 answers "who is roxy?", so apps list servers on
   the network; `ROXY_ADVERTISE_URL` sets the address it gives out.
 - **App updates:** the server hosts the Android APK and a `latest.json` (package, version,

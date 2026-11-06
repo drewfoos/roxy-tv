@@ -131,6 +131,11 @@ class PlayerSession(
      * Loading until the file has loaded and two progress ticks in a row show the clock
      * moving at playback speed (a seek's jump does not count), then Playing; Failed when the
      * first load fails. "Play on" acknowledges a handover only on Playing (RemotePlay).
+     *
+     * Known limit: "frames shown" is read from the playback clock, which audio alone also
+     * moves. A file whose video this device cannot decode but whose audio plays counts as
+     * Playing. Left that way on purpose: audio-only playback is legitimate once music is
+     * supported, so a "no video" check would have to tell the two apart first.
      */
     val startState = kotlinx.coroutines.flow.MutableStateFlow(StartState.Loading)
     private var startProbeSec: Double? = null // last tick's position once the file loaded
