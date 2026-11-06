@@ -222,10 +222,20 @@ func (s *Service) loadArr(ctx context.Context) {
 func atoi(v string) int { n, _ := strconv.Atoi(strings.TrimSpace(v)); return n }
 
 // ArrSettings returns the saved configuration (the caller masks secrets for the wire).
+// ArrSettings returns a deep copy of the live settings: callers decode into it and edit
+// it, and none of that may reach the live settings or the clients built from them.
 func (s *Service) ArrSettings() ArrSettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.arrCfg
+	return s.arrCfg.Clone()
+}
+
+// Clone returns a copy that shares no pointers or slices with a.
+func (a ArrSettings) Clone() ArrSettings {
+	a.Sonarr = a.Sonarr.Clone()
+	a.Radarr = a.Radarr.Clone()
+	a.PathMappings = append([]PathMapping(nil), a.PathMappings...)
+	return a
 }
 
 // SaveArrSettings stores the configuration, rebuilds the clients and sends pending requests.

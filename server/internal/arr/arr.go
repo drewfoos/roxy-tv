@@ -52,6 +52,23 @@ type Config struct {
 	ExternalURL         string `json:"externalUrl,omitempty"` // a public address for links, optional
 }
 
+// Clone returns a copy that shares nothing with c: the pointer and slice fields are
+// copied too. A plain copy shares them, so decoding JSON into the copy (the settings
+// PUT does) wrote through to the live settings even when the update was then refused.
+func (c Config) Clone() Config {
+	if c.SeasonFolders != nil {
+		v := *c.SeasonFolders
+		c.SeasonFolders = &v
+	}
+	if c.SearchOnAdd != nil {
+		v := *c.SearchOnAdd
+		c.SearchOnAdd = &v
+	}
+	c.Tags = append([]int(nil), c.Tags...)
+	c.AnimeTags = append([]int(nil), c.AnimeTags...)
+	return c
+}
+
 func (c Config) Configured() bool {
 	return strings.TrimSpace(c.URL) != "" && strings.TrimSpace(c.APIKey) != ""
 }
@@ -109,6 +126,7 @@ func New(name string, cfg Config) *Client {
 	if !cfg.Configured() {
 		return nil
 	}
+	cfg = cfg.Clone()
 	cfg.URL = strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	return &Client{Name: name, cfg: cfg, http: noRedirects(30 * time.Second)}
