@@ -310,7 +310,7 @@ func TestJustGrabbedIsQueuedNotNotFound(t *testing.T) {
 	}
 }
 
-// A torrent the client calls "stalled, no connections" seconds after the grab is looking
+// A download the client calls "stalled, no connections" seconds after the grab is looking
 // for peers, not a problem; after a couple of minutes it is stalled.
 func TestFreshStallWarningIsQueued(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)

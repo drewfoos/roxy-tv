@@ -158,7 +158,7 @@ type progressMark struct {
 const stallAfter = 10 * time.Minute
 
 // stallQuiet: how long the client's stall warning is shown as "looking for peers" rather
-// than "stalled". Every new torrent reports "stalled, no connections" for its first
+// than "stalled". Every new download reports "stalled, no connections" for its first
 // moments; showing that as a problem 6 s after a grab alarmed for nothing.
 const stallQuiet = 2 * time.Minute
 
@@ -785,7 +785,7 @@ func (s *Service) queueItem(key string, recs []arr.QueueItem, byID map[int]arr.E
 	}
 	it.State, it.Message = queueState(q)
 	// The client's own stall warning ("stalled with no connections"), as opposed to paused
-	// or an unreachable client: a fresh torrent shows it for its first moments while it
+	// or an unreachable client: a fresh download shows it for its first moments while it
 	// finds peers.
 	clientWarning := it.State == DLStalled && (q.Status == "warning" || q.TrackedDownloadStatus == "warning")
 	// No bytes moved for a while: stalled, whatever the client says.
