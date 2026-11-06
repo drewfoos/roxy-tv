@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -125,5 +126,66 @@ func TestAvatarChangeRemovesOldFile(t *testing.T) {
 	files, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(files) != 1 || files[0] != p.AvatarPath || !blueish(t, p.AvatarPath) {
 		t.Fatalf("files: %v, path %s", files, p.AvatarPath)
+	}
+}
+
+func solidJPEG(c color.Color) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for x := 0; x < 8; x++ {
+		for y := 0; y < 8; y++ {
+			img.Set(x, y, c)
+		}
+	}
+	var b bytes.Buffer
+	_ = jpeg.Encode(&b, img, nil)
+	return b.Bytes()
+}
+
+// Save A (red) has recorded its picture and is paused just before cleaning up; then blue
+// is chosen and save B runs. A's cleanup must not delete B's picture: B cannot write
+// until A's save is complete. (Without that, B finished during the pause, A's cleanup
+// deleted B's file, and the profile pointed at a missing picture.)
+func TestAvatarCleanupCannotDeleteNewerPicture(t *testing.T) {
+	s, st, prof, red, blue, dir := avatarFixture(t)
+	ctx := context.Background()
+	_ = st.UpdateProfile(ctx, prof.ID, "", red, "Red")
+	asRed, _ := st.GetProfile(ctx, prof.ID)
+
+	paused, resume := make(chan struct{}), make(chan struct{})
+	pauses := 0
+	avatarBeforeCleanup = func() {
+		if pauses++; pauses == 1 { // A only
+			close(paused)
+			<-resume
+		}
+	}
+	t.Cleanup(func() { avatarBeforeCleanup = func() {} })
+
+	doneA := make(chan struct{})
+	go func() { s.saveAvatar(ctx, asRed, solidJPEG(color.RGBA{255, 0, 0, 255})); close(doneA) }()
+	<-paused // A has recorded red and is about to clean up
+
+	_ = st.UpdateProfile(ctx, prof.ID, "", blue, "Blue")
+	asBlue, _ := st.GetProfile(ctx, prof.ID)
+	doneB := make(chan struct{})
+	go func() { s.saveAvatar(ctx, asBlue, solidJPEG(color.RGBA{0, 0, 255, 255})); close(doneB) }()
+	time.Sleep(200 * time.Millisecond) // time enough for B to finish, were it not held back
+	close(resume)
+	<-doneA
+	<-doneB
+
+	got, _ := st.GetProfile(ctx, prof.ID)
+	if got.AvatarURL != blue || got.AvatarPath == "" {
+		t.Fatalf("profile: url %s path %q", got.AvatarURL, got.AvatarPath)
+	}
+	if _, err := os.Stat(got.AvatarPath); err != nil {
+		t.Fatalf("the recorded picture is missing: %v", err)
+	}
+	if !blueish(t, got.AvatarPath) {
+		t.Fatal("the recorded picture is not blue")
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*"))
+	if len(files) != 1 || files[0] != got.AvatarPath {
+		t.Fatalf("files left: %v (want only %s)", files, got.AvatarPath)
 	}
 }

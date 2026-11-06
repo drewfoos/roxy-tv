@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -249,10 +250,30 @@ func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
 	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 88}); err != nil {
 		return
 	}
+	s.saveAvatar(ctx, prof, buf.Bytes())
+}
+
+// avatarMu serialises saving profile pictures: writing the file, recording it and
+// cleaning up the profile's other files happen as one step, so one save's cleanup can
+// never meet another save's half-done work. Downloads run outside it, in parallel.
+var avatarMu sync.Mutex
+
+// avatarBeforeCleanup is called (under avatarMu) after a picture is recorded and before
+// the profile's older files are removed. Tests pause there.
+var avatarBeforeCleanup = func() {}
+
+// saveAvatar writes a downloaded picture for prof and records it (see fetchAvatar).
+func (s *Server) saveAvatar(ctx context.Context, prof *model.Profile, jpegData []byte) {
 	dir := filepath.Join(s.cfg.ImagesDir(), "profiles")
 	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
+	// Writing, recording and cleaning up are one step under avatarMu. With the cleanup
+	// after the recording but outside any lock, a save that had recorded its picture and
+	// was about to clean up could delete the file of a newer save that had been written
+	// meanwhile, leaving the profile pointing at a missing file.
+	avatarMu.Lock()
+	defer avatarMu.Unlock()
 	// One file per picture (<profile>-<hash of its URL>.jpg), written whole (temp file, then
 	// rename), and recorded only if that URL is still the profile's choice. It used to be
 	// <profile>.jpg for every picture and recorded unconditionally, so of two overlapping
@@ -261,7 +282,7 @@ func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
 	base := prof.ID + "-" + avatarKey(prof.AvatarURL)
 	path := filepath.Join(dir, base+".jpg")
 	tmp := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
-	if err := safefs.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
+	if err := safefs.WriteFile(tmp, jpegData, 0o644); err != nil {
 		return
 	}
 	if err := safefs.Rename(tmp, path); err != nil {
@@ -276,6 +297,7 @@ func (s *Server) fetchAvatar(ctx context.Context, prof *model.Profile) {
 		return
 	}
 	prof.AvatarPath = path
+	avatarBeforeCleanup()
 	// The profile's earlier pictures and their resized variants, and the old <profile>.jpg.
 	removeAvatarFiles(dir, prof.ID, base)
 }
