@@ -203,6 +203,7 @@ export const api = {
   history: (limit = 100) => get<ItemsResponse>(`/v1/me/history?limit=${limit}`),
 
   // ---- watch state ----
+  /** subtitleIndex: a track, SUBTITLES_OFF (-1) for off, or undefined to leave the saved choice alone. */
   progress: (itemId: string, positionMs: number, audioIndex?: number, subtitleIndex?: number) =>
     request<void>('POST', '/v1/me/progress', { itemId, positionMs, audioIndex, subtitleIndex }, true, true),
   setPlayed: (itemId: string, on: boolean) => (on ? post<{ userData: UserData }>(`/v1/me/played/${itemId}`) : del<{ userData: UserData }>(`/v1/me/played/${itemId}`)),

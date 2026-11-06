@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { ageLabel, pickSubtitle, primarySource } from '../api/items'
 import { lang3, prefs } from '../api/prefs'
-import type { Item, MediaSegment, MediaStream, TrickplayManifest } from '../api/types'
+import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
@@ -31,9 +31,10 @@ type Mode = { kind: 'direct' } | { kind: 'server'; audio: number | null; offset:
 /**
  * The audio and subtitle tracks an item starts with: the choice saved on this title, else
  * the profile's preferences (audio language; subtitles off, only with foreign audio, or
- * always). Worked out again for every item: the Watch page keeps one Player across
- * episodes (so fullscreen survives Autoplay Next), and the next episode must not inherit
- * the last one's tracks.
+ * always). A saved SUBTITLES_OFF means the viewer turned them off on this title: they stay
+ * off, and the track C would turn on is the preferred one. Worked out again for every
+ * item: the Watch page keeps one Player across episodes (so fullscreen survives Autoplay
+ * Next), and the next episode must not inherit the last one's tracks.
  */
 function initialTracks(item: Item, source: ReturnType<typeof primarySource>, audioTracks: MediaStream[], subTracks: MediaStream[]) {
   const p = prefs.get()
@@ -44,7 +45,8 @@ function initialTracks(item: Item, source: ReturnType<typeof primarySource>, aud
   const savedSub = item.userData?.subtitleIndex
   const sub = savedSub != null && subTracks.some((t) => t.index === savedSub) ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
   let subsOn = true
-  if (savedSub == null) {
+  if (savedSub === SUBTITLES_OFF) subsOn = false
+  else if (savedSub == null) {
     if (p.subMode === 'none') subsOn = false
     else if (p.subMode === 'foreign') {
       const a = audioTracks.find((t) => t.index === (savedAudio ?? -1)) ?? audioTracks.find((t) => lang3(t.language) === p.audioLang) ?? audioTracks[0]
@@ -144,7 +146,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const positionMs = Math.round(absTime() * 1000)
       if (positionMs <= 0) return
       lastReport.current = now
-      api.progress(item.id, positionMs, audioIndex ?? undefined, subsOn ? (subIndex ?? undefined) : undefined).catch(() => undefined)
+      // Subtitles off is saved as SUBTITLES_OFF; leaving it out (as this used to) kept the
+      // last track saved, so they came back on next time.
+      api.progress(item.id, positionMs, audioIndex ?? undefined, subsOn ? (subIndex ?? undefined) : SUBTITLES_OFF).catch(() => undefined)
     },
     [item.id, absTime, audioIndex, subIndex, subsOn],
   )

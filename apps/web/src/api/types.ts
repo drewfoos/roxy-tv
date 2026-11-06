@@ -42,8 +42,12 @@ export interface UserData {
   isFavorite: boolean
   lastPlayedAt?: string | null
   audioIndex?: number | null
+  /** The saved subtitle track; SUBTITLES_OFF means the viewer turned subtitles off. */
   subtitleIndex?: number | null
 }
+
+/** subtitleIndex value meaning "subtitles off", in progress reports and in userData. */
+export const SUBTITLES_OFF = -1
 
 export type StreamType = 'video' | 'audio' | 'subtitle'
 
