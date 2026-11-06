@@ -102,3 +102,34 @@ func TestResolveMappingsLongestOnlyAnyOrder(t *testing.T) {
 		t.Errorf("boundary: got %q ok=%v", got, ok)
 	}
 }
+
+// The same folder name in two libraries: the folder above it in the arr path picks the
+// library; when nothing does, nothing is resolved (a folder delete must not guess).
+func TestResolveSameFolderInTwoLibraries(t *testing.T) {
+	roots := []string{"/m/TV", "/m/Anime"}
+	exists := func(p string) bool {
+		return p == filepath.FromSlash("/m/TV/Avatar") || p == filepath.FromSlash("/m/Anime/Avatar")
+	}
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"/data/Anime/Avatar", "/m/Anime/Avatar", true},
+		{"/data/anime/Avatar", "/m/Anime/Avatar", true},
+		{"/data/TV/Avatar", "/m/TV/Avatar", true},
+		{"/data/other/Avatar", "", false},
+		{"/Avatar", "", false},
+	}
+	for _, c := range cases {
+		for _, rs := range [][]string{roots, {roots[1], roots[0]}} {
+			got, ok := Resolve(c.in, nil, rs, exists)
+			want := ""
+			if c.want != "" {
+				want = filepath.FromSlash(c.want)
+			}
+			if ok != c.ok || got != want {
+				t.Errorf("%s with roots %v: got %q ok=%v, want %q ok=%v", c.in, rs, got, ok, want, c.ok)
+			}
+		}
+	}
+}

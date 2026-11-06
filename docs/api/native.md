@@ -471,9 +471,13 @@ apps' Webhook connection payloads (`docs/api/arr-webhooks.md`). Auth: an API key
 dropped, new file ingested), `Rename` (old source dropped, new path ingested),
 `EpisodeFileDelete` / `MovieFileDelete`, `SeriesDelete` / `MovieDelete` (everything
 under the folder), `Test`; the rest are logged. Paths are the arr app's own: an explicit
-`pathMappings: [{from, to}]` on the arr settings document is applied first, else the
-longest tail of the path that exists under a library root (or, for removals, that the
-library knows) wins. Every notification lands in `GET /v1/webhooks/events?limit=`
+`pathMappings: [{from, to}]` on the arr settings document is applied first (only the
+one with the longest `from` that is the path or a folder above it, whatever the list
+order), else the longest tail of the path that exists under a library root (or, for
+removals, that the library knows) wins. A tail found under two roots (the same show
+folder in two libraries) is used only when the folder above it in the arr path names one
+of those roots; otherwise the notification is ignored rather than guessed. Folder
+deletes match paths case-sensitively and on whole folder names. Every notification lands in `GET /v1/webhooks/events?limit=`
 (admin) with its outcome. API keys: `GET/POST /v1/auth/keys`, `DELETE
 /v1/auth/keys/{id}` (admin; the token is returned once on create). Both lists are
 always arrays (`{"keys": []}`, `{"events": []}`), never `null`. Sonarr and Radarr send

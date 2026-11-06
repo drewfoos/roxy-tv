@@ -350,8 +350,10 @@ func (s *Service) resolve(ctx context.Context, p string) (string, bool) {
 }
 
 // Resolve applies the longest matching mapping (one only), then checks the result is under a
-// root; otherwise it tries every suffix of the path under every root and keeps the first
-// that exists. Pure, so it is unit-tested with a fake filesystem.
+// root; otherwise it tries every suffix of the path under every root and keeps the longest
+// that exists. A suffix found under several roots is taken only when the arr path names
+// one of them; otherwise nothing is resolved. Pure, so it is unit-tested with a fake
+// filesystem.
 func Resolve(p string, mappings []PathMapping, roots []string, exists func(string) bool) (string, bool) {
 	norm := func(s string) string { return strings.ReplaceAll(s, `\`, "/") }
 	// Cleaned before any check: "/root/../x" must not pass as under "/root".
@@ -392,12 +394,48 @@ func Resolve(p string, mappings []PathMapping, roots []string, exists func(strin
 		if tail == "" || tail == "." || strings.Contains("/"+tail+"/", "/../") {
 			continue // "/" would map onto a root itself
 		}
+		var hits []string // candidates, one per root where the tail exists
+		var bases []string
 		for _, r := range roots {
-			candidate := filepath.FromSlash(strings.TrimRight(norm(r), "/") + "/" + tail)
+			root := strings.TrimRight(norm(r), "/")
+			candidate := filepath.FromSlash(root + "/" + tail)
 			if exists(candidate) {
-				return candidate, true
+				hits = append(hits, candidate)
+				bases = append(bases, path.Base(root))
 			}
+		}
+		if len(hits) == 1 {
+			return hits[0], true
+		}
+		if len(hits) > 1 {
+			// The same folder in two libraries ("Avatar" in TV and in Anime). The folder
+			// above the tail in the arr path usually names the library ("/data/anime/
+			// Avatar" against root ".../Anime"): take the one root it names, else refuse.
+			// Taking the first root deleted the wrong library's files on a folder delete.
+			if i == 0 {
+				return "", false
+			}
+			if c, ok := onlyMatch(hits, bases, parts[i-1], func(a, b string) bool { return a == b }); ok {
+				return c, true
+			}
+			if c, ok := onlyMatch(hits, bases, parts[i-1], strings.EqualFold); ok {
+				return c, true
+			}
+			return "", false
 		}
 	}
 	return "", false
+}
+
+// onlyMatch returns the hit whose root base name equals parent, when exactly one does.
+func onlyMatch(hits, bases []string, parent string, eq func(a, b string) bool) (string, bool) {
+	found := ""
+	n := 0
+	for j, b := range bases {
+		if eq(b, parent) {
+			found = hits[j]
+			n++
+		}
+	}
+	return found, n == 1
 }

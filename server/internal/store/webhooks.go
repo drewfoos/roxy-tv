@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"context"
 	"strings"
 )
@@ -51,8 +52,10 @@ func (s *Store) ListWebhookEvents(ctx context.Context, limit int) ([]WebhookEven
 // (a series or movie folder the arr app deleted). Returns how many went.
 func (s *Store) DeleteSourcesUnder(ctx context.Context, dir string) (int, error) {
 	dir = strings.TrimRight(dir, `\/`)
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT source_id FROM media_parts WHERE path = ? OR path LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\'`,
-		dir, likeEscape(dir)+`/%`, likeEscape(dir)+`\\%`)
+	if dir == "" {
+		return 0, errors.New("refusing to delete everything under the filesystem root")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT source_id FROM media_parts WHERE `+underDir, underDirArgs(dir)...)
 	if err != nil {
 		return 0, err
 	}
@@ -80,14 +83,18 @@ func (s *Store) DeleteSourcesUnder(ctx context.Context, dir string) (int, error)
 func (s *Store) CountSourcesUnder(ctx context.Context, dir string) (int, error) {
 	dir = strings.TrimRight(dir, `\/`)
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_id) FROM media_parts WHERE path = ? OR path LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\'`,
-		dir, likeEscape(dir)+`/%`, likeEscape(dir)+`\\%`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT source_id) FROM media_parts WHERE `+underDir, underDirArgs(dir)...).Scan(&n)
 	return n, err
 }
 
-func likeEscape(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(s)
+// underDir matches a part at dir or anywhere below it, case-sensitively and on whole
+// path components: the prefix compared is dir plus a separator. LIKE was used before,
+// which ignores ASCII case, so deleting /TV/Avatar also dropped /TV/avatar/.
+const underDir = `(path = ? OR substr(path, 1, length(?)) = ? OR substr(path, 1, length(?)) = ?)`
+
+func underDirArgs(dir string) []any {
+	slash, back := dir+"/", dir+`\`
+	return []any{dir, slash, slash, back, back}
 }
 
 // DeleteAPIKeyByID removes an API key (the admin's Webhooks page).
