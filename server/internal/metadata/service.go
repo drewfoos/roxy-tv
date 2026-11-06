@@ -1390,12 +1390,8 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 		slog.Warn("metadata: image cache dir", "err", err)
 		return
 	}
-	tmp := path + ".tmp"
-	if err := safefs.WriteFile(tmp, data, 0o644); err != nil {
-		return
-	}
-	if err := safefs.Rename(tmp, path); err != nil {
-		safefs.Remove(tmp)
+	// A unique temp file: two refreshes of the same item can save the same image at once.
+	if err := safefs.WriteFileAtomic(path, data, 0o644); err != nil {
 		return
 	}
 	dropResizedVariants(dir, typ)

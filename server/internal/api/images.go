@@ -130,15 +130,10 @@ func resizeToFile(src, dst string, width int) error {
 	} else if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 85}); err != nil {
 		return err
 	}
-	tmp := dst + ".tmp"
-	if err := safefs.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
-		return err
-	}
-	if err := safefs.Rename(tmp, dst); err != nil {
-		safefs.Remove(tmp)
-		return err
-	}
-	return nil
+	// A unique temp file per call: the first requests for a variant often arrive together
+	// (a page of cards), and a shared dst+".tmp" let them truncate or rename away each
+	// other's file, failing all but one with a 500.
+	return safefs.WriteFileAtomic(dst, buf.Bytes(), 0o644)
 }
 
 // PUT /v1/items/{id}/images/{type} {url}: admin picks the art by hand (any https image,

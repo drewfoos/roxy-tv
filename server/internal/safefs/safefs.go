@@ -103,6 +103,36 @@ func WriteFile(path string, data []byte, perm os.FileMode) error {
 	return os.WriteFile(path, data, perm)
 }
 
+// WriteFileAtomic writes data to a uniquely named temporary file in path's folder and
+// renames it over path, so a reader never sees a partial file and concurrent writers of
+// the same path each write their own temporary file (a shared "path.tmp" let one writer
+// rename away or truncate another's).
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if err := Check(path); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, perm)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, path)
+	}
+	if werr != nil {
+		os.Remove(tmp)
+	}
+	return werr
+}
+
 func MkdirAll(path string, perm os.FileMode) error {
 	if err := Check(path); err != nil {
 		return err
