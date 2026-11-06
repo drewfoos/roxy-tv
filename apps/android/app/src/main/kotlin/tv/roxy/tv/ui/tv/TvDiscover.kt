@@ -80,6 +80,8 @@ import tv.roxy.tv.api.DiscoverDetail
 import tv.roxy.tv.api.DiscoverSeason
 import tv.roxy.tv.api.DownloadStatus
 import tv.roxy.tv.ui.components.RoxyImage
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
  * Discover on the TV: the phone's Discover (Roxy's own request app) laid out for a remote. A
@@ -279,7 +281,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         return
     }
     val action = remember { FocusRequester() }
-    LaunchedEffect(d.tmdbId) { repeat(6) { withFrameNanos { }; if (runCatching { action.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(d.tmdbId) { retryEachFrame("discover title: action") { action.tryFocus() } }
 
     val dl = d.download
     val req = d.request

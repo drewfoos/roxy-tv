@@ -67,6 +67,8 @@ import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /** The rail's pages, top to bottom as on Crunchyroll's TV app. */
 enum class RailPage(val label: String, val icon: ImageVector, val route: Route, val routeName: String) {
@@ -98,7 +100,7 @@ fun TvShell(current: RailPage?, onSelect: (RailPage) -> Unit, onSwitchProfile: (
     var enterTick by remember { mutableStateOf(0) }
     LaunchedEffect(enterTick, current) {
         if (current == null || enterTick == 0) return@LaunchedEffect
-        repeat(15) { withFrameNanos { }; if (entry.owner == current && runCatching { entry.enter() }.getOrDefault(false)) return@LaunchedEffect }
+        retryEachFrame("rail: enter page $current", budgetMs = 1_000) { entry.owner == current && entry.enter() }
     }
     // Closing the rail hands focus straight from the rail to the page's element: the page
     // may take focus again first (closing), the entry moves focus there, and only then does
@@ -226,7 +228,7 @@ private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit,
     // Opening lands focus on the page's own item.
     LaunchedEffect(open) {
         if (!open) return@LaunchedEffect
-        repeat(6) { withFrameNanos { }; if (runCatching { requesters.getValue(current).requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
+        retryEachFrame("rail: open on $current") { requesters.getValue(current).tryFocus() }
     }
     // Focus leaving the rail for good (the page took it) closes it. A move between two of
     // its items reports no focus for an instant, so the loss has to last a couple of frames,

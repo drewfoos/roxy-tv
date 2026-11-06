@@ -62,6 +62,8 @@ import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
  * Edit or create a profile on the TV. The phone's editor (a scrolling column of small
@@ -105,7 +107,7 @@ fun TvProfileEditor(api: RoxyApi, profile: Profile?, onSaved: (Profile) -> Unit,
     fun tile(id: Int) = tileFocus.getOrPut(id) { FocusRequester() }
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     fun firstVisibleTile(): FocusRequester? = (gridState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? Int)?.let { tile(it) }
-    LaunchedEffect(Unit) { repeat(6) { withFrameNanos { }; if (runCatching { nameFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(Unit) { retryEachFrame("profile editor: name") { nameFocus.tryFocus() } }
 
     fun save() {
         if (name.isBlank() || busy) { if (name.isBlank()) error = "Give the profile a name."; return }

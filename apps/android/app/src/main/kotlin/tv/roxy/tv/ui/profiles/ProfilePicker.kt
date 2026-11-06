@@ -89,6 +89,8 @@ import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.isTelevision
 import tv.roxy.tv.ui.tv.TvFocusable
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /** Avatar size on the picker: big up to four profiles, a little smaller beyond so six still fit. */
 private fun pickSize(count: Int): Dp = if (count > 4) 96.dp else 112.dp
@@ -303,7 +305,7 @@ private fun TvPickerRow(
                 // open with nothing focused, so the first press of a key only found the row.
                 val start = remember { FocusRequester() }
                 val startId = profiles.firstOrNull { it.id == lastId }?.id ?: profiles.firstOrNull()?.id
-                LaunchedEffect(startId) { repeat(6) { withFrameNanos { }; if (runCatching { start.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+                LaunchedEffect(startId) { retryEachFrame("profiles: last used profile") { start.tryFocus() } }
                 profiles.forEach { p ->
                     TvProfileTile(p, api, tile, managing = managing, current = p.id == lastId, onClick = { onPick(p) }, modifier = if (p.id == startId) Modifier.focusRequester(start) else Modifier)
                 }

@@ -65,6 +65,7 @@ import tv.roxy.tv.ui.home.HomeViewModel
 import tv.roxy.tv.ui.phone.OnUserDataChanged
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /** The hero block's height; the first row's title shows under it, as on Crunchyroll. */
 private val HeroHeight = 455.dp
@@ -94,7 +95,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
         vm.load(silent = true)
         listState.scrollToItem(0)
         memory.key = "hero/play"
-        repeat(6) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
+        retryEachFrame("home: hero after Home on the rail") { memory.restore("hero/play") }
     }
 
     // (Re)load on every return to the foreground so progress made in the player shows up.
@@ -110,16 +111,17 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
     val readyRows = (state as? HomeUiState.Ready)?.rows
     LaunchedEffect(resumedAt, heroId, readyRows) {
         if (resumedAt == 0L || android.os.SystemClock.elapsedRealtime() - resumedAt > 8_000) return@LaunchedEffect
-        repeat(10) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
+        // Short budgets here: each miss falls through to the next choice.
+        if (retryEachFrame("home: focus after the player", budgetMs = 300) { memory.restore("hero/play") }) return@LaunchedEffect
         // The card that had focus left its row (the finished episode was replaced by the next
         // one in Continue Watching) and the hero is scrolled away: take the row's first card,
         // else go back to the top and the hero. Before, nothing was focused at all.
         val rowKey = memory.key?.substringBefore('/')
         val first = readyRows?.let { tvRows(it) }?.firstOrNull { it.key == rowKey }?.items?.firstOrNull()
-        if (first != null) repeat(5) { withFrameNanos { }; if (memory.restore("$rowKey/${first.id}")) return@LaunchedEffect }
+        if (first != null && retryEachFrame("home: first card of $rowKey", budgetMs = 300) { memory.restore("$rowKey/${first.id}") }) return@LaunchedEffect
         listState.scrollToItem(0)
         memory.key = "hero/play"
-        repeat(6) { withFrameNanos { }; if (memory.restore("hero/play")) return@LaunchedEffect }
+        retryEachFrame("home: hero fallback") { memory.restore("hero/play") }
     }
     OnUserDataChanged { vm.load(silent = true) }
     // Hold OK on an episode or film in a row: play from the start, go to its show / film,

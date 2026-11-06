@@ -39,6 +39,8 @@ import tv.roxy.tv.api.Item
 import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.ui.phone.markWatched
 import tv.roxy.tv.ui.theme.RoxyColors
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /**
  * Hold OK on an episode or film (Home's rows, a title page): Play from start, Go to show /
@@ -89,7 +91,7 @@ fun TvItemMenu(
                         TvListRow(label = "Mark $name as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { mark(season.id, false) }, modifier = mod())
                     }
                     TvListRow(label = "File info", icon = Icons.Outlined.Info, selected = true, onClick = { info = true }, modifier = mod())
-                    LaunchedEffect(Unit) { repeat(10) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+                    LaunchedEffect(Unit) { retryEachFrame("item menu: first option") { first.tryFocus() } }
                 }
             }
         }
@@ -124,7 +126,7 @@ private fun FileInfo(given: Item, onBack: () -> Unit) {
     }
     val back = remember { FocusRequester() }
     TvListRow(label = "Back", icon = Icons.Filled.ArrowBack, selected = true, onClick = onBack, modifier = Modifier.fillMaxWidth().focusRequester(back))
-    LaunchedEffect(Unit) { repeat(10) { withFrameNanos { }; if (runCatching { back.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(Unit) { retryEachFrame("item menu: file info Back") { back.tryFocus() } }
 }
 
 @Composable

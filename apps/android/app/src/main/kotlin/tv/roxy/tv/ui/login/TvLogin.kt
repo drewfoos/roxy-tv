@@ -57,6 +57,8 @@ import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.tv.TvFocusable
 import tv.roxy.tv.ui.tv.TvTextField
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
  * Sign-in on a TV, as on the web: the library's posters as a dimmed wall, "Roxy TV" over
@@ -170,7 +172,7 @@ private fun CardTitle(title: String, sub: String?) {
 private fun PhoneCard(state: LoginUiState, serverUrl: String, onUsePassword: () -> Unit, onShowTerms: () -> Unit) {
     val api = RoxyApp.get(LocalContext.current).api
     val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { repeat(6) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(Unit) { retryEachFrame("login: first control") { first.tryFocus() } }
     // The QR at the left, the rest at the right: big enough to scan from across the room,
     // and the card stays short enough for one screen.
     val link = state.link
@@ -204,7 +206,7 @@ private fun PasswordCard(
     agreed: Boolean, onAgreed: (Boolean) -> Unit, canConnect: Boolean, onConnect: () -> Unit, onShowTerms: () -> Unit, onUsePhone: () -> Unit,
 ) {
     val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { repeat(6) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(Unit) { retryEachFrame("login: first control") { first.tryFocus() } }
     CardTitle("Sign in", null)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TvTextField(username, onUsername, placeholder = "User name", icon = Icons.Outlined.Person, modifier = Modifier.focusRequester(first))
@@ -240,7 +242,7 @@ private fun PasswordCard(
 private fun ServerCard(state: LoginUiState, serverUrl: String, onPick: (String) -> Unit, onRescan: () -> Unit, canGoBack: Boolean, onBack: () -> Unit) {
     var typed by rememberSaveable { mutableStateOf(serverUrl) }
     val first = remember { FocusRequester() }
-    LaunchedEffect(state.servers.isNotEmpty()) { repeat(6) { withFrameNanos { }; if (runCatching { first.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(state.servers.isNotEmpty()) { retryEachFrame("login: first control") { first.tryFocus() } }
     CardTitle(
         "Choose your server",
         when {

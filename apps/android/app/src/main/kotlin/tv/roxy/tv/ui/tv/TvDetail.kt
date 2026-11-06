@@ -102,6 +102,8 @@ import tv.roxy.tv.ui.phone.setWatchlist
 import tv.roxy.tv.ui.phone.markWatched
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
  * Title pages, as Crunchyroll's TV app lays them out: full-bleed key art with the logo,
@@ -258,7 +260,7 @@ private fun TitlePage(
     var pendingFocus by remember { mutableStateOf<FocusRequester?>(null) }
     LaunchedEffect(pendingFocus) {
         val target = pendingFocus ?: return@LaunchedEffect
-        repeat(10) { withFrameNanos { }; if (runCatching { target.requestFocus() }.getOrDefault(false)) { pendingFocus = null; return@LaunchedEffect } }
+        retryEachFrame("title page: pending focus") { target.tryFocus() }
         pendingFocus = null
     }
     val topHeight by animateDpAsState(if (folded) 0.dp else TopBlockHeight, Fold, label = "fold")
@@ -270,7 +272,7 @@ private fun TitlePage(
     LaunchedEffect(title.id) { withFrameNanos { }; below = true }
     LaunchedEffect(title.id) {
         if (restored) return@LaunchedEffect
-        repeat(6) { withFrameNanos { }; if (memory.restore("play")) { restored = true; return@LaunchedEffect } }
+        if (retryEachFrame("title page: play action") { memory.restore("play") }) restored = true
     }
 
     // Back from the list (folded) goes up to the actions first, as on Crunchyroll; a second

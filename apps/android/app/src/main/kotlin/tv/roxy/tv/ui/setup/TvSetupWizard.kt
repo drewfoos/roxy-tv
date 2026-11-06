@@ -103,6 +103,8 @@ import tv.roxy.tv.ui.phone.WitchHat
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.tv.TvFocusable
 import tv.roxy.tv.ui.tv.TvTextField
+import tv.roxy.tv.ui.components.tryFocus
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
  * The setup wizard on a TV: the phone's steps (Welcome, Account, Details, Media, Done) laid
@@ -122,11 +124,11 @@ private val ContentWidth = 860.dp
 /** Focus [req] once it is attached (a step's controls appear a frame or two after it does). */
 @Composable
 private fun FocusOnStart(req: FocusRequester, vararg keys: Any?) {
-    LaunchedEffect(*keys) { repeat(8) { withFrameNanos { }; if (runCatching { req.requestFocus() }.getOrDefault(false)) return@LaunchedEffect } }
+    LaunchedEffect(*keys) { retryEachFrame("setup: step's first control") { req.tryFocus() } }
 }
 
 private suspend fun focusSoon(req: FocusRequester) {
-    repeat(8) { withFrameNanos { }; if (runCatching { req.requestFocus() }.getOrDefault(false)) return }
+    retryEachFrame("setup: focus soon") { req.tryFocus() }
 }
 
 @Composable

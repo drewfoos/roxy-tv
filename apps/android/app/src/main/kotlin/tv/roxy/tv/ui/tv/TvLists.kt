@@ -40,6 +40,7 @@ import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 import java.text.DateFormat
 import java.util.Date
+import tv.roxy.tv.ui.components.retryEachFrame
 
 /*
  * Watchlist and History, as Crunchyroll's TV app shows them: a centred uppercase title,
@@ -184,7 +185,7 @@ private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, upKey:
         // Only a card of this list: a tab switch must leave focus on the tab.
         val k = memory.key?.takeIf { it.startsWith("$key/") } ?: return@LaunchedEffect
         items.indexOfFirst { "$key/${it.id}" == k }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } ?: return@LaunchedEffect
-        repeat(6) { withFrameNanos { }; if (memory.restore()) { restored = true; return@LaunchedEffect } }
+        if (retryEachFrame("list: last focused card") { memory.restore() }) restored = true
     }
     LazyVerticalGrid(
         columns = GridCells.Fixed(GridColumns),
