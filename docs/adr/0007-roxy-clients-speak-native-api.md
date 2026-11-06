@@ -1,4 +1,4 @@
-# ADR-0007: Roxy clients speak the native API; Jellyfin compat is for request app/arr only
+# ADR-0007: Roxy clients speak the native API; Jellyfin compat is for the arr apps only
 
 Status: accepted, 2026-10-13. Supersedes ADR-0006.
 
@@ -13,7 +13,7 @@ more than it saved in the first hour of real use:
 - Its OkHttp transport is blocking, so every call needs an IO dispatcher.
 - Its models are strict: every field Jellyfin marks required must be present, so the
   compat layer would have to reproduce Jellyfin DTOs field for field (first failure:
-  `SessionInfo.SupportedCommands`), not just the fields request app and the arr apps read.
+  `SessionInfo.SupportedCommands`), not just the fields the arr apps read.
 
 Roxy is standalone. Its clients log into Roxy Server, never into Jellyfin.
 
@@ -21,7 +21,7 @@ Roxy is standalone. Its clients log into Roxy Server, never into Jellyfin.
 
 - Roxy clients (TV app, web) use the native `/v1` API (`docs/api/native.md`) with a small
   hand-written client (OkHttp + kotlinx.serialization, unknown keys ignored).
-- The Jellyfin-compatible surface stays, scoped to what request app, Sonarr and Radarr call.
+- The Jellyfin-compatible surface stays, scoped to what Sonarr and Radarr call.
   Making official Jellyfin clients work against Roxy is explicitly a non-goal for now.
 - Migrating the owner's Jellyfin data (users, watched state, favourites) is a one-time
   import tool, later.

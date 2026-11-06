@@ -4,8 +4,8 @@ Status: accepted, 2026-10-26. Supersedes the compat parts of ADR-0001 and ADR-00
 
 ## Context
 
-ADR-0001 added a Jellyfin-shaped API so request app, Sonarr and Radarr could treat Roxy as a
-Jellyfin server. Since then Roxy grew its own Discover / requests (request app's job) and the
+ADR-0001 added a Jellyfin-shaped API so Sonarr and Radarr could treat Roxy as a
+Jellyfin server. Since then Roxy grew its own Discover / requests flow and the
 arr apps report imports through Roxy's native webhooks (`/v1/webhooks/{source}`). Roxy's
 clients never used the compat surface (ADR-0007). It had become dead weight and a second
 sign-in door, with its own token header formats.
@@ -43,7 +43,7 @@ A review of how the app talks to the server also found:
 
 ## Consequences
 
-- Official Jellyfin apps and request app can no longer connect. Bringing them back means
+- Official Jellyfin apps and other Jellyfin-only integrations can no longer connect. Bringing them back means
   restoring the package from git history (before 2026-10-26).
 - The TV's external player can be handed a URL that exposes one video for a day, not the account.
 - Old `?api_key=` media URLs from earlier app builds stop working only where they used the

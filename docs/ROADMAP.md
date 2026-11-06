@@ -130,7 +130,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   progress, then opens the package installer (REQUEST_INSTALL_PACKAGES + FileProvider).
   Verified on the S25 Ultra: 0.2.0 → 0.3.0 installed through the bar. Phone layout only
   so far (the TV needs a focusable version).
-- Also done (2026-10-19, night): **Discover tab** ("our own request app"). Server
+- Also done (2026-10-19, night): **Discover tab** (Roxy's own request flow). Server
   `internal/discover` over the existing TMDB client: trending, new anime this season,
   popular / top-rated anime, anime movies, popular / upcoming movies, popular series;
   search; title detail; every item marked when the library has it (TMDB id match) or
@@ -147,7 +147,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   search box (Series / Movies, Anime, Sort, Filters · n, Clear) and a bottom sheet (sort,
   genres, original language, years, rating, status) over `GET /v1/discover/browse`
   (TMDB discover, paged, infinite scroll, cached 5 min per query). Admin page Account →
-  Server → Sonarr & Radarr, laid out like request app's Services page: URL, API key, Test
+  Server → Sonarr & Radarr, one card per app: URL, API key, Test
   connection (lists root folders, quality profiles, tags from the server), root folder /
   quality profile pickers, anime root folder / profile / tags for Sonarr, minimum
   availability for Radarr, season folders, search on add. Saved on the server (settings
@@ -190,8 +190,8 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   (WSL2 + Docker 29, NVENC in the container); the dev server now runs in WSL because Smart
   App Control blocks fresh Windows builds (`deploy/wsl-firewall.ps1` opens 8096 in WSL's
   Hyper-V firewall).
-- Also done (2026-10-26): **download status for requests** (request app's "Processing", done
-  better): per request and per episode from the arr apps' queue, episodes and history:
+- Also done (2026-10-26): **download status for requests** (more than a plain
+  "Processing" label): per request and per episode from the arr apps' queue, episodes and history:
   downloading with % and time left, queued, importing, stalled (with the arr's message,
   or no progress for 10 min), cannot import, failed with the reason, no release found,
   not aired / released yet, complete. "Trying another release" is shown while the arr
@@ -212,7 +212,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
 - **Owner priorities, in their words (2026-10-14):** efficiency ("if it's not better than
   Jellyfin why use it"), **downloads** (and watch them when the server is unreachable),
   **profiles** per account with a profile picker at launch, a **Discover** tab that talks
-  to the arr apps through TMDB ("our own request app"), Chromecast if feasible (would need the
+  to the arr apps through TMDB (Roxy's own request flow), Chromecast if feasible (would need the
   server to serve HLS; mpv playback does not cast), notifications. Dub | Sub on series
   slides needs the server to aggregate audio languages per series (today it is derived
   from the continue-watching episode's streams only).
@@ -279,11 +279,11 @@ Jellyfin 12.2 through the Jellyfin SDK is superseded).
 - Device test matrix: the Costco TV, plus at least one Fire TV Stick or Onn box.
 
 Exit: every ASS/Hi10P episode in the library plays direct with styled subs on the TV;
-watch state syncs with Jellyfin; request app/arr untouched.
+watch state syncs with Jellyfin; arr apps untouched.
 
 ## Phase 2 — Roxy Server MVP, direct play only (3-4 months)
 
-Goal: replace Jellyfin for direct-play clients while request app, Sonarr and Radarr see "Jellyfin".
+Goal: replace Jellyfin for direct-play clients while Sonarr and Radarr see "Jellyfin".
 
 - Go skeleton, config, SQLite schema + migrations, OpenAPI for `/v1`.
 - **Dockerfile and compose from the first commit** (`deploy/`): multi-arch image with
@@ -299,11 +299,10 @@ Goal: replace Jellyfin for direct-play clients while request app, Sonarr and Rad
 - Direct play streaming with ranges, attachments, sidecar subtitles.
 - Sessions, progress, websocket.
 - Compat API subset (`docs/api/jellyfin-compat.md`) with replay tests from captured
-  request app/Sonarr/Radarr traffic.
-- Run Roxy Server in parallel with Jellyfin; point a second request app instance at it.
+  Sonarr/Radarr traffic.
+- Run Roxy Server in parallel with Jellyfin.
 
-Exit: request app imports users and marks requests available via Roxy; Sonarr/Radarr
-notifications land; the Roxy TV app works unchanged pointed at Roxy Server; the whole
+Exit: Sonarr/Radarr notifications land; the Roxy TV app works unchanged pointed at Roxy Server; the whole
 thing runs from `docker compose up` next to the existing containers.
 
 ## Phase 3 — Transcoding fallback (2-3 months)

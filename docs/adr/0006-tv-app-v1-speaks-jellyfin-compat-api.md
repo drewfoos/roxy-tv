@@ -24,7 +24,7 @@ against Jellyfin before Roxy Server exists.
 ## Consequences
 
 - Phase 1 delivers a usable client months before the server, on the existing stack.
-- The compat surface gets a second, demanding consumer (the app) alongside request app and the
-  arr apps, which hardens it.
+- The compat surface gets a second, demanding consumer (the app) alongside the arr
+  apps, which hardens it.
 - The app's adapter layer must stay thin and backend-agnostic so the native API can be
   slotted in without a rewrite.

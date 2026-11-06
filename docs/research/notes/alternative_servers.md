@@ -1,35 +1,10 @@
-# Alternative Self-Hosted Media Servers to Jellyfin for an Anime-Heavy Library (ASS subtitles, request app, *arr stack) — as of 2026-10-13
+# Alternative Self-Hosted Media Servers to Jellyfin for an Anime-Heavy Library (ASS subtitles, *arr stack) — as of 2026-10-13
 
-Scope note: Research covered Plex, Emby, Jellyfin (official + third-party clients/forks), Seanime, Kyoo, Shoko/Shokofin, Stremio, Dim, Olaris, Wizarr, SuggestArr, and the request app/servarr integration layer. Primary sources were preferred (project repos, official docs, vendor forums with staff replies). Several official pages returned HTTP 403 to the fetcher (plex.tv blog, Plex support article on hardware transcoding, servarr wiki body); where that happened I relied on secondary coverage and flagged it.
-
----
-
-## Key Question 1: Which servers does request app officially support for auth and library sync as of late 2026?
-
-### Takeaway
-request app (the merged request app + request app project) officially supports Plex, Jellyfin, and Emby — simultaneously, in any combination — for both user authentication/import and library scanning, and its request backends remain Sonarr and Radarr only. The latest release at research time is v3.5.0 (2026-09-28).
-
-### Cited Findings
-- request app README: it "integrates with the media server of your choice: Jellyfin, Plex, and Emby", with "Full Jellyfin/Emby/Plex integration including authentication with user import & management" and a "Jellyfin/Emby/Plex library scan, to keep track of the titles which are already available." License is MIT. — [request app-team/request app README]((link removed))
-- Request backends: "Currently, request app supports Sonarr and Radarr. More to come!" — [request app-team/request app README]((link removed))
-- A fork README states request app supports Jellyfin, Plex, and Emby simultaneously so you can configure any subset and allow users from any enabled provider to sign in. — [regix1/request app fork README (mirror of upstream text)]((link removed))
-- The README has a "Migrating from request app/request app to request app" section pointing to a release announcement and migration guide. — [request app-team/request app README]((link removed))
-- The request app release post (republished on Lemmy/PieFed) says the request app and request app developers now work together as one group called request app, giving a single shared codebase that carries over request app's features, the newer request app features, and support for Jellyfin and Emby. — [request app & request app to merge into request app (Lemmy repost)](https://scribe.disroot.org/comment/9449842)
-- Latest release: tag v3.5.0, published 2026-09-28T00:13:38Z. Notes include: a breaking API change where GET library endpoints for Plex and Jellyfin no longer accept `sync`/`enable`; library sync now uses `POST /settings/{plex|jellyfin}/library/sync` and enable/disable uses `PUT /settings/{plex|jellyfin}/library/{libraryId}`; Jellyfin Authorization headers updated (#3502); Emby servers now hide the Quick Connect button on login (#3369); connection failures no longer masked during media-server sync and login (#3324); support for a custom Plex metadata provider GUID scheme in the scanner (#3316). — [GitHub API: request app releases/latest]((link removed))
-- docs.request app.dev/getting-started lists install methods (Docker recommended, source, Kubernetes, Nix) and the web UI at port 5055; it does not itself list servers. — [docs.request app.dev Getting Started]((link removed))
-- Adjacent tools: Wizarr (invite/user management) supports Plex, Jellyfin, Emby, Audiobookshelf, Romm, Komga, Kavita; SuggestArr reads watch history from Jellyfin, Plex, and Emby and sends requests to request app/request app/request app (older pages list only Jellyfin + Plex; Emby appears newer). — [wiki.serversatho.me/wizarr](https://wiki.serversatho.me/wizarr); [SuggestArr docs (ElfHosted)](https://docs.elfhosted.com/app/suggestarr/); [SuggestArr source summary](https://www.sourcepulse.org/projects/25022344)
-
-### Inferences
-- Because request app supports all three servers at parity for auth + library sync, choosing between Plex/Emby/Jellyfin does not affect request-management capability; the decision can be made purely on playback/subtitle/pricing grounds.
-- The 3.5.0 API path naming (`/settings/{plex|jellyfin}/...`) suggests Emby shares the Jellyfin code path internally (the Emby-specific change in 3.5.0 is only a UI tweak), consistent with Emby support being derived from the Jellyfin integration.
-
-### Gaps
-- Could not fetch the docs.request app.dev "Using request app" settings pages (only the install landing page loaded), so exact wording of per-server auth options (e.g., Plex OAuth vs. Jellyfin/Emby local login, Quick Connect) is from the release notes rather than the docs.
-- Did not find any request app support for servers other than the big three (no Kyoo/Seanime support found; "More to come" is unspecified).
+Scope note: Research covered Plex, Emby, Jellyfin (official + third-party clients/forks), Seanime, Kyoo, Shoko/Shokofin, Stremio, Dim, Olaris, and the Sonarr/Radarr integration layer. Primary sources were preferred (project repos, official docs, vendor forums with staff replies). Several official pages returned HTTP 403 to the fetcher (plex.tv blog, Plex support article on hardware transcoding, servarr wiki body); where that happened I relied on secondary coverage and flagged it.
 
 ---
 
-## Key Question 2: Does Plex or Emby render ASS natively in their Android TV apps, or burn in? Any 2025–2026 changes?
+## Key Question 1: Does Plex or Emby render ASS natively in their Android TV apps, or burn in? Any 2025–2026 changes?
 
 ### Takeaway
 Neither Plex nor Emby reliably renders styled ASS natively on Android TV as of Oct 2026. Emby's Android/Android TV apps embed a libass JNI renderer but it fails on many real-world anime ASS tracks (staff acknowledged an outdated libass, no ETA); Plex removed libmpv from its mobile/Apple TV apps, and users report ASS is "completely broken" there as of Sept–Oct 2026, with "burn subtitles: always" (server transcode) as the practical workaround.
@@ -61,10 +36,10 @@ Neither Plex nor Emby reliably renders styled ASS natively on Android TV as of O
 
 ---
 
-## Key Question 3: Are there anime-specific servers/clients (Seanime, Shoko + Shokofin, anime-focused Jellyfin forks) that do styled subs well and still work with the arr stack?
+## Key Question 2: Are there anime-specific servers/clients (Seanime, Shoko + Shokofin, anime-focused Jellyfin forks) that do styled subs well and still work with the arr stack?
 
 ### Takeaway
-Yes, but the strongest "styled subs done right on a TV" options are Jellyfin-side clients/forks (Jellyfin Thor fork with libass 0.17.5; official Jellyfin Android TV 0.20.0 beta adding ASS direct play; mpv-based Streamyfin/Wholphin; libVLC) rather than separate servers; Seanime (Go, GPL-3) and Kyoo (GPL-3, single developer) both support ASS/SSA with embedded fonts but have no Sonarr/Radarr/request app integration and no Android TV client. Shoko + Shokofin remains active (last push Apr 2026) and is a metadata layer on top of Jellyfin, so it keeps full arr/request app compatibility.
+Yes, but the strongest "styled subs done right on a TV" options are Jellyfin-side clients/forks (Jellyfin Thor fork with libass 0.17.5; official Jellyfin Android TV 0.20.0 beta adding ASS direct play; mpv-based Streamyfin/Wholphin; libVLC) rather than separate servers; Seanime (Go, GPL-3) and Kyoo (GPL-3, single developer) both support ASS/SSA with embedded fonts but have no Sonarr/Radarr integration and no Android TV client. Shoko + Shokofin remains active (last push Apr 2026) and is a metadata layer on top of Jellyfin, so it keeps full arr compatibility.
 
 ### Cited Findings
 **Jellyfin official Android TV**
@@ -86,16 +61,16 @@ Yes, but the strongest "styled subs done right on a TV" options are Jellyfin-sid
 - Shokofin provides AniDB-accurate anime metadata, automatic episode grouping, watch-tracking sync and anime ordering (secondary source). — [JellyWatch Shoko guide index](https://jellywatch.app/blog?q=shoko)
 
 **Seanime**
-- Open-source media server with web UI + desktop app for anime and manga; server in Go; frontend React; desktop "Seanime Denshi" (Electron) includes a libmpv-based player with shader support; "Seamless integration with MPV, VLC, and MPC-HC on desktop"; mobile opens files in Outplayer/VLC via intents; library streaming "on-the-fly transcoding or direct play to any device's web browser"; SSA/ASS explicitly supported; torrent streaming (BitTorrent, Torbox, Real-Debrid, AllDebrid, Premiumize); downloads via download client/Transmission; AniList integration; companion/mobile apps "Seanime Tenji" for iOS/Android; GPL-3.0; Android TV and Sonarr/arr integration not mentioned. — [5rahim/seanime](https://github.com/5rahim/seanime)
-- A search for Seanime + Sonarr integration found no connection; adjacent tools found instead: Transpondarr (beta anime PVR using AniList + download client + Prowlarr/Torznab, hardlinks into Plex/Jellyfin), ani2arr (Firefox extension adding Sonarr/Radarr/request app actions to AniList pages), Moeradar (MAL/AniList to Sonarr/Radarr). — [pkg.go.dev transpondarr](https://pkg.go.dev/github.com/matthewdias/transpondarr); [ani2arr](https://addons.mozilla.org/it/firefox/addon/ani2arr/); [NCRoxas/moeradar](https://github.com/NCRoxas/moeradar)
+- Open-source media server with web UI + desktop app for anime and manga; server in Go; frontend React; desktop "Seanime Denshi" (Electron) includes a libmpv-based player with shader support; "Seamless integration with MPV, VLC, and MPC-HC on desktop"; mobile opens files in Outplayer/VLC via intents; library streaming "on-the-fly transcoding or direct play to any device's web browser"; SSA/ASS explicitly supported; torrent streaming (BitTorrent, Torbox, Real-Debrid, AllDebrid, Premiumize); downloads via external torrent clients; AniList integration; companion/mobile apps "Seanime Tenji" for iOS/Android; GPL-3.0; Android TV and Sonarr/arr integration not mentioned. — [5rahim/seanime](https://github.com/5rahim/seanime)
+- A search for Seanime + Sonarr integration found no connection; adjacent tools found instead: Transpondarr (beta anime PVR using AniList + a torrent client + Prowlarr/Torznab, hardlinks into Plex/Jellyfin), ani2arr (Firefox extension adding Sonarr/Radarr actions to AniList pages), Moeradar (MAL/AniList to Sonarr/Radarr). — [pkg.go.dev transpondarr](https://pkg.go.dev/github.com/matthewdias/transpondarr); [ani2arr](https://addons.mozilla.org/it/firefox/addon/ani2arr/); [NCRoxas/moeradar](https://github.com/NCRoxas/moeradar)
 
 **Kyoo**
-- "A portable and vast media library solution" for movies, series, and anime; topics python/golang/react-native/next; dynamic transcoding with ABR plus original-quality playback; hardware transcoding referenced in install guide; "PGS/VOBSUB and SSA/ASS are supported, using embedded fonts when available, including on web and Chromecast"; anime explicitly targeted (unusual filenames should scan); intro/credit detection; OIDC login; Helm chart; clients: web, Android (VLC-based), Chromecast; Android TV "planned, no firm date"; GPL-3.0; 2.5k stars, 79 forks, 52 open issues; "developed by one person"; v5 rewrote most code; SIMKL sync and offline downloads "coming later". No Sonarr/Radarr/request app mention. — [zoriya/Kyoo](https://github.com/zoriya/Kyoo)
+- "A portable and vast media library solution" for movies, series, and anime; topics python/golang/react-native/next; dynamic transcoding with ABR plus original-quality playback; hardware transcoding referenced in install guide; "PGS/VOBSUB and SSA/ASS are supported, using embedded fonts when available, including on web and Chromecast"; anime explicitly targeted (unusual filenames should scan); intro/credit detection; OIDC login; Helm chart; clients: web, Android (VLC-based), Chromecast; Android TV "planned, no firm date"; GPL-3.0; 2.5k stars, 79 forks, 52 open issues; "developed by one person"; v5 rewrote most code; SIMKL sync and offline downloads "coming later". No Sonarr/Radarr mention. — [zoriya/Kyoo](https://github.com/zoriya/Kyoo)
 - Docker Hub backend image was last updated ~12 months before the indexed snapshot. — [hub.docker.com zoriya/kyoo_back](https://hub.docker.com/r/zoriya/kyoo_back)
 
 ### Inferences
-- For "styled subs + arr stack + request app", the lowest-friction path is Jellyfin server (unchanged arr/request app integration) with an ASS-capable TV client: Jellyfin Thor (libass 0.17.5, most complete), official 0.20.0 beta (ASS direct play, experimental), or an mpv/libVLC-based client.
-- Seanime and Kyoo are viable for a web/desktop/phone-centric household, but both lose on TV clients (no Android TV) and both would require a parallel request pipeline since request app does not know them. Seanime is better thought of as an AniList-driven downloader + desktop player than as a server replacement.
+- For "styled subs + arr stack", the lowest-friction path is Jellyfin server (unchanged arr integration) with an ASS-capable TV client: Jellyfin Thor (libass 0.17.5, most complete), official 0.20.0 beta (ASS direct play, experimental), or an mpv/libVLC-based client.
+- Seanime and Kyoo are viable for a web/desktop/phone-centric household, but both lose on TV clients (no Android TV) and both would require a parallel request pipeline since the usual request tooling does not know them. Seanime is better thought of as an AniList-driven downloader + desktop player than as a server replacement.
 - Shoko/Shokofin does not change subtitle behavior (it's metadata); it is compatible with any of the clients above.
 
 ### Gaps
@@ -107,7 +82,7 @@ Yes, but the strongest "styled subs done right on a TV" options are Jellyfin-sid
 
 ---
 
-## Key Question 4: What does Plex's 2025 pricing change mean for remote streaming and mobile apps?
+## Key Question 3: What does Plex's 2025 pricing change mean for remote streaming and mobile apps?
 
 ### Takeaway
 Since April 29, 2025 remote streaming from a Plex server is no longer free: either the server owner holds Plex Pass (now $6.99/mo, $69.99/yr, $249.99 lifetime) or each remote user buys a Remote Watch Pass ($1.99/mo or $19.99/yr introductory, rising to $2.99/mo or $29.99/yr after June 1, 2026); in exchange the one-time mobile unlock fee was removed for the new apps, and a further lifetime price rise was signaled for July 1, 2026.
@@ -131,7 +106,7 @@ Since April 29, 2025 remote streaming from a Plex server is no longer free: eith
 
 ---
 
-## Key Question 5: Which server has the best Android TV experience for anime specifically (direct play of 10-bit HEVC + ASS)?
+## Key Question 4: Which server has the best Android TV experience for anime specifically (direct play of 10-bit HEVC + ASS)?
 
 ### Takeaway
 Jellyfin, paired with a libass/mpv-capable Android TV client (Jellyfin Thor fork today; official 0.20.0 with ASS direct play once stable), is the only stack found that direct-plays 10-bit HEVC and renders styled ASS on Android TV without a server transcode; Plex and Emby both fall back to burn-in transcodes for complex ASS on Android TV.
@@ -160,7 +135,7 @@ Jellyfin, paired with a libass/mpv-capable Android TV client (Jellyfin Thor fork
 
 ---
 
-## Key Question 6: Is there a current open-source project positioning itself as a "Jellyfin replacement" (Rust/Go) with active development in 2025–2026?
+## Key Question 5: Is there a current open-source project positioning itself as a "Jellyfin replacement" (Rust/Go) with active development in 2025–2026?
 
 ### Takeaway
 Kyoo (Go/Python/React Native, GPL-3, single maintainer, v5 rewrite) is the only actively maintained general-purpose open-source server found that explicitly targets anime and does ASS with embedded fonts; Dim (Rust) and Olaris (Go) are effectively dormant, and Seanime (Go) is anime-specific rather than a general Jellyfin replacement.
@@ -173,7 +148,7 @@ Kyoo (Go/Python/React Native, GPL-3, single maintainer, v5 rewrite) is the only 
 - Jellyfin itself: 10.11.x line through 10.11.8 in 2026 with a 12.0 roadmap; 10.11.0 added full system backup. — [jellyfin v10.11.0 release](https://github.com/jellyfin/jellyfin/releases/tag/v10.11.0); [JellyWatch Jellyfin 10.11.7 / 12.0 roadmap](https://jellywatch.app/blog/jellyfin-current-version-latest-features-march-2026)
 
 ### Inferences
-- No Rust/Go project has reached feature parity with Jellyfin's client ecosystem; Kyoo's lack of Android TV and arr/request app integration makes it a secondary/experimental option for an anime-on-TV household in 2026.
+- No Rust/Go project has reached feature parity with Jellyfin's client ecosystem; Kyoo's lack of Android TV and arr integration makes it a secondary/experimental option for an anime-on-TV household in 2026.
 
 ### Gaps
 - Dim's GitHub commit activity in 2025–2026 was not verified (only README retrieved).

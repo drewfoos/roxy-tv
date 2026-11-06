@@ -1,151 +1,13 @@
 # *arr Stack <-> Custom Media Server Integration Contract (as of 2026-10-13)
 
-Scope: request app (request UI) -> Prowlarr -> Radarr / Sonarr (anime series type) -> download client -> library import -> a NEW custom media server (replacing Jellyfin/Plex/Emby) -> user's own client. Versions observed at research time: request app v3.5.0 (released 2026-09-28), Sonarr v4.0.20.3014 (2026-09-16), Radarr v6.4.4.10685 (2026-09-16). All source citations are to the `develop` branches of the respective GitHub repositories unless stated otherwise.
+Scope: Prowlarr -> Radarr / Sonarr (anime series type) -> download client -> library import -> a NEW custom media server (replacing Jellyfin/Plex/Emby) -> user's own client. Versions observed at research time: Sonarr v4.0.20.3014 (2026-09-16), Radarr v6.4.4.10685 (2026-09-16). All source citations are to the `develop` branches of the respective GitHub repositories unless stated otherwise.
 
 ---
 
-## KQ1. What does request app (v3.x) strictly require from a "media server"?
+## KQ1. Sonarr v4 / Radarr v5-v6: import flow, naming, and Connect notifications
 
 ### Takeaway
-request app has no abstract "media server" interface: it supports exactly Plex, Jellyfin, or Emby, and for Jellyfin/Emby it talks to a small, well-defined subset of the Jellyfin REST API (auth, users, libraries, items, seasons/episodes). A custom server that emulates that subset (with Jellyfin-shaped JSON, `MediaBrowser` auth header, `ProviderIds`, and `MediaSources[].MediaStreams[]`) can be configured in request app as "Jellyfin" unchanged. Availability is determined only by scanning the media server; Sonarr/Radarr sync marks items PROCESSING (not AVAILABLE), and there is no inbound Sonarr/Radarr webhook in request app.
-
-### Cited Findings
-
-**Versions / release state**
-- request app latest release is `v3.5.0`, published 2026-09-28; the release notes flag a breaking change to the Plex and Jellyfin library API endpoints (PR #3321): reading library endpoints no longer accept `sync` or `enable` params; new per-server sync and enable/disable endpoints exist — [GitHub releases API]((link removed))
-- request app's Radarr/Sonarr docs: "Only v3 & V4 Radarr/Sonarr servers are supported!" — [docs.request app.dev services]((link removed))
-
-**Media server type gating**
-- The Jellyfin scanner runs only if `mediaServerType` is `JELLYFIN` or `EMBY`; it calls `animeList.sync()` before scanning — [request app server/lib/scanners/jellyfin/index.ts]((link removed))
-- Jellyfin jobs (`jellyfin-recently-added-scan`, `jellyfin-full-scan`) are registered for Jellyfin or Emby; Plex jobs only for Plex — [request app server/job/schedule.ts]((link removed))
-- `/auth/jellyfin` returns "Jellyfin login is disabled" if a media server is configured and either `mediaServerLogin === false` or the type is neither Jellyfin nor Emby — [request app server/routes/auth.ts]((link removed))
-- `JellyfinSettings` interface: `name, ip, port, useSsl?, urlBase?, externalHostname?, jellyfinForgotPasswordUrl?, libraries: Library[], serverId, apiKey` — [request app server/lib/settings/index.ts]((link removed))
-
-**Exact Jellyfin endpoints request app calls (class `JellyfinAPI`, server/api/jellyfin.ts)** — [request app server/api/jellyfin.ts]((link removed))
-| Method | Path | Params / body | Used by |
-|---|---|---|---|
-| POST | `/Users/AuthenticateByName` | body `{ Username, Pw }`; optional `X-Forwarded-For` header on first attempt | `login()` |
-| POST | `/QuickConnect/Initiate` | none | `initiateQuickConnect()` |
-| GET | `/QuickConnect/Connect` | `?secret=` | `checkQuickConnect()` |
-| POST | `/Users/AuthenticateWithQuickConnect` | body `{ Secret }` | `authenticateQuickConnect()` |
-| GET | `/System/Info` | none | `getSystemInfo()` |
-| GET | `/System/Info/Public` | none | `getServerName()` |
-| GET | `/Users` | none | `getUsers()` |
-| GET | `/Users/{userId ?? 'Me'}` | none | `getUser()` |
-| GET | `/Library/MediaFolders` (primary) / `/Users/{userId ?? 'Me'}/Views` (fallback) | none | `getLibraries()` |
-| GET | `/Items` | `SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Series,Movie,Others&Recursive=true&StartIndex=0&ParentId={libraryId}&collapseBoxSetItems=false` | `getLibraryContents()` |
-| GET | `/Items/Latest` (Jellyfin, with `userId=`) or `/Users/{userId}/Items/Latest` (Emby) | `Limit=12&ParentId={libraryId}` | `getRecentlyAdded()` |
-| GET | `/Items` | `ids={id}&fields=ProviderIds,MediaSources,Width,Height,IsHD,DateCreated` | `getItemData()` |
-| GET | `/Shows/{seriesId}/Seasons` | none | `getSeasons()` |
-| GET | `/Shows/{seriesId}/Episodes` | `seasonId={seasonId}` (+ `fields=MediaSources` when `includeMediaInfo`) | `getEpisodes()` |
-| POST / GET | `/Auth/Keys?App={appName}` then `/Auth/Keys` | none | `createApiToken()` (creates key named "request app", then lists keys to find it) |
-- Note: `/Library/VirtualFolders` and `/Items/{id}` are NOT used; item lookup is `/Items?ids=...` — [request app server/api/jellyfin.ts]((link removed))
-
-**Auth header format request app sends** — [request app server/api/jellyfin.ts]((link removed))
-```ts
-let authHeaderVal = `MediaBrowser Client="request app", Device="request app", DeviceId="${safeDeviceId}", Version="${version}"`;
-if (authToken) { authHeaderVal += `, Token="${authToken}"`; }
-```
-- Sent as the `Authorization` header (not `X-Emby-Authorization`); `Version` is `'1.0.0'` when server type is Emby, else request app's app version; default `DeviceId` is `Buffer.from('BOT_request app').toString('base64')`; `Content-Type` and `Accept` are `application/json` — [request app server/api/jellyfin.ts]((link removed))
-- Per-user device IDs: admin (user id 1) always uses `BOT_request app`; other users get `Buffer.from(\`BOT_request app_${body.username}\`).toString('base64')` — [request app server/routes/auth.ts]((link removed))
-
-**Response shapes request app types (what the custom server must return)** — [request app server/api/jellyfin.ts]((link removed))
-```ts
-export interface JellyfinUserResponse {
-  Name: string; ServerId: string; ServerName: string; Id: string;
-  Configuration: { GroupedFolders: string[] };
-  Policy: { IsAdministrator: boolean };
-  PrimaryImageTag?: string;
-}
-export interface JellyfinLibraryItem {
-  Name: string; Id: string; HasSubtitles: boolean;
-  Type: 'Movie' | 'Episode' | 'Season' | 'Series';
-  LocationType: 'FileSystem' | 'Offline' | 'Remote' | 'Virtual';
-  SeriesName?: string; SeriesId?: string; SeasonId?: string; SeasonName?: string;
-  IndexNumber?: number; IndexNumberEnd?: number; ParentIndexNumber?: number;
-  MediaType: string;
-}
-export interface JellyfinLibraryItemExtended extends JellyfinLibraryItem {
-  ProviderIds: { Tmdb?: string; TheMovieDb?: string; Imdb?: string; Tvdb?: string; AniDB?: string };
-  MediaSources?: JellyfinMediaSource[]; Width?: number; Height?: number; IsHD?: boolean; DateCreated?: string;
-}
-export interface JellyfinMediaSource { Protocol: string; Id: string; Path: string; Type: string; VideoType: string; MediaStreams: JellyfinMediaStream[]; }
-export interface JellyfinMediaStream { Codec: string; Type: 'Video' | 'Audio' | 'Subtitle'; Height?: number; Width?: number; AverageFrameRate?: number; RealFrameRate?: number; Language?: string; DisplayTitle: string; }
-```
-
-**Fields the Jellyfin scanner actually reads** — [request app server/lib/scanners/jellyfin/index.ts]((link removed))
-- `ProviderIds`: `Tmdb`, `TheMovieDb` (Emby spelling), `Imdb`, `Tvdb`, `AniDB`. Movie lookup order: TMDb, then IMDb (resolved to TMDb via `resolveImdbIdForScan`), then AniDB via the anime list. Shows: TMDb, then TVDb, then AniDB.
-- `MediaSources[].MediaStreams[]` filtered by `Type === 'Video'`, then `Width` checked. `Height` is NOT read.
-- 4K test: `return (MediaStream.Width ?? 0) > 2000;`. Movies compute `has4k` and `hasOtherResolution` separately; a standard entry is processed if `hasOtherResolution || (!this.enable4kMovie && has4k)`; a 4K entry if `has4k && this.enable4kMovie`. Episodes: 4K checked only when `enable4kShow` is on; an episode can count toward both standard and 4K totals. A code comment notes resolution alone is used, not which Radarr/Sonarr instance produced it.
-- `Type` (`'Movie' | 'Series' | 'Season' | 'Episode'`) drives `processItem`; AniDB series detection uses `metadata.Type === 'Series'`.
-- Item id resolution for recently-added dedupe: `const Id = jellyfinitem.SeriesId ?? jellyfinitem.SeasonId ?? jellyfinitem.Id;`; recent-mode items are deduplicated with `uniqWith` by `SeriesId`, then `SeasonId`, then `Id`.
-- `IndexNumber` is used as the season number on Season items and the episode number on Episode items; `IndexNumberEnd` is used for multi-episode files (count = `IndexNumberEnd - IndexNumber + 1`); `ParentIndexNumber` is not used in this file.
-- `DateCreated` becomes `mediaAddedAt`; `Name` is used as the title.
-- Season matching: `Number(md.IndexNumber) === season.season_number` (TMDb season numbers); season 0 (specials) is dropped unless `settings.main.enableSpecialEpisodes` is true; a season with no matching Jellyfin season is recorded with `episodes: 0, episodes4k: 0`.
-- For AniDB-tagged series: `tvdbSeasonFromAnidb === season.season_number && md.IndexNumber === 1`, counts accumulated per TMDb show id in `processedAnidbSeason`.
-- `getEpisodes(seriesId, seasonId, { includeMediaInfo: true })` is called only when 4K show detection is enabled.
-- The scanner is constructed as `new JellyfinAPI(getHostname(), settings.jellyfin.apiKey, admin.jellyfinDeviceId)` using the admin (user id 1) context.
-
-**How availability status is computed (BaseScanner)** — [request app server/lib/scanners/baseScanner.ts]((link removed))
-- Movies: `const statusField = is4k ? 'status4k' : 'status';`. Existing records change only when not already AVAILABLE; a title with a file and no active processing becomes AVAILABLE; an abandoned PROCESSING entry becomes UNKNOWN; otherwise PROCESSING (or stays DELETED). New movies: `if (!processing && !hasFile) { return; }`.
-- Seasons: AVAILABLE when `(season.totalEpisodes === season.episodes && season.episodes > 0)`; PARTIALLY_AVAILABLE when `season.episodes > 0`; PROCESSING when `season.processing` and not DELETED; an existing AVAILABLE season is never downgraded by the scanner. `totalEpisodes` comes from TMDb `episode_count`.
-- Show rollup: specials excluded; all counted seasons AVAILABLE -> `media.status = AVAILABLE`; any season PARTIALLY_AVAILABLE/AVAILABLE -> PARTIALLY_AVAILABLE; else PROCESSING/DELETED/UNKNOWN.
-- `jellyfinMediaId` / `jellyfinMediaId4k` (and Plex `ratingKey`) stored on the Media row; for shows only when `season.episodes > 0`. `mediaAddedAt` set on new records or when status changes; for shows when newly available seasons increase (also updates `media.lastSeasonChange`).
-- The scanner does NOT set MediaRequest status to COMPLETED; the only request status change in the base scanner is `declineOrphanedRequests` setting `request.status = MediaRequestStatus.DECLINED` when a PROCESSING entry is reset to UNKNOWN.
-- Batching: `const BUNDLE_SIZE = 20;` and `const UPDATE_RATE = 4 * 1000;` (4 s between bundles); items in a bundle run via `Promise.all`; writes per TMDb id serialized via `asyncLock.dispatch(tmdbId, ...)`.
-
-**Scan frequency (default cron, 6-field with seconds)** — [request app server/lib/settings/index.ts]((link removed))
-| Job | Default schedule |
-|---|---|
-| `jellyfin-recently-added-scan` | `0 */5 * * * *` (every 5 min; uses `/Items/Latest?Limit=12` per library) |
-| `jellyfin-full-scan` | `0 0 3 * * *` (daily 03:00; uses `/Items?Recursive=true...`) |
-| `plex-recently-added-scan` / `plex-full-scan` | `0 */5 * * * *` / `0 0 3 * * *` |
-| `radarr-scan` / `sonarr-scan` | `0 0 4 * * *` / `0 30 4 * * *` |
-| `availability-sync` | `0 0 5 * * *` |
-| `download-sync` / `download-sync-reset` | `0 * * * * *` (every minute) / `0 0 1 * * *` |
-| `image-cache-cleanup` | `0 0 5 * * *` |
-| `process-blocklisted-tags` | `0 30 1 */7 * *` |
-- Full sync can also be triggered via `POST /settings/jellyfin/sync` (start/cancel) and progress read via GET; library list via `GET /settings/jellyfin/library`, `PUT /settings/jellyfin/library/{libraryId}` enable/disable, `POST /settings/jellyfin/library/sync`; users via `GET /settings/jellyfin/users` — [request app-api.yml]((link removed))
-
-**Sonarr/Radarr "sync" is not availability; there is no inbound Sonarr/Radarr webhook**
-- Radarr scanner: `const processing = !radarrMovie.hasFile && radarrMovie.monitored;` then `processMovie(radarrMovie.tmdbId, { is4k: server4k, serviceId, externalServiceId: radarrMovie.id, externalServiceSlug: radarrMovie.titleSlug, title, processing, hasFile: radarrMovie.hasFile })`; the file never assigns `MediaStatus.AVAILABLE` itself — [request app server/lib/scanners/radarr/index.ts]((link removed))
-- request app docs describe the Radarr/Sonarr "Library scan" option as: "Enable this setting if you would like to scan your Radarr/Sonarr server for existing media/request status" (prevents duplicate requests) — [docs.request app.dev services]((link removed))
-- `server/routes/index.ts` mounts `/user, /settings, /search, /discover, /request, /watchlist, /blocklist, /movie, /tv, /media, /person, /collection, /service, /issue, /issueComment, /overrideRule, /auth` and inline status/genre routes; "No `/webhook`, `/jellyfin/webhook`, `/plex/webhook`, or Sonarr/Radarr webhook path is defined or mounted in this file" — [request app server/routes/index.ts]((link removed))
-- OpenAPI spec (first 100k chars): "No visible path accepts inbound webhooks from Sonarr or Radarr. Those services are configured as outbound connections (hostname, port, API key) that request app calls." The `WebhookSettings.webhookUrl` schema is for request app's own outbound notifications — [request app-api.yml]((link removed))
-- Availability Sync job (`availability-sync`): for media marked AVAILABLE/PARTIALLY_AVAILABLE it checks Radarr (`if (radarr && radarr.hasFile)`), Sonarr (`if (sonarr.statistics.episodeFileCount > 0)`), Plex (`getMetadata(ratingKey)`), Jellyfin/Emby (`jellyfinClient?.getItemData(jellyfinMediaId)`; seasons: `seasonExistsInJellyfin = episodes.length > 0`). If found in none, `media[is4k ? 'status4k' : 'status'] = MediaStatus.DELETED;` and seasons via `mediaSeason[is4k ? 'status4k' : 'status'] = MediaStatus.DELETED;`. Non-404 errors are treated as "exists" to avoid false removals. "Nothing in the code removes media requests." — [request app server/lib/availabilitySync.ts]((link removed))
-- request app sends requests to Sonarr with an anime profile when the TMDb show has keyword `ANIME_KEYWORD_ID = 210024` ("export const ANIME_KEYWORD_ID = 210024;"); SonarrSettings carry `seriesType`, `animeSeriesType`, `activeAnimeProfileId?`, `activeAnimeDirectory?`, `activeAnimeLanguageProfileId?`, `animeTags?`, `enableSeasonFolders`, `monitorNewItems` — [request app constants.ts]((link removed)); [request app settings/index.ts]((link removed))
-
-**Jellyfin auth flow in request app (`POST /auth/jellyfin`)** — [request app server/routes/auth.ts]((link removed))
-- Body: `username` (required), `password`, `hostname` (required only on first setup when `settings.jellyfin.ip` is empty), `port` (default 8096), `urlBase`, `useSsl`, `email`, `serverType` (must be Jellyfin or Emby enum on initial setup).
-- Calls `jellyfinserver.login(username, password, clientIp)` (-> `/Users/AuthenticateByName`), then matches the local user by `account.User.Id`.
-- Initial setup: `IsAdministrator === false` throws `ApiError(403, ApiErrorCode.NotAdmin)`; creates local user id 1 with `Permission.ADMIN`, storing Jellyfin user Id, device ID and access token; then `const apiKey = await jellyfinClient.createApiToken('request app');` (uses the admin's access token to POST `/Auth/Keys?App=request app` and GET `/Auth/Keys`); saves `settings.jellyfin.name` from `getServerName()` (`/System/Info/Public`), `serverId` from `account.User.ServerId`, plus `ip, port, urlBase, useSsl, apiKey`; then `startJobs()`.
-- Subsequent logins: existing linked user (`account.User.Id === user.jellyfinUserId`) refreshes avatar and `jellyfinUsername`; unknown user is rejected with 403 unless `settings.main.newPlexLogin` is enabled, in which case a user is created with `defaultPermissions`.
-- Avatar: `/avatarproxy/${user.jellyfinUserId}?v=${user.avatarVersion}` (served by request app's avatar proxy; the route itself makes no direct `/Users/{id}/Images/Primary` call in this file).
-- Quick Connect (Jellyfin type only): `POST /jellyfin/quickconnect/initiate` -> `initiateQuickConnect()` returns `code` and `secret`; `GET /jellyfin/quickconnect/check` validates `secret` (8-128 hex chars) and calls `checkQuickConnect(secret)` returning `authenticated`; `POST /jellyfin/quickconnect/authenticate` -> `authenticateQuickConnect(secret)` (`/Users/AuthenticateWithQuickConnect`), updates `jellyfinAuthToken`, `jellyfinDeviceId`, avatar; rejected during initial setup.
-
-**User import (`POST /user/import-from-jellyfin`, needs `MANAGE_USERS`)** — [request app server/routes/user/index.ts]((link removed))
-- Calls `const jellyfinUsers = await jellyfinClient.getUsers();` (GET `/Users`) with the owner (user id 1) context; indexes by `normalizeJellyfinGuid(user.Id)`.
-- Reads only `Id` and `Name` from each user; does not use `Policy.IsAdministrator` or `PrimaryImageTag` in this route.
-- New users: `jellyfinUsername: jellyfinUser?.Name`, `jellyfinUserId: jellyfinUser?.Id`, `email: jellyfinUser?.Name` (placeholder), `jellyfinDeviceId` = base64 of `BOT_request app_${Name}`, `permissions: settings.main.defaultPermissions`, `avatar: /avatarproxy/${Id}`, `userType` chosen by `settings.main.mediaServerType === MediaServerType.JELLYFIN` (Jellyfin vs Emby). Body `jellyfinUserIds[]` selects which to import; existing `jellyfinUserId`s are skipped.
-
-### Inferences
-- A custom server can present itself to request app as "Jellyfin" by implementing the 15 endpoints in the table above with the typed JSON shapes; everything else in the Jellyfin API is unused by request app. The key non-obvious requirements: (a) the `Authorization: MediaBrowser Client=..., Token=...` header must be accepted for both user access tokens and API keys created via `/Auth/Keys`; (b) `/Users/AuthenticateByName` must return `{ User: { Id, Name, ServerId, Policy: { IsAdministrator }, PrimaryImageTag? }, AccessToken }` (the route reads `account.User.Id`, `account.User.ServerId`, `IsAdministrator`); (c) items must carry `ProviderIds.Tmdb` (movies, shows) or `Tvdb` (shows) or `Imdb`/`AniDB`, and `MediaSources[].MediaStreams[]` with `Type:'Video'` and `Width` so 4K detection works; (d) `/Shows/{id}/Seasons` must return Season items with `IndexNumber` = TMDb season number, and `/Shows/{id}/Episodes?seasonId=` must return Episode items with `IndexNumber` (and `IndexNumberEnd` for multi-episode files); (e) `/Items/Latest?ParentId=&Limit=12` must return the most recently added Movie/Series/Season/Episode items (with `SeriesId`/`SeasonId` for episodes) because the 5-minute recent scan relies on it; (f) `DateCreated` should be ISO-8601 so `mediaAddedAt` is correct.
-- Because the scanner counts episodes against TMDb `episode_count` per TMDb season number, anime that Sonarr stores with TVDb season numbering must be exposed by the custom server with season/episode numbers that match TMDb's numbering (or with `ProviderIds.AniDB` so request app's AniDB-to-TVDb-season mapping path is used); mismatches lead to perpetual PARTIALLY_AVAILABLE.
-- Availability cannot be driven by Sonarr/Radarr webhooks alone: request app has no inbound Sonarr/Radarr webhook route, the Radarr/Sonarr scanners only set PROCESSING/UNKNOWN, and the only path to AVAILABLE is the media-server scan (recent scan every 5 min by default, full scan daily). Fastest route to "available" after import is therefore for the custom server to index the new file quickly and surface it in `/Items/Latest`.
-- Emby mode differs in only two places that matter for an emulator: `ProviderIds.TheMovieDb` vs `Tmdb`, and `/Users/{userId}/Items/Latest` vs `/Items/Latest?userId=`; presenting as Jellyfin is simpler.
-
-### Gaps
-- The exact JSON of `/Users/AuthenticateByName` response fields consumed (`AccessToken`, `User`) is inferred from `account.User.Id` / `account.User.ServerId` usage in auth.ts; the `login()` implementation body in jellyfin.ts was summarized, not quoted.
-- Whether request app validates `/System/Info` fields (e.g., `Version`, `Id`) beyond calling it was not confirmed.
-- The request app docs page for Jellyfin settings (`docs.request app.dev/using-request app/settings/jellyfin/`) returned 404 at fetch time; behaviour is documented here from source instead.
-- `MediaServerType` enum numeric values live in `server/constants/server.ts` and were not fetched.
-
----
-
-## KQ2. Sonarr v4 / Radarr v5-v6: import flow, naming, and Connect notifications
-
-### Takeaway
-Sonarr/Radarr import completed download client downloads (matched by category/download id) by hardlinking (default) or copying into the series/movie folder, renaming per the configured format; TRaSH's recommended formats embed `{tvdb-...}`/`{tmdb-...}`/`[tvdbid-...]`/`[tmdbid-...]` ID tags in folder names and absolute numbers, bit depth, audio language and release group for anime. The Webhook connect posts JSON with an `eventType` string and full `series`/`episodes[]`/`episodeFile` or `movie`/`movieFile` objects including TVDb/TMDb/IMDb (and for Sonarr, MAL/AniList) IDs and absolute file paths, so a custom server never has to re-parse filenames.
+Sonarr/Radarr import completed downloads (matched by category/download id) by hardlinking (default) or copying into the series/movie folder, renaming per the configured format; TRaSH's recommended formats embed `{tvdb-...}`/`{tmdb-...}`/`[tvdbid-...]`/`[tmdbid-...]` ID tags in folder names and absolute numbers, bit depth, audio language and release group for anime. The Webhook connect posts JSON with an `eventType` string and full `series`/`episodes[]`/`episodeFile` or `movie`/`movieFile` objects including TVDb/TMDb/IMDb (and for Sonarr, MAL/AniList) IDs and absolute file paths, so a custom server never has to re-parse filenames.
 
 ### Cited Findings
 
@@ -154,7 +16,7 @@ Sonarr/Radarr import completed download client downloads (matched by category/do
 - Hard links are on by default; "A hard link will not use any additional disk space."; "The file system and mounts must be the same for your completed download directory and your media library."; if linking fails Sonarr falls back to copying — [Servarr Wiki sonarr/faq.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/faq.md)
 - Completed files stay in their original location for seeding; Sonarr hardlinks or copies them to the media folder on import. With "Remove Completed" enabled, Sonarr removes the original file and torrent only after the client reports seeding complete and the torrent is stopped — [Servarr Wiki sonarr/faq.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/faq.md)
 - Completed Download Handling "Enable" is an advanced global setting that automatically imports completed downloads from the client; "Remove Completed" removes imported downloads from client history once finished (usenet) or stopped/complete (torrents) — [Servarr Wiki sonarr/settings.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/settings.md)
-- Torrent client settings: "Category" (strongly recommended), "Post-Import Category" (warned: breaks completed download removal), "Initial State" (for download client, "Forced" bypasses all seed thresholds) — [Servarr Wiki sonarr/settings.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/settings.md)
+- Torrent client settings: "Category" (strongly recommended), "Post-Import Category" (warned: breaks completed download removal), "Initial State" — [Servarr Wiki sonarr/settings.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/settings.md)
 - Remote Path Mappings: "A remote path map is a DUMB search/replace" mapping the path the download client reports to a path Sonarr can access; used mainly when Sonarr and the client are on different hosts or with merged filesystems — [Servarr Wiki sonarr/settings.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/settings.md)
 - Other Media Management options: "Import Extra Files" (examples "subtitles, nfo, etc"; subtitle tags such as `cc` or `forced` are preserved when recognized); "Rescan Series Folder after Refresh" (Always / After Manual Refresh / Never, with Never "not recommended unless all library changes are made through Sonarr"); "Change File Date" (None / Local Release / UTC Release Date); "Minimum Free Space" — [Servarr Wiki sonarr/settings.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/settings.md)
 - Series Type definition: "**Anime** - Episodes released using an absolute episode number"; "the Anime type does not have any concept of Season Packs or Seasons" — [Servarr Wiki sonarr/faq.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/faq.md)
@@ -204,22 +66,21 @@ Sonarr/Radarr import completed download client downloads (matched by category/do
 - Episodes with absolute numbers added to TVDb (via Skyhook) are auto-searched if aired within last 14 days; "The episode(s) on TVDb do not have an absolute number assigned" is the usual cause of missed anime, fix on TVDb then wait 36-48 h — [Servarr Wiki sonarr/faq.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/faq.md)
 
 ### Inferences
-- A custom server should consume the Sonarr/Radarr Webhook (POST JSON) and key on: `eventType` (string, e.g. `"Download"`, `"Rename"`, `"EpisodeFileDelete"`, `"SeriesDelete"`, `"MovieFileDelete"`, `"MovieDelete"`, `"Test"`, `"Health"`), `series.tvdbId` / `series.tmdbId` / `series.imdbId` / `series.malIds[]` / `series.anilistIds[]` / `series.type` (`anime`), `episodes[].seasonNumber` / `episodes[].episodeNumber` / `episodes[].tvdbId`, `episodeFile.path` (absolute, server-side path = `series.path` + `relativePath`), `episodeFile.mediaInfo.{width,height,audioLanguages,subtitles,videoCodec}`, `isUpgrade`, `deletedFiles[].path`; and for Radarr `movie.tmdbId` / `movie.imdbId` / `movie.folderPath` / `movieFile.path`. JSON property names are camelCase in practice (consistent with request app's `radarrMovie.hasFile`/`tmdbId` consumption of the same serializer), but see Gaps.
+- A custom server should consume the Sonarr/Radarr Webhook (POST JSON) and key on: `eventType` (string, e.g. `"Download"`, `"Rename"`, `"EpisodeFileDelete"`, `"SeriesDelete"`, `"MovieFileDelete"`, `"MovieDelete"`, `"Test"`, `"Health"`), `series.tvdbId` / `series.tmdbId` / `series.imdbId` / `series.malIds[]` / `series.anilistIds[]` / `series.type` (`anime`), `episodes[].seasonNumber` / `episodes[].episodeNumber` / `episodes[].tvdbId`, `episodeFile.path` (absolute, server-side path = `series.path` + `relativePath`), `episodeFile.mediaInfo.{width,height,audioLanguages,subtitles,videoCodec}`, `isUpgrade`, `deletedFiles[].path`; and for Radarr `movie.tmdbId` / `movie.imdbId` / `movie.folderPath` / `movieFile.path`. JSON property names are camelCase in practice, but see Gaps.
 - `Rename` payloads carry previous and new paths (`renamedEpisodeFiles` / `renamedMovieFiles`; custom script `*_previouspaths` / `*_paths`), so the server should re-key its index by the new path without re-scanning.
 - To be a drop-in for the built-in "Emby/Jellyfin" connect (if the user prefers it over Webhook), the custom server needs `POST /Library/Media/Updated` accepting `{ "Updates": [ { "Path": "...", "UpdateType": "..." } ] }` with a token-bearing auth header, returning 204, and optionally `POST /Library/Refresh`. Paths arrive as Sonarr/Radarr sees them (container paths) unless the connect's path mapping is used, so the server must either share the same mount layout or map paths.
-- Polling as a fallback: Sonarr `/api/v3/series`, `/api/v3/episode?seriesId=`, `/api/v3/episodefile?seriesId=`; Radarr `/api/v3/movie`, `/api/v3/moviefile?movieId=` with `X-Api-Key` give the same ids and absolute paths; request app's own Radarr scanner relies on `getMovies()` (`/movie`) returning `id, tmdbId, titleSlug, hasFile, monitored`, and the availability sync relies on Sonarr series `statistics.episodeFileCount`, which confirms those fields exist on the v3 API.
+- Polling as a fallback: Sonarr `/api/v3/series`, `/api/v3/episode?seriesId=`, `/api/v3/episodefile?seriesId=`; Radarr `/api/v3/movie`, `/api/v3/moviefile?movieId=` with `X-Api-Key` give the same ids and absolute paths.
 - The TRaSH Jellyfin folder tags `[tvdbid-NNN]` / `[tmdbid-NNN]` / `[imdbid-ttNNN]` are a reliable secondary key the server can regex from folder names if a webhook is missed; absolute episode numbers `- 001 -` and `[10bit]`, `[JA]`, `-RlsGrp` tokens follow the anime format above.
 
 ### Gaps
 - The Sonarr/Radarr `MediaBrowserProxy.cs` (Emby/Jellyfin connect implementation) could not be fetched (404 on raw/blob URLs for `src/NzbDrone.Core/Notifications/Emby/MediaBrowserProxy.cs` on both repos), so the exact `UpdateType` values sent, the auth header used (`X-MediaBrowser-Token` vs `Authorization: MediaBrowser ... Token=`), and whether Sonarr calls `/Library/Media/Updated` vs `/Library/Refresh` for Jellyfin are unverified here; only the Jellyfin receiving contract is cited.
 - The JSON casing of webhook payloads (camelCase vs PascalCase) was not directly confirmed from the Sonarr/Radarr JSON serializer settings; property names above are the C# names.
 - The Servarr "sonarr/api" wiki page and `sonarr.tv/docs/api` were not reachable; the `X-Api-Key` header / `apikey` query param convention is stated from general knowledge, not a fetched source.
-- download client-specific download client fields (Sequential Order, First and Last First, Content Layout) are not on the fetched settings page.
 - Sonarr's default (non-TRaSH) anime naming format and the "Anime Standard Format Search" option details were not captured.
 
 ---
 
-## KQ3. Prowlarr: role and media-server requirements
+## KQ2. Prowlarr: role and media-server requirements
 
 ### Takeaway
 Prowlarr only manages indexers and pushes them into Sonarr/Radarr; it never talks to the media server, and its download clients are used only for its own in-app searches.
@@ -238,18 +99,17 @@ Prowlarr only manages indexers and pushes them into Sonarr/Radarr; it never talk
 
 ---
 
-## KQ4. download client: categories, seeding, hardlinks, Docker volume layout
+## KQ3. Download client: shared volume, hardlinks, Docker volume layout
 
 ### Takeaway
-Use one `/data` volume shared by download client, Sonarr, Radarr and the media server, with downloads in `/data/torrents/{tv,movies}` (via download client categories with "Automatic" torrent management) and the library in `/data/media/{tv,movies}`; this lets Sonarr/Radarr hardlink (instant, zero extra space) while seeding continues, and the media server sees the finished file in `/data/media` immediately.
+Use one `/data` volume shared by the download client, Sonarr, Radarr and the media server, with downloads in `/data/torrents/{tv,movies}` (sorted by download client categories) and the library in `/data/media/{tv,movies}`; this lets Sonarr/Radarr hardlink (instant, zero extra space) while seeding continues, and the media server sees the finished file in `/data/media` immediately.
 
 ### Cited Findings
 - Recommended tree rooted at `data`: `torrents/{books,movies,music,tv}`, `usenet/{incomplete,complete/{...}}`, `media/{books,movies,music,tv}`; `media` is "your library and what you'd pass to Plex, Emby or JellyFin"; creation command `mkdir -p /data/{torrents/{tv,movies,music},media/{tv,movies,music}}` — [TRaSH Docker folder structure](https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/)
-- download client container path `/data/torrents/` mapped from host `/<path_to_data>/data/torrents/`; sort downloads into `/data/torrents/{tv|movies|music}`; Sonarr/Radarr "gets access to everything using `/data`"; compose volumes: radarr/sonarr `/data:/data`, bazarr `/data/media:/data/media` — [TRaSH Docker folder structure](https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/)
+- Download client container path `/data/torrents/` mapped from host `/<path_to_data>/data/torrents/`; sort downloads into `/data/torrents/{tv|movies|music}`; Sonarr/Radarr "gets access to everything using `/data`"; compose volumes: radarr/sonarr `/data:/data`, bazarr `/data/media:/data/media` — [TRaSH Docker folder structure](https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/)
 - Default mounts like `/movies` or `/downloads` make containers "look like two or three file systems, even if they aren't," losing "the ability to hardlink or instant move," forcing slower copy+delete — [TRaSH Docker folder structure](https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/)
 - Hardlinks: "Having a file in multiple locations without using double your storage space."; "You CAN'T hardlink across separate file systems, partitions, volumes or mounts."; "Space is only reclaimed once all "copies" of hardlinked data are deleted."; "Modifying any copy of a hardlinked file will impact all "copies"."; an instant move "is a real move, not a copying of a file from the download folder to the media folder" — [TRaSH Hardlinks and Instant Moves](https://trash-guides.info/File-and-Folder-Structure/Hardlinks-and-Instant-Moves/)
-- download client setup: Saving Management "Make sure this is set to `Automatic`" (Default Torrent Management Mode); "Pre-allocate disk space for all files" is personal preference (disable on unRAID cache); seeding limits (ratio/total time/inactive time) suggested "Disabled" with action "Paused and Disabled"; warns against Docker-style `/downloads` => `/data/downloads` mounts — [TRaSH download client Basic Setup](https://trash-guides.info/Downloaders/download client/Basic-Setup/)
-- Categories: enter only a subfolder in the category Save Path (it is relative to the default download root); example layout `/data/torrents/{tv|movies|music}`; if downloads land in `/data/torrents/` instead of the category folder "you probably forgot to change `Default Torrent Management Mode:` to `Automatic`" — [TRaSH download client categories](https://trash-guides.info/Downloaders/download client/How-to-add-categories/)
+- Download client setup (save paths, categories, seeding limits) is client-specific; what matters here is that categories sort downloads into `/data/torrents/{tv|movies|music}` — [TRaSH Docker folder structure](https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/)
 - Sonarr: "Category" strongly recommended; "Post-Import Category" breaks completed download removal; "Remove Completed" only after seed goals reached and torrent stopped — [Servarr Wiki sonarr/settings.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/settings.md)
 
 ### Inferences
@@ -263,7 +123,7 @@ Use one `/data` volume shared by download client, Sonarr, Radarr and the media s
 
 ---
 
-## KQ5. Bazarr (optional): sidecar subtitle naming the server must parse
+## KQ4. Bazarr (optional): sidecar subtitle naming the server must parse
 
 ### Takeaway
 Bazarr writes sidecar subtitles as `<video basename>.<lang>[.forced|.<hi-ext>][.<custom tags>].srt` (or `.<format>` for non-SRT), where the hearing-impaired suffix is configurable as `hi`, `cc` or `sdh`, forced and HI are mutually exclusive, and a "single language" mode drops the language suffix entirely; files may be placed alongside the video or in a configured sub-folder.
@@ -284,10 +144,10 @@ Bazarr writes sidecar subtitles as `<video basename>.<lang>[.forced|.<hi-ext>][.
 
 ---
 
-## KQ6. Anime specifics: series type, numbering, release flags, metadata providers and ID mapping
+## KQ5. Anime specifics: series type, numbering, release flags, metadata providers and ID mapping
 
 ### Takeaway
-Sonarr v4 treats Anime as absolute-numbered (no season packs), maps scene numbering via TheXEM, pulls TVDb data via Skyhook (now including MAL and AniList IDs in webhook `series.malIds`/`series.aniListIds`), and TRaSH's anime format emits `SxxEyy - abs - title [..][10bit][codec][audio][JA]-Group`; Fribb/anime-lists provides a merged AniDB-keyed JSON mapping to AniList/MAL/Kitsu/TVDb/TMDb/IMDb with TVDb season and episode offsets, which request app itself consumes for `ProviderIds.AniDB`.
+Sonarr v4 treats Anime as absolute-numbered (no season packs), maps scene numbering via TheXEM, pulls TVDb data via Skyhook (now including MAL and AniList IDs in webhook `series.malIds`/`series.aniListIds`), and TRaSH's anime format emits `SxxEyy - abs - title [..][10bit][codec][audio][JA]-Group`; Fribb/anime-lists provides a merged AniDB-keyed JSON mapping to AniList/MAL/Kitsu/TVDb/TMDb/IMDb with TVDb season and episode offsets.
 
 ### Cited Findings
 - Sonarr Anime series type: "Episodes released using an absolute episode number"; "the Anime type does not have any concept of Season Packs or Seasons" so each episode is searched individually; try Standard type if problems; Xem is "the only way to fix Japanese anime aliases"; dubbed vs subbed tracking example (Pokemon tracks dubbed on TheXEM) — [Servarr Wiki sonarr/faq.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/faq.md)
@@ -297,11 +157,9 @@ Sonarr v4 treats Anime as absolute-numbered (no season packs), maps scene number
 - Custom-script `sonarr_release_absoluteepisodenumbers` (On Grab) and `sonarr_episodefile_mediainfo_audiolanguages` / `_subtitles` (On Import) expose absolute numbers and language lists without filename parsing — [Servarr Wiki sonarr/custom-scripts.md](https://raw.githubusercontent.com/Servarr/Wiki/master/sonarr/custom-scripts.md)
 - Fribb/anime-lists files: `anime-offline-database-reduced`, `anime-lists-reduced`, `anime-list-full` (merged by `anidb_id`), `anime-list-mini` (minified), `Collections/` (per-source related-anime files, e.g. `anidb_collection.json`), `Indices/` (per-source lookup files e.g. mal, tmdb, tvdb) — [Fribb/anime-lists README](https://raw.githubusercontent.com/Fribb/anime-lists/master/README.md)
 - `anime-list-full` entry fields: `type, anidb_id, anilist_id, animecountdown_id, animenewsnetwork_id, anime-planet_id, anisearch_id, kitsu_id, livechart_id, mal_id, simkl_id, imdb_id (array), themoviedb_id ({tv: id} or {movie: [ids]}), tvdb_id, season ({tvdb, tmdb}), episode_offset ({tvdb, tmdb})`; sources are cedya77/anime-offline-database (fork) and Anime-Lists/anime-lists; caveats: Anime-Lists contains TVDb IDs set to "movie", TVDb/TMDb share numeric IDs across movie/TV so the right endpoint must be used, missing IDs are filled via TMDb API without accuracy guarantees, no stated update schedule — [Fribb/anime-lists README](https://raw.githubusercontent.com/Fribb/anime-lists/master/README.md)
-- request app's Jellyfin scanner reads `ProviderIds.AniDB`, calls `animeList.sync()` before scanning, resolves AniDB -> TMDb/TVDb season via the anime list, and matches `tvdbSeasonFromAnidb === season.season_number && md.IndexNumber === 1`; shows with TMDb keyword `210024` use the anime metadata provider — [request app jellyfin scanner]((link removed)); [request app constants.ts]((link removed))
 
 ### Inferences
 - The custom server should treat the Sonarr webhook as the authoritative numbering source for anime: `series.tvdbId` + `episodes[].seasonNumber/episodeNumber` (TVDb numbering, already XEM-corrected by Sonarr) plus `series.malIds[]`/`series.aniListIds[]` for AniList/MAL metadata, and compute AniDB ids by reverse lookup in Fribb's `Indices/` (tvdb -> anidb with `season`/`episode_offset`). Absolute numbers can be recovered from the filename's `- NNN -` token (TRaSH format) or from `sonarr_release_absoluteepisodenumbers` at grab time; Sonarr's import webhook `episodes[]` object does not carry an absolute number field (see Gaps).
-- To stay request app-compatible for anime, expose shows with `ProviderIds.Tmdb` (preferred) and `Tvdb`, and seasons numbered as TMDb numbers them; expose `ProviderIds.AniDB` only if the server deliberately organises by AniDB season (then request app will map via its anime list).
 - Dual-audio / 10-bit / release-group flags are reliably available structured in the import webhook (`episodeFile.mediaInfo.audioLanguages[]`, `episodeFile.releaseGroup`, `episodeFile.quality`) and only heuristically in filenames (`[JA+EN]`, `[10bit]`, `-Group`); `mediaInfo` does not include bit depth, so bit depth must be probed by the server (ffprobe) if needed.
 
 ### Gaps
