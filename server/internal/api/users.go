@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 // Users (admin): Jellyfin's Dashboard > Users with three levels. Every account has its
@@ -150,28 +151,32 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	hash := ""
 	if b.Password != nil {
 		if err := auth.ValidateNewPassword(*b.Password); err != nil {
 			writeError(w, 400, err.Error())
 			return
 		}
-		hash, err := auth.HashPassword(*b.Password)
+		h, err := auth.HashPassword(*b.Password)
 		if err != nil {
 			writeError(w, 500, err.Error())
 			return
 		}
-		if err := s.store.SetPasswordHash(r.Context(), u.ID, hash); err != nil {
-			writeError(w, 500, err.Error())
-			return
-		}
-		signOut = !self // an admin resetting their own keeps this device (use Change password)
+		hash = h
+		signOut = signOut || !self // an admin resetting their own keeps this device (use Change password)
 	}
-	if err := s.store.UpdateUser(r.Context(), u); err != nil {
+	// One transaction: the changes, the new password and the sign-out all happen or none
+	// does (see store.SaveUserChanges).
+	switch err := s.store.SaveUserChanges(r.Context(), u, hash, signOut); {
+	case errors.Is(err, store.ErrLastAdmin):
+		writeError(w, 400, err.Error())
+		return
+	case errors.Is(err, store.ErrNameTaken):
+		writeError(w, 409, err.Error())
+		return
+	case err != nil:
 		writeError(w, 500, err.Error())
 		return
-	}
-	if signOut {
-		_ = s.store.DeleteDevicesExcept(r.Context(), u.ID, "")
 	}
 	slog.Info("user updated", "name", u.Name, "role", u.Role, "disabled", u.IsDisabled, "password_reset", b.Password != nil, "by", p.User.Name)
 	writeJSON(w, 200, viewUser(u, p.UserID))

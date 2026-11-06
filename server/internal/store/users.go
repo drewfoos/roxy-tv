@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/roxy-media/roxy/server/internal/model"
 )
@@ -229,6 +230,80 @@ func (s *Store) SetAcceptedTerms(ctx context.Context, userID, version string) er
 func (s *Store) SetPasswordHash(ctx context.Context, userID, hash string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID)
 	return err
+}
+
+var (
+	// ErrLastAdmin: the change would leave no active admin.
+	ErrLastAdmin = errors.New("this is the only admin; make someone else admin first")
+	// ErrNameTaken: another account already has that name (names are unique, any case).
+	ErrNameTaken = errors.New("another account already has that name")
+)
+
+// ChangePassword sets a new password hash and signs the account out of every device but
+// keepDevice, in one transaction: a password change used to commit the hash first, so a
+// failed sign-out reported an error while the password had already changed and the other
+// devices stayed signed in.
+func (s *Store) ChangePassword(ctx context.Context, userID, hash, keepDevice string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE user_id = ? AND id <> ?`, userID, keepDevice); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SaveUserChanges applies an admin's changes to an account in one transaction: name,
+// level and disabled flag, a new password hash (when not empty), and signing the account
+// out of every device (signOut). Either all of it happens or none does. It used to be
+// separate statements, so a reset whose rename then failed (names are unique) changed the
+// password but kept the old sessions, while the admin saw an error; and a failed sign-out
+// was ignored, so a reset meant to lock someone out could leave them signed in.
+//
+// The last-admin rule is checked inside the same transaction (a check before it could
+// pass for two admins demoting each other at once).
+func (s *Store) SaveUserChanges(ctx context.Context, u *model.User, passwordHash string, signOut bool) error {
+	u.IsAdmin = u.Role == model.RoleAdmin
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if !u.IsAdmin || u.IsDisabled {
+		var wasActiveAdmin, others int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id = ? AND role = 'admin' AND is_disabled = 0`, u.ID).Scan(&wasActiveAdmin); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE id <> ? AND role = 'admin' AND is_disabled = 0`, u.ID).Scan(&others); err != nil {
+			return err
+		}
+		if wasActiveAdmin == 1 && others == 0 {
+			return ErrLastAdmin
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET name = ?, role = ?, is_admin = ?, is_disabled = ? WHERE id = ?`,
+		u.Name, u.Role, boolInt(u.IsAdmin), boolInt(u.IsDisabled), u.ID); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.name") {
+			return ErrNameTaken
+		}
+		return err
+	}
+	if passwordHash != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, u.ID); err != nil {
+			return err
+		}
+	}
+	if signOut {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE user_id = ?`, u.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UpdateUser saves a user's name, level and disabled flag (is_admin follows the level).

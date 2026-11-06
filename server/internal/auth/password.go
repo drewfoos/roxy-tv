@@ -61,9 +61,10 @@ func (s *Service) ChangePassword(ctx context.Context, userID, keepDevice, addres
 	if err != nil {
 		return err
 	}
-	if err := s.store.SetPasswordHash(ctx, u.ID, h); err != nil {
+	// The new password and signing out the other devices are one transaction.
+	if err := s.store.ChangePassword(ctx, u.ID, h, keepDevice); err != nil {
 		return err
 	}
 	s.throttle.succeed(uk)
-	return s.store.DeleteDevicesExcept(ctx, u.ID, keepDevice)
+	return nil
 }
