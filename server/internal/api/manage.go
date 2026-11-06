@@ -29,10 +29,13 @@ func (s *Server) libraryManage(w http.ResponseWriter, r *http.Request) {
 	if titles == nil {
 		titles = []store.TitleStatus{}
 	}
-	running, last := s.lib.ScanStatus()
+	running, last, lastErr := s.lib.ScanStatus()
 	out := map[string]any{"scanning": running, "titles": titles, "queue": 0}
 	if !last.IsZero() {
 		out["lastScanAt"] = last.UTC().Format(time.RFC3339)
+	}
+	if lastErr != nil {
+		out["lastScanError"] = lastErr.Error() // which libraries failed, and why
 	}
 	if s.meta != nil {
 		out["queue"] = s.meta.QueueLength()

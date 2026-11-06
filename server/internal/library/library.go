@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 	"io"
@@ -52,6 +53,7 @@ type Library struct {
 	scanMu           sync.Mutex
 	scanning         bool
 	lastScan         time.Time
+	lastScanErr      error // what the last full scan's last pass failed on (nil: every library scanned)
 	// forcedNext holds one queued forced pass: ScanAll(ctx, true) called while a scan runs.
 	// A channel (capacity 1), so repeated requests merge and no flag is shared.
 	forcedNext chan struct{}
@@ -59,11 +61,12 @@ type Library struct {
 	scanOne func(ctx context.Context, lib model.Library, force bool) error
 }
 
-// ScanStatus reports whether a full scan is running and when the last one finished.
-func (l *Library) ScanStatus() (running bool, last time.Time) {
+// ScanStatus reports whether a full scan is running, when the last one finished, and what
+// it failed on (nil when every library was scanned).
+func (l *Library) ScanStatus() (running bool, last time.Time, lastErr error) {
 	l.scanMu.Lock()
 	defer l.scanMu.Unlock()
-	return l.scanning, l.lastScan
+	return l.scanning, l.lastScan, l.lastScanErr
 }
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
@@ -144,11 +147,12 @@ func (l *Library) ScanAll(ctx context.Context, force bool) error {
 		again := false
 		select {
 		case <-l.forcedNext:
-			again = err == nil && ctx.Err() == nil
+			// A library that failed does not hold back the forced pass for the others.
+			again = ctx.Err() == nil
 		default:
 		}
 		if !again {
-			l.scanning, l.lastScan = false, time.Now()
+			l.scanning, l.lastScan, l.lastScanErr = false, time.Now(), err
 			l.scanMu.Unlock()
 			return err
 		}
@@ -167,9 +171,14 @@ func (l *Library) scanAll(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
+	// A library that fails is logged and the others still scanned, but the failure is
+	// returned (all of them, by library): it used to be logged only, so ScanAll reported
+	// success, `roxy scan` exited 0 and the admin page showed a fresh scan time.
+	var failed []error
 	for _, lib := range libs {
 		if err := one(ctx, lib, force); err != nil {
 			slog.Error("scan failed", "library", lib.Name, "err", err)
+			failed = append(failed, fmt.Errorf("library %q: %w", lib.Name, err))
 		}
 	}
 	// Sweep every series/movie so metadata that is missing or stale gets looked up;
@@ -183,7 +192,7 @@ func (l *Library) scanAll(ctx context.Context, force bool) error {
 			l.OnItemIngested(id)
 		}
 	}
-	return nil
+	return errors.Join(failed...)
 }
 
 // Scan walks a library root, adds new/changed files and removes vanished ones. Files

@@ -2,8 +2,10 @@ package library
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -99,7 +101,7 @@ func TestForcedScanRequestedDuringNormalScan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if running, _ := l.ScanStatus(); !running {
+	if running, _, _ := l.ScanStatus(); !running {
 		t.Fatal("scan not reported as running")
 	}
 	close(release)
@@ -110,7 +112,7 @@ func TestForcedScanRequestedDuringNormalScan(t *testing.T) {
 	got := append([]scanCall(nil), *calls...)
 	mu.Unlock()
 	sameCalls(t, got, append(pass(order, false), pass(order, true)...))
-	if running, _ := l.ScanStatus(); running {
+	if running, _, _ := l.ScanStatus(); running {
 		t.Fatal("still reported as running after the last pass")
 	}
 }
@@ -131,12 +133,58 @@ func TestScanRequestsConcurrently(t *testing.T) {
 		}(i%3 == 0)
 	}
 	wg.Wait()
-	if running, _ := l.ScanStatus(); running {
+	if running, _, _ := l.ScanStatus(); running {
 		t.Fatal("still reported as running")
 	}
 	select {
 	case <-l.forcedNext:
 		t.Fatal("a forced pass was left queued with no scan to run it")
 	default:
+	}
+}
+
+// A library whose scan fails does not stop the others, and the failure is reported: by
+// ScanAll's error (naming the library) and ScanStatus, until a clean scan clears it. A
+// forced pass queued meanwhile still runs.
+func TestScanErrorsAreReported(t *testing.T) {
+	fail := true
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	l, calls, mu, order := twoLibraries(t, func() {
+		once.Do(func() { close(started); <-release })
+	})
+	scanned := l.scanOne
+	l.scanOne = func(ctx context.Context, lib model.Library, force bool) error {
+		err := scanned(ctx, lib, force)
+		if fail && lib.Name == order[0] {
+			return errors.New("disk not mounted")
+		}
+		return err
+	}
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() { done <- l.ScanAll(ctx, false) }()
+	<-started
+	if err := l.ScanAll(ctx, true); err != nil { // queued behind the running scan
+		t.Fatal(err)
+	}
+	close(release)
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), order[0]) || !strings.Contains(err.Error(), "disk not mounted") {
+		t.Fatalf("ScanAll error: %v", err)
+	}
+	mu.Lock()
+	got := append([]scanCall(nil), *calls...)
+	mu.Unlock()
+	sameCalls(t, got, append(pass(order, false), pass(order, true)...)) // both libraries, both passes
+	if _, _, lastErr := l.ScanStatus(); lastErr == nil {
+		t.Fatal("ScanStatus does not report the failure")
+	}
+	fail = false
+	if err := l.ScanAll(ctx, false); err != nil {
+		t.Fatalf("clean scan: %v", err)
+	}
+	if _, _, lastErr := l.ScanStatus(); lastErr != nil {
+		t.Fatalf("a clean scan did not clear the error: %v", lastErr)
 	}
 }

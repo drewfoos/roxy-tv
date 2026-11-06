@@ -74,6 +74,7 @@ it; the player plays with its own engine (the TV app: libmpv + libass). In memor
 | GET | `/v1/system/info` | `{product: "roxy", id, name, version, ffmpeg}`; public, and what the login screen's network sweep reads |
 | GET | `/v1/libraries` | `{libraries: [{id, name, kind, root, animeMode}]}` |
 | POST | `/v1/libraries/scan` | async full rescan, 202 |
+| GET | `/v1/library/manage` | admin: `{scanning, lastScanAt?, lastScanError?, titles, queue}`. `lastScanError` names each library the last full scan failed on (the others were still scanned); gone after a clean scan |
 | GET | `/v1/items` | `{items: [Item], total}`; query below |
 | GET | `/v1/items/{id}` | Item with `mediaSources` |
 | GET | `/v1/sources/{id}` | MediaSource |
