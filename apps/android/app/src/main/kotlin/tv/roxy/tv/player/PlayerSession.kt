@@ -1136,9 +1136,14 @@ class PlayerSession(
     fun destroy() {
         if (destroyed) return
         destroyed = true
-        if (app.remote.activePlayer === this) { app.remote.activePlayer = null; app.remote.reportState(null, "", 0, false) }
+        // A replacement session may already be up (the phone page builds the new one before
+        // the old one is disposed): only the active session clears the shared state.
+        if (app.remote.activePlayer === this) {
+            app.remote.activePlayer = null
+            app.remote.reportState(null, "", 0, false)
+            app.server.playerActive.value = false
+        }
         countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel()
-        app.server.playerActive.value = false
         runCatching { displayManager?.unregisterDisplayListener(displayListener) }
         glue.release()
         player.listener = null
