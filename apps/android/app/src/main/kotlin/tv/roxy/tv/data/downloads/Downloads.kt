@@ -57,6 +57,11 @@ data class DownloadEntry(
     val container: String = "mkv",
     /** Image types saved next to the video (thumb for episodes). */
     val images: List<String> = emptyList(),
+    /**
+     * The server's ETag (or Last-Modified) for the bytes in the part file, sent as If-Range
+     * on resume so a file that changed on the server restarts instead of being appended to.
+     */
+    val validator: String? = null,
 ) {
     val isDone: Boolean get() = state == DownloadState.Done
     val fraction: Float get() = if (bytesTotal > 0) (bytesDone.toFloat() / bytesTotal).coerceIn(0f, 1f) else 0f
@@ -168,6 +173,16 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
      */
     fun enqueue(items: List<Item>, title: Item, seasonName: String? = null) {
         val now = System.currentTimeMillis()
+        // A failed entry is retried from its part file only when it still points at the same
+        // file; a new source (the server replaced the release) or a new size means those
+        // bytes belong to a different file, and resuming would splice the two together.
+        // The part goes before the service is kicked, so it can never resume from it.
+        val before = _index.value.entries
+        for (item in items) {
+            val src = item.primarySource ?: continue
+            val existing = before[item.id] ?: continue
+            if (existing.state == DownloadState.Failed && !sameFile(existing, src)) partFile(existing).delete()
+        }
         _index.update { idx ->
             val entries = idx.entries.toMutableMap()
             for (item in items) {
@@ -175,6 +190,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                 if (!item.isPlayable) continue
                 val existing = entries[item.id]
                 if (existing != null && existing.state != DownloadState.Failed) continue
+                val keep = existing != null && sameFile(existing, src)
                 entries[item.id] = DownloadEntry(
                     itemId = item.id,
                     sourceId = src.id,
@@ -183,7 +199,8 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                     seasonNumber = item.seasonAired,
                     seasonName = seasonName,
                     state = DownloadState.Queued,
-                    bytesDone = existing?.bytesDone ?: 0,
+                    bytesDone = if (keep) existing!!.bytesDone else 0,
+                    validator = if (keep) existing!!.validator else null,
                     bytesTotal = src.size,
                     addedAt = existing?.addedAt ?: now,
                     container = (src.container ?: "mkv").lowercase().filter { it.isLetterOrDigit() }.ifEmpty { "mkv" },
@@ -193,6 +210,10 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         }
         kick()
     }
+
+    /** Whether [e]'s bytes on disk came from [src]: same source id and (when both are known) same size. */
+    private fun sameFile(e: DownloadEntry, src: Item.Source): Boolean =
+        e.sourceId == src.id && (e.bytesTotal <= 0 || src.size <= 0 || e.bytesTotal == src.size)
 
     fun pause(itemId: String) {
         update(itemId) { if (it.state.isActive) it.copy(state = DownloadState.Paused) else it }

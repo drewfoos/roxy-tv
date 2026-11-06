@@ -171,7 +171,15 @@ class DownloadService : Service() {
         }
         var offset = part.length()
         val url = app.api.streamUrlForHttp(start.sourceId) // the http client adds the token as a header
-        val req = Request.Builder().url(url).apply { if (offset > 0) header("Range", "bytes=$offset-") }.build()
+        // If-Range makes the server send the whole file (200) rather than the rest of a
+        // different one when the file changed since the part was started.
+        val validator = live(itemId)?.validator
+        val req = Request.Builder().url(url).apply {
+            if (offset > 0) {
+                header("Range", "bytes=$offset-")
+                if (validator != null) header("If-Range", validator)
+            }
+        }.build()
         try {
             app.api.http.newCall(req).execute().use { resp ->
                 if (resp.code == 416) { // our offset is past the end: the file changed on the server
@@ -180,7 +188,17 @@ class DownloadService : Service() {
                 }
                 // 4xx (gone, no access) will not get better by retrying; 5xx and the rest may.
                 if (!resp.isSuccessful) throw if (resp.code in 400..499 && resp.code != 408 && resp.code != 429) PermanentFailure("HTTP ${resp.code}") else IOException("HTTP ${resp.code}")
-                if (resp.code == 200 && offset > 0) { part.delete(); offset = 0 } // server ignored the range
+                // A 200 to a ranged request is the whole file: the range was ignored or the
+                // If-Range validator no longer matched. Start over from byte 0 (the part file
+                // is truncated below).
+                if (resp.code == 200) offset = 0
+                // Remember what these bytes are, for the If-Range of a later resume. Only a
+                // strong ETag may be used there; Last-Modified is the fallback.
+                if (offset == 0L) {
+                    val etag = resp.header("ETag")?.takeIf { !it.startsWith("W/") }
+                    val v = etag ?: resp.header("Last-Modified")
+                    downloads.update(itemId) { if (it.validator == v) it else it.copy(validator = v) }
+                }
                 val total = when {
                     resp.code == 206 -> resp.header("Content-Range")?.substringAfter('/')?.toLongOrNull() ?: (offset + (resp.body.contentLength().takeIf { it >= 0 } ?: 0))
                     else -> resp.body.contentLength().takeIf { it >= 0 } ?: start.bytesTotal
@@ -189,6 +207,9 @@ class DownloadService : Service() {
                 if (total > 0 && downloads.freeBytes() < total - offset + (64L shl 20)) throw PermanentFailure("Not enough free space")
 
                 RandomAccessFile(part, "rw").use { out ->
+                    // Drop anything past the offset (all of it on a restart from 0), so old bytes
+                    // can never survive behind the new ones.
+                    out.setLength(offset)
                     out.seek(offset)
                     val buf = ByteArray(256 * 1024)
                     var done = offset
