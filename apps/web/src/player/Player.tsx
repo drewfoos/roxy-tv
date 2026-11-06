@@ -240,6 +240,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setError(null)
     setReady(false)
     setAdvisory(true)
+    // The previous episode's seek previews: its tile size and sheet numbers must not be used
+    // with this source's images while the new manifest loads (or at all, if it has none).
+    setTrick(null)
     tokenRef.current = ''
     lastAbs.current = 0 // a new item: never carry the last one's position over
     setFontWarn(null)
