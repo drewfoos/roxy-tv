@@ -148,6 +148,16 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     },
     [item.id, absTime, audioIndex, subIndex, subsOn],
   )
+  // The start effect's cleanup sends the final report when the item changes or the player
+  // closes. It runs from the closure made at mount, whose report still holds the tracks the
+  // item started with; reading the latest report through this ref saves the ones picked since.
+  // Updated in an effect, not during render: React runs every effect cleanup before any new
+  // effect, so on a change of item the cleanup still finds the last item's report here (one
+  // set during render would already post the old position under the new item's id).
+  const reportRef = useRef(report)
+  useEffect(() => {
+    reportRef.current = report
+  }, [report])
 
   /** Decide direct play or remux for the chosen audio track, and load the stream at a position. */
   const load = useCallback(
@@ -271,7 +281,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       loadGen.current++ // a load still in flight for this item stops at its next await
       clearTimeout(t)
       if (fontWarnTimer.current) clearTimeout(fontWarnTimer.current)
-      report(true)
+      reportRef.current(true)
       subs.destroy()
       subsRef.current = null
       v.removeAttribute('src')
