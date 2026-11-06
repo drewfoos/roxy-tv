@@ -313,6 +313,8 @@ img { display: block; }
 .player__wait { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .player__error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--error); background: rgba(0, 0, 0, 0.7); }
 .player__skip { position: absolute; right: 24px; bottom: 96px; z-index: 3; }
+/* A short heads-up over the picture (a subtitle font that didn't load). */
+.player__notice { position: absolute; right: 20px; top: 20px; max-width: min(420px, calc(100% - 40px)); padding: 10px 14px; background: rgba(20, 20, 24, 0.85); color: #fff; font-size: 14px; line-height: 1.4; border-radius: 4px; z-index: 2; pointer-events: none; animation: advisory-in 400ms ease; }
 /* Crunchyroll's opening card: the age block and the advisories, top-left, for the first seconds. */
 .player__advisory { position: absolute; left: 20px; top: 20px; display: flex; align-items: center; gap: 14px; font-weight: 700; font-size: 15px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); animation: advisory-in 400ms ease; z-index: 2; pointer-events: none; }
 .player__age { padding: 8px 12px; background: rgba(60, 60, 68, 0.85); font-size: 20px; font-style: italic; font-weight: 800; letter-spacing: 0.5px; }

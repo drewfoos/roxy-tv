@@ -7,7 +7,7 @@ import wasmUrl from 'jassub/dist/jassub-worker.wasm?url'
 import modernWasmUrl from 'jassub/dist/jassub-worker-modern.wasm?url'
 import legacyWasmUrl from 'jassub/dist/jassub-worker.wasm.js?url'
 import defaultFontUrl from 'jassub/dist/default.woff2?url'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { Attachment, MediaStream } from '../api/types'
 
 const abs = (u: string) => new URL(u, window.location.href).href
@@ -26,10 +26,35 @@ export interface SubtitleRenderer {
   destroy(): void
 }
 
-/** One renderer per video element; tracks and fonts are swapped without rebuilding it. */
-export function createSubtitleRenderer(video: HTMLVideoElement): SubtitleRenderer {
+/**
+ * One font from the file, retried once unless the server said it is not there (a 4xx
+ * other than timeout / rate limit): a dropped connection should not cost a font.
+ */
+async function fetchFont(sourceId: string, a: Attachment): Promise<Uint8Array | null> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api.attachmentBytes(sourceId, a.index)
+    } catch (e) {
+      const final = e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429
+      if (final || attempt >= 1) {
+        console.warn(`subtitle font ${a.filename || a.index} did not load:`, e)
+        return null
+      }
+      await new Promise((r) => setTimeout(r, 600))
+    }
+  }
+}
+
+/**
+ * One renderer per video element; tracks and fonts are swapped without rebuilding it.
+ * [onFontsFailed] hears the names of fonts that could not be loaded: libass then draws
+ * those styles in the fallback font, so signs and karaoke can look wrong.
+ */
+export function createSubtitleRenderer(video: HTMLVideoElement, onFontsFailed?: (names: string[]) => void): SubtitleRenderer {
   let instance: JASSUB | null = null
-  let loadedFontsFor = ''
+  // Fonts handed to libass, as "source/index". Only fonts that loaded are recorded, so a
+  // failed one is tried again with the next track (it used to be skipped for good).
+  const loadedFonts = new Set<string>()
   let gen = 0
   let offset = 0
 
@@ -67,14 +92,13 @@ export function createSubtitleRenderer(video: HTMLVideoElement): SubtitleRendere
         return
       }
       const source = await api.source(sourceId)
-      const wantFonts = loadedFontsFor !== sourceId
-      const [text, fonts] = await Promise.all([
-        api.subtitleText(sourceId, stream.index),
-        wantFonts ? Promise.all(fontAttachments(source.attachments).map((a) => api.attachmentBytes(sourceId, a.index).catch(() => null))) : Promise.resolve([] as (Uint8Array | null)[]),
-      ])
+      const wanted = fontAttachments(source.attachments).filter((a) => !loadedFonts.has(`${sourceId}/${a.index}`))
+      const [text, fonts] = await Promise.all([api.subtitleText(sourceId, stream.index), Promise.all(wanted.map((a) => fetchFont(sourceId, a)))])
       if (my !== gen) return
       ensure(text, fonts.filter((f): f is Uint8Array => !!f))
-      if (wantFonts) loadedFontsFor = sourceId
+      const failed: string[] = []
+      wanted.forEach((a, i) => (fonts[i] ? loadedFonts.add(`${sourceId}/${a.index}`) : failed.push(a.filename || `font ${a.index}`)))
+      if (failed.length) onFontsFailed?.(failed)
     },
     destroy() {
       gen++

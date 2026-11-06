@@ -105,6 +105,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const autoplayRef = useRef(true)
   const [skip, setSkip] = useState<MediaSegment | null>(null)
   const [advisory, setAdvisory] = useState(true)
+  // "2 subtitle fonts didn't load": shown for a few seconds when a font download fails.
+  const [fontWarn, setFontWarn] = useState<string | null>(null)
+  const fontWarnTimer = useRef<number | null>(null)
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null)
   const [trick, setTrick] = useState<TrickplayManifest | null>(null)
   const [audioIndex, setAudioIndex] = useState<number | null>(() => {
@@ -247,7 +250,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setAdvisory(true)
     tokenRef.current = ''
     lastAbs.current = 0 // a new item: never carry the last one's position over
-    const subs = createSubtitleRenderer(v)
+    setFontWarn(null)
+    const subs = createSubtitleRenderer(v, (names) => {
+      if (!live) return
+      setFontWarn(`${names.length === 1 ? `The subtitle font ${names[0]} didn't` : `${names.length} subtitle fonts didn't`} load, so some signs may look wrong.`)
+      if (fontWarnTimer.current) clearTimeout(fontWarnTimer.current)
+      fontWarnTimer.current = window.setTimeout(() => setFontWarn(null), 8000)
+    })
     subsRef.current = subs
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
@@ -260,6 +269,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       live = false
       loadGen.current++ // a load still in flight for this item stops at its next await
       clearTimeout(t)
+      if (fontWarnTimer.current) clearTimeout(fontWarnTimer.current)
       report(true)
       subs.destroy()
       subsRef.current = null
@@ -496,6 +506,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         </button>
       )}
       {error && <div className="player__error">{error}</div>}
+      {fontWarn && !error && (
+        <div className="player__notice" role="status">
+          {fontWarn}
+        </div>
+      )}
 
       <div className="player__controls" onClick={(e) => e.stopPropagation()}>
         <div ref={seekBarRef} className="seek" onMouseMove={onBarMove} onMouseLeave={() => setHover(null)} onClick={onBarClick}>
