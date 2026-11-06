@@ -117,7 +117,7 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 	} {
 		var sent map[string]any
 		var cmds []map[string]any
-		readyPoll = time.Millisecond
+		readyPoll.Store(time.Millisecond)
 		episodeCalls.Store(0)
 		srv := fakeSonarr(t, &sent, &cmds)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
@@ -298,7 +298,7 @@ func TestAddSeriesEpisodesOnly(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	readyPoll = time.Millisecond
+	readyPoll.Store(time.Millisecond)
 	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
 	if _, err := c.AddSeries(context.Background(), 1, false, []int{-1}, []string{"S0E5"}); err != nil {
 		t.Fatal(err)

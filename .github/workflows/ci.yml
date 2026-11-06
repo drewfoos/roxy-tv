@@ -19,7 +19,7 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race ./... # the runner has a C compiler, which -race needs
       - run: CGO_ENABLED=0 go build -trimpath -o /tmp/roxy ./cmd/roxy
 
   web:

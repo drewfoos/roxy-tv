@@ -98,10 +98,14 @@ func (h *Hub) Wait(ctx context.Context, deviceID, userID, name, client string) (
 
 // Send queues a command for a player of the same login. False when the player is not
 // connected (or is someone else's), or its queue is full.
+//
+// The checks and the queueing happen under h.mu: touch and SetNowPlaying write the same
+// player fields from the player's own poll. The send never blocks (a full queue returns
+// false), so holding the lock for it is safe.
 func (h *Hub) Send(deviceID, userID string, c Command) bool {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	p := h.players[deviceID]
-	h.mu.Unlock()
 	if p == nil || p.userID != userID || time.Since(p.LastSeen) > Stale {
 		return false
 	}
@@ -123,8 +127,6 @@ func (h *Hub) SetNowPlaying(deviceID string, now *NowPlaying) {
 	}
 }
 
-// List is the login's connected players other than the caller's own device, the ones
-// playing something first, then by name.
 // Connected: the login's players polling right now (this one included), by device id.
 func (h *Hub) Connected(userID string) map[string]Player {
 	h.mu.Lock()
@@ -138,6 +140,8 @@ func (h *Hub) Connected(userID string) map[string]Player {
 	return out
 }
 
+// List is the login's connected players other than the caller's own device, the ones
+// playing something first, then by name. Players gone longer than Stale are dropped.
 func (h *Hub) List(userID, exceptDevice string) []Player {
 	h.mu.Lock()
 	defer h.mu.Unlock()

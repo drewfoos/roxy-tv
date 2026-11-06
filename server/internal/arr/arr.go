@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -416,11 +417,19 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 }
 
 // How often, and for how long, a new series is checked for its episode list before the
-// first search. Variables so tests can shorten them.
+// first search. readyPoll is atomic so tests can shorten it while an earlier test's
+// background search is still reading it.
 var (
-	readyPoll    = 2 * time.Second
+	readyPoll    atomicDuration
 	readyTimeout = 2 * time.Minute
 )
+
+func init() { readyPoll.Store(2 * time.Second) }
+
+type atomicDuration struct{ v atomic.Int64 }
+
+func (d *atomicDuration) Load() time.Duration   { return time.Duration(d.v.Load()) }
+func (d *atomicDuration) Store(v time.Duration) { d.v.Store(int64(v)) }
 
 // searchWhenReady waits until Sonarr has loaded a new series' episodes, then searches
 // the seasons and monitors (and searches) the single episodes asked for. Sonarr adds the
@@ -441,7 +450,7 @@ wait:
 			slog.Warn("sonarr: episodes never loaded; searching anyway", "series", seriesID)
 			ctx = context.Background()
 			break wait
-		case <-time.After(readyPoll):
+		case <-time.After(readyPoll.Load()):
 		}
 	}
 	if c.cfg.searchOnAdd() && seasons {
