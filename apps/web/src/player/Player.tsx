@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
-import { ageLabel, languageName, pickSubtitle, primarySource } from '../api/items'
+import { ageLabel, pickSubtitle, primarySource } from '../api/items'
 import { lang3, prefs } from '../api/prefs'
-import type { Item, MediaSegment, MediaStream, TrickplayManifest } from '../api/types'
-import { IconCheckCircle, IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
+import type { Item, MediaSegment, TrickplayManifest } from '../api/types'
+import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
+import { fmt } from './format'
+import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
+import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
+import { usePlayerKeys } from './usePlayerKeys'
 
 export interface PlayerProps {
   item: Item
@@ -24,24 +28,7 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 /** Direct play, or a server stream (remux or transcode) whose clock starts at `offset`. */
 type Mode = { kind: 'direct' } | { kind: 'server'; audio: number | null; offset: number }
 
-/** Quality choices (Crunchyroll's gear): the file itself, or a server H.264 encode at a height. */
-type Quality = 'original' | 1080 | 720 | 480
 const QUALITY_KBPS: Record<Exclude<Quality, 'original'>, number> = { 1080: 8000, 720: 4000, 480: 1500 }
-
-function fmt(sec: number): string {
-  if (!isFinite(sec) || sec < 0) sec = 0
-  const s = Math.floor(sec % 60)
-  const m = Math.floor((sec / 60) % 60)
-  const h = Math.floor(sec / 3600)
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`
-}
-
-function trackLabel(s: MediaStream): string {
-  const lang = s.detectedLanguage || s.language
-  const parts = [lang ? languageName(lang) : null, s.title && !/^(und|unknown)$/i.test(s.title) ? s.title : null]
-  const label = parts.filter(Boolean).join(' · ') || `Track ${s.index}`
-  return s.type === 'audio' && s.channels ? `${label} (${s.channels > 2 ? `${s.channels - 1}.1` : s.channels === 2 ? 'stereo' : 'mono'})` : label
-}
 
 /**
  * Roxy's player, laid out like Crunchyroll's: a seek bar across the top of the controls
@@ -78,7 +65,6 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // older one is still waiting (on the token, the metadata, play()), and the older one used
   // to go on and seek or flag the newer stream.
   const loadGen = useRef(0)
-  const seekBarRef = useRef<HTMLDivElement>(null)
 
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -108,7 +94,6 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // "2 subtitle fonts didn't load": shown for a few seconds when a font download fails.
   const [fontWarn, setFontWarn] = useState<string | null>(null)
   const fontWarnTimer = useRef<number | null>(null)
-  const [hover, setHover] = useState<{ x: number; t: number } | null>(null)
   const [trick, setTrick] = useState<TrickplayManifest | null>(null)
   const [audioIndex, setAudioIndex] = useState<number | null>(() => {
     const want = item.userData?.audioIndex
@@ -382,80 +367,18 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   }, [])
 
   // ---- keyboard ----
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
-      switch (e.key) {
-        case ' ':
-        case 'k':
-          e.preventDefault()
-          togglePlay()
-          break
-        case 'ArrowLeft':
-        case 'j':
-          e.preventDefault()
-          seekTo(absTime() - 10)
-          break
-        case 'ArrowRight':
-        case 'l':
-          e.preventDefault()
-          seekTo(absTime() + 10)
-          break
-        case 'ArrowUp':
-          e.preventDefault()
-          setVolume((x) => Math.min(1, x + 0.1))
-          break
-        case 'ArrowDown':
-          e.preventDefault()
-          setVolume((x) => Math.max(0, x - 0.1))
-          break
-        case 'f':
-          toggleFullscreen()
-          break
-        case 'm':
-          setMuted((m) => !m)
-          break
-        case 'c':
-          setSubsOn((s) => !s)
-          break
-        case 'n':
-          if (next) onNext?.()
-          break
-        case 'Escape':
-          setMenu('none')
-          break
-        default:
-          return
-      }
-      poke()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, seekTo, absTime, toggleFullscreen, next, onNext, poke])
+  usePlayerKeys({
+    togglePlay,
+    seekBy: (sec) => seekTo(absTime() + sec),
+    volumeBy: (d) => setVolume((x) => Math.min(1, Math.max(0, x + d))),
+    toggleFullscreen,
+    toggleMute: () => setMuted((m) => !m),
+    toggleSubs: () => setSubsOn((x) => !x),
+    next: next && onNext ? onNext : null,
+    closeMenu: () => setMenu('none'),
+    poke,
+  })
 
-  // ---- seek bar ----
-  const barTime = (e: ReactMouseEvent) => {
-    const bar = seekBarRef.current
-    if (!bar || !duration) return null
-    const r = bar.getBoundingClientRect()
-    const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))
-    return { x: e.clientX - r.left, t: f * duration }
-  }
-  const onBarMove = (e: ReactMouseEvent) => setHover(barTime(e))
-  const onBarClick = (e: ReactMouseEvent) => {
-    const h = barTime(e)
-    if (h) seekTo(h.t)
-  }
-  const preview = useMemo(() => {
-    if (!hover || !trick || !source || trick.count === 0) return null
-    const tile = Math.min(trick.count - 1, Math.max(0, Math.floor((hover.t * 1000) / trick.intervalMs)))
-    const per = trick.columns * trick.rows
-    const sheet = Math.floor(tile / per)
-    const col = (tile % per) % trick.columns
-    const row = Math.floor((tile % per) / trick.columns)
-    return { sheet, x: col * trick.width, y: row * trick.height }
-  }, [hover, trick, source])
 
   const changeAudio = (idx: number) => {
     setAudioIndex(idx)
@@ -480,8 +403,6 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
 
   const rating = item.officialRating ?? series?.officialRating
   const advisories = item.advisories?.length ? item.advisories : (series?.advisories ?? [])
-  const played = duration ? Math.min(1, current / duration) : 0
-  const buff = duration ? Math.min(1, buffered / duration) : 0
   const hidden = !visible && playing && menu === 'none'
 
   if (!source) return <div className="player player--empty">No media for this title.</div>
@@ -513,24 +434,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       )}
 
       <div className="player__controls" onClick={(e) => e.stopPropagation()}>
-        <div ref={seekBarRef} className="seek" onMouseMove={onBarMove} onMouseLeave={() => setHover(null)} onClick={onBarClick}>
-          <div className="seek__track">
-            <div className="seek__buffered" style={{ width: `${buff * 100}%` }} />
-            <div className="seek__played" style={{ width: `${played * 100}%` }} />
-          </div>
-          <div className="seek__thumb" style={{ left: `${played * 100}%` }} />
-          {(source.segments ?? []).map((s, i) =>
-            duration ? <div key={i} className="seek__segment" style={{ left: `${(s.startMs / 1000 / duration) * 100}%`, width: `${((s.endMs - s.startMs) / 1000 / duration) * 100}%` }} /> : null,
-          )}
-          {hover && (
-            <div className="seek__hover" style={{ left: hover.x }}>
-              {preview && trick && (
-                <div className="seek__thumbnail" style={{ width: trick.width, height: trick.height, backgroundImage: `url(${api.trickplaySheetUrl(source.id, preview.sheet)})`, backgroundPosition: `-${preview.x}px -${preview.y}px` }} />
-              )}
-              <div className="seek__time">{fmt(hover.t)}</div>
-            </div>
-          )}
-        </div>
+        <SeekBar sourceId={source.id} duration={duration} current={current} buffered={buffered} segments={source.segments ?? []} trick={trick} onSeek={seekTo} />
         <div className="controls">
           <button className="controls__btn" onClick={() => seekTo(absTime() - 10)} aria-label="Back 10 seconds">
             <IconReplay10 size={26} />
@@ -562,34 +466,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
                 <IconSubtitles size={26} />
               </button>
               {menu === 'tracks' && (
-                <div className="panel panel--tracks">
-                  <div className="panel__col">
-                    <div className="panel__head">Audio</div>
-                    <div className="panel__list">
-                      {audioTracks.map((t) => (
-                        <button key={t.index} className={'panel__row' + (t.index === audioIndex ? ' panel__row--on' : '')} onClick={() => changeAudio(t.index)}>
-                          <span>{trackLabel(t)}</span>
-                          {t.index === audioIndex && <IconCheckCircle size={22} />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="panel__col">
-                    <div className="panel__head">Subtitles/CC</div>
-                    <div className="panel__list">
-                      {subTracks.map((t) => (
-                        <button key={t.index} className={'panel__row' + (subsOn && t.index === subIndex ? ' panel__row--on' : '')} onClick={() => changeSub(t.index)}>
-                          <span>{trackLabel(t)}</span>
-                          {subsOn && t.index === subIndex && <IconCheckCircle size={22} />}
-                        </button>
-                      ))}
-                      <button className={'panel__row' + (!subsOn ? ' panel__row--on' : '')} onClick={() => changeSub(null)}>
-                        <span>None</span>
-                        {!subsOn && <IconCheckCircle size={22} />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <TracksPanel audioTracks={audioTracks} audioIndex={audioIndex} onAudio={changeAudio} subTracks={subTracks} subIndex={subIndex} subsOn={subsOn} onSub={changeSub} />
               )}
             </div>
           )}
@@ -598,17 +475,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
               {rate}x
             </button>
             {menu === 'speed' && (
-              <div className="panel">
-                <div className="panel__head">Playback Speed</div>
-                <div className="panel__list">
-                  {SPEEDS.map((s) => (
-                    <button key={s} className={'panel__row' + (s === rate ? ' panel__row--on' : '')} onClick={() => { setRate(s); setMenu('none') }}>
-                      <span>{s}x</span>
-                      {s === rate && <IconCheckCircle size={22} />}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <SpeedPanel speeds={SPEEDS} rate={rate} onRate={(r) => { setRate(r); setMenu('none') }} />
             )}
           </div>
           <div className="controls__menu-anchor">
@@ -616,27 +483,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
               <IconSettings size={26} />
             </button>
             {menu === 'quality' && (
-              <div className="panel panel--settings">
-                <div className="panel__head">Settings</div>
-                <button className="panel__row panel__row--toggle" onClick={() => setAutoplay((a) => !a)}>
-                  <span>Autoplay Next</span>
-                  <span className={'toggle' + (autoplay ? ' toggle--on' : '')} aria-hidden="true">
-                    <i />
-                  </span>
-                </button>
-                <div className="panel__head">Quality</div>
-                <div className="panel__list">
-                  {qualities.map((q) => (
-                    <button key={q} className={'panel__row panel__row--tall' + (q === quality ? ' panel__row--on' : '')} onClick={() => changeQuality(q)}>
-                      <span>
-                        <b>{q === 'original' ? (srcHeight ? `${srcHeight}p (Original)` : 'Original') : `${q}p`}</b>
-                        <small>{q === 'original' ? 'The file as it is, nothing re-encoded.' : q === 480 ? 'Uses the least data. Good for slower connections.' : 'Uses less data at a standard quality.'}</small>
-                      </span>
-                      {q === quality && <IconCheckCircle size={22} />}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <SettingsPanel autoplay={autoplay} onAutoplay={() => setAutoplay((a) => !a)} qualities={qualities} quality={quality} srcHeight={srcHeight} onQuality={changeQuality} />
             )}
           </div>
           <button className="controls__btn" onClick={toggleFullscreen} aria-label="Fullscreen">
