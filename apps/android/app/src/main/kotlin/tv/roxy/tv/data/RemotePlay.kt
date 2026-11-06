@@ -198,36 +198,63 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
      * of device is undone and this player keeps playing. Taken (202) only means queued, so
      * this player pauses and the TV's own report is watched until it shows the item; if it
      * never does within [HANDOFF_CONFIRM_MS], the device choice is undone and playback
-     * resumes here. Picking another device meanwhile ends the handover where it is. It used
-     * to pause here first and send without looking at the answer, so a failed handover left
-     * the phone paused.
+     * resumes here. Picking another device meanwhile ends this handover: if [to] already
+     * took the command it is told to stop, and if this phone was picked, playback resumes
+     * here. It used to pause here first and send without looking at the answer, so a failed
+     * handover left the phone paused.
      */
     private suspend fun handOver(to: RemotePlayer, local: PlayerSession, itemId: String) {
         fun stillTarget() = target.value?.deviceId == to.deviceId
         fun say(text: String) = android.widget.Toast.makeText(app, text, android.widget.Toast.LENGTH_LONG).show()
-        if (!send(RemoteCommand(type = "play", itemId = itemId, positionMs = local.positionMs()))) {
-            if (stillTarget()) target.value = null // send() already clears it when the TV is gone
+        // Superseded after [to] took the command: it would start playing for nobody, so stop
+        // it; and if this phone was picked again, play on here. (A handover to yet another
+        // device runs on its own and pauses here itself.)
+        suspend fun superseded() {
+            sendTo(to.deviceId, RemoteCommand(type = "stop"))
+            if (target.value == null && activePlayer === local) local.remotePause(false)
+        }
+        // Addressed to [to] itself, not to whichever device is picked when the request runs.
+        if (!sendTo(to.deviceId, RemoteCommand(type = "play", itemId = itemId, positionMs = local.positionMs()))) {
+            if (!stillTarget()) return // another device was picked while this was on its way
+            target.value = null
             say("Couldn't reach ${to.name.ifBlank { "that device" }}. Still playing here.")
             return
         }
+        // Checked again before touching this player: the send may have taken a while.
+        if (!stillTarget()) return superseded()
         local.remotePause(true)
         val deadline = android.os.SystemClock.elapsedRealtime() + HANDOFF_CONFIRM_MS
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
             delay(1_000)
-            if (!stillTarget()) return // another device (or this one) was picked: leave it be
+            if (!stillTarget()) return superseded()
             if (refreshPlayers().firstOrNull { it.deviceId == to.deviceId }?.nowPlaying?.itemId == itemId) return
         }
-        if (!stillTarget()) return
+        if (!stillTarget()) return superseded()
         target.value = null
+        // It may yet start late: stop it, so the episode doesn't play in two places.
+        sendTo(to.deviceId, RemoteCommand(type = "stop"))
         if (activePlayer === local) local.remotePause(false)
         say("${to.name.ifBlank { "That device" }} didn't start playing. Playing here again.")
     }
 
+    /** Sends [cmd] to the device picked right now (see [sendTo]). */
     suspend fun send(cmd: RemoteCommand): Boolean {
         val t = target.value ?: return false
-        return runCatching { api.sendSessionCommand(t.deviceId, cmd.copy(from = deviceName)); true }
-            .getOrElse { Timber.w(it, "remote send"); if (it is tv.roxy.tv.api.ApiException && it.code == 404) { target.value = null }; false }
+        return sendTo(t.deviceId, cmd)
     }
+
+    /**
+     * Sends [cmd] to [deviceId], whichever device is picked by the time it goes out. When
+     * the server says that device is gone, the choice is undone only if it is still the one
+     * picked (a handover to another device may have replaced it meanwhile).
+     */
+    suspend fun sendTo(deviceId: String, cmd: RemoteCommand): Boolean =
+        runCatching { api.sendSessionCommand(deviceId, cmd.copy(from = deviceName)); true }
+            .getOrElse {
+                Timber.w(it, "remote send")
+                if (it is tv.roxy.tv.api.ApiException && it.code == 404 && target.value?.deviceId == deviceId) target.value = null
+                false
+            }
 
     companion object {
         fun get(context: Context): RemotePlay = RoxyApp.get(context).remote
