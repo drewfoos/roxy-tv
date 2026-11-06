@@ -182,6 +182,12 @@ class PlayerSession(
     /** True while [quality] came from the settings: then a file already smaller than it plays as-is. */
     private var qualityFromSettings = true
     private var transcoding = false
+    /**
+     * Playing the downloaded file itself. A download at a lower quality is a server
+     * transcode (local stays true), so a stream that drops there is a lost connection
+     * to reconnect, not the end of the file.
+     */
+    private val fromDisk: Boolean get() = local && !transcoding
     private var directUrl = params.url
     private var sourceHeight = 0
     private var sourceDurationSec: Double? = null
@@ -309,7 +315,7 @@ class PlayerSession(
                 // restarted, connection reset) is a dropped connection, not the end.
                 val dur = knownDuration()
                 val pos = player.timePosSeconds() ?: ui.positionSec
-                if (!local && dur != null && pos < dur - 10.0) {
+                if (!fromDisk && dur != null && pos < dur - 10.0) {
                     Timber.w("stream closed at %.1f of %.1f s: reconnecting", pos, dur)
                     reconnect(pos)
                     return
@@ -321,7 +327,7 @@ class PlayerSession(
 
             override fun onLoadFailed() {
                 if (startState.value == StartState.Loading) startState.value = StartState.Failed
-                if (local) { switching = false; changingItem = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
+                if (fromDisk) { switching = false; changingItem = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
                 val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
                 reconnect(at)
             }
@@ -664,7 +670,7 @@ class PlayerSession(
     private fun handleEof() {
         val pos = player.timePosSeconds() ?: 0.0
         val dur = knownDuration()
-        if (!local && dur != null && pos < dur - 10.0) {
+        if (!fromDisk && dur != null && pos < dur - 10.0) {
             Timber.w("stream ended at %.1f of %.1f s: reconnecting", pos, dur)
             reconnect(pos)
             return
@@ -757,7 +763,7 @@ class PlayerSession(
      * server answers (a restarted server dropped the transcode), open a fresh stream.
      */
     private fun watchStall() {
-        val stalled = !local && !reconnecting && !switching && waitingAt == null && !player.isPaused() && player.isBuffering() && player.timePosSeconds() != null
+        val stalled = !fromDisk && !reconnecting && !switching && waitingAt == null && !player.isPaused() && player.isBuffering() && player.timePosSeconds() != null
         if (!stalled) {
             if (stallShown) { stallShown = false; if (osd == LOST_CONNECTION) flashOsd(null) }
             stallTicks = 0
