@@ -65,7 +65,7 @@ it; the player plays with its own engine (the TV app: libmpv + libass). In memor
 | POST | `/v1/sessions/players/{device}/command` | `{type, itemId?, positionMs?, fromStart?, seconds?, from?}`; `type` = play, pause, resume, toggle, seek, seekBy, next, stop. 202, or 404 when not connected |
 
 `play` resumes from the saved position; a sender handing over mid-episode sets
-`positionMs`, which the player saves first. `positionMs` or `fromStart: true` is a position the sender chose: a player that already has that item open jumps there instead of carrying on. Commands need a device login (not an API key).
+`positionMs`, which the player saves first. `positionMs` or `fromStart: true` is a position the sender chose: a player that already has that item open jumps there instead of carrying on. Commands need a device login (not an API key). A command the player has not picked up within 30 s is dropped, and a player that comes back after going stale (60 s without a poll) starts with an empty queue, so nothing sent while it was away runs later.
 
 ## Library
 

@@ -51,7 +51,7 @@ type Player struct {
 type player struct {
 	Player
 	userID   string
-	cmds     chan Command
+	cmds     chan queued
 	stateSeq int64 // the newest SetNowPlaying sequence number accepted
 }
 
@@ -63,16 +63,35 @@ type Hub struct {
 // Stale is how long after its last poll a player is still listed.
 const Stale = 60 * time.Second
 
+// CommandTTL is how long a queued command stays good. A connected player picks commands up
+// within a poll; one still queued after this was sent while the player was away, and
+// "pause", "seek" or "play this" from then must not run when it comes back.
+const CommandTTL = 30 * time.Second
+
+// queued is a command and when it was sent.
+type queued struct {
+	cmd Command
+	at  time.Time
+}
+
+// nowFn is the hub's clock; tests move it.
+var nowFn = time.Now
+
 func New() *Hub { return &Hub{players: map[string]*player{}} }
 
-func (h *Hub) touch(deviceID, userID, name, client string) *player {
+// touch registers or refreshes a player and returns its command queue (read under the
+// lock: a player coming back after going stale gets a new, empty queue, so commands
+// queued while it was away are never run).
+func (h *Hub) touch(deviceID, userID, name, client string) chan queued {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	p := h.players[deviceID]
 	if p == nil {
-		p = &player{cmds: make(chan Command, 8)}
+		p = &player{cmds: make(chan queued, 8)}
 		p.DeviceID = deviceID
 		h.players[deviceID] = p
+	} else if nowFn().Sub(p.LastSeen) > Stale {
+		p.cmds = make(chan queued, 8)
 	}
 	p.userID = userID
 	if name != "" {
@@ -81,19 +100,25 @@ func (h *Hub) touch(deviceID, userID, name, client string) *player {
 	if client != "" {
 		p.Client = client
 	}
-	p.LastSeen = time.Now()
-	return p
+	p.LastSeen = nowFn()
+	return p.cmds
 }
 
 // Wait registers the player (or refreshes it) and returns its next command, or false
 // when ctx ends first (the long poll's deadline, or the client going away).
+// Commands older than CommandTTL are dropped, not returned.
 func (h *Hub) Wait(ctx context.Context, deviceID, userID, name, client string) (Command, bool) {
-	p := h.touch(deviceID, userID, name, client)
-	select {
-	case c := <-p.cmds:
-		return c, true
-	case <-ctx.Done():
-		return Command{}, false
+	cmds := h.touch(deviceID, userID, name, client)
+	for {
+		select {
+		case q := <-cmds:
+			if nowFn().Sub(q.at) > CommandTTL {
+				continue // sent while the player was away
+			}
+			return q.cmd, true
+		case <-ctx.Done():
+			return Command{}, false
+		}
 	}
 }
 
@@ -107,11 +132,11 @@ func (h *Hub) Send(deviceID, userID string, c Command) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	p := h.players[deviceID]
-	if p == nil || p.userID != userID || time.Since(p.LastSeen) > Stale {
+	if p == nil || p.userID != userID || nowFn().Sub(p.LastSeen) > Stale {
 		return false
 	}
 	select {
-	case p.cmds <- c:
+	case p.cmds <- queued{c, nowFn()}:
 		return true
 	default:
 		return false
@@ -130,7 +155,7 @@ func (h *Hub) SetNowPlaying(deviceID string, now *NowPlaying, seq int64) bool {
 	if p == nil {
 		return false
 	}
-	p.LastSeen = time.Now() // a late report still shows the player is there
+	p.LastSeen = nowFn() // a late report still shows the player is there
 	if seq > 0 {
 		if seq <= p.stateSeq {
 			return false
@@ -147,7 +172,7 @@ func (h *Hub) Connected(userID string) map[string]Player {
 	defer h.mu.Unlock()
 	out := map[string]Player{}
 	for id, p := range h.players {
-		if p.userID == userID && time.Since(p.LastSeen) <= Stale {
+		if p.userID == userID && nowFn().Sub(p.LastSeen) <= Stale {
 			out[id] = p.Player
 		}
 	}
@@ -161,7 +186,7 @@ func (h *Hub) List(userID, exceptDevice string) []Player {
 	defer h.mu.Unlock()
 	out := []Player{}
 	for id, p := range h.players {
-		if time.Since(p.LastSeen) > Stale {
+		if nowFn().Sub(p.LastSeen) > Stale {
 			delete(h.players, id)
 			continue
 		}

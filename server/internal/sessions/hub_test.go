@@ -97,3 +97,47 @@ func TestStaleStatusReportIsIgnored(t *testing.T) {
 		t.Fatal("an unnumbered report was not applied")
 	}
 }
+
+// A command sent while a player was away must not run when it comes back: after going
+// stale it re-registers with an empty queue, and a command older than CommandTTL is
+// dropped anyway (a short drop-out that never went stale).
+func TestQueuedCommandsDoNotSurviveAnAbsence(t *testing.T) {
+	clock := time.Now()
+	nowFn = func() time.Time { return clock }
+	t.Cleanup(func() { nowFn = time.Now })
+	h := New()
+	poll := func(d time.Duration) (Command, bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		return h.Wait(ctx, "tv", "u1", "TV", "android")
+	}
+	poll(0) // the TV connects
+
+	// It drops off; a phone sends "pause" while it still counts as connected.
+	clock = clock.Add(20 * time.Second)
+	if !h.Send("tv", "u1", Command{Type: "pause"}) {
+		t.Fatal("pause not queued")
+	}
+	// The TV comes back much later (stale by then): the old pause must not run.
+	clock = clock.Add(2 * Stale)
+	if c, ok := poll(10 * time.Millisecond); ok {
+		t.Fatalf("ran a command from before the absence: %+v", c)
+	}
+
+	// A short drop-out that never went stale: queued, then picked up after the TTL.
+	if !h.Send("tv", "u1", Command{Type: "seek", Seconds: 600}) {
+		t.Fatal("seek not queued")
+	}
+	clock = clock.Add(CommandTTL + time.Second)
+	if c, ok := poll(10 * time.Millisecond); ok {
+		t.Fatalf("ran an expired command: %+v", c)
+	}
+
+	// A fresh command still arrives.
+	if !h.Send("tv", "u1", Command{Type: "toggle"}) {
+		t.Fatal("toggle not queued")
+	}
+	if c, ok := poll(time.Second); !ok || c.Type != "toggle" {
+		t.Fatalf("fresh command: %+v %v", c, ok)
+	}
+}
