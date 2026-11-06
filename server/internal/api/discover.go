@@ -2,12 +2,17 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/roxy-media/roxy/server/internal/auth"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/discover"
 	"github.com/roxy-media/roxy/server/internal/model"
 )
@@ -245,7 +250,10 @@ func (s *Server) discoverSearchAgain(w http.ResponseWriter, r *http.Request) {
 	if !s.discoverGuard(w) || userFrom(w, r) == nil {
 		return
 	}
-	body := searchBody(r)
+	body, ok := searchBody(w, r)
+	if !ok {
+		return
+	}
 	if err := s.discover.SearchAgain(r.Context(), chi.URLParam(r, "id"), body.Seasons, body.Episodes...); err != nil {
 		writeError(w, 409, err.Error())
 		return
@@ -259,7 +267,11 @@ func (s *Server) discoverReplaceRelease(w http.ResponseWriter, r *http.Request) 
 	if !s.requireAdmin(w, r) || !s.discoverGuard(w) {
 		return
 	}
-	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id"), searchBody(r).Episodes...); err != nil {
+	body, ok := searchBody(w, r)
+	if !ok {
+		return
+	}
+	if err := s.discover.TryAnotherRelease(r.Context(), chi.URLParam(r, "id"), body.Episodes...); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
@@ -273,17 +285,49 @@ type searchTarget struct {
 	Seasons  []int    `json:"seasons"`
 }
 
-func searchBody(r *http.Request) searchTarget {
+// searchBody returns the selection, or answers 400 and returns false.
+//
+// An empty selection means everything missing, so only a body that really says so may
+// produce one: no body at all, or empty lists. Anything malformed is a 400 and nothing
+// runs. Decode errors used to be ignored, so a broken body (or `{"episodes": [""]}`,
+// whose blank code the service drops) became "everything" and could search for, or
+// blocklist and replace, every missing episode instead of the one meant. Too many
+// entries used to be cut off silently; now they are refused too. Episode codes are
+// checked and written the way the service compares them ("S01E03" -> "S1E3").
+func searchBody(w http.ResponseWriter, r *http.Request) (searchTarget, bool) {
 	var body searchTarget
-	_ = json.NewDecoder(http.MaxBytesReader(nil, r.Body, 8<<10)).Decode(&body)
-	if len(body.Episodes) > 200 {
-		body.Episodes = body.Episodes[:200]
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	if err := dec.Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, 400, "invalid request body")
+		return body, false
+	} else if err == nil && dec.More() {
+		writeError(w, 400, "invalid request body: more than one JSON value")
+		return body, false
 	}
-	if len(body.Seasons) > 100 {
-		body.Seasons = body.Seasons[:100]
+	if len(body.Episodes) > 200 || len(body.Seasons) > 100 {
+		writeError(w, 400, "too many episodes or seasons (at most 200 and 100)")
+		return body, false
 	}
-	return body
+	for i, code := range body.Episodes {
+		m := episodeCodeRe.FindStringSubmatch(strings.TrimSpace(code))
+		if m == nil {
+			writeError(w, 400, fmt.Sprintf("not an episode code: %q (want S1E3)", code))
+			return body, false
+		}
+		season, _ := strconv.Atoi(m[1])
+		episode, _ := strconv.Atoi(m[2])
+		body.Episodes[i] = fmt.Sprintf("S%dE%d", season, episode)
+	}
+	for _, n := range body.Seasons {
+		if n < 0 {
+			writeError(w, 400, fmt.Sprintf("not a season number: %d", n))
+			return body, false
+		}
+	}
+	return body, true
 }
+
+var episodeCodeRe = regexp.MustCompile(`^[sS](\d{1,4})[eE](\d{1,5})$`)
 
 // upstreamError logs the real cause and tells the client only that TMDB did not answer:
 // transport errors quote URLs and must not reach the app.

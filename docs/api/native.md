@@ -394,6 +394,10 @@ object is on each episode of `GET /v1/discover/tv/{id}/season/{n}` as `download`
 - `POST /v1/discover/requests/{id}/replace` `{episodes?}` (admin) → `{ok}`: remove the
   failed / stalled / unimportable downloads (all, or those episodes') from the client,
   blocklist those releases and let the arr app pick another.
+- Both bodies are optional. No body, or empty lists, means everything missing. Anything
+  else must be valid: malformed JSON, a blank or unrecognisable episode code (`S1E3`;
+  `S01E03` is accepted and read as `S1E3`), a negative season, or more than 200 episodes /
+  100 seasons is a 400 and nothing is searched or replaced.
 
 Guards, so a button never piles onto work already under way (the server enforces them
 and returns `409` with the reason; `canSearch` / `canRetry` tell the apps when to show
