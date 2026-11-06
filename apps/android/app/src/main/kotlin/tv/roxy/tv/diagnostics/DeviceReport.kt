@@ -57,7 +57,7 @@ object DeviceReport {
         Display.HdrCapabilities.HDR_TYPE_HDR10 in types || Display.HdrCapabilities.HDR_TYPE_HLG in types
     }.getOrDefault(false)
 
-    /** Under 3 GB of RAM (the TCL has 2.4 GB with about 200 MB free): the player keeps smaller buffers. */
+    /** Under 3 GB of RAM (the budget TV has 2.4 GB with about 200 MB free): the player keeps smaller buffers. */
     fun lowRam(context: Context): Boolean = runCatching {
         val am = context.getSystemService(android.app.ActivityManager::class.java)
         val info = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }

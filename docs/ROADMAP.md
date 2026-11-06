@@ -2,7 +2,7 @@
 
 ## Status (2026-10-13)
 
-Hardware (Jellyfin server, Costco TV) is in transit, so work started on what needs
+Hardware (the server, a budget Android TV) is in transit, so work started on what needs
 neither: synthetic test media and the server MVP. Phase 0/1a wait for the TV; the spike
 APK can be sideloaded on the owner's Android phone meanwhile.
 
@@ -17,7 +17,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   (series/year/tvdb tag, seasons, SxxExx + absolute numbers, episode titles, sidecars).
   Android SDK installed headlessly (API 36/37, build-tools 37), Gradle 9.8 wrapper in place.
 - Also done (2026-10-13, evening): persisted watch state on the compat surface. **Spike
-  APK ran on the owner's phone (Galaxy S25 Ultra)**: libmpv + libass rendered the ASS
+  APK ran on the owner's phone (a high-end Android phone)**: libmpv + libass rendered the ASS
   test with MKV-attached fonts correctly in all 15 runs of `apps/android/tools/spike-matrix.ps1`;
   Hi10P decodes in software, HEVC10 / 4K HDR10 / AV1 10-bit in hardware. 2026-10-14: test
   set grown to 10 files (H.264 8-bit, HEVC 60 fps + 5.1, Blu-ray TrueHD + PGS via
@@ -27,7 +27,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   policy in the player. The app now bundles a 50-font fallback set (`apps/android/FONTS.md`)
   with fontconfig aliases, fixed `FONTCONFIG_FILE` wiring, and colour-emoji rejection;
   `test-symbols-fallback.mkv` renders every symbol/emoji/CJK line with no boxes. Results:
-  `docs/research/player-spike-SM-S938U.md`. Decision (ADR-0007): Roxy clients speak the
+  `docs/research/player-spike-phone.md`. Decision (ADR-0007): Roxy clients speak the
   native `/v1` API, the Jellyfin SDK was removed from the app, and the server gained
   native login + Bearer/`api_key` auth on `/v1` (`docs/api/native.md`).
 - Also done (2026-10-14, night): **Phase 1b has started.** Server: TMDB + AniList metadata
@@ -63,7 +63,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   on), and **Skip intro / Skip outro** with an **auto-skip** option: the server detects
   OP/ED from chapter markers (`media_segments`, migration 0006; 22 of 36 episodes in the
   test library have them) and the app shows the pill or jumps automatically. All verified
-  on the phone. The TV is a TCL 65" Q77K (Google TV), so the same APK sideloads.
+  on the phone. The TV is a budget Google TV, so the same APK sideloads.
 - Also done (2026-10-14, 04:00): "Ends at" clock, double-tap seek, OP detection picks
   the chapter closest to 90 s, pinch zoom v2 (YouTube-style: persistent level with a
   "1.5×" readout, 0.1× steps, one mpv update per frame; the owner still has to try it by
@@ -72,7 +72,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   TV = landscape D-pad screens as before; phone = portrait, edge-to-edge, Netflix-style
   (hero poster card with Play/Info, poster rows, bottom bar Home / Series / Movies /
   Settings, Netflix title pages with season chips and episode rows). Navigation moved to
-  Navigation Compose with typed routes. Verified on the S25 Ultra, including play and
+  Navigation Compose with typed routes. Verified on the high-end phone, including play and
   return. Screens in `apps/android/spike-runs/20261014-controls/5*.png`.
 - Also done (2026-10-14, 07:20): phone layout round two from the owner's feedback. Hero is
   a full-bleed Crunchyroll-style carousel (poster bleeding under logo, "★ 8.5 Dub | Sub •
@@ -103,7 +103,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   subtitle languages come from the snapshot; positions watched offline queue and sync on the
   next launch; "Who's watching?" uses a cached profile list. Home shows the offline state
   within 3 s (probe beside the request). Watched episodes get a full red bar. Verified on the
-  S25 Ultra: KonoSuba S1 (11 episodes, 2.8 GB) downloaded, paused, resumed, played offline,
+  high-end phone: KonoSuba S1 (11 episodes, 2.8 GB) downloaded, paused, resumed, played offline,
   progress synced. Not yet: smart downloads (delete watched / fetch next), downloads on TV.
 - Also done (2026-10-19, later): **next-episode queue**. The player resolves the episode after
   the current one (server order; downloads only when offline), shows the Netflix end card at
@@ -111,7 +111,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   follows the credits (post-credits scene: Skip outro handles the credits), else the last 15 s, with a 10 s countdown, Play now / Watch credits, and a
   Next button in the control bar; the next file loads on the same mpv instance (no activity
   restart). Moving on marks the finished episode watched (queued offline). "Autoplay next
-  episode" switch under Account > Playback. Verified on the S25 Ultra: S01E03 → E04 → E05.
+  episode" switch under Account > Playback. Verified on the high-end phone: S01E03 → E04 → E05.
 - Also done (2026-10-19, night): **intro/outro detection by audio fingerprint** for files
   without chapter markers (`server/internal/segments`, Intro Skipper's method): Chromaprint
   via jellyfin-ffmpeg of the first 10 and last 6 minutes per episode (cached in
@@ -128,7 +128,7 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   `GET /v1/apps/tv/latest|download`). The app checks after login and shows a bar above the
   bottom navigation ("Roxy 0.3.1 is available · notes · Update · ×"), downloads with
   progress, then opens the package installer (REQUEST_INSTALL_PACKAGES + FileProvider).
-  Verified on the S25 Ultra: 0.2.0 → 0.3.0 installed through the bar. Phone layout only
+  Verified on the high-end phone: 0.2.0 → 0.3.0 installed through the bar. Phone layout only
   so far (the TV needs a focusable version).
 - Also done (2026-10-19, night): **Discover tab** (Roxy's own request flow). Server
   `internal/discover` over the existing TMDB client: trending, new anime this season,
@@ -224,11 +224,11 @@ APK can be sideloaded on the owner's Android phone meanwhile.
   `roxy://pair?server=<id>&code=<code>`; the phone app, already signed in, scans it and
   approves, and the server hands the TV a device token. The server id in `system/info`
   and the beacon reply is there for this.
-- Next on the client: run the same matrix on the Costco TV when it arrives (the
+- Next on the client: run the same matrix on the budget TV when it arrives (the
   performance decision needs it), then start Phase 1b on the native API.
 
 The ordering follows one principle from the research: **the client is where the payoff
-is, and direct-play-first makes the server small.** Because the Costco TV already decodes
+is, and direct-play-first makes the server small.** Because the budget TV already decodes
 Hi10P and renders ASS in Kodi, Roxy Server's MVP needs no transcoder at all.
 
 ## Phase 0 — Baseline on the current stack (days)
@@ -276,7 +276,7 @@ Jellyfin 12.2 through the Jellyfin SDK is superseded).
 - Font cache with Noto CJK; attachment download for the Media3 path.
 - Playback reporting loop (`Sessions/Playing`, `Progress`, `Stopped`).
 - Runtime dropped-frame fallback to transcode.
-- Device test matrix: the Costco TV, plus at least one Fire TV Stick or Onn box.
+- Device test matrix: the budget TV, plus at least one Fire TV Stick or Onn box.
 
 Exit: every ASS/Hi10P episode in the library plays direct with styled subs on the TV;
 watch state syncs with Jellyfin; arr apps untouched.

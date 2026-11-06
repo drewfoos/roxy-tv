@@ -5,7 +5,7 @@ subtitles play the way they were made, on every screen, without the server trans
 
 ![Roxy TV's Home on an Android TV: the hero for The Legend of Korra with Continue: S4 E13, the side menu, and Recently added](docs/images/tv-home.jpg)
 
-*Roxy TV on a TCL Google TV.*
+*Roxy TV on a budget Google TV.*
 
 ## Why
 

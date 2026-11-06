@@ -23,7 +23,7 @@ object AudioPassthrough {
     // Only what mpv's audiotrack output can actually pass through: it wraps every format as
     // IEC 61937 on a stereo channel mask at the output's native rate (ao_audiotrack.c in mpv
     // 0.41). E-AC3 needs a 192 kHz carrier and TrueHD / DTS-HD MA an 8-channel HBR link, so
-    // those hang or stay silent (the TCL's black screen on E-AC3); they are decoded here.
+    // those hang or stay silent (the budget TV's black screen on E-AC3); they are decoded here.
     private val candidates = listOf(
         Format("ac3", "Dolby Digital", AudioFormat.ENCODING_AC3, AudioFormat.CHANNEL_OUT_5POINT1),
         Format("dts", "DTS", AudioFormat.ENCODING_DTS, AudioFormat.CHANNEL_OUT_5POINT1),
@@ -41,7 +41,7 @@ object AudioPassthrough {
         val hdmi = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.type in hdmiTypes }
         if (hdmi.isEmpty()) return emptyList()
         // A device's encoding list is what the soundbar's EDID advertises, and when it gives
-        // one it is the truth: the TCL also answers "direct playback supported" for E-AC3,
+        // one it is the truth: the budget TV also answers "direct playback supported" for E-AC3,
         // which its soundbar does not take, and the picture then waits on audio that never
         // starts. Only an empty list ("not reported") falls back to asking the audio system.
         val advertised = hdmi.flatMap { it.encodings.toList() }.toSet()

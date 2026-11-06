@@ -4,7 +4,7 @@ What the phone app looks like today (2026-10-26), written down so the desktop an
 clients draw the same thing. The phone follows Crunchyroll's app with Roxy's own colours
 (blue, never orange) and a Discover tab Crunchyroll does not have. Source of truth for
 the values: `apps/android/app/src/main/kotlin/tv/roxy/tv/ui/theme/Theme.kt` and
-`ui/phone/PhoneUi.kt`; screenshots were taken on a Galaxy S25 Ultra.
+`ui/phone/PhoneUi.kt`; screenshots were taken on a high-end Android phone.
 
 ## 1. Tokens
 
@@ -199,7 +199,7 @@ built on 2026-10-26, checked page by page against crunchyroll.com in Chrome:
   are three-wide 6 px-radius posters; Account is the phone's grouped cards. Scroll-linked
   pieces read the unitless `--sy` variable (hooks/useScrollVar.ts) in CSS calc.
 - **Android TV** (`apps/android` `ui/tv/*`, measured from Crunchyroll's TV app on the
-  TCL, 1 dp = 2 px): a left rail (avatar, Search, Home, Watchlist, History, Browse,
+  budget TV, 1 dp = 2 px): a left rail (avatar, Search, Home, Watchlist, History, Browse,
   Settings) 80 dp collapsed / 264 dp with labels when focus enters it; a focused row is a
   full-width accent bar with dark text. Home: a 455 dp hero (art, logo, facts, two lines,
   CONTINUE / MORE INFO outlined buttons) over the phone's rows; posters 137 dp with a

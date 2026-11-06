@@ -13,7 +13,7 @@ func TestCheckRedirect(t *testing.T) {
 		case "image.tmdb.org":
 			return []net.IPAddr{{IP: net.ParseIP("151.101.1.1")}}, nil
 		case "evil.example":
-			return []net.IPAddr{{IP: net.ParseIP("151.101.1.1")}, {IP: net.ParseIP("192.168.1.125")}}, nil
+			return []net.IPAddr{{IP: net.ParseIP("151.101.1.1")}, {IP: net.ParseIP("192.168.1.50")}}, nil
 		}
 		return nil, &net.DNSError{Err: "no such host", Name: host}
 	}
@@ -24,7 +24,7 @@ func TestCheckRedirect(t *testing.T) {
 		"https://127.0.0.1:8097/v1/":       false,
 		"https://[::1]/":                   false,
 		"https://169.254.169.254/latest":   false,
-		"https://100.91.162.76/":           false,
+		"https://100.100.1.2/":            false,
 		"https://10.0.0.1/":                false,
 		"https://8.8.8.8/":                 true,
 		"https://nowhere.invalid/":         false,

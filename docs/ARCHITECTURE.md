@@ -378,7 +378,7 @@ Ideas from earlier drafts, kept here so they are not mistaken for features:
 | Risk | Mitigation |
 |---|---|
 | A TV's chip cannot decode a file (Hi10P at high bitrates, AV1 on older SoCs) | The Quality menu falls back to a server transcode |
-| The libmpv AAR is our own build, checked into `app/libs/` | Pinned by version in its file name; libmpv and libass are long-lived upstream projects. Its build steps are not yet written down |
+| The libmpv AAR is our own build, checked into `app/libs/` | Pinned by version in its file name; the build is written down in `apps/android/tools/build-libmpv.md`; libmpv and libass are long-lived upstream projects |
 | Sonarr / Radarr API changes | All arr calls live in `internal/arr` (API v3); `cmd/arrsim` fakes both apps for local testing |
 | Browser codec gaps (no AC3/E-AC3/DTS/TrueHD, limited Matroska) | The remux re-encodes only the audio; the transcode is H.264 |
 | SQLite on large libraries | WAL, indices on provider IDs and paths; one writer |

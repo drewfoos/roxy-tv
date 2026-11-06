@@ -95,8 +95,8 @@ plus ~5 min of downloads.
 
 ## Copy to the app and verify
 ```powershell
-Copy-Item \wsl.localhost\Ubuntu-24.04\home\drewfoos\build\libmpv-android\libmpv\build\outputs\aar\libmpv-release.aar `
-  C:\Users\drewf\Downloads\dev\roxy\apps\android\app\libs\libmpv-roxy-1.0.0-pl7.387.aar
+Copy-Item \wsl.localhost\<distro>\home\<you>\build\libmpv-android\libmpv\build\outputs\aar\libmpv-release.aar `
+  <repo>\apps\android\app\libs\libmpv-roxy-1.0.0-pl7.387.aar
 ```
 ```sh
 unzip -q libmpv-release.aar -d x

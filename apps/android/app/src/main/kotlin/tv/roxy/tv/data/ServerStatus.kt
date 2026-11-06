@@ -97,7 +97,7 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
 
 /**
  * Words for an error shown to people: a connection failure reads "Can't reach Roxy"
- * instead of "failed to connect to /192.168.1.125 (port 8097)…"; the server's own
+ * instead of "failed to connect to /192.168.1.50 (port 8096)…"; the server's own
  * messages (ApiException) pass through.
  */
 fun friendlyError(t: Throwable, what: String? = null): String = when {

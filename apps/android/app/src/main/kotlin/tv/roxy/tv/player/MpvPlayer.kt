@@ -822,7 +822,7 @@ class MpvPlayer(
 
     /**
      * Safety net: some TVs never finish opening a passthrough audio output for a format
-     * (the TCL with a soundbar on E-AC3). mpv then waits on the audio clock and the picture
+     * (the budget TV with a soundbar on E-AC3). mpv then waits on the audio clock and the picture
      * stays black. If the position hasn't moved after 6 s of the player actually trying
      * to play (time paused by the viewer, buffering or seeking does not count), that codec
      * is decoded here from then on, for this sound output, and the file reopens where it was.

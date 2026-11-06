@@ -100,7 +100,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
 
 /*
  * The TV screens copy Crunchyroll's Android TV app. Every size here was measured from
- * 1920x1080 captures of it on the TCL (density 320: 1 dp = 2 px) and halved.
+ * 1920x1080 captures of it on the budget TV (density 320: 1 dp = 2 px) and halved.
  */
 object TvDims {
     /** The collapsed rail: icons only. */
@@ -657,7 +657,7 @@ fun PageMessage(text: String, modifier: Modifier = Modifier, color: Color = Roxy
 
 /**
  * Loading placeholders for the TV. One slow pulse per screen, read only when drawing: the
- * blocks never recompose while they pulse (a shimmer per card was a frame drain on the TCL).
+ * blocks never recompose while they pulse (a shimmer per card was a frame drain on the budget TV).
  */
 @Composable
 fun rememberSkeletonPulse(): State<Float> {

@@ -490,7 +490,7 @@ function ChangeServer({ onBack }: { onBack: () => void }) {
     e.preventDefault()
     const list = candidates(address)
     if (list.length === 0) {
-      setError('Type the address of a Roxy server, like 192.168.1.125:8097.')
+      setError('Type the address of a Roxy server, like 192.168.1.50:8096.')
       return
     }
     setBusy(true)
@@ -523,7 +523,7 @@ function ChangeServer({ onBack }: { onBack: () => void }) {
       <form className="signin__form" onSubmit={connect} noValidate>
         <label className="signin__field">
           <span>Server address</span>
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="192.168.1.125:8097" autoComplete="url" autoCapitalize="none" spellCheck={false} inputMode="url" autoFocus />
+          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="192.168.1.50:8096" autoComplete="url" autoCapitalize="none" spellCheck={false} inputMode="url" autoFocus />
         </label>
         {error && (
           <div className="signin__error" role="alert">

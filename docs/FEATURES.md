@@ -107,8 +107,8 @@ The full feature list, server and apps. The short version is in the [README](../
 - Browse on the phone: categories (Newly Added, A-Z, Series, Movies, genres) as chips over a
   poster grid with the title and year under each poster.
 
-Phone screens are verified on a Galaxy S25 Ultra after every change; the TV layout runs on
-a TCL Q77K (Google TV).
+Phone screens are verified on a high-end Android phone after every change; the TV layout runs on
+a budget Google TV.
 
 ## Roxy Web
 

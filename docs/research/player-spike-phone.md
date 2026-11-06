@@ -1,7 +1,7 @@
-# Player spike results: Samsung Galaxy S25 Ultra (SM-S938U)
+# Player spike results: a high-end Android phone
 
 Date: 2026-10-13 (set 1, five files) and 2026-10-14 (set 2, five more: H.264 8-bit,
-HEVC 8-bit 60 fps with 5.1 audio, Blu-ray shape with TrueHD + PGS, HLG, MP4 + mov_text). Device: Samsung SM-S938U, Qualcomm SM8750 (Snapdragon 8 Elite, Adreno
+HEVC 8-bit 60 fps with 5.1 audio, Blu-ray shape with TrueHD + PGS, HLG, MP4 + mov_text). Device: a high-end Android phone (Snapdragon 8 Elite, Adreno
 830), 8 cores, Android 17 (API 37), display 1440x3120 up to 120 Hz, HDR10 / HLG / HDR10+.
 Player: libmpv 0.41.0 (dev.jdtech.mpv:libmpv 1.0.0, FFmpeg n8.1, libplacebo 7.360.1),
 libass 0.17.4, HarfBuzz 14.1.0. Server: Roxy Server dev build on the laptop over Wi-Fi.
@@ -9,8 +9,8 @@ libass 0.17.4, HarfBuzz 14.1.0. Server: Roxy Server dev build on the laptop over
 **Scope.** This phone is far faster than the living-room TV, so this run validates
 *correctness* (libass rendering, font selection, hwdec selection, HDR signalling, the
 native API end to end). The performance decision (default `hwdec`/`vo`, whether 4K ASS
-needs server burn-in) still has to come from the Costco TV. Raw output (overlay
-screenshots, mpv logs, `results.csv`): `apps/android/spike-runs/20261013-SM-S938U/`.
+needs server burn-in) still has to come from the budget TV. Raw output (overlay
+screenshots, mpv logs, `results.csv`): `apps/android/spike-runs/20261013-phone/`.
 
 ## Matrix (vo=gpu, ~12 s into each file, 23.976 fps content)
 
@@ -35,7 +35,7 @@ mistimed) in every run.
 | AV1 10-bit 1080p | mediacodec | mediacodec | mediacodec | 16% |
 | AV1 10-bit 1080p | no | software | yuv420p10 | 51% |
 
-Set 2 (2026-10-14, same device and build; raw output in `apps/android/spike-runs/20261014-SM-S938U-set2/`):
+Set 2 (2026-10-14, same device and build; raw output in `apps/android/spike-runs/20261014-phone-set2/`):
 
 | File | hwdec requested | decoder actually used | output format | CPU | drops |
 |---|---|---|---|---|---|

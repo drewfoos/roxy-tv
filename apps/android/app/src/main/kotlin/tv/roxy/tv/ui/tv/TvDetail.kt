@@ -127,7 +127,7 @@ private val EpisodeThumbWidth = 192.dp
  * The height the content keeps while it sits under the art, off screen: enough for its first
  * row (the first episode, the first similar title), which Down from the tabs must reach. It
  * was 320 dp, three episode rows composed and measured that nobody could see yet: a 26 ms
- * frame on the TCL as the episodes arrived. The rest compose as the page folds up.
+ * frame on the budget TV as the episodes arrived. The rest compose as the page folds up.
  */
 private val ContentFloor = 140.dp
 private val Fold = tween<Dp>(220)
@@ -267,7 +267,7 @@ private fun TitlePage(
     var restored by remember { mutableStateOf(false) }
     // The page arrives in two frames: the art, copy and actions first, then the tabs and the
     // content (which start at the bottom edge, mostly off screen) one frame later. In one
-    // frame it was 26 ms on the TCL; split, each half fits a frame.
+    // frame it was 26 ms on the budget TV; split, each half fits a frame.
     var below by remember(title.id) { mutableStateOf(false) }
     LaunchedEffect(title.id) { withFrameNanos { }; below = true }
     LaunchedEffect(title.id) {

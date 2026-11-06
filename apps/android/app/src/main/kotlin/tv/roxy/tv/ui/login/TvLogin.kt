@@ -295,7 +295,7 @@ private fun Unreachable(serverUrl: String, onRescan: () -> Unit) {
     CardButton("Choose another server", icon = Icons.Outlined.Refresh, primary = true, onClick = onRescan)
 }
 
-/** "Signing in to pookiebox · 192.168.1.125:8097 · Different server?" under the card. */
+/** "Signing in to myserver · 192.168.1.50:8096 · Different server?" under the card. */
 @Composable
 private fun ServerLine(name: String?, url: String, onChange: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {

@@ -235,5 +235,5 @@ mistimed), `fps` output vs container, `cpu`, and whether the font log shows
 
 Decisions the matrix feeds: default engine for the TV (libmpv vs Media3 + ass-media),
 default `hwdec` and `vo` for the TV's SoC, and whether 4K ASS needs the server to burn in.
-The phone run (Galaxy S25 Ultra, `docs/research/player-spike-SM-S938U.md`) validates
-correctness only; the performance decision needs the Costco TV.
+The phone run (a high-end Android phone, `docs/research/player-spike-phone.md`) validates
+correctness only; the performance decision needs the budget TV.

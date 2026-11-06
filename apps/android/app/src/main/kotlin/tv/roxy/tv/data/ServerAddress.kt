@@ -44,7 +44,7 @@ object ServerAddress {
 
     /**
      * Private as above, or a name that only means something on a home network: a single
-     * label ("pookiebox") or .local / .lan / .home.arpa / .internal. For the "not encrypted"
+     * label ("myserver") or .local / .lan / .home.arpa / .internal. For the "not encrypted"
      * hint only; never for trusting a discovery answer.
      */
     fun isHomeNetwork(host: String): Boolean {
