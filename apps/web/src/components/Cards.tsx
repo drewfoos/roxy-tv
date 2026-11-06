@@ -342,10 +342,10 @@ export function CardMenu({ item, played, onPlayedChange, onOpenChange }: { item:
       </button>
       {open && pos && createPortal(
         <div ref={menu} className="menu menu--float" style={pos} onClick={() => setOpen(false)}>
-          <Link to={itemPath(item)}>
-            <button>
-              <IconPlay size={20} /> Watch now
-            </button>
+          {/* A link styled as a menu row: a button inside a link is invalid HTML and is
+              announced (and focused) twice. */}
+          <Link to={itemPath(item)} className="menu__item">
+            <IconPlay size={20} /> Watch now
           </Link>
           <button onClick={toggleSave}>
             {saved ? <IconBookmark size={20} /> : <IconBookmarkOutline size={20} />} {saved ? 'Remove from Watchlist' : 'Add to Watchlist'}

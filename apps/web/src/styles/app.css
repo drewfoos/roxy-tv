@@ -629,8 +629,8 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 /* ---------- menus ---------- */
 .menu--float { position: fixed !important; z-index: 1000 !important; top: auto; right: auto; }
 .menu { position: absolute; right: 0; top: 100%; z-index: 20; min-width: 220px; background: var(--surface-high); border-radius: 8px; padding: 6px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
-.menu button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; text-align: left; color: #fff; font-size: 14px; }
-.menu button:hover { background: rgba(255, 255, 255, 0.08); }
+.menu button, .menu .menu__item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; text-align: left; color: #fff; font-size: 14px; }
+.menu button:hover, .menu .menu__item:hover { background: rgba(255, 255, 255, 0.08); }
 
 /* ---------- Account Settings (Crunchyroll's layout: title, grouped links, a dark panel) ---------- */
 .acc { width: min(1050px, 100%); margin: 0 auto; padding: 48px var(--gutter) 80px; }
