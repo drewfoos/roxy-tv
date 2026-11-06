@@ -41,8 +41,8 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if p := auth.PrincipalFrom(ctx); p != nil && p.User != nil {
 		resume, err = s.store.ContinueItems(ctx, p.ScopeID, 20)
 		// Streams ride along so the client can play straight away and show Dub | Sub.
-		for i := range resume {
-			resume[i].Sources, _ = s.store.SourcesForItem(ctx, resume[i].ID)
+		if err == nil {
+			err = s.attachSources(ctx, resume)
 		}
 	}
 	if !add("continue", "Continue Watching", resume, err) {
@@ -66,8 +66,8 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Streams ride along on the "recently added" rows too (Dub | Sub on the cards).
-	for i := range perSeries {
-		perSeries[i].Sources, _ = s.store.SourcesForItem(ctx, perSeries[i].ID)
+	if err == nil {
+		err = s.attachSources(ctx, perSeries)
 	}
 	if !add("recentEpisodes", "Recently Added Episodes", perSeries, err) {
 		return
@@ -75,8 +75,8 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 
 	withMedia := true
 	movies, _, err := s.store.ListItems(ctx, store.ItemQuery{Types: []model.ItemType{model.TypeMovie}, SortBy: "date_created", Desc: true, Limit: 20, HasMedia: &withMedia})
-	for i := range movies {
-		movies[i].Sources, _ = s.store.SourcesForItem(ctx, movies[i].ID)
+	if err == nil {
+		err = s.attachSources(ctx, movies)
 	}
 	if !add("recentMovies", "Recently Added Movies", movies, err) {
 		return

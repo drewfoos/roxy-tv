@@ -6,7 +6,6 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
 )
@@ -72,51 +71,94 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 }
 
 func (s *Store) GetSource(ctx context.Context, id string) (*model.MediaSource, error) {
-	var src model.MediaSource
-	var name, container, label sql.NullString
-	var bitrate sql.NullInt64
-	var primary int
-	err := s.db.QueryRowContext(ctx, `SELECT id, item_id, name, container, size, duration_ms, bitrate, version_label, is_primary FROM media_sources WHERE id = ?`, id).
-		Scan(&src.ID, &src.ItemID, &name, &container, &src.Size, &src.DurationMs, &bitrate, &label, &primary)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
+	srcs, err := s.querySources(ctx, `SELECT `+sourceCols+` FROM media_sources WHERE id = ?`, id)
+	if err != nil || len(srcs) == 0 {
 		return nil, err
 	}
-	src.Name, src.Container, src.VersionLabel, src.Bitrate, src.IsPrimary = name.String, container.String, label.String, bitrate.Int64, primary == 1
-	if err := s.loadSourceChildren(ctx, &src); err != nil {
-		return nil, err
-	}
-	return &src, nil
+	return &srcs[0], nil
 }
 
+// SourcesForItem is the item's media sources, primary first.
 func (s *Store) SourcesForItem(ctx context.Context, itemID string) ([]model.MediaSource, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM media_sources WHERE item_id = ? ORDER BY is_primary DESC, name`, itemID)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	var out []model.MediaSource
-	for _, id := range ids {
-		src, err := s.GetSource(ctx, id)
+	m, err := s.SourcesForItems(ctx, []string{itemID})
+	return m[itemID], err
+}
+
+// SourcesForItems is SourcesForItem for a whole page of items in a fixed number of
+// queries (sources, then parts, streams, attachments and segments for all of them),
+// where looping SourcesForItem cost five queries per source.
+func (s *Store) SourcesForItems(ctx context.Context, itemIDs []string) (map[string][]model.MediaSource, error) {
+	out := map[string][]model.MediaSource{}
+	for _, ids := range chunks(itemIDs) {
+		srcs, err := s.querySources(ctx, `SELECT `+sourceCols+` FROM media_sources WHERE item_id IN (`+placeholders(len(ids))+`) ORDER BY is_primary DESC, name`, anys(ids)...)
 		if err != nil {
 			return nil, err
 		}
-		if src != nil {
-			out = append(out, *src)
+		for _, src := range srcs {
+			out[src.ItemID] = append(out[src.ItemID], src)
 		}
 	}
 	return out, nil
+}
+
+const sourceCols = `id, item_id, name, container, size, duration_ms, bitrate, version_label, is_primary`
+
+// querySources reads media_sources rows (sourceCols, in order) and loads their children.
+func (s *Store) querySources(ctx context.Context, query string, args ...any) ([]model.MediaSource, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	var srcs []model.MediaSource
+	for rows.Next() {
+		var src model.MediaSource
+		var name, container, label sql.NullString
+		var bitrate sql.NullInt64
+		var primary int
+		if err := rows.Scan(&src.ID, &src.ItemID, &name, &container, &src.Size, &src.DurationMs, &bitrate, &label, &primary); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		src.Name, src.Container, src.VersionLabel, src.Bitrate, src.IsPrimary = name.String, container.String, label.String, bitrate.Int64, primary == 1
+		srcs = append(srcs, src)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	ptrs := make([]*model.MediaSource, len(srcs))
+	for i := range srcs {
+		ptrs[i] = &srcs[i]
+	}
+	if err := s.loadSourcesChildren(ctx, ptrs); err != nil {
+		return nil, err
+	}
+	return srcs, nil
+}
+
+// chunks splits ids into IN-list sized groups (well under SQLite's parameter limit).
+func chunks(ids []string) [][]string {
+	const size = 500
+	var out [][]string
+	for len(ids) > size {
+		out = append(out, ids[:size])
+		ids = ids[size:]
+	}
+	if len(ids) > 0 {
+		out = append(out, ids)
+	}
+	return out
+}
+
+func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+
+func anys(ids []string) []any {
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = id
+	}
+	return out
 }
 
 // FindSourceByPathStem returns the source whose first part's file name (without
@@ -253,95 +295,103 @@ func (s *Store) DeleteSource(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *Store) loadSourceChildren(ctx context.Context, src *model.MediaSource) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, part_index, path, size, mtime, duration_ms FROM media_parts WHERE source_id = ? ORDER BY part_index`, src.ID)
-	if err != nil {
-		return err
+// loadSourcesChildren fills parts, streams, attachments and segments for srcs, a fixed
+// number of queries per IN-list chunk however many sources there are.
+func (s *Store) loadSourcesChildren(ctx context.Context, srcs []*model.MediaSource) error {
+	byID := map[string]*model.MediaSource{}
+	ids := make([]string, 0, len(srcs))
+	for _, src := range srcs {
+		byID[src.ID] = src
+		ids = append(ids, src.ID)
 	}
-	for rows.Next() {
-		var p model.MediaPart
-		var mtime string
-		var dur sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.Index, &p.Path, &p.Size, &mtime, &dur); err != nil {
-			rows.Close()
-			return err
-		}
-		p.SourceID = src.ID
-		p.ModTime = ParseTime(mtime)
-		p.DurationMs = dur.Int64
-		src.Parts = append(src.Parts, p)
-	}
-	rows.Close()
-
-	rows, err = s.db.QueryContext(ctx, `SELECT stream_index, type, codec, profile, level, bit_depth, pix_fmt, width, height, fps,
-		color_primaries, color_transfer, color_space, range_type, dv_profile, channels, channel_layout, sample_rate, bitrate, language, title,
-		is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language FROM media_streams WHERE source_id = ? ORDER BY stream_index`, src.ID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var st model.MediaStream
-		var profile, pixFmt, prim, trc, space, rng, layout, lang, title, extPath, detected sql.NullString
-		var level, depth, w, h, dv, ch, sr sql.NullInt64
-		var fps sql.NullFloat64
-		var br sql.NullInt64
-		var def, forced, hi, ext, text int
-		if err := rows.Scan(&st.Index, &st.Type, &st.Codec, &profile, &level, &depth, &pixFmt, &w, &h, &fps,
-			&prim, &trc, &space, &rng, &dv, &ch, &layout, &sr, &br, &lang, &title, &def, &forced, &hi, &ext, &extPath, &text, &detected); err != nil {
-			rows.Close()
-			return err
-		}
-		st.SourceID = src.ID
-		st.Profile, st.PixFmt, st.ColorPrimaries, st.ColorTransfer, st.ColorSpace = profile.String, pixFmt.String, prim.String, trc.String, space.String
-		st.RangeType = model.RangeType(rng.String)
-		st.ChannelLayout, st.Language, st.Title, st.ExternalPath = layout.String, lang.String, title.String, extPath.String
-		st.DetectedLanguage = detected.String
-		st.Level, st.BitDepth, st.Width, st.Height, st.DVProfile, st.Channels, st.SampleRate = int(level.Int64), int(depth.Int64), int(w.Int64), int(h.Int64), int(dv.Int64), int(ch.Int64), int(sr.Int64)
-		st.FPS, st.Bitrate = fps.Float64, br.Int64
-		st.IsDefault, st.IsForced, st.IsHearingImpaired, st.IsExternal, st.IsTextFormat = def == 1, forced == 1, hi == 1, ext == 1, text == 1
-		src.Streams = append(src.Streams, st)
-	}
-	rows.Close()
-
-	rows, err = s.db.QueryContext(ctx, `SELECT stream_index, filename, mime, extracted_path, extracted_at FROM attachments WHERE source_id = ? ORDER BY stream_index`, src.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var a model.Attachment
-		var mime, path, at sql.NullString
-		if err := rows.Scan(&a.Index, &a.Filename, &mime, &path, &at); err != nil {
-			return err
-		}
-		a.SourceID = src.ID
-		a.Mime, a.ExtractedPath = mime.String, path.String
-		if at.Valid {
-			t := ParseTime(at.String)
-			if !t.IsZero() {
-				tt := t
-				a.ExtractedAt = &tt
+	for _, chunk := range chunks(ids) {
+		in, args := placeholders(len(chunk)), anys(chunk)
+		if err := s.eachRow(ctx, `SELECT source_id, id, part_index, path, size, mtime, duration_ms FROM media_parts WHERE source_id IN (`+in+`) ORDER BY source_id, part_index`, args, func(rows *sql.Rows) error {
+			var p model.MediaPart
+			var mtime string
+			var dur sql.NullInt64
+			if err := rows.Scan(&p.SourceID, &p.ID, &p.Index, &p.Path, &p.Size, &mtime, &dur); err != nil {
+				return err
 			}
+			p.ModTime = ParseTime(mtime)
+			p.DurationMs = dur.Int64
+			src := byID[p.SourceID]
+			src.Parts = append(src.Parts, p)
+			return nil
+		}); err != nil {
+			return err
 		}
-		src.Attachments = append(src.Attachments, a)
+		if err := s.eachRow(ctx, `SELECT source_id, stream_index, type, codec, profile, level, bit_depth, pix_fmt, width, height, fps,
+		color_primaries, color_transfer, color_space, range_type, dv_profile, channels, channel_layout, sample_rate, bitrate, language, title,
+		is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language FROM media_streams WHERE source_id IN (`+in+`) ORDER BY source_id, stream_index`, args, func(rows *sql.Rows) error {
+			var st model.MediaStream
+			var profile, pixFmt, prim, trc, space, rng, layout, lang, title, extPath, detected sql.NullString
+			var level, depth, w, h, dv, ch, sr sql.NullInt64
+			var fps sql.NullFloat64
+			var br sql.NullInt64
+			var def, forced, hi, ext, text int
+			if err := rows.Scan(&st.SourceID, &st.Index, &st.Type, &st.Codec, &profile, &level, &depth, &pixFmt, &w, &h, &fps,
+				&prim, &trc, &space, &rng, &dv, &ch, &layout, &sr, &br, &lang, &title, &def, &forced, &hi, &ext, &extPath, &text, &detected); err != nil {
+				return err
+			}
+			st.Profile, st.PixFmt, st.ColorPrimaries, st.ColorTransfer, st.ColorSpace = profile.String, pixFmt.String, prim.String, trc.String, space.String
+			st.RangeType = model.RangeType(rng.String)
+			st.ChannelLayout, st.Language, st.Title, st.ExternalPath = layout.String, lang.String, title.String, extPath.String
+			st.DetectedLanguage = detected.String
+			st.Level, st.BitDepth, st.Width, st.Height, st.DVProfile, st.Channels, st.SampleRate = int(level.Int64), int(depth.Int64), int(w.Int64), int(h.Int64), int(dv.Int64), int(ch.Int64), int(sr.Int64)
+			st.FPS, st.Bitrate = fps.Float64, br.Int64
+			st.IsDefault, st.IsForced, st.IsHearingImpaired, st.IsExternal, st.IsTextFormat = def == 1, forced == 1, hi == 1, ext == 1, text == 1
+			src := byID[st.SourceID]
+			src.Streams = append(src.Streams, st)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := s.eachRow(ctx, `SELECT source_id, stream_index, filename, mime, extracted_path, extracted_at FROM attachments WHERE source_id IN (`+in+`) ORDER BY source_id, stream_index`, args, func(rows *sql.Rows) error {
+			var a model.Attachment
+			var mime, path, at sql.NullString
+			if err := rows.Scan(&a.SourceID, &a.Index, &a.Filename, &mime, &path, &at); err != nil {
+				return err
+			}
+			a.Mime, a.ExtractedPath = mime.String, path.String
+			if at.Valid {
+				if t := ParseTime(at.String); !t.IsZero() {
+					a.ExtractedAt = &t
+				}
+			}
+			src := byID[a.SourceID]
+			src.Attachments = append(src.Attachments, a)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := s.eachRow(ctx, `SELECT source_id, type, start_ms, end_ms, origin FROM media_segments WHERE source_id IN (`+in+`) ORDER BY source_id, start_ms`, args, func(rows *sql.Rows) error {
+			var sg model.MediaSegment
+			var sourceID string
+			if err := rows.Scan(&sourceID, &sg.Type, &sg.StartMs, &sg.EndMs, &sg.Origin); err != nil {
+				return err
+			}
+			src := byID[sourceID]
+			src.Segments = append(src.Segments, sg)
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	rows.Close()
+	return nil
+}
 
-	rows, err = s.db.QueryContext(ctx, `SELECT type, start_ms, end_ms, origin FROM media_segments WHERE source_id = ? ORDER BY start_ms`, src.ID)
+// eachRow runs query and calls fn for every row, closing the rows whatever happens.
+func (s *Store) eachRow(ctx context.Context, query string, args []any, fn func(*sql.Rows) error) error {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var sg model.MediaSegment
-		if err := rows.Scan(&sg.Type, &sg.StartMs, &sg.EndMs, &sg.Origin); err != nil {
+		if err := fn(rows); err != nil {
 			return err
 		}
-		src.Segments = append(src.Segments, sg)
 	}
-	_ = time.Now
 	return rows.Err()
 }

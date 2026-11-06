@@ -86,8 +86,9 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		items = []model.Item{}
 	}
 	if r.URL.Query().Get("include") == "sources" {
-		for i := range items {
-			items[i].Sources, _ = s.store.SourcesForItem(r.Context(), items[i].ID)
+		if err := s.attachSources(r.Context(), items); err != nil {
+			writeError(w, 500, err.Error())
+			return
 		}
 	}
 	s.fillSeriesRefs(r.Context(), items)
@@ -95,6 +96,24 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	s.attachUserData(r.Context(), items)
 	s.fillAudioLanguages(r.Context(), items)
 	writeJSON(w, 200, map[string]any{"items": items, "total": total})
+}
+
+// attachSources fills Sources for every item of a page in one batched lookup. A failed
+// lookup is returned, never left as items without sources: those used to be sent with
+// HTTP 200, and an episode with no sources reads to a client as one with nothing to play.
+func (s *Server) attachSources(ctx context.Context, items []model.Item) error {
+	ids := make([]string, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	byItem, err := s.store.SourcesForItems(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		items[i].Sources = byItem[items[i].ID]
+	}
+	return nil
 }
 
 // fillSeriesRefs resolves episode -> season -> series with one query so list views can
