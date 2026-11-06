@@ -73,6 +73,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // read 0 and wipe the saved position; they use this instead.
   const lastAbs = useRef(0)
   const hideTimer = useRef<number | null>(null)
+  // Each load() takes a number; one that wakes from an await to find a newer number stops
+  // there. A seek, a track or quality change, or the next episode can start a load while an
+  // older one is still waiting (on the token, the metadata, play()), and the older one used
+  // to go on and seek or flag the newer stream.
+  const loadGen = useRef(0)
   const seekBarRef = useRef<HTMLDivElement>(null)
 
   const [ready, setReady] = useState(false)
@@ -152,9 +157,15 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   /** Decide direct play or remux for the chosen audio track, and load the stream at a position. */
   const load = useCallback(
     async (startSec: number, audio: number | null) => {
+      const my = ++loadGen.current
+      const stale = () => my !== loadGen.current
       const v = videoRef.current
       if (!v || !source) return
-      if (!tokenRef.current) tokenRef.current = (await api.mediaToken(source.id)).token
+      if (!tokenRef.current) {
+        const token = (await api.mediaToken(source.id)).token
+        if (stale()) return // the item may have changed: its token must not be kept
+        tokenRef.current = token
+      }
       const first = audioTracks[0]
       const chosen = audioTracks.find((t) => t.index === audio) ?? first
       const q = qualityRef.current
@@ -175,11 +186,17 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
             const once = () => {
               v.removeEventListener('loadedmetadata', once)
               v.removeEventListener('error', once)
+              v.removeEventListener('emptied', replaced)
               resolve()
             }
+            // A newer load replaced the src: stop waiting (the check below then stops this
+            // one). Only then: setting this load's own src fires 'emptied' too.
+            const replaced = () => { if (stale()) once() }
             v.addEventListener('loadedmetadata', once)
             v.addEventListener('error', once)
+            v.addEventListener('emptied', replaced)
           })
+          if (stale()) return
           v.currentTime = startSec
         }
       } else {
@@ -191,6 +208,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       setBuffered(startSec)
       v.playbackRate = rate
       if (wasPlaying || !ready) await v.play().catch(() => undefined)
+      if (stale()) return
       setReady(true)
     },
     [source, audioTracks, rate, ready],
@@ -240,6 +258,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     const t = setTimeout(() => live && setAdvisory(false), 7000)
     return () => {
       live = false
+      loadGen.current++ // a load still in flight for this item stops at its next await
       clearTimeout(t)
       report(true)
       subs.destroy()
