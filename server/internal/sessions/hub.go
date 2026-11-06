@@ -41,8 +41,11 @@ type NowPlaying struct {
 	Title      string `json:"title,omitempty"`
 	PositionMs int64  `json:"positionMs"`
 	Paused     bool   `json:"paused"`
-	// Handoff is the last handed-over "play" this player started for this item (Command.Handoff).
-	Handoff string `json:"handoff,omitempty"`
+	// Handoff is the last handed-over "play" this player answered for this item
+	// (Command.Handoff): once playback has really started, or with HandoffError set when it
+	// could not play it.
+	Handoff      string `json:"handoff,omitempty"`
+	HandoffError string `json:"handoffError,omitempty"`
 }
 
 // Player is one connected client as the list shows it.

@@ -124,6 +124,16 @@ class PlayerSession(
     var osd by mutableStateOf<String?>(null); private set
     private var osdJob: Job? = null
     var ui by mutableStateOf(PlayerUiState()); private set
+
+    /** How this session's first start went: Playing once frames are really being shown. */
+    enum class StartState { Loading, Playing, Failed }
+    /**
+     * Loading until the file has loaded and two progress ticks in a row show the clock
+     * moving at playback speed (a seek's jump does not count), then Playing; Failed when the
+     * first load fails. "Play on" acknowledges a handover only on Playing (RemotePlay).
+     */
+    val startState = kotlinx.coroutines.flow.MutableStateFlow(StartState.Loading)
+    private var startProbeSec: Double? = null // last tick's position once the file loaded
     var controlsVisible by mutableStateOf(true); private set
     var sheet by mutableStateOf(Sheet.None)
     private var hideJob: Job? = null
@@ -267,6 +277,7 @@ class PlayerSession(
         )
         player.listener = object : MpvPlayer.Listener {
             override fun onFileLoaded() {
+                if (startState.value == StartState.Loading && startProbeSec == null) startProbeSec = player.timePosSeconds() ?: 0.0
                 switching = false
                 endReported = false
                 if (reconnecting) { reconnecting = false; flashOsd(null) }
@@ -296,6 +307,7 @@ class PlayerSession(
             }
 
             override fun onLoadFailed() {
+                if (startState.value == StartState.Loading) startState.value = StartState.Failed
                 if (local) { switching = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
                 val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
                 reconnect(at)
@@ -395,6 +407,15 @@ class PlayerSession(
                 tick++
                 refreshUi()
                 watchStall()
+                if (startState.value == StartState.Loading) startProbeSec?.let { prev ->
+                    val pos = player.timePosSeconds()
+                    if (pos != null) {
+                        // Half a second of ticking moves the clock by about that much while
+                        // frames play; a seek jumps it further, a stall not at all.
+                        if (!player.isPaused() && pos - prev in 0.1..2.0) startState.value = StartState.Playing
+                        startProbeSec = pos
+                    }
+                }
                 if (tick % 2 != 0) continue
                 if (showStats) {
                     val cores = Runtime.getRuntime().availableProcessors()

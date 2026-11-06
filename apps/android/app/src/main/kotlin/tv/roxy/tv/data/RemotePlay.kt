@@ -22,8 +22,18 @@ import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.ui.playItem
 import java.util.Locale
 
-/** How long a handover waits for the other device to report the item playing (its own wait is 15 s). */
-private const val HANDOFF_CONFIRM_MS = 20_000L
+/**
+ * How long a handover waits for the other device to report the item really playing: its
+ * own waits are up to 15 s for the player and [PLAYBACK_START_TIMEOUT_MS] for playback.
+ */
+private const val HANDOFF_CONFIRM_MS = 45_000L
+
+/** How long a player waits for a handed-over play to really start before giving up on answering. */
+private const val PLAYBACK_START_TIMEOUT_MS = 28_000L
+
+/** A handed-over position counts as reached when playback is this close to it. */
+private const val SEEK_TOLERANCE_BEFORE_MS = 5_000L
+private const val SEEK_TOLERANCE_AFTER_MS = 30_000L
 
 /** How long a "play" command waits for the new player to come up before the next command. */
 private const val PLAYER_START_TIMEOUT_MS = 15_000L
@@ -110,9 +120,10 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
             if (up == null) {
                 Timber.w("remote play: no player showing %s after %d ms; carrying on", itemId, PLAYER_START_TIMEOUT_MS)
             } else if (cmd.handoff.isNotEmpty()) {
-                // Tell the sender this play is ours: its id goes back in our state reports.
-                synchronized(this) { handoffAck = itemId to cmd.handoff }
-                activePlayer?.reportStateNow()
+                // Acknowledged on its own, so the next commands are not held up meanwhile
+                // (they must reach this new player well within the server's 30 s TTL).
+                val session = activePlayer
+                if (session != null) scope.launch { acknowledge(session, itemId, cmd) }
             }
             return
         }
@@ -146,7 +157,42 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
     private var retryDelayMs = STATE_RETRY_MIN_MS
     // (item id, handoff id) of the last handed-over play this player started: reported back
     // while that item plays, so the sender sees its own request applied (handOver).
-    private var handoffAck: Pair<String, String>? = null
+    private var handoffAck: HandoffAck? = null
+
+    private data class HandoffAck(val itemId: String, val id: String, val error: String = "")
+
+    /**
+     * The handed-over play is answered only once playback has really started: frames shown
+     * ([PlayerSession.StartState.Playing]) and, when the sender asked for a position, the
+     * clock near it (a seek done). A failed first load is answered at once with an error, so
+     * the sender takes playback back without waiting out its timeout. Neither within
+     * [PLAYBACK_START_TIMEOUT_MS] (or the player replaced): no answer; the sender's own
+     * timeout takes over.
+     */
+    private suspend fun acknowledge(session: PlayerSession, itemId: String, cmd: RemoteCommand) {
+        val target = when {
+            cmd.fromStart -> 0L
+            cmd.positionMs > 0 -> cmd.positionMs
+            else -> null
+        }
+        // "" = playing as asked, "failed" = could not play it, null = replaced meanwhile.
+        suspend fun outcome(): String? {
+            while (true) {
+                if (activePlayer !== session) return null
+                when (session.startState.value) {
+                    PlayerSession.StartState.Failed -> return "failed"
+                    PlayerSession.StartState.Playing ->
+                        if (target == null || session.positionMs() - target in -SEEK_TOLERANCE_BEFORE_MS..SEEK_TOLERANCE_AFTER_MS) return ""
+                    PlayerSession.StartState.Loading -> {}
+                }
+                delay(250)
+            }
+        }
+        val result = withTimeoutOrNull(PLAYBACK_START_TIMEOUT_MS) { outcome() }
+        if (result == null) { Timber.w("handover %s: playback not confirmed in time", cmd.handoff); return }
+        synchronized(this) { handoffAck = HandoffAck(itemId, cmd.handoff, result) }
+        session.reportStateNow()
+    }
 
     init {
         scope.launch {
@@ -175,11 +221,13 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
     @Synchronized
     fun reportState(itemId: String?, title: String, positionMs: Long, paused: Boolean) {
         if (!prefs.session.value.isLoggedIn) { latest = null; return }
-        if (handoffAck?.first != itemId) handoffAck = null // another item, or stopped
-        val handoff = handoffAck?.second.orEmpty()
+        if (handoffAck?.itemId != itemId) handoffAck = null // another item, or stopped
+        val ack = handoffAck
+        val handoff = ack?.id.orEmpty()
+        val handoffError = ack?.error.orEmpty()
         val cur = latest
-        if (cur != null && cur.itemId == itemId.orEmpty() && cur.positionMs == positionMs && cur.paused == paused && cur.handoff == handoff) return
-        val s = RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet(), handoff = handoff)
+        if (cur != null && cur.itemId == itemId.orEmpty() && cur.positionMs == positionMs && cur.paused == paused && cur.handoff == handoff && cur.handoffError == handoffError) return
+        val s = RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet(), handoff = handoff, handoffError = handoffError)
         latest = s
         states.trySend(s)
     }
@@ -239,19 +287,25 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
         // Checked again before touching this player: the send may have taken a while.
         if (!stillTarget()) return superseded()
         local.remotePause(true)
+        var failed = false
         val deadline = android.os.SystemClock.elapsedRealtime() + HANDOFF_CONFIRM_MS
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
             delay(1_000)
             if (!stillTarget()) return superseded()
             val now = refreshPlayers().firstOrNull { it.deviceId == to.deviceId }?.nowPlaying
-            if (now?.itemId == itemId && (!byId || now.handoff == handoff)) return
+            if (now?.itemId == itemId && (!byId || now.handoff == handoff)) {
+                if (now.handoffError.isEmpty()) return // playing there: done
+                failed = true // it said it could not play it: no need to wait any longer
+                break
+            }
         }
         if (!stillTarget()) return superseded()
         target.value = null
         // It may yet start late: stop it, so the episode doesn't play in two places.
         sendTo(to.deviceId, RemoteCommand(type = "stop"))
         if (activePlayer === local) local.remotePause(false)
-        say("${to.name.ifBlank { "That device" }} didn't start playing. Playing here again.")
+        val name = to.name.ifBlank { "That device" }
+        say(if (failed) "$name couldn't play it. Playing here again." else "$name didn't start playing. Playing here again.")
     }
 
     /** Sends [cmd] to the device picked right now (see [sendTo]). */

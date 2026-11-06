@@ -1159,7 +1159,7 @@ data class RemoteCommand(val type: String, val itemId: String = "", val position
 private data class RemoteCommandBody(val command: RemoteCommand)
 
 @Serializable
-data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false, val seq: Long = 0, val handoff: String = "")
+data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false, val seq: Long = 0, val handoff: String = "", val handoffError: String = "")
 
 @Serializable
 data class RemotePlayer(val deviceId: String, val name: String = "", val client: String = "", val nowPlaying: RemoteNow? = null, val caps: List<String> = emptyList())
