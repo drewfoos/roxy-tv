@@ -40,10 +40,11 @@ import androidx.tv.material3.Text
 @Composable
 fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
     val player = session.player
-    // The window flag belongs to the activity host; a page host needs the view's own flag,
-    // or the phone dozes off in the middle of an episode.
+    // Both hosts keep the screen on through the view's own flag, and only while the video
+    // plays: paused, the phone may doze and the TV reaches its screensaver as usual.
     val view = LocalView.current
-    DisposableEffect(view) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
+    val playing = !session.ui.paused
+    DisposableEffect(view, playing) { view.keepScreenOn = playing; onDispose { view.keepScreenOn = false } }
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
