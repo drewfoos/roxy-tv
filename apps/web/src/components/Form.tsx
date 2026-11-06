@@ -137,7 +137,11 @@ export function Notice({ kind = 'info', children }: { kind?: 'info' | 'error' | 
   return <div className={'notice notice--' + kind}>{children}</div>
 }
 
-/** A primary button that shows its own busy and done states. */
+/**
+ * A primary button that shows its own busy and done states. The handler resolves to false
+ * (or throws) when it failed: most handlers catch their error to show it in a notice, and
+ * the button used to flash its done label ("Saved") over that error.
+ */
 export function ActionButton({ children, onClick, disabled, kind = 'brand', done }: { children: ReactNode; onClick: () => Promise<unknown> | void; disabled?: boolean; kind?: 'brand' | 'grey' | 'outline' | 'danger'; done?: string }) {
   const [busy, setBusy] = useState(false)
   const [ok, setOk] = useState(false)
@@ -145,11 +149,13 @@ export function ActionButton({ children, onClick, disabled, kind = 'brand', done
     setBusy(true)
     setOk(false)
     try {
-      await onClick()
-      if (done) {
+      const result = await onClick()
+      if (done && result !== false) {
         setOk(true)
         setTimeout(() => setOk(false), 1600)
       }
+    } catch (e) {
+      console.error(e)
     } finally {
       setBusy(false)
     }

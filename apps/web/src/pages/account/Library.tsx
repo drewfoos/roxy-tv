@@ -37,14 +37,16 @@ export function LibraryPage() {
   // A locked title was fixed by hand, so it doesn't need attention.
   const unmatched = (manage.data?.titles ?? []).filter((t) => !t.matched && !t.locked)
 
-  const run = async (fn: () => Promise<unknown>, after?: () => void) => {
+  const run: Run = async (fn, after) => {
     setErr(null)
     try {
       await fn()
       after?.()
       manage.reload(true)
+      return true
     } catch (e) {
       setErr(errorText(e))
+      return false
     }
   }
 
@@ -117,7 +119,8 @@ export function LibraryPage() {
   )
 }
 
-type Run = (fn: () => Promise<unknown>, after?: () => void) => Promise<void>
+/** Runs a change and shows its error; false when it failed, so an ActionButton shows no done label. */
+type Run = (fn: () => Promise<unknown>, after?: () => void) => Promise<boolean>
 
 /** The media folders with Edit and Add folder (a folder browser). Also the setup wizard's media step. */
 export function MediaFolders({ onChanged }: { onChanged?: () => void }) {
@@ -132,8 +135,10 @@ export function MediaFolders({ onChanged }: { onChanged?: () => void }) {
       after?.()
       folders.reload(true)
       onChanged?.()
+      return true
     } catch (e) {
       setErr(errorText(e))
+      return false
     }
   }
   return (
@@ -327,6 +332,7 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
       setCands(r.candidates)
     } catch (e) {
       setErr(errorText(e))
+      return false
     }
   }
   return (

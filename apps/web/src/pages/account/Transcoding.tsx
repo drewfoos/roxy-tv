@@ -24,6 +24,7 @@ export function TranscodingPage() {
       reload(true)
     } catch (e) {
       setErr(errorText(e))
+      return false
     }
   }
   return (

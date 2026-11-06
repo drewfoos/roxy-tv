@@ -40,9 +40,13 @@ export function ArrPage() {
     try {
       const t = await api.testArr(kind, cfg.url.trim(), cfg.apiKey)
       setTests({ ...tests, [kind]: t })
-      if (t.error) setErr(t.error)
+      if (t.error) {
+        setErr(t.error)
+        return false
+      }
     } catch (e) {
       setErr(errorText(e))
+      return false
     }
   }
   const save = async () => {
@@ -53,6 +57,7 @@ export function ArrPage() {
       reload(true)
     } catch (e) {
       setErr(errorText(e))
+      return false
     }
   }
   const toggleTag = (key: 'tags' | 'animeTags', id: number) => {

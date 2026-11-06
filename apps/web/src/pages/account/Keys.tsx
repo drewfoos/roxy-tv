@@ -23,6 +23,7 @@ export function KeysPage() {
       tmdb.reload(true)
     } catch (e) {
       setTmdbErr(errorText(e))
+      return false
     }
   }
   const saveFanart = async () => {
@@ -33,6 +34,7 @@ export function KeysPage() {
       fanart.reload(true)
     } catch (e) {
       setFanartErr(errorText(e))
+      return false
     }
   }
 

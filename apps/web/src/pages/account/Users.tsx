@@ -72,13 +72,17 @@ function UserEditor({ user, onChanged, onGone }: { user: AccountUser; onChanged:
   if (user.isYou) return <Notice>You can't change your own level, disable or delete yourself. Change your password under Account.</Notice>
   const save = async () => {
     setError(null)
-    if (password && password.length < 8) return setError('A new password needs at least 8 characters.')
+    if (password && password.length < 8) {
+      setError('A new password needs at least 8 characters.')
+      return false
+    }
     try {
       await api.updateUser(user.id, { role: role !== user.role ? role : undefined, password: password || undefined })
       setPassword('')
       onChanged()
     } catch (e) {
       setError(errorText(e))
+      return false
     }
   }
   const toggleDisabled = async () => {
@@ -88,6 +92,7 @@ function UserEditor({ user, onChanged, onGone }: { user: AccountUser; onChanged:
       onChanged()
     } catch (e) {
       setError(errorText(e))
+      return false
     }
   }
   const remove = async () => {
@@ -132,13 +137,20 @@ function AddUser({ onDone }: { onDone: (changed: boolean) => void }) {
   const [error, setError] = useState<string | null>(null)
   const add = async () => {
     setError(null)
-    if (!name.trim()) return setError('Give them a name to sign in with.')
-    if (password.length < 8) return setError('The password needs at least 8 characters.')
+    if (!name.trim()) {
+      setError('Give them a name to sign in with.')
+      return false
+    }
+    if (password.length < 8) {
+      setError('The password needs at least 8 characters.')
+      return false
+    }
     try {
       await api.createUser(name.trim(), password, role)
       onDone(true)
     } catch (e) {
       setError(errorText(e))
+      return false
     }
   }
   return (
