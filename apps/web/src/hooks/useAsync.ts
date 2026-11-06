@@ -65,10 +65,28 @@ function cachePut(key: string, value: unknown) {
  * `freshMs`: a cached result younger than this is shown without asking again (Discover's
  * TMDB rows are ~100 KB and change slowly); 0 = always refresh in the background.
  */
+/** What a component last loaded, and for which key and cache generation (see useAsync). */
+interface Held<T> {
+  key: string | null
+  epoch: number
+  data: T | null
+  error: string | null
+  loading: boolean
+}
+
 export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unknown[] = [], freshMs = 0): AsyncState<T> {
-  const [data, setData] = useState<T | null>(() => (key && cache.has(key) ? (cacheGet(key) as T) : null))
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState<boolean>(key != null && !cache.has(key))
+  // The result is held together with the key and cache generation it belongs to, and only
+  // handed out while both still match. A plain data state kept the previous key's result
+  // for the renders between a key change and the effect below (Episode A's item while the
+  // URL already said B), and a component that stayed on screen through a profile switch
+  // kept the old profile's data the same way.
+  const [held, setHeld] = useState<Held<T>>(() => ({
+    key,
+    epoch,
+    data: key && cache.has(key) ? (cacheGet(key) as T) : null,
+    error: null,
+    loading: key != null && !cache.has(key),
+  }))
   const fnRef = useRef(fn)
   fnRef.current = fn
   const gen = useRef(0)
@@ -79,7 +97,9 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
       if (key == null) return
       const my = ++gen.current
       const myEpoch = epoch
-      if (!silent && !cache.has(key)) setLoading(true)
+      if (!silent && !cache.has(key)) {
+        setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, loading: true } : { key, epoch: myEpoch, data: null, error: null, loading: true }))
+      }
       fnRef
         .current()
         .then((d) => {
@@ -88,15 +108,13 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
           // (a component that stays on screen through the switch, like the footer).
           if (myEpoch !== epoch) return again.current(silent)
           cachePut(key, d)
-          setData(d)
-          setError(null)
-          setLoading(false)
+          setHeld({ key, epoch: myEpoch, data: d, error: null, loading: false })
         })
         .catch((e: unknown) => {
           if (my !== gen.current) return
           if (myEpoch !== epoch) return again.current(silent)
-          setError(e instanceof Error ? e.message : String(e))
-          setLoading(false)
+          const error = e instanceof Error ? e.message : String(e)
+          setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, error, loading: false } : { key, epoch: myEpoch, data: null, error, loading: false }))
         })
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,16 +128,20 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   useEffect(() => {
     if (key == null) return
     if (cache.has(key)) {
-      setData(cacheGet(key) as T)
-      setLoading(false)
+      setHeld({ key, epoch, data: cacheGet(key) as T, error: null, loading: false })
       if (!(freshMs > 0 && Date.now() - (fetchedAt.get(key) ?? 0) < freshMs)) run(true)
     } else {
-      setData(null)
+      setHeld({ key, epoch, data: null, error: null, loading: true })
       run(false)
     }
   }, [key, run, freshMs])
 
-  return { data, error, loading, reload: run }
+  if (held.key === key && held.epoch === epoch) return { data: held.data, error: held.error, loading: held.loading, reload: run }
+  // Rendering for a new key (or after a profile switch) before the effect has caught up:
+  // this key's cached result if there is one (read without reordering the cache), else
+  // nothing yet. Never the previous key's.
+  const cached = key != null && cache.has(key) ? (cache.get(key) as T) : null
+  return { data: cached, error: null, loading: key != null && cached == null, reload: run }
 }
 
 /** Forget cached pages (after sign-out or a profile switch). */
