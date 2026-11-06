@@ -22,6 +22,9 @@ import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.ui.playItem
 import java.util.Locale
 
+/** How long a handover waits for the other device to report the item playing (its own wait is 15 s). */
+private const val HANDOFF_CONFIRM_MS = 20_000L
+
 /** How long a "play" command waits for the new player to come up before the next command. */
 private const val PLAYER_START_TIMEOUT_MS = 15_000L
 
@@ -184,16 +187,40 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
         target.value = player
         watchJob?.cancel()
         if (player == null) return
-        activePlayer?.let { local ->
-            val id = local.itemId
-            if (id != null) {
-                val pos = local.positionMs()
-                local.remotePause(true)
-                scope.launch { send(RemoteCommand(type = "play", itemId = id, positionMs = pos)) }
-            }
-        }
+        activePlayer?.let { local -> local.itemId?.let { id -> scope.launch { handOver(player, local, id) } } }
         // Keep the bar's "now playing" fresh while a target is set.
         watchJob = scope.launch { while (isActive && target.value != null) { refreshPlayers(); delay(3_000) } }
+    }
+
+    /**
+     * Moves what [local] is playing to [to], in two stages. The command is sent first: if the
+     * server does not take it (the TV is gone, no network) nothing changes here, the choice
+     * of device is undone and this player keeps playing. Taken (202) only means queued, so
+     * this player pauses and the TV's own report is watched until it shows the item; if it
+     * never does within [HANDOFF_CONFIRM_MS], the device choice is undone and playback
+     * resumes here. Picking another device meanwhile ends the handover where it is. It used
+     * to pause here first and send without looking at the answer, so a failed handover left
+     * the phone paused.
+     */
+    private suspend fun handOver(to: RemotePlayer, local: PlayerSession, itemId: String) {
+        fun stillTarget() = target.value?.deviceId == to.deviceId
+        fun say(text: String) = android.widget.Toast.makeText(app, text, android.widget.Toast.LENGTH_LONG).show()
+        if (!send(RemoteCommand(type = "play", itemId = itemId, positionMs = local.positionMs()))) {
+            if (stillTarget()) target.value = null // send() already clears it when the TV is gone
+            say("Couldn't reach ${to.name.ifBlank { "that device" }}. Still playing here.")
+            return
+        }
+        local.remotePause(true)
+        val deadline = android.os.SystemClock.elapsedRealtime() + HANDOFF_CONFIRM_MS
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            delay(1_000)
+            if (!stillTarget()) return // another device (or this one) was picked: leave it be
+            if (refreshPlayers().firstOrNull { it.deviceId == to.deviceId }?.nowPlaying?.itemId == itemId) return
+        }
+        if (!stillTarget()) return
+        target.value = null
+        if (activePlayer === local) local.remotePause(false)
+        say("${to.name.ifBlank { "That device" }} didn't start playing. Playing here again.")
     }
 
     suspend fun send(cmd: RemoteCommand): Boolean {
