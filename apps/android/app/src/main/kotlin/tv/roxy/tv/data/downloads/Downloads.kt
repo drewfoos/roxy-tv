@@ -309,6 +309,12 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     }
 
     /** Whether a position for [itemId] (this profile) is waiting to be sent. */
+    /** The newest progress this profile recorded offline for [itemId] and has not sent yet. */
+    fun latestPendingProgress(itemId: String): PendingProgress? {
+        val profile = prefs.session.value.profileId
+        return _index.value.pendingProgress.filter { it.itemId == itemId && it.profileId == profile }.maxByOrNull { it.at }
+    }
+
     fun hasPendingProgress(itemId: String): Boolean {
         val profile = prefs.session.value.profileId
         return _index.value.pendingProgress.any { it.itemId == itemId && it.profileId == profile }

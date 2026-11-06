@@ -70,18 +70,28 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
         else -> fresh ?: item
     }
     val source = full.primarySource ?: return Result.failure(IllegalStateException("No media source for ${full.title}"))
-    // The server's watch state when it answered; otherwise the freshest of what is at hand
-    // (the snapshot is updated by offline playback, the item may be newer than the snapshot).
-    val serverData = fresh?.userData
-    val watched = if (fresh != null) serverData?.played == true else (full.userData?.played ?: item.userData?.played) == true
-    val position = when {
+    // Where to start, from the newest information at hand, never the largest number: a
+    // rewind or a restart is a smaller position that is still the latest. In order: the
+    // server's watch state when it answered; for a download without it, the newest report
+    // recorded offline and not yet sent, then the download's snapshot (updated by every
+    // local playback); the passed item last, as it may be an old cached copy. Taking the
+    // maximum of item and snapshot resumed at 45 min after a restart watched to 5 min.
+    val pending = if (entry != null && fresh == null) app.downloads.latestPendingProgress(item.id) else null
+    val snapshot = if (entry != null) entry.item.userData else null
+    val watched: Boolean
+    val position: Long
+    when {
+        fresh != null -> { watched = fresh.userData?.played == true; position = fresh.userData?.positionMs ?: 0L }
+        pending != null -> { watched = pending.played; position = if (pending.played) 0L else pending.positionMs }
+        snapshot != null -> { watched = snapshot.played; position = snapshot.positionMs }
+        else -> { watched = item.userData?.played == true; position = item.userData?.positionMs ?: 0L }
+    }
+    val startAt = when {
         fromStart -> 0L
         startMs != null -> startMs
-        fresh != null -> serverData?.positionMs ?: 0L
-        entry != null -> listOfNotNull(item.userData?.positionMs, full.userData?.positionMs).maxOrNull() ?: 0L
-        else -> item.userData?.positionMs ?: 0L
+        else -> position
     }
-    val start = if (watched && position == 0L) 0 else (position / 1000).toInt()
+    val start = if (watched && startAt == 0L) 0 else (startAt / 1000).toInt()
     val url = local?.path ?: runCatching { app.api.streamUrl(source.id, app.api.mediaToken(source.id)) }.getOrElse { return Result.failure(it) }
     return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, explicitStart = fromStart || startMs != null, local = local != null))
 }
