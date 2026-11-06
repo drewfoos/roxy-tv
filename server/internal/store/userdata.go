@@ -119,16 +119,30 @@ func (s *Store) finishPlay(ctx context.Context, userID, guid, asOf string) (bool
 	return applied(res, err)
 }
 
-// MarkPlayed sets played (incrementing play count) or unplayed (resetting position).
+// MarkPlayed sets played or unplayed (resetting position). Marking an unplayed item
+// watched counts a play now; an item already played keeps its play count and last
+// played time, so "mark all watched" over a season half seen does not count the seen
+// half again or move it to the top of history.
 func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool) error {
+	return markPlayed(ctx, s.db, userID, guid, played)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func markPlayed(ctx context.Context, db execer, userID, guid string, played bool) error {
 	if played {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
+		_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
 			VALUES (?, ?, 0, 1, 1, ?)
-			ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, play_count = user_item_data.play_count + 1, played = 1, last_played_at = excluded.last_played_at`,
+			ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0,
+				play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 THEN 0 ELSE 1 END,
+				last_played_at = CASE WHEN user_item_data.played = 1 THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
+				played = 1`,
 			userID, guid, Now())
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played) VALUES (?, ?, 0, 0)
+	_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played) VALUES (?, ?, 0, 0)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0`, userID, guid)
 	return err
 }
@@ -138,6 +152,7 @@ func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool
 // series' progress is derived from its episodes. Marking watched skips placeholders
 // (missing or unaired episodes): they share the GUID of the file that arrives later,
 // which would otherwise show up already watched. Marking unwatched clears them too.
+// One transaction: a failure part way leaves the season as it was, not half marked.
 func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, played bool) error {
 	q := `WITH RECURSIVE tree(id) AS (
 			SELECT id FROM items WHERE id = ?
@@ -148,7 +163,12 @@ func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, play
 	if played {
 		q += ` AND is_virtual = 0`
 	}
-	rows, err := s.db.QueryContext(ctx, q, itemID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, q, itemID)
 	if err != nil {
 		return err
 	}
@@ -161,13 +181,17 @@ func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, play
 		}
 		guids = append(guids, g)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
 	rows.Close()
 	for _, g := range guids {
-		if err := s.MarkPlayed(ctx, userID, g, played); err != nil {
+		if err := markPlayed(ctx, tx, userID, g, played); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) SetFavorite(ctx context.Context, userID, guid string, fav bool) error {
