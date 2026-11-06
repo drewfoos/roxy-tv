@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 // A player keeps reporting after the played threshold; only the first report of a
@@ -99,5 +102,81 @@ func TestRewatchClearsWatched(t *testing.T) {
 	}
 	if d := get(); !d.Played || d.PositionMs != 0 || d.PlayCount != 2 {
 		t.Fatalf("finished again: played %v position %d plays %d, want watched at 0, 2 plays", d.Played, d.PositionMs, d.PlayCount)
+	}
+}
+
+// A replayed offline report (made at `at`, sent later) applies only if nothing newer was
+// recorded for the item; the check is part of the write.
+func TestProgressAsOf(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	pos := func(g string) (int64, bool) {
+		d, err := s.GetUserItemData(ctx, "u", g)
+		if err != nil || d == nil {
+			t.Fatalf("user data %s: %v %v", g, d, err)
+		}
+		return d.PositionMs, d.Played
+	}
+	hourAgo := time.Now().Add(-time.Hour)
+
+	// Nothing recorded yet: an old report is the best there is.
+	if ok, err := s.SetProgressAsOf(ctx, "u", "new", hourAgo, 90_000, nil, nil); err != nil || !ok {
+		t.Fatalf("first report not applied: %v %v", ok, err)
+	}
+	// Watched further live since: the older report must not wind it back.
+	if err := s.SetProgress(ctx, "u", "g", 600_000, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.SetProgressAsOf(ctx, "u", "g", hourAgo, 1_000, nil, nil); err != nil || ok {
+		t.Fatalf("older report applied: %v %v", ok, err)
+	}
+	if p, _ := pos("g"); p != 600_000 {
+		t.Fatalf("wound back to %d", p)
+	}
+	if ok, err := s.FinishPlayAsOf(ctx, "u", "g", hourAgo); err != nil || ok {
+		t.Fatalf("older finish applied: %v %v", ok, err)
+	}
+	// Made after the latest activity: applied.
+	if ok, err := s.SetProgressAsOf(ctx, "u", "g", time.Now().Add(time.Minute), 700_000, nil, nil); err != nil || !ok {
+		t.Fatalf("newer report not applied: %v %v", ok, err)
+	}
+	if ok, err := s.FinishPlayAsOf(ctx, "u", "g", time.Now().Add(2*time.Minute)); err != nil || !ok {
+		t.Fatalf("newer finish not applied: %v %v", ok, err)
+	}
+	if _, played := pos("g"); !played {
+		t.Fatal("finish not recorded")
+	}
+}
+
+// A live report and an older replayed one racing for the same item: whichever lands
+// first, the live position must win (a separate check-then-write could lose it).
+func TestProgressAsOfRacesLiveReport(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	for i := 0; i < 50; i++ {
+		g := fmt.Sprintf("g%d", i)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = s.SetProgress(ctx, "u", g, 600_000, nil, nil) }()
+		go func() { defer wg.Done(); _, _ = s.SetProgressAsOf(ctx, "u", g, old, 1_000, nil, nil) }()
+		wg.Wait()
+		if d, err := s.GetUserItemData(ctx, "u", g); err != nil || d == nil || d.PositionMs != 600_000 {
+			t.Fatalf("round %d: live position lost: %+v %v", i, d, err)
+		}
 	}
 }

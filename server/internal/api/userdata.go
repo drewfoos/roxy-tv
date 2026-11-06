@@ -100,37 +100,34 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "item not found")
 		return
 	}
-	if body.At > 0 {
-		cur, err := s.store.GetUserItemData(r.Context(), p.ScopeID, it.GUID)
-		if err != nil {
-			writeError(w, 500, err.Error())
-			return
-		}
-		if cur != nil && staleReport(body.At, cur.LastPlayedAt) {
-			slog.Info("progress: older than the item's latest activity, ignored", "item", it.Title, "positionMs", body.PositionMs)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-	}
 	played := it.RuntimeMs != nil && *it.RuntimeMs > 0 && float64(body.PositionMs) >= float64(*it.RuntimeMs)*playedThreshold
-	if played {
+	// A replayed offline report (At set) from before the item's latest activity (finished
+	// or watched further on another device since) would wind it back, and on a watched
+	// episode leave it watched and part-way at once. The AsOf writes drop it, checking in
+	// the same statement as the write: a separate read first let a live report from another
+	// device land in between and then be overwritten by the older one.
+	applied := true
+	switch {
+	case body.At > 0 && played:
+		applied, err = s.store.FinishPlayAsOf(r.Context(), p.ScopeID, it.GUID, time.UnixMilli(body.At))
+	case body.At > 0:
+		applied, err = s.store.SetProgressAsOf(r.Context(), p.ScopeID, it.GUID, time.UnixMilli(body.At), body.PositionMs, body.AudioIndex, body.SubtitleIndex)
+	case played:
 		err = s.store.FinishPlay(r.Context(), p.ScopeID, it.GUID)
-		slog.Info("playback finished", "user", p.User.Name, "item", it.Title, "positionMs", body.PositionMs)
-	} else {
+	default:
 		err = s.store.SetProgress(r.Context(), p.ScopeID, it.GUID, body.PositionMs, body.AudioIndex, body.SubtitleIndex)
 	}
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
+	switch {
+	case !applied:
+		slog.Info("progress: older than the item's latest activity, ignored", "item", it.Title, "positionMs", body.PositionMs)
+	case played:
+		slog.Info("playback finished", "user", p.User.Name, "item", it.Title, "positionMs", body.PositionMs)
+	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// staleReport: a replayed offline position from before the item's latest activity
-// (finished or watched further on another device since) would wind it back, and on a
-// watched episode leave it watched and part-way at once. Such a report is dropped.
-func staleReport(atMs int64, lastPlayed time.Time) bool {
-	return atMs > 0 && !lastPlayed.IsZero() && time.UnixMilli(atMs).Before(lastPlayed)
 }
 
 // POST|DELETE /v1/me/played/{itemId}

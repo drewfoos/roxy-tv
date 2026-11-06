@@ -55,16 +55,43 @@ const RewatchMinMs = 30_000
 // On a watched item it follows [RewatchMinMs]: a watched item is never also part-way,
 // which used to show "Watched" in the episode list and "Resume" on Home at once.
 func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
+	_, err := s.setProgress(ctx, userID, guid, positionMs, audio, sub, "")
+	return err
+}
+
+// SetProgressAsOf is SetProgress for a report made at [at] and sent later (a phone
+// replaying what it watched offline): it applies only if nothing newer was recorded for
+// the item meanwhile (last_played_at not after at). The check is part of the same
+// statement, so a live report from another device cannot land between a separate check
+// and the write and then be wound back. False when it was not applied.
+func (s *Store) SetProgressAsOf(ctx context.Context, userID, guid string, at time.Time, positionMs int64, audio, sub *int) (bool, error) {
+	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, at.UTC().Format(TimeFormat))
+}
+
+// unlessNewer is the upsert condition for the AsOf writes: no activity recorded, or none
+// after the report's time. TimeFormat is fixed width UTC, so the text compares in order.
+// An empty asOf applies always.
+const unlessNewer = ` WHERE ? = '' OR user_item_data.last_played_at IS NULL OR user_item_data.last_played_at = '' OR user_item_data.last_played_at <= ?`
+
+func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int, asOf string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
 			position_ms = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.position_ms ELSE excluded.position_ms END,
 			last_played_at = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
 			played = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN 1 ELSE 0 END,
 			audio_stream_index = COALESCE(excluded.audio_stream_index, user_item_data.audio_stream_index),
-			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`,
-		userID, guid, positionMs, Now(), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs)
-	return err
+			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`+unlessNewer,
+		userID, guid, positionMs, Now(), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs, asOf, asOf)
+	return applied(res, err)
+}
+
+func applied(res sql.Result, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // FinishPlay records reaching the end of an item during playback. A player keeps
@@ -72,13 +99,24 @@ func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs
 // the credits), so only the first report of a viewing counts as a play: one already
 // marked played and back at position 0 is left alone.
 func (s *Store) FinishPlay(ctx context.Context, userID, guid string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
+	_, err := s.finishPlay(ctx, userID, guid, "")
+	return err
+}
+
+// FinishPlayAsOf is FinishPlay for a report made at [at] and sent later; like
+// SetProgressAsOf it applies only if nothing newer was recorded meanwhile.
+func (s *Store) FinishPlayAsOf(ctx context.Context, userID, guid string, at time.Time) (bool, error) {
+	return s.finishPlay(ctx, userID, guid, at.UTC().Format(TimeFormat))
+}
+
+func (s *Store) finishPlay(ctx context.Context, userID, guid, asOf string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
 		VALUES (?, ?, 0, 1, 1, ?)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
 			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 AND user_item_data.position_ms = 0 THEN 0 ELSE 1 END,
-			position_ms = 0, played = 1, last_played_at = excluded.last_played_at`,
-		userID, guid, Now())
-	return err
+			position_ms = 0, played = 1, last_played_at = excluded.last_played_at`+unlessNewer,
+		userID, guid, Now(), asOf, asOf)
+	return applied(res, err)
 }
 
 // MarkPlayed sets played (incrementing play count) or unplayed (resetting position).
