@@ -210,6 +210,13 @@ class PlayerSession(
     private var countdownJob: Job? = null
     /** True from "load the next file" until it has loaded, so the old file's end events are ignored. */
     @Volatile private var switching = false
+    /**
+     * True from playNext until the next episode's file has loaded. [itemId] already names
+     * the next episode then, but for a stream mpv keeps playing the old file until the
+     * server's subtitle languages (and a media token) come back, so its position and tracks
+     * belong to the previous episode and must not be reported under the new id.
+     */
+    @Volatile private var changingItem = false
     /** This file's end was reported (EOF and END_FILE both arrive at the end). */
     private var endReported = false
     // The age rating card: what it says, and whether it is up (a few seconds per title).
@@ -284,6 +291,7 @@ class PlayerSession(
             override fun onFileLoaded() {
                 if (startState.value == StartState.Loading && startProbeSec == null) startProbeSec = player.timePosSeconds() ?: 0.0
                 switching = false
+                changingItem = false
                 endReported = false
                 if (reconnecting) { reconnecting = false; flashOsd(null) }
                 stallTicks = 0; stallShown = false; waitingAt = null
@@ -313,7 +321,7 @@ class PlayerSession(
 
             override fun onLoadFailed() {
                 if (startState.value == StartState.Loading) startState.value = StartState.Failed
-                if (local) { switching = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
+                if (local) { switching = false; changingItem = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
                 val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
                 reconnect(at)
             }
@@ -603,6 +611,7 @@ class PlayerSession(
         itemId?.let { finished -> markWatched(finished) }
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
         switching = true
+        changingItem = true
         next = null
         itemId = req.item.id
         sourceId = req.sourceId
@@ -1043,6 +1052,9 @@ class PlayerSession(
     fun reportProgress(reason: String, atSec: Double? = null) {
         val id = itemId ?: return
         if (!app.prefs.session.value.isLoggedIn) return
+        // Mid-switch the player still holds the previous episode (see changingItem); only a
+        // caller that names the position (a reconnect of the new file) may report.
+        if (changingItem && atSec == null) return
         val pos = atSec ?: runCatching { player.timePosSeconds() }.getOrNull() ?: return
         val positionMs = (pos * 1000).toLong()
         if (positionMs <= 0) return
@@ -1103,7 +1115,11 @@ class PlayerSession(
     fun remoteSeekBy(seconds: Int) { main.post { if (!destroyed) actions.seekBy(seconds) } }
     fun remoteNext() { main.post { if (!destroyed) playNext() } }
     fun remoteStop() { main.post { if (!destroyed) { reportProgress("stop"); host.back() } } }
-    fun positionMs(): Long = ((runCatching { player.timePosSeconds() }.getOrNull() ?: 0.0) * 1000).toLong()
+    fun positionMs(): Long {
+        // While the next episode loads, mpv's clock is still the previous one's.
+        if (changingItem) return ((pendingStart ?: 0.0) * 1000).toLong()
+        return ((runCatching { player.timePosSeconds() }.getOrNull() ?: 0.0) * 1000).toLong()
+    }
 
     /** Reports this player's state for "Play on" right away (after a handed-over play is up). */
     fun reportStateNow() { itemId?.let { app.remote.reportState(it, title, positionMs(), ui.paused) } }
