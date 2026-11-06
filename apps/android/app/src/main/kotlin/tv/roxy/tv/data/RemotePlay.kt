@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,6 +13,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.RemoteCommand
+import tv.roxy.tv.api.RemoteNow
 import tv.roxy.tv.api.RemotePlayer
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.isTelevision
@@ -96,13 +98,28 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
 
     private var lastState: String? = null
 
+    // Every report is numbered (starting from the clock, so a restarted app keeps counting
+    // up) and sent by one coroutine, in order, one at a time; the queue keeps only the
+    // newest unsent report. Each used to be its own coroutine, so a "playing" report could
+    // reach the server after the "stopped" sent later and show the episode playing again.
+    // The server also drops a number older than the last it took (Hub.SetNowPlaying).
+    private val stateSeq = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000)
+    private val states = Channel<RemoteNow>(Channel.CONFLATED)
+
+    init {
+        scope.launch {
+            for (s in states) runCatching { api.sessionState(s) }.onFailure { Timber.d("remote state: %s", it.message) }
+        }
+    }
+
     /** Called by the local player on every progress report and on stop (itemId null). */
+    @Synchronized
     fun reportState(itemId: String?, title: String, positionMs: Long, paused: Boolean) {
         if (!prefs.session.value.isLoggedIn) return
         val key = "$itemId:$positionMs:$paused"
         if (key == lastState) return
         lastState = key
-        scope.launch { runCatching { api.sessionState(itemId, title, positionMs, paused) }.onFailure { Timber.d("remote state: %s", it.message) } }
+        states.trySend(RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet()))
     }
 
     // ---- as a remote ----

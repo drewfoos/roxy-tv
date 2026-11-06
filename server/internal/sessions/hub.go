@@ -50,8 +50,9 @@ type Player struct {
 
 type player struct {
 	Player
-	userID string
-	cmds   chan Command
+	userID   string
+	cmds     chan Command
+	stateSeq int64 // the newest SetNowPlaying sequence number accepted
 }
 
 type Hub struct {
@@ -117,14 +118,27 @@ func (h *Hub) Send(deviceID, userID string, c Command) bool {
 	}
 }
 
-// SetNowPlaying records what a player is doing (nil when it stopped).
-func (h *Hub) SetNowPlaying(deviceID string, now *NowPlaying) {
+// SetNowPlaying records what a player is doing (nil when it stopped). seq is the
+// player's own increasing number for its reports: one not newer than the last accepted
+// is out of date (reports can overtake each other on the way) and is ignored, so a late
+// "playing A" cannot undo the "stopped" sent after it. 0 means the client sends no
+// numbers (older apps): always accepted. False when the report was ignored.
+func (h *Hub) SetNowPlaying(deviceID string, now *NowPlaying, seq int64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if p := h.players[deviceID]; p != nil {
-		p.NowPlaying = now
-		p.LastSeen = time.Now()
+	p := h.players[deviceID]
+	if p == nil {
+		return false
 	}
+	p.LastSeen = time.Now() // a late report still shows the player is there
+	if seq > 0 {
+		if seq <= p.stateSeq {
+			return false
+		}
+		p.stateSeq = seq
+	}
+	p.NowPlaying = now
+	return true
 }
 
 // Connected: the login's players polling right now (this one included), by device id.

@@ -43,8 +43,8 @@ func (s *Server) sessionCommands(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"command": cmd})
 }
 
-// POST /v1/sessions/state {itemId, title?, positionMs, paused} -> 204. An empty itemId
-// means the player stopped.
+// POST /v1/sessions/state {itemId, title?, positionMs, paused, seq?} -> 204. An empty
+// itemId means the player stopped. seq orders the reports (see Hub.SetNowPlaying).
 func (s *Server) sessionState(w http.ResponseWriter, r *http.Request) {
 	p := userFrom(w, r)
 	if p == nil {
@@ -54,16 +54,19 @@ func (s *Server) sessionState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "a device login is required")
 		return
 	}
-	var body sessions.NowPlaying
+	var body struct {
+		sessions.NowPlaying
+		Seq int64 `json:"seq"`
+	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, 400, "invalid request body")
 		return
 	}
+	now := &body.NowPlaying
 	if body.ItemID == "" {
-		s.hub.SetNowPlaying(p.DeviceID, nil)
-	} else {
-		s.hub.SetNowPlaying(p.DeviceID, &body)
+		now = nil
 	}
+	s.hub.SetNowPlaying(p.DeviceID, now, body.Seq)
 	w.WriteHeader(http.StatusNoContent)
 }
 

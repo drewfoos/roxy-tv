@@ -415,8 +415,9 @@ class RoxyApi(private val prefs: Prefs) {
         }
     }
 
-    suspend fun sessionState(itemId: String?, title: String, positionMs: Long, paused: Boolean) =
-        postNoBody("/v1/sessions/state", json.encodeToString(RemoteNow.serializer(), RemoteNow(itemId.orEmpty(), title, positionMs, paused)))
+    /** This player's state for "Play on" ([RemoteNow.seq] orders the reports; see RemotePlay.reportState). */
+    suspend fun sessionState(state: RemoteNow) =
+        postNoBody("/v1/sessions/state", json.encodeToString(RemoteNow.serializer(), state))
 
     suspend fun sessionPlayers(): List<RemotePlayer> = get<RemotePlayers>("/v1/sessions/players").players
 
@@ -1157,7 +1158,7 @@ data class RemoteCommand(val type: String, val itemId: String = "", val position
 private data class RemoteCommandBody(val command: RemoteCommand)
 
 @Serializable
-data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false)
+data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false, val seq: Long = 0)
 
 @Serializable
 data class RemotePlayer(val deviceId: String, val name: String = "", val client: String = "", val nowPlaying: RemoteNow? = null)
