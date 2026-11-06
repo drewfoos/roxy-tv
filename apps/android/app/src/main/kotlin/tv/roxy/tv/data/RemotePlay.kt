@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.RemoteCommand
@@ -20,6 +21,9 @@ import tv.roxy.tv.isTelevision
 import tv.roxy.tv.player.PlayerSession
 import tv.roxy.tv.ui.playItem
 import java.util.Locale
+
+/** How long a "play" command waits for the new player to come up before the next command. */
+private const val PLAYER_START_TIMEOUT_MS = 15_000L
 
 /** A failed "Play on" status report is sent again after this long, doubling up to the max. */
 private const val STATE_RETRY_MIN_MS = 5_000L
@@ -76,20 +80,35 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
         }
     }
 
-    private fun handle(cmd: RemoteCommand) {
+    /**
+     * Commands are handled one at a time, in the order the poll receives them. "play" runs
+     * here, not in a coroutine of its own, and returns only once the new player is up with
+     * that item (or [PLAYER_START_TIMEOUT_MS] passed): it used to return at once, so a
+     * pause, seek or stop sent right after it reached the previous player (or none) while
+     * the item was still loading, and the new episode then started playing anyway. Until
+     * this returns the poll is not asked again, so the commands sent meanwhile wait on the
+     * server (well inside its 30 s CommandTTL) and then drive the new player.
+     */
+    private suspend fun handle(cmd: RemoteCommand) {
+        if (cmd.type == "play") {
+            val itemId = runCatching {
+                val item = api.item(cmd.itemId)
+                // Handing over mid-episode: the sender's position becomes the saved one first.
+                if (cmd.positionMs > 0) runCatching { api.progress(item.id, cmd.positionMs) }
+                app.items.put(item)
+                // A position or "from the start" is explicit: a player already showing this
+                // item jumps there instead of carrying on where it was.
+                playItem(app, item, fromStart = cmd.fromStart, startMs = cmd.positionMs.takeIf { it > 0 }).getOrThrow()
+                item.id
+            }.onFailure { Timber.w(it, "remote play") }.getOrNull() ?: return
+            val up = withTimeoutOrNull(PLAYER_START_TIMEOUT_MS) {
+                while (activePlayer?.itemId != itemId) delay(100)
+            }
+            if (up == null) Timber.w("remote play: no player showing %s after %d ms; carrying on", itemId, PLAYER_START_TIMEOUT_MS)
+            return
+        }
         val p = activePlayer
         when (cmd.type) {
-            "play" -> scope.launch {
-                runCatching {
-                    val item = api.item(cmd.itemId)
-                    // Handing over mid-episode: the sender's position becomes the saved one first.
-                    if (cmd.positionMs > 0) runCatching { api.progress(item.id, cmd.positionMs) }
-                    app.items.put(item)
-                    // A position or "from the start" is explicit: a player already showing this
-                    // item jumps there instead of carrying on where it was.
-                    playItem(app, item, fromStart = cmd.fromStart, startMs = cmd.positionMs.takeIf { it > 0 }).getOrThrow()
-                }.onFailure { Timber.w(it, "remote play") }
-            }
             "pause" -> p?.remotePause(true)
             "resume" -> p?.remotePause(false)
             "toggle" -> p?.remoteToggle()
