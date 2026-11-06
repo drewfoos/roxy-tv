@@ -1,6 +1,7 @@
 package tv.roxy.tv.ui
 
 import android.content.Context
+import kotlinx.coroutines.async
 import tv.roxy.tv.api.RemoteCommand
 import android.content.Intent
 import android.app.Activity
@@ -38,23 +39,45 @@ data class PlayRequest(
  * download time standing in for the server. Otherwise the item is fetched when it carries
  * no `mediaSources` (Home rows may omit them). Resumes from `userData.positionMs` unless
  * [fromStart] or the item already counts as watched.
+ *
+ * The position comes from the server whenever it answers: the [item] handed in may be a
+ * cached copy (a row loaded an hour ago, another device watched since), so its userData is
+ * only a fallback. A download asks briefly and plays from its snapshot when the server is
+ * away; a position recorded offline and not yet sent is fresher than the server's.
  */
 suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false, startMs: Long? = null): Result<PlayRequest> {
     val app = RoxyApp.get(context)
     val local = app.downloads.localFile(item.id)
     val entry = if (local != null) app.downloads.entry(item.id) else null
+    val explicit = fromStart || startMs != null
+    // The server's current copy, when it is needed and reachable. A download never waits long
+    // for it: offline playback must start at once.
+    val fresh: Item? = when {
+        entry != null -> if (explicit || app.downloads.hasPendingProgress(item.id) || !app.prefs.session.value.isLoggedIn) null
+            else {
+                // The HTTP call blocks its thread and ignores cancellation, so it runs apart
+                // and only the wait for it is cut short.
+                val call = app.scope.async(kotlinx.coroutines.Dispatchers.IO) { runCatching { app.api.item(item.id) }.getOrNull() }
+                kotlinx.coroutines.withTimeoutOrNull(3_000) { call.await() }
+            }
+        item.mediaSources.isEmpty() -> runCatching { app.api.item(item.id) }.getOrElse { return Result.failure(it) }
+        else -> runCatching { app.api.item(item.id) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+    }
     val full = when {
         entry != null -> entry.item
-        item.mediaSources.isEmpty() -> runCatching { app.api.item(item.id) }.getOrElse { return Result.failure(it) }
-        else -> item
+        else -> fresh ?: item
     }
     val source = full.primarySource ?: return Result.failure(IllegalStateException("No media source for ${full.title}"))
-    // Freshest position wins: the server's when we have it, else the snapshot's (updated by offline playback).
-    val watched = (full.userData?.played ?: item.userData?.played) == true
+    // The server's watch state when it answered; otherwise the freshest of what is at hand
+    // (the snapshot is updated by offline playback, the item may be newer than the snapshot).
+    val serverData = fresh?.userData
+    val watched = if (fresh != null) serverData?.played == true else (full.userData?.played ?: item.userData?.played) == true
     val position = when {
         fromStart -> 0L
         startMs != null -> startMs
-        else -> listOfNotNull(item.userData?.positionMs, full.userData?.positionMs).maxOrNull() ?: 0L
+        fresh != null -> serverData?.positionMs ?: 0L
+        entry != null -> listOfNotNull(item.userData?.positionMs, full.userData?.positionMs).maxOrNull() ?: 0L
+        else -> item.userData?.positionMs ?: 0L
     }
     val start = if (watched && position == 0L) 0 else (position / 1000).toInt()
     val url = local?.path ?: runCatching { app.api.streamUrl(source.id, app.api.mediaToken(source.id)) }.getOrElse { return Result.failure(it) }
