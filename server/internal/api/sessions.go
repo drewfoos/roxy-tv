@@ -121,7 +121,17 @@ func (s *Server) sessionCommand(w http.ResponseWriter, r *http.Request) {
 	if cmd.From == "" {
 		cmd.From = r.URL.Query().Get("from")
 	}
-	if !s.hub.Send(chi.URLParam(r, "device"), p.UserID, cmd) {
+	target := chi.URLParam(r, "device")
+	// The target must still be signed in: the hub may not have heard of a sign-out yet
+	// (an idle device expired, or a poll that started just before it was signed out).
+	if ok, err := s.store.DeviceSignedIn(r.Context(), p.UserID, target); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	} else if !ok {
+		writeError(w, 404, "that player is not connected")
+		return
+	}
+	if !s.hub.Send(target, p.UserID, cmd) {
 		writeError(w, 404, "that player is not connected")
 		return
 	}
@@ -191,6 +201,7 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "no such device")
 		return
 	}
+	s.hub.Remove(id) // gone from "Play on" at once, not after its poll goes stale
 	w.WriteHeader(http.StatusNoContent)
 }
 

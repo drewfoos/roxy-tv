@@ -64,7 +64,8 @@ type player struct {
 	Player
 	userID   string
 	cmds     chan queued
-	stateSeq int64 // the newest SetNowPlaying sequence number accepted
+	gone     chan struct{} // closed when the device is signed out (Remove): ends its poll
+	stateSeq int64         // the newest SetNowPlaying sequence number accepted
 }
 
 type Hub struct {
@@ -94,16 +95,19 @@ func New() *Hub { return &Hub{players: map[string]*player{}} }
 // touch registers or refreshes a player and returns its command queue (read under the
 // lock: a player coming back after going stale gets a new, empty queue, so commands
 // queued while it was away are never run).
-func (h *Hub) touch(deviceID, userID, name, client string, caps []string) chan queued {
+func (h *Hub) touch(deviceID, userID, name, client string, caps []string) (chan queued, chan struct{}) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	p := h.players[deviceID]
 	if p == nil {
-		p = &player{cmds: make(chan queued, 8)}
+		p = &player{cmds: make(chan queued, 8), gone: make(chan struct{})}
 		p.DeviceID = deviceID
 		h.players[deviceID] = p
 	} else if nowFn().Sub(p.LastSeen) > Stale {
+		// Back after going stale: a fresh queue (see above), and no "now playing" from
+		// before the absence; the player reports what it is doing now on its own.
 		p.cmds = make(chan queued, 8)
+		p.NowPlaying = nil
 	}
 	p.userID = userID
 	if name != "" {
@@ -114,16 +118,52 @@ func (h *Hub) touch(deviceID, userID, name, client string, caps []string) chan q
 	}
 	p.Caps = caps
 	p.LastSeen = nowFn()
-	return p.cmds
+	return p.cmds, p.gone
+}
+
+// Remove forgets a device that was signed out: it is no longer listed, commands to it
+// fail, and a poll it has open ends at once. It used to stay "connected" until it went
+// stale (60 s), so another device could still drive a TV that had just been signed out.
+func (h *Hub) Remove(deviceID string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.removeLocked(deviceID)
+}
+
+// RemoveUser is Remove for every device of a login except keep (a password change keeps
+// the device it was made on; "" removes all).
+func (h *Hub) RemoveUser(userID, keep string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, p := range h.players {
+		if p.userID == userID && id != keep {
+			h.removeLocked(id)
+		}
+	}
+}
+
+func (h *Hub) removeLocked(deviceID string) {
+	if p := h.players[deviceID]; p != nil {
+		delete(h.players, deviceID)
+		close(p.gone)
+	}
 }
 
 // Wait registers the player (or refreshes it) and returns its next command, or false
 // when ctx ends first (the long poll's deadline, or the client going away).
 // Commands older than CommandTTL are dropped, not returned.
 func (h *Hub) Wait(ctx context.Context, deviceID, userID, name, client string, caps []string) (Command, bool) {
-	cmds := h.touch(deviceID, userID, name, client, caps)
+	cmds, gone := h.touch(deviceID, userID, name, client, caps)
 	for {
 		select {
+		case <-gone:
+			return Command{}, false // signed out
 		case q := <-cmds:
 			if nowFn().Sub(q.at) > CommandTTL {
 				continue // sent while the player was away
@@ -200,7 +240,7 @@ func (h *Hub) List(userID, exceptDevice string) []Player {
 	out := []Player{}
 	for id, p := range h.players {
 		if nowFn().Sub(p.LastSeen) > Stale {
-			delete(h.players, id)
+			h.removeLocked(id)
 			continue
 		}
 		if p.userID != userID || id == exceptDevice {

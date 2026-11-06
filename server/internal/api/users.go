@@ -178,6 +178,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	if signOut {
+		s.hub.RemoveUser(u.ID, "") // their players leave "Play on" at once
+	}
 	slog.Info("user updated", "name", u.Name, "role", u.Role, "disabled", u.IsDisabled, "password_reset", b.Password != nil, "by", p.User.Name)
 	writeJSON(w, 200, viewUser(u, p.UserID))
 }
@@ -208,6 +211,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	s.hub.RemoveUser(u.ID, "")
 	slog.Info("user deleted", "name", u.Name, "by", p.User.Name)
 	w.WriteHeader(http.StatusNoContent)
 }

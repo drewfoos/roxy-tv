@@ -159,6 +159,13 @@ func (s *Store) DeleteDevice(ctx context.Context, id string) error {
 	return err
 }
 
+// DeviceSignedIn: deviceID is a device of userID that is still signed in.
+func (s *Store) DeviceSignedIn(ctx context.Context, userID, deviceID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND user_id = ?`, deviceID, userID).Scan(&n)
+	return n > 0, err
+}
+
 // DeleteDevicesExcept signs a user out everywhere but keepID (after a password change).
 func (s *Store) DeleteDevicesExcept(ctx context.Context, userID, keepID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE user_id = ? AND id <> ?`, userID, keepID)

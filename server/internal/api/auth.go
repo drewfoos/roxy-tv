@@ -99,6 +99,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	var retry *auth.RetryError
 	switch {
 	case err == nil:
+		s.hub.RemoveUser(p.UserID, p.DeviceID) // the other devices were signed out
 		slog.Info("password changed", "user", p.User.Name)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.As(err, &retry):
@@ -119,6 +120,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFrom(r.Context())
 	if p != nil && p.DeviceID != "" {
 		_ = s.store.DeleteDevice(r.Context(), p.DeviceID)
+		s.hub.Remove(p.DeviceID)
 	}
 	auth.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)

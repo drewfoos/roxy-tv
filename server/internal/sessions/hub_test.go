@@ -167,3 +167,69 @@ func TestHandoffIdRoundTrip(t *testing.T) {
 		t.Fatalf("caps not kept: %v", p.Caps)
 	}
 }
+
+// Signing a device out takes it off "Play on" at once: its open poll ends, it is no longer
+// listed, and commands to it fail (it used to stay connected until it went stale).
+func TestRemoveEndsPollAndCommands(t *testing.T) {
+	h := New()
+	polled := make(chan bool, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, ok := h.Wait(ctx, "tv", "u1", "TV", "android", nil)
+		polled <- ok
+	}()
+	for i := 0; len(h.Connected("u1")) == 0; i++ { // wait until it is registered
+		if i > 200 {
+			t.Fatal("player never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.Remove("tv")
+	select {
+	case ok := <-polled:
+		if ok {
+			t.Fatal("the poll returned a command after sign-out")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the open poll did not end on sign-out")
+	}
+	if len(h.Connected("u1")) != 0 || h.Send("tv", "u1", Command{Type: "pause"}) {
+		t.Fatal("a signed-out device is still reachable")
+	}
+}
+
+// A password change signs out every device of the login but the one it was made on.
+func TestRemoveUserKeepsOneDevice(t *testing.T) {
+	h := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, d := range []string{"tv", "phone", "laptop"} {
+		h.Wait(ctx, d, "u1", d, "x", nil)
+	}
+	h.Wait(ctx, "other", "u2", "other", "x", nil)
+	h.RemoveUser("u1", "phone")
+	if c := h.Connected("u1"); len(c) != 1 || c["phone"].DeviceID != "phone" {
+		t.Fatalf("left connected: %v", c)
+	}
+	if len(h.Connected("u2")) != 1 {
+		t.Fatal("another login's device was removed")
+	}
+}
+
+// A player back after going stale shows no "now playing" from before its absence.
+func TestStaleReconnectClearsNowPlaying(t *testing.T) {
+	clock := time.Now()
+	nowFn = func() time.Time { return clock }
+	t.Cleanup(func() { nowFn = time.Now })
+	h := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.Wait(ctx, "tv", "u1", "TV", "android", nil)
+	h.SetNowPlaying("tv", &NowPlaying{ItemID: "A"}, 1)
+	clock = clock.Add(2 * Stale)
+	h.Wait(ctx, "tv", "u1", "TV", "android", nil) // back
+	if np := h.Connected("u1")["tv"].NowPlaying; np != nil {
+		t.Fatalf("stale state shown after reconnect: %+v", np)
+	}
+}
