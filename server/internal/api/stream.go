@@ -271,7 +271,7 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if err := probe.ExtractTextSubtitle(r.Context(), s.ff, video, st.Index, st.Codec, path); err != nil {
+			if err := probe.EnsureTextSubtitle(r.Context(), s.ff, video, st.Index, st.Codec, path); err != nil {
 				writeError(w, 500, err.Error())
 				return
 			}

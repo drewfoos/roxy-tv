@@ -403,6 +403,10 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 		src.Attachments[i].SourceID = sourceID
 	}
 
+	// A file replaced in place (same path, so same source id) must not keep the old
+	// file's subtitles and seek thumbnails: both caches are reused whenever they exist.
+	l.dropStaleCaches(ctx, path, sourceID, res.Size, res.ModTime)
+
 	// Eager attachment extraction (fonts).
 	if len(src.Attachments) > 0 {
 		dir := filepath.Join(l.cfg.AttachmentsDir(), sourceID)
@@ -439,6 +443,29 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	return nil
 }
 
+// dropStaleCaches deletes the extracted subtitles and trickplay sheets of a source whose
+// file changed (size or modification time) since it was last ingested. The subtitle
+// endpoint and trickplay both reuse whatever is cached for the source id, and the id
+// comes from the path alone, so without this a re-encoded or replaced file kept serving
+// the old file's subtitles and thumbnails. A forced rescan of an unchanged file keeps them.
+func (l *Library) dropStaleCaches(ctx context.Context, path, sourceID string, size int64, modTime time.Time) {
+	if l.cfg == nil {
+		return
+	}
+	part, err := l.store.GetPartByPath(ctx, path)
+	if err != nil || part == nil {
+		return
+	}
+	if part.Size == size && part.ModTime.Equal(modTime.UTC().Truncate(time.Millisecond)) {
+		return
+	}
+	for _, dir := range []string{filepath.Join(l.cfg.SubtitlesDir(), sourceID), filepath.Join(l.cfg.TrickplayDir(), sourceID)} {
+		if err := safefs.RemoveAll(dir); err != nil {
+			slog.Warn("removing stale cache", "dir", dir, "err", err)
+		}
+	}
+}
+
 // detectSubtitleLanguages fills DetectedLanguage for every text subtitle stream by
 // reading its text (sidecar file directly, embedded track via extraction into the
 // subtitle cache). Failures are logged and leave the field empty.
@@ -458,7 +485,7 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 			}
 			textPath = filepath.Join(l.cfg.SubtitlesDir(), src.ID, fmt.Sprintf("%d%s", st.Index, ext))
 			if _, err := os.Stat(textPath); err != nil {
-				if err := probe.ExtractTextSubtitle(ctx, l.ff, path, st.Index, st.Codec, textPath); err != nil {
+				if err := probe.EnsureTextSubtitle(ctx, l.ff, path, st.Index, st.Codec, textPath); err != nil {
 					slog.Warn("subtitle extraction failed", "file", filepath.Base(path), "stream", st.Index, "err", err)
 					continue
 				}

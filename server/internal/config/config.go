@@ -119,6 +119,7 @@ func (c *Config) CacheDir() string       { return filepath.Join(c.DataDir, "cach
 func (c *Config) AttachmentsDir() string { return filepath.Join(c.CacheDir(), "attachments") }
 func (c *Config) SubtitlesDir() string   { return filepath.Join(c.CacheDir(), "subtitles") }
 func (c *Config) ImagesDir() string      { return filepath.Join(c.CacheDir(), "images") }
+func (c *Config) TrickplayDir() string   { return filepath.Join(c.CacheDir(), "trickplay") }
 
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {

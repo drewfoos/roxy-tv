@@ -64,7 +64,7 @@ func New(st *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Service {
 }
 
 func (s *Service) dir(sourceID string) string {
-	return filepath.Join(s.cfg.CacheDir(), "trickplay", sourceID)
+	return filepath.Join(s.cfg.TrickplayDir(), sourceID)
 }
 
 func (s *Service) manifestPath(sourceID string) string {

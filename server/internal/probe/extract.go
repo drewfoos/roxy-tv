@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
@@ -46,8 +47,30 @@ func ExtractAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string
 	return nil
 }
 
+// subtitleLocks serialises extraction per cache file, so a burst of requests for the same
+// track (a player retrying, ingest warming the cache while someone presses play) runs
+// ffmpeg once instead of several times over the same file.
+var subtitleLocks sync.Map
+
+// EnsureTextSubtitle extracts the track to dst unless a copy is already there. A copy at
+// dst is always complete: extraction writes a temporary file and renames it into place.
+func EnsureTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, streamIndex int, codec, dst string) error {
+	mu, _ := subtitleLocks.LoadOrStore(dst, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+	defer subtitleLocks.Delete(dst)
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	}
+	return ExtractTextSubtitle(ctx, ff, path, streamIndex, codec, dst)
+}
+
 // ExtractTextSubtitle copies one embedded text subtitle stream (ASS/SSA/SRT/VTT) to dst
 // without conversion. Never converts between formats: ASS stays ASS byte for byte.
+//
+// ffmpeg writes to a temporary file next to dst, renamed into place only on success.
+// Callers skip extraction whenever dst exists, so a file ffmpeg left half written (killed,
+// cancelled request, full disk) at dst would be served truncated from then on.
 func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, streamIndex int, codec, dst string) error {
 	if err := safefs.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -56,17 +79,29 @@ func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, st
 	if format == "" {
 		return fmt.Errorf("unsupported text subtitle codec %q", codec)
 	}
-	_, err := ff.Run(ctx, "", "-y", "-v", "error", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-c:s", "copy", "-fs", fmt.Sprint(MaxTextSubtitle), "-f", format, dst)
+	if err := safefs.Check(dst); err != nil {
+		return err
+	}
+	tf, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
 	if err != nil {
+		return err
+	}
+	tmp := tf.Name()
+	tf.Close()
+	defer func() { _ = safefs.Remove(tmp) }() // a no-op after the rename
+	if _, err := ff.Run(ctx, "", "-y", "-v", "error", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-c:s", "copy", "-fs", fmt.Sprint(MaxTextSubtitle), "-f", format, tmp); err != nil {
 		return err
 	}
 	// Real tracks are a few MB even with karaoke; one at the cap is a planted bomb (an
 	// 88 MB track was copied to /config whole and read into memory). Not kept truncated.
-	if fi, err := os.Stat(dst); err == nil && fi.Size() >= MaxTextSubtitle {
-		_ = safefs.Remove(dst)
+	fi, err := os.Stat(tmp)
+	if err != nil {
+		return err
+	}
+	if fi.Size() >= MaxTextSubtitle {
 		return fmt.Errorf("subtitle track is larger than %d MB", MaxTextSubtitle>>20)
 	}
-	return nil
+	return safefs.Rename(tmp, dst)
 }
 
 // MaxTextSubtitle caps an extracted text subtitle track.
