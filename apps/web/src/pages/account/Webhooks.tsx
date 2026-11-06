@@ -46,7 +46,10 @@ export function WebhooksPage() {
       setError(errorText(e))
     }
   }
-  const drop = async (id: string) => {
+  const drop = async (id: string, name: string) => {
+    // One tap used to delete the key, and whatever Sonarr or Radarr uses it stops reaching
+    // Roxy until a new key is pasted into it.
+    if (!window.confirm(`Delete the key ${name}? Sonarr or Radarr using it can no longer notify Roxy until you give it a new key.`)) return
     setError(null)
     try {
       await api.deleteApiKey(id)
@@ -79,7 +82,7 @@ export function WebhooksPage() {
             title={k.name}
             sub={k.createdAt ? `Created ${formatWhen(k.createdAt)}` : undefined}
             right={
-              <button type="button" className="icon-btn" onClick={() => void drop(k.id)} aria-label={`Delete key ${k.name}`}>
+              <button type="button" className="icon-btn" onClick={() => void drop(k.id, k.name)} aria-label={`Delete key ${k.name}`}>
                 <IconDelete size={20} />
               </button>
             }
