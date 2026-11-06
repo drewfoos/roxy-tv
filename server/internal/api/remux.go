@@ -2,13 +2,9 @@ package api
 
 import (
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
-	"log/slog"
 	"math"
 	"net/http"
-	"os/exec"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -77,44 +73,5 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "the server is already remuxing as much as it can")
 		return
 	}
-	cmd := exec.CommandContext(r.Context(), s.ff.FFmpeg, ffmpeg.LocalInputs(transcode.RemuxArgs(req))...)
-	stderr := &tailBuffer{max: 64 << 10} // only the end is logged; a chatty ffmpeg cannot grow it
-	cmd.Stderr = stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		writeError(w, 500, err.Error())
-		return
-	}
-	began := time.Now()
-	if err := cmd.Start(); err != nil {
-		writeError(w, 500, "ffmpeg: "+err.Error())
-		return
-	}
-	slog.Info("remux: start", "source", src.ID, "audio", req.AudioIndex, "codec", req.Codec, "start", start)
-	w.Header().Set("Content-Type", "video/x-matroska")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(200)
-	buf := make([]byte, 256*1024)
-	flusher, _ := w.(http.Flusher)
-	var sent int64
-	for {
-		n, rerr := stdout.Read(buf)
-		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				break // the player went away (stop or seek); the context kills ffmpeg
-			}
-			sent += int64(n)
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		if rerr != nil {
-			break
-		}
-	}
-	_ = cmd.Wait()
-	if r.Context().Err() == nil && stderr.Len() > 0 {
-		slog.Warn("remux: ffmpeg", "source", src.ID, "err", strings.TrimSpace(tailString(stderr.String(), 600)))
-	}
-	slog.Info("remux: end", "source", src.ID, "bytes", sent, "took", time.Since(began).Round(time.Second))
+	s.pipeFFmpeg(w, r, "remux", ffmpeg.LocalInputs(transcode.RemuxArgs(req)), "source", src.ID, "audio", req.AudioIndex, "codec", req.Codec, "start", start)
 }
