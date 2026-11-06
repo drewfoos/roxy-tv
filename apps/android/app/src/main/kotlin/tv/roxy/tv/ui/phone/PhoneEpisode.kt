@@ -82,7 +82,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
  * autoplay moves to the next episode, the text follows.
  */
 @Composable
-fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, onOpenEpisode: (Item) -> Unit, onOpenPerson: (CastMember) -> Unit = {}) {
+fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = false, startMs: Long? = null, onBack: () -> Unit, onOpenEpisode: (Item) -> Unit, onOpenPerson: (CastMember) -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
@@ -186,7 +186,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, onBack: () -> Unit, o
         // Server away (restart, Wi-Fi drop): say so and keep trying, instead of a dead box.
         var wait = 3_000L
         while (true) {
-            val r = playRequest(context, seed)
+            val r = playRequest(context, seed, fromStart, startMs)
             r.onSuccess { req ->
                 error = null
                 episode = req.item

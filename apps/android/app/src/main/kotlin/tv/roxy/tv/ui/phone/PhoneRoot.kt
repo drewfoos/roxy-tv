@@ -138,10 +138,13 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     // while it slides in.
     fun openSeries(item: Item) { app.items.put(item); nav.navigate(Route.Series(item.id, item.title)) }
     fun openMovie(item: Item) { app.items.put(item); nav.navigate(Route.Movie(item.id, item.title)) }
-    fun openEpisode(item: Item) { app.items.put(item); nav.navigate(Route.Episode(item.id, item.title)) }
+    fun openEpisode(item: Item, fromStart: Boolean = false, startMs: Long? = null) {
+        app.items.put(item)
+        nav.navigate(Route.Episode(item.id, item.title, fromStart, startMs ?: -1))
+    }
     // Every play on the phone (hero, Resume pill, downloads, episode rows) lands on the player page.
     DisposableEffect(nav) {
-        app.openPlayerPage = { item -> openEpisode(item) }
+        app.openPlayerPage = { item, fromStart, startMs -> openEpisode(item, fromStart, startMs) }
         app.openArrSettings = { nav.navigate(Route.ArrSettings) }
         app.openTitleAdmin = { item, action ->
             if (action == "identify") nav.navigate(Route.Identify(item.id, item.title, if (item.isMovie) "movie" else "series"))
@@ -348,7 +351,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 composable<Route.Episode> { e ->
                     Page {
                         val r = e.toRoute<Route.Episode>()
-                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) }, onOpenPerson = { nav.navigate(Route.Person(it.tmdbId, it.name)) })
+                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, fromStart = r.fromStart, startMs = r.startMs.takeIf { it >= 0 }, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) }, onOpenPerson = { nav.navigate(Route.Person(it.tmdbId, it.name)) })
                     }
                 }
                 composable<Route.Movie> { e ->

@@ -60,7 +60,7 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
      * phone opens it (the video in a box with the page under it, fullscreen by turning
      * the phone); without it (the TV) playback goes to the full-screen activity.
      */
-    @Volatile var openPlayerPage: ((Item) -> Unit)? = null
+    @Volatile var openPlayerPage: ((item: Item, fromStart: Boolean, startMs: Long?) -> Unit)? = null
 
     /** Opens Account → Server → Sonarr & Radarr (set by the phone layout), for "set up requests" prompts. */
     @Volatile var openArrSettings: (() -> Unit)? = null

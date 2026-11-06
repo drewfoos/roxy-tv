@@ -94,7 +94,9 @@ suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false, s
         return if (ok) Result.success(Unit) else Result.failure(IllegalStateException("${t.name} is not connected any more"))
     }
     // The phone has one player, the page's; the TV keeps the full-screen activity.
-    app.openPlayerPage?.let { open -> open(item); return Result.success(Unit) }
+    // The explicit start goes along: a "Play on" handover is acknowledged only once the
+    // player is at the position the sender asked for.
+    app.openPlayerPage?.let { open -> open(item, fromStart, startMs); return Result.success(Unit) }
     val req = playRequest(context, item, fromStart, startMs).getOrElse { t ->
         // Server away: say so, rather than a Play button that does nothing.
         if (t !is kotlinx.coroutines.CancellationException) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {

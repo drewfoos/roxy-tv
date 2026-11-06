@@ -48,6 +48,7 @@ sealed interface Route {
     @Serializable data class Movie(val id: String, val title: String) : Route
     // Phone: the "More details" page of a series or movie.
     @Serializable data class Details(val id: String, val title: String) : Route
-    // Phone: one episode, playing inline at the top of its page.
-    @Serializable data class Episode(val id: String, val title: String) : Route
+    // Phone: one episode, playing inline at the top of its page. [fromStart] / [startMs]
+    // (-1 = none) carry an explicit start, e.g. a "Play on" handover to this phone.
+    @Serializable data class Episode(val id: String, val title: String, val fromStart: Boolean = false, val startMs: Long = -1) : Route
 }
