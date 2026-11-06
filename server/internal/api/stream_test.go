@@ -190,3 +190,20 @@ func TestStreamPartBoundsAndSymlink(t *testing.T) {
 		t.Errorf("a video symlinked out of media must be 403, got %d", rec.Code)
 	}
 }
+
+// An index that is not a number (or is negative) is refused, never read as track 0.
+func TestInvalidTrackIndexRefused(t *testing.T) {
+	_, h, _ := streamFixture(t)
+	for _, path := range []string{
+		"/v1/sources/src1/attachments/abc", "/v1/sources/src1/attachments/-4", "/v1/sources/src1/attachments/4.0",
+		"/v1/sources/src1/subtitles/abc", "/v1/sources/src1/subtitles/-5", "/v1/sources/src1/subtitles/5x",
+	} {
+		if rec := get(h, path); rec.Code != 400 {
+			t.Errorf("%s: %d, want 400", path, rec.Code)
+		}
+	}
+	// A real index still works.
+	if rec := get(h, "/v1/sources/src1/attachments/4"); rec.Code != 200 {
+		t.Errorf("valid attachment index: %d", rec.Code)
+	}
+}

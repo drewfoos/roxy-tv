@@ -85,7 +85,10 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "source not found")
 		return
 	}
-	idx, _ := strconv.Atoi(chi.URLParam(r, "index"))
+	idx, ok := pathIndex(w, r)
+	if !ok {
+		return
+	}
 	for _, a := range src.Attachments {
 		if a.Index != idx {
 			continue
@@ -228,7 +231,10 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "source not found")
 		return
 	}
-	idx, _ := strconv.Atoi(chi.URLParam(r, "index"))
+	idx, ok := pathIndex(w, r)
+	if !ok {
+		return
+	}
 	var st *model.MediaStream
 	for i := range src.Streams {
 		if src.Streams[i].Index == idx && src.Streams[i].Type == model.StreamSubtitle {
@@ -315,4 +321,16 @@ func subtitleMime(codec string) string {
 		return "text/vtt; charset=utf-8"
 	}
 	return "text/plain; charset=utf-8"
+}
+
+// pathIndex reads the {index} URL part: a track or attachment number, 0 or more. Anything
+// else is a 400. It used to be parsed with the error ignored, so "abc" (or any typo) read
+// as index 0 and could serve track 0 instead of being refused.
+func pathIndex(w http.ResponseWriter, r *http.Request) (int, bool) {
+	idx, err := strconv.Atoi(chi.URLParam(r, "index"))
+	if err != nil || idx < 0 {
+		writeError(w, 400, "invalid index")
+		return 0, false
+	}
+	return idx, true
 }
