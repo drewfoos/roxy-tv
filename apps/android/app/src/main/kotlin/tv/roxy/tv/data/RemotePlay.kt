@@ -79,7 +79,9 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
                     // Handing over mid-episode: the sender's position becomes the saved one first.
                     if (cmd.positionMs > 0) runCatching { api.progress(item.id, cmd.positionMs) }
                     app.items.put(item)
-                    playItem(app, item).getOrThrow()
+                    // A position or "from the start" is explicit: a player already showing this
+                    // item jumps there instead of carrying on where it was.
+                    playItem(app, item, fromStart = cmd.fromStart, startMs = cmd.positionMs.takeIf { it > 0 }).getOrThrow()
                 }.onFailure { Timber.w(it, "remote play") }
             }
             "pause" -> p?.remotePause(true)

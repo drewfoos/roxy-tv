@@ -1151,7 +1151,7 @@ data class ArrConfig(
 )
 
 @Serializable
-data class RemoteCommand(val type: String, val itemId: String = "", val positionMs: Long = 0, val seconds: Int = 0, val from: String = "")
+data class RemoteCommand(val type: String, val itemId: String = "", val positionMs: Long = 0, val seconds: Int = 0, val from: String = "", val fromStart: Boolean = false)
 
 @Serializable
 private data class RemoteCommandBody(val command: RemoteCommand)

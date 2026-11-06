@@ -15,6 +15,12 @@ data class PlayRequest(
     val url: String,
     val sourceId: String,
     val startSeconds: Int,
+    /**
+     * The requester chose [startSeconds] (Play from start, a "Play on" handover), so a
+     * player that already has this item open jumps there. Otherwise the position is only
+     * the saved one, and an open player keeps its own (fresher) place.
+     */
+    val explicitStart: Boolean = false,
     /** `url` is a downloaded file; segments and sniffed subtitle languages come from the download snapshot. */
     val local: Boolean,
 ) {
@@ -33,7 +39,7 @@ data class PlayRequest(
  * no `mediaSources` (Home rows may omit them). Resumes from `userData.positionMs` unless
  * [fromStart] or the item already counts as watched.
  */
-suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false): Result<PlayRequest> {
+suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false, startMs: Long? = null): Result<PlayRequest> {
     val app = RoxyApp.get(context)
     val local = app.downloads.localFile(item.id)
     val entry = if (local != null) app.downloads.entry(item.id) else null
@@ -45,24 +51,28 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
     val source = full.primarySource ?: return Result.failure(IllegalStateException("No media source for ${full.title}"))
     // Freshest position wins: the server's when we have it, else the snapshot's (updated by offline playback).
     val watched = (full.userData?.played ?: item.userData?.played) == true
-    val position = if (fromStart) 0L else listOfNotNull(item.userData?.positionMs, full.userData?.positionMs).maxOrNull() ?: 0L
+    val position = when {
+        fromStart -> 0L
+        startMs != null -> startMs
+        else -> listOfNotNull(item.userData?.positionMs, full.userData?.positionMs).maxOrNull() ?: 0L
+    }
     val start = if (watched && position == 0L) 0 else (position / 1000).toInt()
     val url = local?.path ?: runCatching { app.api.streamUrl(source.id, app.api.mediaToken(source.id)) }.getOrElse { return Result.failure(it) }
-    return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, local = local != null))
+    return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, explicitStart = fromStart || startMs != null, local = local != null))
 }
 
 /** Starts [PlayerActivity] for an item (see [playRequest]). */
-suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false): Result<Unit> {
+suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false, startMs: Long? = null): Result<Unit> {
     val app = RoxyApp.get(context)
     // A target device is set ("Play on"): the play happens there, this device stays a remote.
     app.remote.target.value?.let { t ->
         if (fromStart) runCatching { app.api.progress(item.id, 0) }
-        val ok = app.remote.send(RemoteCommand(type = "play", itemId = item.id))
+        val ok = app.remote.send(RemoteCommand(type = "play", itemId = item.id, positionMs = startMs ?: 0, fromStart = fromStart))
         return if (ok) Result.success(Unit) else Result.failure(IllegalStateException("${t.name} is not connected any more"))
     }
     // The phone has one player, the page's; the TV keeps the full-screen activity.
     app.openPlayerPage?.let { open -> open(item); return Result.success(Unit) }
-    val req = playRequest(context, item, fromStart).getOrElse { t ->
+    val req = playRequest(context, item, fromStart, startMs).getOrElse { t ->
         // Server away: say so, rather than a Play button that does nothing.
         if (t !is kotlinx.coroutines.CancellationException) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             android.widget.Toast.makeText(context.applicationContext, tv.roxy.tv.data.friendlyError(t), android.widget.Toast.LENGTH_LONG).show()

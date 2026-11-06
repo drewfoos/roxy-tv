@@ -23,6 +23,8 @@ type Command struct {
 	// PositionMs is set, which the sender sets when handing over mid-episode.
 	ItemID     string `json:"itemId,omitempty"`
 	PositionMs int64  `json:"positionMs,omitempty"`
+	// FromStart: play from the beginning, even if the player already has this item open.
+	FromStart bool `json:"fromStart,omitempty"`
 	// seek: an absolute position; seekBy: an offset.
 	Seconds int `json:"seconds,omitempty"`
 	// From is the sender's device name, for the player's "Playing from <phone>" line.

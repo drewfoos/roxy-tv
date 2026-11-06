@@ -62,10 +62,10 @@ it; the player plays with its own engine (the TV app: libmpv + libass). In memor
 | GET | `/v1/sessions/commands?name=&client=&wait=` | A player's long poll: `{command}` or 204 after `wait` s (25 max). Polling keeps it listed; 60 s without a poll drops it. |
 | POST | `/v1/sessions/state` | `{itemId, title?, positionMs, paused}`; empty `itemId` = stopped |
 | GET | `/v1/sessions/players` | `{players: [{deviceId, name, client, lastSeen, nowPlaying?}]}`, the login's other players |
-| POST | `/v1/sessions/players/{device}/command` | `{type, itemId?, positionMs?, seconds?, from?}`; `type` = play, pause, resume, toggle, seek, seekBy, next, stop. 202, or 404 when not connected |
+| POST | `/v1/sessions/players/{device}/command` | `{type, itemId?, positionMs?, fromStart?, seconds?, from?}`; `type` = play, pause, resume, toggle, seek, seekBy, next, stop. 202, or 404 when not connected |
 
 `play` resumes from the saved position; a sender handing over mid-episode sets
-`positionMs`, which the player saves first. Commands need a device login (not an API key).
+`positionMs`, which the player saves first. `positionMs` or `fromStart: true` is a position the sender chose: a player that already has that item open jumps there instead of carrying on. Commands need a device login (not an API key).
 
 ## Library
 

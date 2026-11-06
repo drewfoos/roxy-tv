@@ -35,6 +35,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_HWDEC = "hwdec"
         const val EXTRA_VO = "vo"
         const val EXTRA_START = "start"      // seconds; adb: --ei start 600
+        const val EXTRA_START_EXPLICIT = "startExplicit" // the requester chose EXTRA_START (see PlayRequest.explicitStart)
         const val EXTRA_SUBMODE = "submode"  // full | signs | foreign | none; adb: --es submode full
         const val EXTRA_SID = "sid"          // force an mpv subtitle id; adb: --ei sid 2
         const val EXTRA_SOURCE_ID = "sourceId" // Roxy source id: enables server-sniffed sub languages
@@ -57,7 +58,9 @@ class PlayerActivity : ComponentActivity() {
             subtitleLine: String = "",
             local: Boolean = false,
             anime: Boolean = false,
+            explicitStart: Boolean = false,
         ): Intent = Intent(context, PlayerActivity::class.java)
+            .putExtra(EXTRA_START_EXPLICIT, explicitStart)
             .putExtra(EXTRA_ANIME, anime)
             .putExtra(EXTRA_SLANG, settings.subLang)
             .putExtra(EXTRA_URL, url)
@@ -74,7 +77,7 @@ class PlayerActivity : ComponentActivity() {
             .putExtra(EXTRA_STATS, settings.showStats)
 
         fun intent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
-            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime)
+            intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime, explicitStart = req.explicitStart)
     }
 
     private lateinit var app: RoxyApp
@@ -115,7 +118,16 @@ class PlayerActivity : ComponentActivity() {
         val url = intent.getStringExtra(EXTRA_URL) ?: return
         val same = ::session.isInitialized && intent.getStringExtra(EXTRA_ITEM_ID)?.let { it == session.itemId } == true
         if (same) {
-            Timber.i("play request for the item already playing: resume it")
+            // Already open: a request that chose a position (Play from start, a "Play on"
+            // handover) jumps there; a plain repeat (a Watch Next card, Play again) resumes,
+            // since this player's own position is fresher than the saved one it carries.
+            if (intent.getBooleanExtra(EXTRA_START_EXPLICIT, false)) {
+                val start = intent.getIntExtra(EXTRA_START, 0)
+                Timber.i("play request for the item already playing: jump to %ds", start)
+                session.actions.seekTo(start.toDouble())
+            } else {
+                Timber.i("play request for the item already playing: resume it")
+            }
             session.playPause(play = true)
             return
         }
