@@ -52,6 +52,10 @@ type linkEntry struct {
 	// so two approvals racing can't both issue a token and both close done (which panicked
 	// while holding the lock and left every later /link request hanging).
 	claimed bool
+	// delivered: a waiter has taken the token. Checked and set under the store's lock, so
+	// only one /wait ever receives it (several could be parked on done at once: a TV that
+	// retried, or polled twice).
+	delivered bool
 }
 
 type linkStore struct {
@@ -189,11 +193,20 @@ func (s *Server) linkWait(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		return
 	}
-	// Handed over once: the code is gone after this.
+	// Handed over once. Every waiter parked on done wakes up; the first to get here takes the
+	// token and the code is gone, the others are told it expired. Deleting the code alone
+	// did not do it: they had all looked it up already.
 	s.links.mu.Lock()
+	if e.delivered {
+		s.links.mu.Unlock()
+		writeError(w, 404, "code expired or unknown")
+		return
+	}
+	e.delivered = true
+	token, user, deviceID := e.token, e.user, e.deviceID
 	delete(s.links.entries, e.code)
 	s.links.mu.Unlock()
-	writeJSON(w, 200, map[string]any{"status": "done", "token": e.token, "user": userJSON(e.user), "deviceId": e.deviceID})
+	writeJSON(w, 200, map[string]any{"status": "done", "token": token, "user": userJSON(user), "deviceId": deviceID})
 }
 
 // GET /v1/link/{code}: the phone side asks which device wants in before approving.
