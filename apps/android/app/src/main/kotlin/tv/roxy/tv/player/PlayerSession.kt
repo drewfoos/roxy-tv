@@ -534,6 +534,9 @@ class PlayerSession(
         sourceDurationSec = null
         reloadTarget = null
         transcoding = false
+        // The previous file's sniffed languages name its own track ids; when this file's
+        // lookup fails they must not relabel its tracks (and steer the language policy).
+        player.subtitleLanguageOverrides = emptyMap()
         val wantTranscode = !local && sourceId != null && !quality.isOriginal && app.prefs.session.value.isLoggedIn
         val snapshot = if (local) itemId?.let { app.downloads.entry(it)?.item } else null
         if (snapshot != null) {
