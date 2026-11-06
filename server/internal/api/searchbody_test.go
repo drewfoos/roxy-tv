@@ -28,6 +28,11 @@ func TestSearchBody(t *testing.T) {
 		{"not a code", `{"episodes": ["episode 3"]}`, false, nil, nil},
 		{"negative season", `{"seasons": [-1]}`, false, nil, nil},
 		{"two JSON values", `{"episodes": ["S1E3"]} {"episodes": []}`, false, nil, nil},
+		{"empty object: everything missing", `{}`, true, nil, nil},
+		{"null body (decoded as nothing chosen = everything)", `null`, false, nil, nil},
+		{"null episodes", `{"episodes": null}`, false, nil, nil},
+		{"null seasons", `{"episodes": ["S1E3"], "seasons": null}`, false, nil, nil},
+		{"an array, not an object", `["S1E3"]`, false, nil, nil},
 		{"too many episodes (was cut off silently)", `{"episodes": [` + strings.Repeat(`"S1E1",`, 200) + `"S1E1"]}`, false, nil, nil},
 	} {
 		rec := httptest.NewRecorder()

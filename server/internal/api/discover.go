@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -296,12 +297,32 @@ type searchTarget struct {
 // checked and written the way the service compares them ("S01E03" -> "S1E3").
 func searchBody(w http.ResponseWriter, r *http.Request) (searchTarget, bool) {
 	var body searchTarget
+	var raw json.RawMessage
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
-	if err := dec.Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+	if err := dec.Decode(&raw); errors.Is(err, io.EOF) {
+		return body, true // no body: everything missing, as documented
+	} else if err != nil {
 		writeError(w, 400, "invalid request body")
 		return body, false
-	} else if err == nil && dec.More() {
+	} else if dec.More() {
 		writeError(w, 400, "invalid request body: more than one JSON value")
+		return body, false
+	}
+	// An object, with no null in it: JSON null decodes to "nothing chosen", which here means
+	// everything missing, so a null body or a null list would act on everything too.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		writeError(w, 400, "invalid request body: want a JSON object")
+		return body, false
+	}
+	for k, v := range fields {
+		if string(bytes.TrimSpace(v)) == "null" {
+			writeError(w, 400, fmt.Sprintf("invalid request body: %s is null (leave it out, or send an empty list)", k))
+			return body, false
+		}
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		writeError(w, 400, "invalid request body")
 		return body, false
 	}
 	if len(body.Episodes) > 200 || len(body.Seasons) > 100 {
