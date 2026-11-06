@@ -141,12 +141,33 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST|DELETE /v1/me/played/{itemId}
+// POST|DELETE /v1/me/played/{itemId}[?at=unixMs]
+//
+// at: when a phone replays a watched mark it made offline, the time it was made. The mark
+// is then dropped if the item saw activity since (rewatched on another device), as with
+// the at of POST /v1/me/progress; without it an old mark always won and flipped the item
+// back to watched. Only for marking one item watched.
 func (s *Server) played(w http.ResponseWriter, r *http.Request) {
+	var at int64
+	if v := r.URL.Query().Get("at"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			writeError(w, 400, "invalid at")
+			return
+		}
+		at = n
+	}
 	s.setFlag(w, r, func(ctx context.Context, userID string, it *model.Item, on bool) error {
 		// A series or season stands for its episodes ("mark all as watched").
 		if it.Type == model.TypeSeries || it.Type == model.TypeSeason {
 			return s.store.MarkPlayedUnder(ctx, userID, it.ID, on)
+		}
+		if at > 0 && on {
+			ok, err := s.store.MarkPlayedAsOf(ctx, userID, it.GUID, time.UnixMilli(at))
+			if err == nil && !ok {
+				slog.Info("played: older than the item's latest activity, ignored", "item", it.Title)
+			}
+			return err
 		}
 		return s.store.MarkPlayed(ctx, userID, it.GUID, on)
 	})

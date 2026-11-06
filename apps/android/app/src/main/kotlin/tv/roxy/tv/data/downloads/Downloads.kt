@@ -325,7 +325,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
         for (p in mine) {
-            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true) else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at) }
+            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true, at = p.at) else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at) }
             result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
             // A 4xx (the title was deleted meanwhile) will never succeed: drop it rather than block the rest.
             val rejected = (result.exceptionOrNull() as? tv.roxy.tv.api.ApiException)?.let { it.code in 400..499 && !it.isUnauthorized } == true

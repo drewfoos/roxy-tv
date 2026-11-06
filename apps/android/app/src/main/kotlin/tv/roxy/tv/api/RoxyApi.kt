@@ -162,8 +162,9 @@ class RoxyApi(private val prefs: Prefs) {
         if (on) postNoBody("/v1/me/favorite/$itemId", "") else delete("/v1/me/favorite/$itemId")
     }
 
-    suspend fun setPlayed(itemId: String, on: Boolean) {
-        if (on) postNoBody("/v1/me/played/$itemId", "") else delete("/v1/me/played/$itemId")
+    /** [at]: when an offline watched mark was made (Unix ms), so the server can drop it if the item was played since. */
+    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null) {
+        if (on) postNoBody("/v1/me/played/$itemId" + (at?.let { "?at=$it" } ?: ""), "") else delete("/v1/me/played/$itemId")
     }
 
     // ---- profiles ----

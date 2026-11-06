@@ -180,3 +180,51 @@ func TestProgressAsOfRacesLiveReport(t *testing.T) {
 		}
 	}
 }
+
+// A watched mark made offline and replayed later: applied when nothing newer happened,
+// dropped when the item was rewatched since (it used to flip it back to watched and lose
+// the newer position).
+func TestMarkPlayedAsOf(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	get := func(g string) (int64, bool, int) {
+		d, err := s.GetUserItemData(ctx, "u", g)
+		if err != nil || d == nil {
+			t.Fatalf("user data %s: %v %v", g, d, err)
+		}
+		return d.PositionMs, d.Played, d.PlayCount
+	}
+	hourAgo := time.Now().Add(-time.Hour)
+
+	// Nothing recorded: the old mark is the best there is.
+	if ok, err := s.MarkPlayedAsOf(ctx, "u", "new", hourAgo); err != nil || !ok {
+		t.Fatalf("first mark not applied: %v %v", ok, err)
+	}
+	if _, played, n := get("new"); !played || n != 1 {
+		t.Fatalf("first mark: played %v count %d", played, n)
+	}
+	// Finished offline an hour ago, rewatched part way on the TV since: kept as the TV left it.
+	if err := s.SetProgress(ctx, "u", "g", 600_000, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MarkPlayedAsOf(ctx, "u", "g", hourAgo); err != nil || ok {
+		t.Fatalf("older mark applied: %v %v", ok, err)
+	}
+	if p, played, _ := get("g"); p != 600_000 || played {
+		t.Fatalf("rewatch lost: position %d played %v", p, played)
+	}
+	// Made after the latest activity: applied.
+	if ok, err := s.MarkPlayedAsOf(ctx, "u", "g", time.Now().Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("newer mark not applied: %v %v", ok, err)
+	}
+	if p, played, n := get("g"); p != 0 || !played || n != 1 {
+		t.Fatalf("newer mark: position %d played %v count %d", p, played, n)
+	}
+}

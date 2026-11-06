@@ -127,6 +127,23 @@ func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool
 	return markPlayed(ctx, s.db, userID, guid, played)
 }
 
+// MarkPlayedAsOf is MarkPlayed(played) for a mark made at [at] and sent later (a phone
+// replaying an episode it finished offline): like SetProgressAsOf it applies only if
+// nothing newer was recorded for the item meanwhile, so a rewatch on another device since
+// is not flipped back to watched. The check is part of the same statement. False when it
+// was not applied.
+func (s *Store) MarkPlayedAsOf(ctx context.Context, userID, guid string, at time.Time) (bool, error) {
+	asOf := at.UTC().Format(TimeFormat)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
+		VALUES (?, ?, 0, 1, 1, ?)
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0,
+			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 THEN 0 ELSE 1 END,
+			last_played_at = CASE WHEN user_item_data.played = 1 THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
+			played = 1`+unlessNewer,
+		userID, guid, Now(), asOf, asOf)
+	return applied(res, err)
+}
+
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
