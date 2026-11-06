@@ -217,7 +217,8 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	// library root that could not be read at all, emptied the library.
 	var unreadable []string
 	var rootErr error
-	// Files that were read but could not be added or updated (a probe or parse failure):
+	// Files that could not be added or updated (their details unreadable, or a probe or
+	// parse failure):
 	// the rest of the scan goes on, and the count is reported as a partial failure. They
 	// used to be logged only, so such a scan still reported success.
 	ingestFailed := 0
@@ -254,6 +255,13 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		seen[path] = true
 		info, err := d.Info()
 		if err != nil {
+			// Seen, so its record is kept; but it could not be checked or updated, and the
+			// scan says so (it used to return here silently and report success).
+			slog.Error("reading file details failed", "path", path, "err", err)
+			ingestFailed++
+			if len(ingestErrs) < 3 {
+				ingestErrs = append(ingestErrs, fmt.Sprintf("%s (reading it failed: %v)", filepath.Base(path), err))
+			}
 			return nil
 		}
 		if _, ok := known[path]; ok {

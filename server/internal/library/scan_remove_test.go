@@ -209,3 +209,28 @@ func TestScanReportsFilesThatCouldNotBeAdded(t *testing.T) {
 	}
 	wantRecorded(t, st, lib, paths[:3]) // the others kept, B/two removed, three.mkv not added
 }
+
+// infoFails is a file entry whose details cannot be read (d.Info fails).
+type infoFails struct{ fs.DirEntry }
+
+func (infoFails) Info() (fs.FileInfo, error) { return nil, errors.New("stale file handle") }
+
+// A file whose details cannot be read keeps its record (it was seen) and is reported
+// with the scan's file-level failures, not passed over in silence.
+func TestScanReportsUnreadableFileDetails(t *testing.T) {
+	l, st, lib, paths := recordedLibrary(t)
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if path == paths[0] && err == nil {
+				return fn(path, infoFails{d}, nil)
+			}
+			return fn(path, d, err)
+		})
+	}
+	t.Cleanup(func() { walkDir = filepath.WalkDir })
+	err := l.Scan(context.Background(), lib)
+	if err == nil || !strings.Contains(err.Error(), "1 file(s) could not be added") || !strings.Contains(err.Error(), "one.mkv (reading it failed: stale file handle)") {
+		t.Fatalf("scan error: %v", err)
+	}
+	wantRecorded(t, st, lib, paths) // its record kept
+}
