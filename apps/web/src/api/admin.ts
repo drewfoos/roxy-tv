@@ -79,6 +79,8 @@ export interface ManageTitle {
 export interface ManageStatus {
   scanning: boolean
   lastScanAt?: string | null
+  /** One line per library the last full scan failed on: `library "Name": reason`. */
+  lastScanError?: string | null
   queue: number
   titles: ManageTitle[]
 }

@@ -153,6 +153,16 @@ fun PhoneLibrarySettings(onBack: () -> Unit, onIdentify: (LibraryTitle) -> Unit,
                     if (busy) Icon(Icons.Filled.Sync, null, tint = RoxyColors.accent, modifier = Modifier.size(16.dp).padding(end = 2.dp))
                     Text(line, fontSize = 13.sp, color = if (busy) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.padding(start = if (busy) 6.dp else 0.dp))
                 }
+                // The libraries the last full scan could not read ("Anime: open /data/Anime:
+                // no such file or directory"), until a clean scan; the others were scanned.
+                val scanErrors = s?.takeIf { !it.scanning }?.lastScanError.orEmpty().lines().filter { it.isNotBlank() }
+                    .map { it.replace(Regex("^library \"(.+?)\": "), "$1: ") }
+                if (scanErrors.isNotEmpty()) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(12.dp)).background(RoxyColors.surface).padding(12.dp)) {
+                        Text("The last scan couldn't read every library", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.error)
+                        scanErrors.forEach { Text(it, fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 4.dp)) }
+                    }
+                }
             }
             item(key = "folders") { MediaFoldersCard(reloadKey = s, onAdd = onAddFolder, onChanged = { scope.launch { delay(800); reload() } }) }
             item(key = "actions") {

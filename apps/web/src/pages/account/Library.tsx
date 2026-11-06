@@ -29,6 +29,11 @@ export function LibraryPage() {
   }, [busy, manage])
 
   const status = !manage.data ? '…' : manage.data.scanning ? 'Scanning folders…' : manage.data.queue > 0 ? `Looking up details: ${manage.data.queue} waiting` : manage.data.lastScanAt ? `Last scan ${formatWhen(manage.data.lastScanAt)}` : 'Up to date'
+  // The libraries the last full scan could not read ("Anime: open /data/Anime: no such
+  // file or directory"), shown until a clean scan; the others were still scanned.
+  const scanErrors = manage.data && !manage.data.scanning && manage.data.lastScanError
+    ? manage.data.lastScanError.split('\n').filter(Boolean).map((l) => l.replace(/^library "(.+?)": /, '$1: '))
+    : []
   // A locked title was fixed by hand, so it doesn't need attention.
   const unmatched = (manage.data?.titles ?? []).filter((t) => !t.matched && !t.locked)
 
@@ -46,7 +51,15 @@ export function LibraryPage() {
   return (
     <section className="acc-form">
       <PanelHead title="Library" sub="Where your files live, when they were last read, and the titles that still need a hand." />
-      <Notice kind={busy ? 'info' : 'ok'}>{status}</Notice>
+      <Notice kind={busy ? 'info' : scanErrors.length ? 'error' : 'ok'}>{status}</Notice>
+      {scanErrors.length > 0 && (
+        <Notice kind="error">
+          The last scan couldn't read every library:
+          {scanErrors.map((l) => (
+            <div key={l}>{l}</div>
+          ))}
+        </Notice>
+      )}
       {err && <Notice kind="error">{err}</Notice>}
       {manage.error && <Notice kind="error">{manage.error}</Notice>}
 

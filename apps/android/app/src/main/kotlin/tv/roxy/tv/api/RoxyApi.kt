@@ -1181,7 +1181,8 @@ data class FanartSettings(val apiKey: String = "", val enabled: Boolean = false)
 
 /** The server's transcoding encoder: [hwAccel] is the saved choice, [encoder] what runs now. */
 @Serializable
-data class LibraryManage(val scanning: Boolean = false, val lastScanAt: String? = null, val queue: Int = 0, val titles: List<LibraryTitle> = emptyList())
+/** [lastScanError]: one line per library the last full scan failed on (`library "Name": reason`), until a clean scan. */
+data class LibraryManage(val scanning: Boolean = false, val lastScanAt: String? = null, val lastScanError: String? = null, val queue: Int = 0, val titles: List<LibraryTitle> = emptyList())
 
 @Serializable
 data class LibraryTitle(
