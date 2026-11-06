@@ -205,11 +205,18 @@ class DownloadService : Service() {
             downloads.update(itemId) { it.copy(state = DownloadState.Done, bytesDone = it.bytesTotal, completedAt = System.currentTimeMillis()) }
             return Outcome.Done
         }
-        var offset = part.length()
         val url = app.api.streamUrlForHttp(start.sourceId) // the http client adds the token as a header
         // If-Range makes the server send the whole file (200) rather than the rest of a
         // different one when the file changed since the part was started.
         val validator = live(itemId)?.validator
+        // A part without a validator cannot be checked against the server's file: start over
+        // (see resumeOffset). The part is truncated to the offset below.
+        var offset = resumeOffset(part.length(), validator)
+        if (offset == 0L && part.length() > 0) {
+            Timber.i("download %s: part without a validator, restarting from 0", itemId)
+            downloads.update(itemId) { it.copy(bytesDone = 0) }
+        }
+        val expectedTotal = start.bytesTotal
         val req = Request.Builder().url(url).apply {
             if (offset > 0) {
                 header("Range", "bytes=$offset-")
@@ -234,6 +241,12 @@ class DownloadService : Service() {
                     val etag = resp.header("ETag")?.takeIf { !it.startsWith("W/") }
                     val v = etag ?: resp.header("Last-Modified")
                     downloads.update(itemId) { if (it.validator == v) it else it.copy(validator = v) }
+                }
+                if (resp.code == 206 && !partialFits(resp.header("Content-Range"), offset, expectedTotal)) {
+                    // Not the rest of the file the part came from: drop the part and start over.
+                    part.delete()
+                    downloads.update(itemId) { it.copy(validator = null) }
+                    throw IOException("unexpected range ${resp.header("Content-Range")} for offset $offset; restarting")
                 }
                 val total = when {
                     resp.code == 206 -> resp.header("Content-Range")?.substringAfter('/')?.toLongOrNull() ?: (offset + (resp.body.contentLength().takeIf { it >= 0 } ?: 0))
