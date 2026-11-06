@@ -191,6 +191,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         pick = hero, api = app.api, memory = memory,
                         onPlay = { play -> if (play.isEpisode || play.isMovie) scope.launch { playItem(context, play).onFailure { Timber.w(it, "play failed") } } else open(play) },
                         onInfo = { title -> open(title) },
+                        onHold = { title -> toggleWatchlist(context, scope, title) },
                         onFocused = { focusedRow.value = 0 },
                         downKey = { lastKey(0) },
                         upNext = hero != null && rows.firstOrNull { it.key == "continue" }?.items?.any { it.id == hero.play.id } == true,
@@ -201,7 +202,9 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         title = row.title, rowKey = row.key, items = row.items, api = app.api, memory = memory,
                         onClick = ::open, onRowFocused = { key -> lastInRow[row.key] = key; focusedRow.value = i + 1 }, thumbs = row.key == "continue",
                         upKey = { if (i == 0) "hero/play" else lastKey(i - 1) }, downKey = { lastKey(i + 1) },
-                        onLongClick = { menuFor = it },
+                        // Hold OK: episodes (and everything in Continue Watching) open the
+                        // options menu; a show or film poster goes on or off the Watchlist.
+                        onLongClick = { item -> if (row.key == "continue" || item.isEpisode) menuFor = item else toggleWatchlist(context, scope, item) },
                     )
                 }
                 item(key = "footer") {
@@ -300,7 +303,7 @@ private fun HomeSkeleton() {
  * START WATCHING / CONTINUE and MORE INFO.
  */
 @Composable
-private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: () -> String?, upNext: Boolean = false) {
+private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (Item) -> Unit, onInfo: (Item) -> Unit, onFocused: () -> Unit, downKey: () -> String?, upNext: Boolean = false, onHold: (Item) -> Unit = {}) {
     Box(modifier = Modifier.fillMaxWidth().height(HeroHeight)) {
         if (pick == null) {
             Column(modifier = Modifier.padding(start = TvDims.ContentStart, top = 160.dp)) {
@@ -343,9 +346,10 @@ private fun Hero(pick: HeroPick?, api: RoxyApi, memory: FocusMemory, onPlay: (It
                 val label = if (play.isEpisode && (started || (play.indexAired ?: 1) > 1)) "Continue: ${episodeShort(play)}" else if (started) "Continue" else "Start watching"
                 // Focus on either button pins the page to the top.
                 val down = Modifier.moveVertically(memory, up = { null }, down = downKey)
-                TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play").then(down), onFocused = onFocused)
+                // Holding OK on either button puts the show or film on the Watchlist (or takes it off).
+                TvButton(label, play = true, onClick = { onPlay(play) }, modifier = Modifier.focusKey(memory, "hero/play").then(down), onFocused = onFocused, onLongClick = { onHold(title) })
                 Spacer(Modifier.width(18.dp))
-                TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info").then(down), onFocused = onFocused)
+                TvButton("More info", onClick = { onInfo(title) }, modifier = Modifier.focusKey(memory, "hero/info").then(down), onFocused = onFocused, onLongClick = { onHold(title) })
             }
         }
     }

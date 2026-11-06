@@ -504,6 +504,8 @@ private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpe
         similar = runCatching { api.similar(item.id) }.onSuccess { TabCache.put("similar/${item.id}", it) }.getOrDefault(emptyList())
     }
     val cards: List<Any> = related + similar.orEmpty().filter { s -> related.none { it.id == s.libraryItemId } }
+    val context = LocalContext.current
+    val holdScope = rememberCoroutineScope() // hold OK on a poster: on / off the Watchlist
     if (similar != null && cards.isEmpty()) { PageMessage("Nothing like this in the library yet."); return }
     LazyVerticalGrid(
         columns = GridCells.Fixed(6),
@@ -513,7 +515,7 @@ private fun MoreLikeThisTab(item: Item, api: RoxyApi, related: List<Item>, onOpe
         itemsIndexed(cards, key = { _, c -> if (c is Item) c.id else "tmdb:${(c as DiscoverItem).tmdbId}" }) { i, c ->
             val firstMod = if (i == 0) Modifier.focusRequester(first) else Modifier
             when (c) {
-                is Item -> PosterCard(c, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = { if (c.isMovie) onOpenMovie(c) else onOpenSeries(c) }, modifier = firstMod)
+                is Item -> PosterCard(c, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = { if (c.isMovie) onOpenMovie(c) else onOpenSeries(c) }, modifier = firstMod, onLongClick = { toggleWatchlist(context, holdScope, c) })
                 is DiscoverItem -> UrlPosterCard(
                     title = c.title, url = c.poster, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, modifier = firstMod,
                     note = if (c.inLibrary) null else "Not in library",

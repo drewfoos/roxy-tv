@@ -99,7 +99,8 @@ private fun ListMessage(text: String, color: androidx.compose.ui.graphics.Color 
 /** The saved titles (the profile's favourites), newest saved first. */
 @Composable
 private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
-    val app = RoxyApp.get(LocalContext.current)
+    val holdContext = LocalContext.current
+    val app = RoxyApp.get(holdContext)
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<Item>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -119,7 +120,8 @@ private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) 
         list == null && error != null -> ListMessage(error!!, color = RoxyColors.error)
         list == null -> Unit
         list.isEmpty() -> ListMessage("Titles you add to your watchlist show up here.")
-        else -> CardGrid(list, memory, key = "watchlist", upKey = upKey, secondLine = { audioBadge(it) ?: it.year?.toString() }) { item ->
+        // Hold OK on a card takes it off the Watchlist (the page reloads without it).
+        else -> CardGrid(list, memory, key = "watchlist", upKey = upKey, secondLine = { audioBadge(it) ?: it.year?.toString() }, onLongClick = { toggleWatchlist(holdContext, scope, it) }) { item ->
             if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
         }
     }
@@ -176,7 +178,7 @@ private fun historyLine(item: Item, dateFormat: DateFormat): String {
  * when the list comes back (from a title page); the first row's Up goes to [upKey] (the tabs).
  */
 @Composable
-private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, upKey: String, secondLine: (Item) -> String?, onClick: (Item) -> Unit) {
+private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, upKey: String, secondLine: (Item) -> String?, onLongClick: ((Item) -> Unit)? = null, onClick: (Item) -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val gridState = rememberLazyGridState()
     var restored by remember { mutableStateOf(false) }
@@ -199,6 +201,7 @@ private fun CardGrid(items: List<Item>, memory: FocusMemory, key: String, upKey:
             ThumbCard(
                 item, app.api, width = TvDims.GridCardWidth, captionHeight = TvDims.GridCaption, titleLines = 1, secondLine = secondLine(item),
                 onClick = { onClick(item) },
+                onLongClick = onLongClick?.let { f -> { f(item) } },
                 modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i < GridColumns) Modifier.focusProperties { up = memory.requester(upKey) } else Modifier),
                 badge = if (item.isEpisode || item.isMovie) minutesLabel(item) else null,
                 progress = if (item.isEpisode || item.isMovie) item.progressFraction else null,

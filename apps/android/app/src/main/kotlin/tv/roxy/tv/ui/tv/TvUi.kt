@@ -266,6 +266,7 @@ fun TvFocusable(
     background: Color = Color.Transparent,
     shape: androidx.compose.ui.graphics.Shape = RectangleShape,
     onFocused: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -275,10 +276,7 @@ fun TvFocusable(
     Box(
         modifier = modifier
             .onFocusChanged { val f = it.isFocused; if (f && !focused) onFocusedNow?.invoke(); focused = f }
-            .onKeyEvent { ev ->
-                val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
-                if (enabled && ok && ev.type == KeyEventType.KeyDown && (ev.nativeKeyEvent as NativeKeyEvent).repeatCount == 0) { onClick(); true } else false
-            }
+            .okPress(enabled, onClick, onLongClick)
             .focusable(enabled)
             .clip(shape)
             .background(if (focused) focusedBackground else background)
@@ -297,37 +295,10 @@ fun TvCard(onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() ->
     // a row redraws two frames and recomposes nothing. No touch handler: a remote drives it.
     val focused = remember { mutableStateOf(false) }
     val onFocusedNow by rememberUpdatedState(onFocused)
-    val onClickNow by rememberUpdatedState(onClick)
-    val onLongClickNow by rememberUpdatedState(onLongClick)
-    // With a long-press action, OK acts on release: a press held until the system's first
-    // key repeat (the long-press timeout) is a long press; a shorter one is a click.
-    val press = remember { BooleanArray(2) } // [0] OK is down on this card, [1] the long press fired
     Box(
         modifier = modifier
-            .onFocusChanged { val f = it.isFocused; if (f && !focused.value) onFocusedNow?.invoke(); focused.value = f; if (!f) press[0] = false }
-            .onKeyEvent { ev ->
-                val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
-                if (!ok) return@onKeyEvent false
-                val native = ev.nativeKeyEvent as NativeKeyEvent
-                val long = onLongClickNow
-                if (long == null) {
-                    return@onKeyEvent if (ev.type == KeyEventType.KeyDown && native.repeatCount == 0) { onClickNow(); true } else false
-                }
-                when {
-                    ev.type == KeyEventType.KeyDown && native.repeatCount == 0 -> { press[0] = true; press[1] = false; true }
-                    ev.type == KeyEventType.KeyDown -> {
-                        if (press[0] && !press[1]) { press[1] = true; long() }
-                        true
-                    }
-                    ev.type == KeyEventType.KeyUp -> {
-                        val wasDown = press[0]
-                        press[0] = false
-                        if (wasDown && !press[1]) onClickNow()
-                        wasDown
-                    }
-                    else -> false
-                }
-            }
+            .onFocusChanged { val f = it.isFocused; if (f && !focused.value) onFocusedNow?.invoke(); focused.value = f }
+            .okPress(true, onClick, onLongClick)
             .focusable()
             .drawWithContent {
                 drawContent()
@@ -338,6 +309,43 @@ fun TvCard(onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() ->
             }
             .padding(TvDims.FocusBorder),
     ) { content() }
+}
+
+/**
+ * OK on the remote: [onClick] on press. With [onLongClick], OK acts on release instead: a
+ * press held until the system's first key repeat (the long-press timeout) is a long press,
+ * a shorter one a click. Without it, behaviour is exactly the plain press.
+ */
+@Composable
+fun Modifier.okPress(enabled: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)?): Modifier {
+    val onClickNow by rememberUpdatedState(onClick)
+    val onLongClickNow by rememberUpdatedState(onLongClick)
+    val press = remember { BooleanArray(2) } // [0] OK is down here, [1] the long press fired
+    return this
+        .onFocusChanged { if (!it.isFocused) press[0] = false }
+        .onKeyEvent { ev ->
+            val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
+            if (!enabled || !ok) return@onKeyEvent false
+            val native = ev.nativeKeyEvent as NativeKeyEvent
+            val long = onLongClickNow
+            if (long == null) {
+                return@onKeyEvent if (ev.type == KeyEventType.KeyDown && native.repeatCount == 0) { onClickNow(); true } else false
+            }
+            when {
+                ev.type == KeyEventType.KeyDown && native.repeatCount == 0 -> { press[0] = true; press[1] = false; true }
+                ev.type == KeyEventType.KeyDown -> {
+                    if (press[0] && !press[1]) { press[1] = true; long() }
+                    true
+                }
+                ev.type == KeyEventType.KeyUp -> {
+                    val wasDown = press[0]
+                    press[0] = false
+                    if (wasDown && !press[1]) onClickNow()
+                    wasDown
+                }
+                else -> false
+            }
+        }
 }
 
 /** Crunchyroll's episode code: "E2" in the first season, "S2 E1" after it; "" when unknown. */
@@ -501,8 +509,9 @@ fun TvRow(
                 }
                 val focused = remember(key, i) { { pivot.value = i to pivot.value.second + 1; rowFocused(key) } }
                 val clicked = remember(item) { { click(item) } }
-                // Hold OK: the options menu, for what can be played (episodes and films).
-                val held: (() -> Unit)? = if (onLongClick != null && item.isPlayable) remember(item) { { longClick?.invoke(item); Unit } } else null
+                // Hold OK: the page decides (the options menu for episodes, the Watchlist for a
+                // show or film poster).
+                val held: (() -> Unit)? = if (onLongClick != null && (item.isPlayable || item.isSeries)) remember(item) { { longClick?.invoke(item); Unit } } else null
                 if (thumbs || item.isEpisode) {
                     ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = clicked, modifier = focusMod, onFocused = focused, onLongClick = held)
                 } else {
@@ -562,8 +571,8 @@ fun TvListRow(
  * (START WATCHING with its play triangle, MORE INFO).
  */
 @Composable
-fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, play: Boolean = false, onFocused: (() -> Unit)? = null) {
-    TvFocusable(onClick = onClick, modifier = modifier, focusedBackground = RoxyColors.accent, onFocused = onFocused) { focused ->
+fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, play: Boolean = false, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null) {
+    TvFocusable(onClick = onClick, modifier = modifier, focusedBackground = RoxyColors.accent, onFocused = onFocused, onLongClick = onLongClick) { focused ->
         val color = if (focused) OnAccent else Color.White
         Row(
             modifier = Modifier.height(TvDims.HeroButtonHeight).border(2.dp, if (focused) RoxyColors.accent else Color.White).padding(horizontal = 32.dp),

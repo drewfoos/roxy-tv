@@ -38,6 +38,7 @@ import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.data.downloads.formatBytes
 import tv.roxy.tv.ui.phone.markWatched
+import tv.roxy.tv.ui.phone.setWatchlist
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.components.tryFocus
 import tv.roxy.tv.ui.components.retryEachFrame
@@ -95,6 +96,23 @@ fun TvItemMenu(
                 }
             }
         }
+    }
+}
+
+/**
+ * Hold OK on a show or film poster (or Home's banner): add it to the Watchlist, or take it
+ * off when it is already there, with a short toast saying which. The card may not carry
+ * the flag, so the title is asked for first. Goes through setWatchlist, so every list on
+ * screen reloads.
+ */
+fun toggleWatchlist(context: android.content.Context, scope: kotlinx.coroutines.CoroutineScope, item: Item) {
+    val app = RoxyApp.get(context)
+    scope.launch {
+        val saved = (runCatching { app.api.item(item.id) }.getOrNull() ?: item).userData?.isFavorite == true
+        val title = item.title.ifBlank { "This title" }
+        app.setWatchlist(item.id, !saved)
+            .onSuccess { android.widget.Toast.makeText(context.applicationContext, if (saved) "Removed $title from your Watchlist" else "Added $title to your Watchlist", android.widget.Toast.LENGTH_SHORT).show() }
+            .onFailure { android.widget.Toast.makeText(context.applicationContext, "Couldn't update your Watchlist", android.widget.Toast.LENGTH_SHORT).show() }
     }
 }
 

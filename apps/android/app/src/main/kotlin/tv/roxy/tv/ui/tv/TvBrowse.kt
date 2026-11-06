@@ -222,6 +222,8 @@ private fun PosterGrid(
     // A new category starts at the top (a lazy grid otherwise keeps the old first card in
     // view by key, which can be anywhere in the new order).
     LaunchedEffect(resetKey) { if (resetKey != null) state.scrollToItem(0) }
+    val context = LocalContext.current
+    val holdScope = rememberCoroutineScope()
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = state,
@@ -233,6 +235,7 @@ private fun PosterGrid(
             PosterCard(
                 item, app.api, width = cardWidth, captionHeight = captionHeight,
                 onClick = { if (item.isMovie) onOpenMovie(item) else onOpenSeries(item) },
+                onLongClick = { toggleWatchlist(context, holdScope, item) }, // hold OK: on / off the Watchlist
                 modifier = Modifier.focusKey(memory, "$key/${item.id}").then(if (i == 0) Modifier.focusRequester(memory.requester("$key/first")) else Modifier)
                     .then(if (lastCard != null) Modifier.onFocusChanged { if (it.isFocused) { lastCard[0] = "$key/${item.id}"; onCardFocused() } } else Modifier)
                     .then(if (leftTarget != null && i % columns == 0) Modifier.focusProperties { left = leftTarget() } else Modifier)
