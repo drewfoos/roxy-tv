@@ -24,7 +24,7 @@ func TestCheckRedirect(t *testing.T) {
 		"https://127.0.0.1:8097/v1/":       false,
 		"https://[::1]/":                   false,
 		"https://169.254.169.254/latest":   false,
-		"https://100.100.1.2/":            false,
+		"https://100.100.1.2/":             false,
 		"https://10.0.0.1/":                false,
 		"https://8.8.8.8/":                 true,
 		"https://nowhere.invalid/":         false,

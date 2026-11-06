@@ -86,7 +86,7 @@ func (s *Server) addFolder(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetRootRemoved(r.Context(), root, false)
 	library.GuardMediaRoots(r.Context(), s.store, s.cfg.MediaRoots)
 	slog.Info("library added", "name", lib.Name, "root", root, "kind", kind, "anime", lib.AnimeMode)
-	go func() { _ = s.lib.ScanAll(context.Background()) }()
+	go func() { _ = s.lib.ScanAll(context.Background(), false) }()
 	writeJSON(w, 201, lib)
 }
 

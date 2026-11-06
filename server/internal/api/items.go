@@ -32,11 +32,10 @@ func (s *Server) scanAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "admin only")
 		return
 	}
-	if f := r.URL.Query().Get("force"); f == "1" || f == "true" {
-		s.lib.Force = true
-	}
+	f := r.URL.Query().Get("force")
+	force := f == "1" || f == "true"
 	// Detached from the request context: the scan must outlive this 202 response.
-	go func() { _ = s.lib.ScanAll(context.Background()) }()
+	go func() { _ = s.lib.ScanAll(context.Background(), force) }()
 	w.WriteHeader(http.StatusAccepted)
 }
 

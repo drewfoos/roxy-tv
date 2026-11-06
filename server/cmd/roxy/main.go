@@ -97,7 +97,7 @@ func run(args []string) error {
 
 	switch cmd {
 	case "scan":
-		return lib.ScanAll(context.Background())
+		return lib.ScanAll(context.Background(), false)
 	case "serve":
 		return serve(cfg, db, lib, ff, authSvc)
 	default:
@@ -161,7 +161,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 
 	if cfg.ScanOnStart {
 		go func() {
-			if err := lib.ScanAll(ctx); err != nil {
+			if err := lib.ScanAll(ctx, false); err != nil {
 				slog.Error("initial scan failed", "err", err)
 			}
 			trick.SweepMissing(ctx)

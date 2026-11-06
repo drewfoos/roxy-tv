@@ -49,13 +49,14 @@ type Library struct {
 	// OnSourceIngested, when set, is called with the media source id after a file is
 	// ingested (trickplay generation).
 	OnSourceIngested func(sourceID string)
-	// Force makes the next scan re-probe files whose size and mtime are unchanged
-	// (after a probe/segment change). Reset to false when the scan completes.
-	Force bool
-
-	scanMu   sync.Mutex
-	scanning bool
-	lastScan time.Time
+	scanMu           sync.Mutex
+	scanning         bool
+	lastScan         time.Time
+	// forcedNext holds one queued forced pass: ScanAll(ctx, true) called while a scan runs.
+	// A channel (capacity 1), so repeated requests merge and no flag is shared.
+	forcedNext chan struct{}
+	// scanOne scans one library; nil means l.scan. Tests replace it to watch passes.
+	scanOne func(ctx context.Context, lib model.Library, force bool) error
 }
 
 // ScanStatus reports whether a full scan is running and when the last one finished.
@@ -66,7 +67,7 @@ func (l *Library) ScanStatus() (running bool, last time.Time) {
 }
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
-	return &Library{store: s, ff: ff, cfg: cfg}
+	return &Library{store: s, ff: ff, cfg: cfg, forcedNext: make(chan struct{}, 1)}
 }
 
 // GuardMediaRoots tells safefs every folder that holds media (configured and added in
@@ -113,25 +114,61 @@ func (l *Library) EnsureLibraries(ctx context.Context, roots []string) error {
 	return nil
 }
 
-func (l *Library) ScanAll(ctx context.Context) error {
+// ScanAll scans every library, one full scan at a time. With force, every file of every
+// library is re-probed, also those whose size and mtime are unchanged (after a probe or
+// segment change). A call while a scan runs returns at once: a normal one is covered by
+// the running scan; a forced one is queued and runs as one more pass when it ends.
+//
+// force is passed down per call. It used to be a shared Library.Force field that the
+// API handler set and the first library's scan reset, so only that library was forced
+// (and handler and scanner touched it without a lock).
+func (l *Library) ScanAll(ctx context.Context, force bool) error {
 	l.scanMu.Lock()
 	if l.scanning {
+		if force {
+			select {
+			case l.forcedNext <- struct{}{}:
+			default: // one is queued already
+			}
+		}
 		l.scanMu.Unlock()
-		return nil // one at a time; the running scan covers it
+		return nil
 	}
 	l.scanning = true
 	l.scanMu.Unlock()
-	defer func() {
+	for {
+		err := l.scanAll(ctx, force)
+		// The queue is checked under the lock that clears `scanning`, so a forced request
+		// cannot arrive between "nothing queued" and "not scanning" and be left waiting.
 		l.scanMu.Lock()
-		l.scanning, l.lastScan = false, time.Now()
+		again := false
+		select {
+		case <-l.forcedNext:
+			again = err == nil && ctx.Err() == nil
+		default:
+		}
+		if !again {
+			l.scanning, l.lastScan = false, time.Now()
+			l.scanMu.Unlock()
+			return err
+		}
 		l.scanMu.Unlock()
-	}()
+		slog.Info("a forced scan was requested during the scan: scanning again, forced")
+		force = true
+	}
+}
+
+func (l *Library) scanAll(ctx context.Context, force bool) error {
+	one := l.scanOne
+	if one == nil {
+		one = l.scan
+	}
 	libs, err := l.store.ListLibraries(ctx)
 	if err != nil {
 		return err
 	}
 	for _, lib := range libs {
-		if err := l.Scan(ctx, lib); err != nil {
+		if err := one(ctx, lib, force); err != nil {
 			slog.Error("scan failed", "library", lib.Name, "err", err)
 		}
 	}
@@ -149,8 +186,13 @@ func (l *Library) ScanAll(ctx context.Context) error {
 	return nil
 }
 
-// Scan walks a library root, adds new/changed files and removes vanished ones.
+// Scan walks a library root, adds new/changed files and removes vanished ones. Files
+// whose size and mtime are unchanged are skipped (ScanAll with force re-probes them).
 func (l *Library) Scan(ctx context.Context, lib model.Library) error {
+	return l.scan(ctx, lib, false)
+}
+
+func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error {
 	start := time.Now()
 	known, err := l.store.ListPartPaths(ctx, lib.ID)
 	if err != nil {
@@ -189,7 +231,7 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 		}
 		if _, ok := known[path]; ok {
 			part, err := l.store.GetPartByPath(ctx, path)
-			if !l.Force && err == nil && part != nil && part.Size == info.Size() && part.ModTime.Equal(info.ModTime().UTC().Truncate(time.Millisecond)) {
+			if !force && err == nil && part != nil && part.Size == info.Size() && part.ModTime.Equal(info.ModTime().UTC().Truncate(time.Millisecond)) {
 				skipped++
 				return nil
 			}
@@ -223,8 +265,7 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 	} else if n > 0 {
 		slog.Info("pruned orphaned items", "count", n)
 	}
-	slog.Info("scan complete", "library", lib.Name, "added", added, "updated", updated, "unchanged", skipped, "removed", removed, "forced", l.Force, "took", time.Since(start).Round(time.Millisecond))
-	l.Force = false
+	slog.Info("scan complete", "library", lib.Name, "added", added, "updated", updated, "unchanged", skipped, "removed", removed, "forced", force, "took", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

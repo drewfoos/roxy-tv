@@ -54,7 +54,7 @@ func (s *Server) libraryScan(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	switch body.Mode {
 	case "", "files":
-		go func() { _ = s.lib.ScanAll(context.Background()) }()
+		go func() { _ = s.lib.ScanAll(context.Background(), false) }()
 	case "missing", "replace":
 		if s.meta == nil {
 			writeError(w, 503, "metadata service not running")
