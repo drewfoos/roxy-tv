@@ -21,7 +21,23 @@ import { Player } from '../player/Player'
 export function Watch() {
   const { id = '' } = useParams()
   const nav = useNavigate()
-  const { data: item, error, loading } = useAsync(`item:${id}:full`, () => api.item(id), [id])
+  // The item is always fetched fresh, never painted from the cache: the Player starts at
+  // the position in the item it is given and reads it once, so a cached copy from earlier
+  // in the session resumed from an old spot (and its first report then overwrote the real
+  // position). While the next item loads the previous one stays, so the Player stays
+  // mounted and only switches items (fullscreen survives Next and Autoplay).
+  const [loaded, setLoaded] = useState<{ id: string; item: Item | null; error: string | null } | null>(null)
+  useEffect(() => {
+    let live = true
+    api.item(id).then(
+      (it) => live && setLoaded({ id, item: it, error: null }),
+      (e: unknown) => live && setLoaded({ id, item: null, error: e instanceof Error ? e.message : String(e) }),
+    )
+    return () => {
+      live = false
+    }
+  }, [id])
+  const item = loaded?.item ?? null
   const seriesId = item?.seriesId ?? null
   const { data: series } = useAsync(seriesId ? `item:${seriesId}` : null, () => api.item(seriesId!), [seriesId])
   const { data: sibsRes } = useAsync(seriesId ? `episodes-all:${seriesId}` : null, () => api.items({ type: 'episode', parent: seriesId!, recursive: true, includeSources: true, sort: 'index' }), [seriesId])
@@ -29,8 +45,8 @@ export function Watch() {
   const [more, setMore] = useState(false)
   useEffect(() => setMore(false), [id])
 
-  if (loading && !item) return <Spinner />
-  if (!item) return <div className="empty error">{error ?? 'Not found'}</div>
+  if (!loaded) return <Spinner />
+  if (!item) return <div className="empty error">{loaded.error ?? 'Not found'}</div>
   if (!isPlayable(item)) return <div className="empty">This title has no file to play yet.</div>
 
   const at = siblings.findIndex((e) => e.id === item.id)

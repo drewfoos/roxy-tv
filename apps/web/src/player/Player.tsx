@@ -93,6 +93,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // older one is still waiting (on the token, the metadata, play()), and the older one used
   // to go on and seek or flag the newer stream.
   const loadGen = useRef(0)
+  // True once this item's first load has put the stream at its start position. Until then
+  // nothing is reported: a timeupdate or pause before the start seek would save a position
+  // the viewer never reached over the one they left.
+  const started = useRef(false)
 
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -140,6 +144,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const report = useCallback(
     (force = false) => {
       const now = Date.now()
+      if (!started.current) return
       if (!force && now - lastReport.current < REPORT_EVERY_MS) return
       // Never report 0 (the apps don't either): a position of 0 is "nothing watched", and
       // the server would store it over the real one.
@@ -218,6 +223,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       v.playbackRate = rate
       if (wasPlaying || !ready) await v.play().catch(() => undefined)
       if (stale()) return
+      started.current = true
       setReady(true)
     },
     [source, audioTracks, rate, ready],
@@ -259,6 +265,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setTrick(null)
     tokenRef.current = ''
     lastAbs.current = 0 // a new item: never carry the last one's position over
+    started.current = false
+    // The first report waits a full interval after the start, like every later one.
+    lastReport.current = Date.now()
     setFontWarn(null)
     const subs = createSubtitleRenderer(v, (names) => {
       if (!live) return

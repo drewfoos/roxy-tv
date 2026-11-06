@@ -4,8 +4,14 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
  * Catches a page that throws while rendering. Without it React unmounts everything and
  * the site goes blank; with it the page shows what went wrong and the way home.
  */
-export class PageErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+export class PageErrorBoundary extends Component<{ children: ReactNode; resetKey?: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null }
+
+  // The boundary is kept across some path changes (episode to episode on the watch page):
+  // an error shown for one path must not stay for the next.
+  componentDidUpdate(prev: { resetKey?: string }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null })
+  }
 
   static getDerivedStateFromError(error: Error) {
     return { error }

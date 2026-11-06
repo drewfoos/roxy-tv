@@ -60,9 +60,12 @@ export default function App() {
     return <Navigate to="/profiles" replace />;
 
   // A page that throws shows an error in its place instead of blanking the whole site;
-  // keyed by path, so going to another page starts clean.
+  // keyed by page, so going to another page starts clean. Every /watch/:id is one page:
+  // keying by the full path rebuilt the player for each episode, which dropped
+  // fullscreen on Next and Autoplay. resetKey still clears an error on any path change.
+  const pageKey = loc.pathname.startsWith("/watch/") ? "/watch" : loc.pathname;
   return (
-    <PageErrorBoundary key={loc.pathname}>
+    <PageErrorBoundary key={pageKey} resetKey={loc.pathname}>
       <Routes>
         <Route path="/profiles" element={<Profiles />} />
         <Route path="/" element={<Home />} />
