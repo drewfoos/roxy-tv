@@ -56,6 +56,29 @@ function initialTracks(item: Item, source: ReturnType<typeof primarySource>, aud
   return { audio, sub, subsOn }
 }
 
+const SUBS_FAILED = "Subtitles couldn't be loaded."
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+/**
+ * Asks the server for a file's stream headers only (HEAD): 'ok' when it would serve it,
+ * else what is wrong, in words. Sent without the app's 401 handling on purpose: an
+ * expired media token is not a signed-out session.
+ */
+async function probeStream(url: string): Promise<'ok' | string> {
+  try {
+    const res = await fetch(url, { method: 'HEAD' })
+    if (res.ok) return 'ok'
+    if (res.status === 404) return 'This file is no longer on the server. It may have been deleted or replaced.'
+    if (res.status === 401 || res.status === 403) return 'The playback link expired. Reload the page to keep watching.'
+    return `The server could not stream this file (HTTP ${res.status}).`
+  } catch {
+    return "Couldn't reach the server. Check the connection and try again."
+  }
+}
+
 const QUALITY_KBPS: Record<Exclude<Quality, 'original'>, number> = { 1080: 8000, 720: 4000, 480: 1500 }
 
 /**
@@ -123,9 +146,15 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const autoplayRef = useRef(true)
   const [skip, setSkip] = useState<MediaSegment | null>(null)
   const [advisory, setAdvisory] = useState(true)
-  // "2 subtitle fonts didn't load": shown for a few seconds when a font download fails.
-  const [fontWarn, setFontWarn] = useState<string | null>(null)
-  const fontWarnTimer = useRef<number | null>(null)
+  // A passing problem that leaves playback going, shown for a few seconds: "2 subtitle
+  // fonts didn't load", or subtitles that failed to load at all.
+  const [notice, setNotice] = useState<string | null>(null)
+  const noticeTimer = useRef<number | null>(null)
+  const showNotice = useCallback((text: string) => {
+    setNotice(text)
+    if (noticeTimer.current) clearTimeout(noticeTimer.current)
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 8000)
+  }, [])
   const [trick, setTrick] = useState<TrickplayManifest | null>(null)
   // Set again for every new item in the start effect below (see initialTracks).
   const [audioIndex, setAudioIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).audio)
@@ -229,6 +258,22 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     [source, audioTracks, rate, ready],
   )
 
+  /**
+   * A load started by the viewer (a seek past the buffer, a track or quality change). It
+   * can fail like the first one (the media token request, for one) and used to fail
+   * silently, leaving a stopped player with no word why.
+   */
+  const reload = useCallback(
+    (startSec: number, audio: number | null) => {
+      const my = loadGen.current + 1 // the number this load takes
+      setError(null) // a new try: an earlier failure's message no longer applies
+      load(startSec, audio).catch((e: unknown) => {
+        if (my === loadGen.current) setError(errorText(e))
+      })
+    },
+    [load],
+  )
+
   const seekTo = useCallback(
     (t: number) => {
       const v = videoRef.current
@@ -246,10 +291,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         v.currentTime = rel
         setCurrent(t)
       } else {
-        void load(t, m.audio)
+        reload(t, m.audio)
       }
     },
-    [duration, load],
+    [duration, reload],
   )
 
   // ---- start: token, stream, subtitles, trickplay ----
@@ -268,12 +313,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     started.current = false
     // The first report waits a full interval after the start, like every later one.
     lastReport.current = Date.now()
-    setFontWarn(null)
+    setNotice(null)
     const subs = createSubtitleRenderer(v, (names) => {
       if (!live) return
-      setFontWarn(`${names.length === 1 ? `The subtitle font ${names[0]} didn't` : `${names.length} subtitle fonts didn't`} load, so some signs may look wrong.`)
-      if (fontWarnTimer.current) clearTimeout(fontWarnTimer.current)
-      fontWarnTimer.current = window.setTimeout(() => setFontWarn(null), 8000)
+      showNotice(`${names.length === 1 ? `The subtitle font ${names[0]} didn't` : `${names.length} subtitle fonts didn't`} load, so some signs may look wrong.`)
     })
     subsRef.current = subs
     // This item's own tracks, not the previous episode's (the Player is reused).
@@ -284,16 +327,16 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setSkip(null)
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
-    load(start > 5 ? start : 0, tracks.audio).catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
+    load(start > 5 ? start : 0, tracks.audio).catch((e: unknown) => live && setError(errorText(e)))
     const sub = tracks.subsOn ? (subTracks.find((s) => s.index === tracks.sub) ?? null) : null
-    if (sub) subs.setTrack(source.id, sub).catch(() => undefined)
+    if (sub) subs.setTrack(source.id, sub).catch(() => live && showNotice(SUBS_FAILED))
     api.trickplay(source.id).then((m) => live && setTrick(m)).catch(() => undefined)
     const t = setTimeout(() => live && setAdvisory(false), 7000)
     return () => {
       live = false
       loadGen.current++ // a load still in flight for this item stops at its next await
       clearTimeout(t)
-      if (fontWarnTimer.current) clearTimeout(fontWarnTimer.current)
+      if (noticeTimer.current) clearTimeout(noticeTimer.current)
       reportRef.current(true)
       subs.destroy()
       subsRef.current = null
@@ -335,7 +378,19 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     const onPlaying = () => setWaiting(false)
     const onError = () => {
       const code = v.error?.code
-      setError(code === 4 ? 'This file cannot be played in this browser (unsupported video or audio codec).' : `Playback error ${code ?? ''}`.trim())
+      if (code !== 4) {
+        setError(code === 2 ? 'The connection to the server dropped while playing. Try again.' : code === 3 ? 'The video could not be decoded.' : `Playback error ${code ?? ''}`.trim())
+        return
+      }
+      // Code 4 ("source not supported") is also what the browser reports when the URL
+      // answers 404 (the file was deleted or replaced) or 401 / 403 (the media token
+      // expired): ask the server about the same file before blaming the codec.
+      const my = loadGen.current
+      const direct = modeRef.current.kind === 'direct'
+      probeStream(api.streamUrl(source.id, tokenRef.current)).then((status) => {
+        if (my !== loadGen.current) return // a newer load replaced this stream meanwhile
+        setError(status === 'ok' ? (direct ? 'This file cannot be played in this browser (unsupported video or audio codec).' : 'The server could not prepare a stream this browser can play.') : status)
+      })
     }
     const onEnd = () => {
       report(true)
@@ -376,8 +431,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     const subs = subsRef.current
     if (!subs || !source) return
     const track = subsOn ? (subTracks.find((s) => s.index === subIndex) ?? null) : null
-    subs.setTrack(source.id, track).catch(() => undefined)
-  }, [subIndex, subsOn, source, subTracks])
+    subs.setTrack(source.id, track).catch(() => {
+      if (subsRef.current === subs) showNotice(SUBS_FAILED)
+    })
+  }, [subIndex, subsOn, source, subTracks, showNotice])
 
   // ---- controls visibility ----
   const poke = useCallback(() => {
@@ -422,14 +479,14 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const changeAudio = (idx: number) => {
     setAudioIndex(idx)
     setMenu('none')
-    void load(absTime(), idx)
+    reload(absTime(), idx)
     lastReport.current = 0
   }
   const changeQuality = (q: Quality) => {
     qualityRef.current = q
     setQuality(q)
     setMenu('none')
-    void load(absTime(), audioIndex)
+    reload(absTime(), audioIndex)
   }
   const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
   const qualities: Quality[] = ['original', ...([1080, 720, 480] as const).filter((h) => srcHeight === 0 || h < srcHeight)]
@@ -466,9 +523,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         </button>
       )}
       {error && <div className="player__error">{error}</div>}
-      {fontWarn && !error && (
+      {notice && !error && (
         <div className="player__notice" role="status">
-          {fontWarn}
+          {notice}
         </div>
       )}
 
