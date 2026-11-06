@@ -1398,15 +1398,31 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 		safefs.Remove(tmp)
 		return
 	}
-	// Drop stale resized variants (<type>.w<px>.jpg) of the previous image.
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if n := e.Name(); strings.HasPrefix(n, typ+".w") && strings.HasSuffix(n, ".jpg") {
-				safefs.Remove(filepath.Join(dir, n))
-			}
-		}
-	}
+	dropResizedVariants(dir, typ)
 	if err := s.store.SetItemImage(ctx, store.ItemImage{ItemID: itemID, Type: typ, Path: path, Width: cfg.Width, Height: cfg.Height, SourceURL: srcURL, Locked: force}); err != nil {
 		slog.Warn("metadata: recording image", "item", itemID, "type", typ, "err", err)
+	}
+}
+
+// dropResizedVariants removes the resized copies (<type>.w<px>.jpg, or .png for logos,
+// which keep their transparency) made from the previous image of that type. Only .jpg
+// used to be removed, so a new logo kept being served at every width a client had
+// already asked for.
+func dropResizedVariants(dir, typ string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		n := e.Name()
+		rest, ok := strings.CutPrefix(n, typ+".w")
+		if !ok {
+			continue
+		}
+		digits, ext, ok := strings.Cut(rest, ".")
+		if !ok || (ext != "jpg" && ext != "png") || digits == "" || strings.Trim(digits, "0123456789") != "" {
+			continue
+		}
+		safefs.Remove(filepath.Join(dir, n))
 	}
 }
