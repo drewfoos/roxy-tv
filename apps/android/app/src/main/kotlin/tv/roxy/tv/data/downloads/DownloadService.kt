@@ -57,6 +57,12 @@ class DownloadService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, t -> Timber.e(t, "download service") })
     private var worker: Job? = null
+    /** A start request came in while the worker was already running (main thread only). */
+    private var kickedWhileRunning = false
+    /** Set once the service is told to stop (timeout, destroy); no worker is relaunched after it. */
+    private var stopping = false
+    private var destroyed = false
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private lateinit var app: RoxyApp
     private lateinit var downloads: Downloads
 
@@ -70,19 +76,48 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startInForeground(notification("Preparing downloads", null, 0f, indeterminate = true))
-        if (worker?.isActive != true) worker = scope.launch { runQueue() }
+        if (!startInForeground(notification("Preparing downloads", null, 0f, indeterminate = true))) {
+            // Not allowed to run in the foreground right now (started from the background on
+            // Android 12+, or the Android 15 data-sync time is used up). The queue stays as it
+            // is; the next kick (app opened, network change) tries again.
+            if (worker?.isActive != true) { stopping = true; stopSelf() }
+            return START_NOT_STICKY
+        }
+        if (worker?.isActive == true) kickedWhileRunning = true
+        else launchWorker()
         return START_NOT_STICKY
+    }
+
+    private fun launchWorker() {
+        kickedWhileRunning = false
+        val job = scope.launch { runQueue() }
+        worker = job
+        // Decide on the main thread, where onStartCommand runs, so a kick that lands as the
+        // queue runs dry is never lost between "nothing left" and stopSelf().
+        job.invokeOnCompletion { main.post { finishRun(job) } }
+    }
+
+    /** The worker [job] ended: run the queue again if work was asked for meanwhile, else stop. */
+    private fun finishRun(job: Job) {
+        if (destroyed || worker !== job) return // gone, or a newer worker already took over
+        if (!stopping && kickedWhileRunning) { launchWorker(); return }
+        stopping = true
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         // Android 15 caps data-sync foreground time; stop cleanly and let the next kick resume.
         Timber.w("download service timed out; stopping")
+        stopping = true
         worker?.cancel()
         stopSelf()
     }
 
     override fun onDestroy() {
+        stopping = true
+        destroyed = true
+        main.removeCallbacksAndMessages(null)
         scope.cancel()
         super.onDestroy()
     }
@@ -93,32 +128,28 @@ class DownloadService : Service() {
     private suspend fun runQueue() {
         // Failures in a row per item, so one that keeps failing on a working server gives up.
         val failures = HashMap<String, Int>()
-        try {
-            while (true) {
-                val next = downloads.nextToFetch() ?: break
-                val outcome = try { fetch(next) } catch (t: Throwable) {
-                    if (t is kotlinx.coroutines.CancellationException) throw t
-                    Timber.e(t, "download %s crashed", next.itemId) // never take the app down with it
-                    downloads.update(next.itemId) { if (it.state == DownloadState.Downloading) it.copy(state = DownloadState.Queued, error = t.message) else it }
-                    Outcome.Retry
-                }
-                if (outcome != Outcome.Retry) { failures.remove(next.itemId); continue }
-                val n = (failures[next.itemId] ?: 0) + 1
-                failures[next.itemId] = n
-                if (app.api.reachable()) {
-                    if (n >= MAX_TRANSIENT_FAILURES) {
-                        downloads.update(next.itemId) { if (it.state == DownloadState.Queued) it.copy(state = DownloadState.Failed, error = it.error ?: "Download kept failing") else it }
-                        continue
-                    }
-                    delay(2_000L * n) // a hiccup on a working server: a short pause, then again
+        // Stopping (or running again) is decided by finishRun once this job completes.
+        while (true) {
+            val next = downloads.nextToFetch() ?: break
+            val outcome = try { fetch(next) } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                Timber.e(t, "download %s crashed", next.itemId) // never take the app down with it
+                downloads.update(next.itemId) { if (it.state == DownloadState.Downloading) it.copy(state = DownloadState.Queued, error = t.message) else it }
+                Outcome.Retry
+            }
+            if (outcome != Outcome.Retry) { failures.remove(next.itemId); continue }
+            val n = (failures[next.itemId] ?: 0) + 1
+            failures[next.itemId] = n
+            if (app.api.reachable()) {
+                if (n >= MAX_TRANSIENT_FAILURES) {
+                    downloads.update(next.itemId) { if (it.state == DownloadState.Queued) it.copy(state = DownloadState.Failed, error = it.error ?: "Download kept failing") else it }
                     continue
                 }
-                // The server went away (restart, Wi-Fi drop): keep the bytes and wait for it.
-                if (!waitForServer(next)) break
+                delay(2_000L * n) // a hiccup on a working server: a short pause, then again
+                continue
             }
-        } finally {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            // The server went away (restart, Wi-Fi drop): keep the bytes and wait for it.
+            if (!waitForServer(next)) break
         }
     }
 
@@ -144,9 +175,14 @@ class DownloadService : Service() {
         return false
     }
 
-    private fun startInForeground(n: Notification) {
+    /** False when the system refuses the foreground start (ForegroundServiceStartNotAllowedException and kin). */
+    private fun startInForeground(n: Notification): Boolean = try {
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else startForeground(NOTIFICATION_ID, n)
+        true
+    } catch (t: Exception) {
+        Timber.w(t, "download service could not enter the foreground")
+        false
     }
 
     /** Current state of [itemId] in the index; null when it was deleted. */
