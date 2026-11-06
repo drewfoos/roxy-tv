@@ -19,7 +19,11 @@ const MAX_PROFILES = 6
  */
 export function ProfilesPage() {
   const s = useSession()
-  const { data, error, loading, reload } = useAsync('profiles', () => api.profiles())
+  const { data, error, loading, fresh, reload } = useAsync('profiles', () => api.profiles())
+  // A current profile deleted on another device is dropped (the app then asks who's watching).
+  useEffect(() => {
+    if (fresh && data) session.forgetMissingProfile(data.profiles.map((p) => p.id))
+  }, [fresh, data])
   const [editing, setEditing] = useState<Profile | 'new' | null>(null)
   const profiles = data?.profiles ?? []
   return (

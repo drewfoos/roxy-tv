@@ -46,6 +46,19 @@ export const session = {
     const cur = read()
     if (cur) session.set({ ...cur, ...patch })
   },
+  /**
+   * Given the login's profile ids as the server just listed them, drops the selected
+   * profile if it is not among them (deleted on another device). The server quietly
+   * serves the default profile for an unknown one, so this browser went on showing the
+   * deleted profile's name while reading and writing another's watch state. Dropping it
+   * sends the app to "Who's watching?". True when it was dropped.
+   */
+  forgetMissingProfile(ids: string[]): boolean {
+    const cur = read()
+    if (!cur?.profileId || ids.includes(cur.profileId)) return false
+    session.set({ ...cur, profileId: null, profileName: '', profileHasAvatar: false, profileAvatarKey: '' })
+    return true
+  },
   subscribe(l: () => void) {
     listeners.add(l)
     return () => {

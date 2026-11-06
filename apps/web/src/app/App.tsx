@@ -16,6 +16,7 @@ import { LinkEnter, LinkTv } from "../pages/LinkTv";
 import { SetupWizard, setupInProgressFor } from "../pages/Setup";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { session } from "../api/session";
 import { Spinner } from "../components/Skeleton";
 import { useScrollVar } from "../hooks/useScrollVar";
 import { PageErrorBoundary } from "../components/PageErrorBoundary";
@@ -43,6 +44,24 @@ export default function App() {
       live = false;
     };
   }, [s?.token]);
+  // The selected profile may have been deleted on another device since this browser
+  // picked it: check once per sign-in and profile (see session.forgetMissingProfile).
+  const profileId = s?.profileId ?? null;
+  useEffect(() => {
+    if (!s?.token || !profileId) return;
+    let live = true;
+    api
+      .profiles()
+      .then((r) => {
+        // Only for the profile it was asked about: a switch meanwhile is checked on its own.
+        if (live && session.get()?.profileId === profileId)
+          session.forgetMissingProfile(r.profiles.map((p) => p.id));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [s?.token, profileId]);
   // Bumped when the setup wizard finishes, so this reads its flag again.
   const [, setSetupDone] = useState(0);
 

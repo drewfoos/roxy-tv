@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { api, px } from '../api/client'
 import { session } from '../api/session'
@@ -29,7 +29,12 @@ function lastPicked(): string | null {
 export function Profiles() {
   const s = useSession()
   const nav = useNavigate()
-  const { data, error, loading, reload } = useAsync('profiles', () => api.profiles())
+  const { data, error, loading, fresh, reload } = useAsync('profiles', () => api.profiles())
+  // A profile deleted elsewhere is no longer the current one (and loses the cat). The
+  // session change clears the page cache, so the list is asked for again.
+  useEffect(() => {
+    if (fresh && data && session.forgetMissingProfile(data.profiles.map((p) => p.id))) reload()
+  }, [fresh, data, reload])
   const [managing, setManaging] = useState(false)
   const [editing, setEditing] = useState<Profile | 'new' | null>(null)
   const profiles = data?.profiles ?? []
