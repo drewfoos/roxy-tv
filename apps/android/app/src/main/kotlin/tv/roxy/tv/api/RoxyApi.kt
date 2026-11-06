@@ -406,7 +406,8 @@ class RoxyApi(private val prefs: Prefs) {
 
     /** Long-poll for the next command aimed at this device; null after the server's wait with nothing to do. */
     suspend fun sessionCommands(name: String, client: String, waitSec: Int = 25): RemoteCommand? = withContext(Dispatchers.IO) {
-        val req = request("/v1/sessions/commands?name=${name.urlEncoded()}&client=${client.urlEncoded()}&wait=$waitSec").get().build()
+        // caps=handoff: this app echoes a handed-over "play"'s id back in its state (RemotePlay.handOver).
+        val req = request("/v1/sessions/commands?name=${name.urlEncoded()}&client=${client.urlEncoded()}&wait=$waitSec&caps=handoff").get().build()
         http.newCall(req).execute().use { resp ->
             if (resp.code == 204) return@use null
             val text = resp.body.string()
@@ -1152,16 +1153,16 @@ data class ArrConfig(
 )
 
 @Serializable
-data class RemoteCommand(val type: String, val itemId: String = "", val positionMs: Long = 0, val seconds: Int = 0, val from: String = "", val fromStart: Boolean = false)
+data class RemoteCommand(val type: String, val itemId: String = "", val positionMs: Long = 0, val seconds: Int = 0, val from: String = "", val fromStart: Boolean = false, val handoff: String = "")
 
 @Serializable
 private data class RemoteCommandBody(val command: RemoteCommand)
 
 @Serializable
-data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false, val seq: Long = 0)
+data class RemoteNow(val itemId: String = "", val title: String = "", val positionMs: Long = 0, val paused: Boolean = false, val seq: Long = 0, val handoff: String = "")
 
 @Serializable
-data class RemotePlayer(val deviceId: String, val name: String = "", val client: String = "", val nowPlaying: RemoteNow? = null)
+data class RemotePlayer(val deviceId: String, val name: String = "", val client: String = "", val nowPlaying: RemoteNow? = null, val caps: List<String> = emptyList())
 
 @Serializable
 private data class RemotePlayers(val players: List<RemotePlayer> = emptyList())

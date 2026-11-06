@@ -35,12 +35,28 @@ func (s *Server) sessionCommands(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(wait)*time.Second)
 	defer cancel()
-	cmd, ok := s.hub.Wait(ctx, p.DeviceID, p.UserID, r.URL.Query().Get("name"), r.URL.Query().Get("client"))
+	cmd, ok := s.hub.Wait(ctx, p.DeviceID, p.UserID, r.URL.Query().Get("name"), r.URL.Query().Get("client"), pollCaps(r.URL.Query().Get("caps")))
 	if !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"command": cmd})
+}
+
+// pollCaps reads the poll's caps=a,b list: at most 8 short words, so a client cannot make
+// the player list large.
+func pollCaps(raw string) []string {
+	var caps []string
+	for _, c := range strings.Split(raw, ",") {
+		c = strings.TrimSpace(c)
+		if c == "" || len(c) > 32 {
+			continue
+		}
+		if caps = append(caps, c); len(caps) == 8 {
+			break
+		}
+	}
+	return caps
 }
 
 // POST /v1/sessions/state {itemId, title?, positionMs, paused, seq?} -> 204. An empty

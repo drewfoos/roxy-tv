@@ -1079,6 +1079,9 @@ class PlayerSession(
     fun remoteStop() { main.post { if (!destroyed) { reportProgress("stop"); host.back() } } }
     fun positionMs(): Long = ((runCatching { player.timePosSeconds() }.getOrNull() ?: 0.0) * 1000).toLong()
 
+    /** Reports this player's state for "Play on" right away (after a handed-over play is up). */
+    fun reportStateNow() { itemId?.let { app.remote.reportState(it, title, positionMs(), ui.paused) } }
+
     fun destroy() {
         if (destroyed) return
         destroyed = true

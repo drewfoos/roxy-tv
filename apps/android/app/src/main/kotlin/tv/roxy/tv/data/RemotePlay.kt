@@ -107,7 +107,13 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
             val up = withTimeoutOrNull(PLAYER_START_TIMEOUT_MS) {
                 while (activePlayer?.itemId != itemId) delay(100)
             }
-            if (up == null) Timber.w("remote play: no player showing %s after %d ms; carrying on", itemId, PLAYER_START_TIMEOUT_MS)
+            if (up == null) {
+                Timber.w("remote play: no player showing %s after %d ms; carrying on", itemId, PLAYER_START_TIMEOUT_MS)
+            } else if (cmd.handoff.isNotEmpty()) {
+                // Tell the sender this play is ours: its id goes back in our state reports.
+                synchronized(this) { handoffAck = itemId to cmd.handoff }
+                activePlayer?.reportStateNow()
+            }
             return
         }
         val p = activePlayer
@@ -138,6 +144,9 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
     // changed; a paused or stopped player reports nothing more, so it could stay wrong.
     private var latest: RemoteNow? = null
     private var retryDelayMs = STATE_RETRY_MIN_MS
+    // (item id, handoff id) of the last handed-over play this player started: reported back
+    // while that item plays, so the sender sees its own request applied (handOver).
+    private var handoffAck: Pair<String, String>? = null
 
     init {
         scope.launch {
@@ -166,9 +175,11 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
     @Synchronized
     fun reportState(itemId: String?, title: String, positionMs: Long, paused: Boolean) {
         if (!prefs.session.value.isLoggedIn) { latest = null; return }
+        if (handoffAck?.first != itemId) handoffAck = null // another item, or stopped
+        val handoff = handoffAck?.second.orEmpty()
         val cur = latest
-        if (cur != null && cur.itemId == itemId.orEmpty() && cur.positionMs == positionMs && cur.paused == paused) return
-        val s = RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet())
+        if (cur != null && cur.itemId == itemId.orEmpty() && cur.positionMs == positionMs && cur.paused == paused && cur.handoff == handoff) return
+        val s = RemoteNow(itemId.orEmpty(), title, positionMs, paused, seq = stateSeq.incrementAndGet(), handoff = handoff)
         latest = s
         states.trySend(s)
     }
@@ -213,8 +224,13 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
             sendTo(to.deviceId, RemoteCommand(type = "stop"))
             if (target.value == null && activePlayer === local) local.remotePause(false)
         }
+        // This request's own id. A player that lists "handoff" reports it back once it plays
+        // for it, so the same episode already playing there is not taken for success (nor a
+        // position not yet applied). Older apps do not, and are judged by the item alone.
+        val handoff = java.util.UUID.randomUUID().toString()
+        val byId = "handoff" in to.caps
         // Addressed to [to] itself, not to whichever device is picked when the request runs.
-        if (!sendTo(to.deviceId, RemoteCommand(type = "play", itemId = itemId, positionMs = local.positionMs()))) {
+        if (!sendTo(to.deviceId, RemoteCommand(type = "play", itemId = itemId, positionMs = local.positionMs(), handoff = handoff))) {
             if (!stillTarget()) return // another device was picked while this was on its way
             target.value = null
             say("Couldn't reach ${to.name.ifBlank { "that device" }}. Still playing here.")
@@ -227,7 +243,8 @@ class RemotePlay(private val app: RoxyApp, private val api: RoxyApi, private val
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
             delay(1_000)
             if (!stillTarget()) return superseded()
-            if (refreshPlayers().firstOrNull { it.deviceId == to.deviceId }?.nowPlaying?.itemId == itemId) return
+            val now = refreshPlayers().firstOrNull { it.deviceId == to.deviceId }?.nowPlaying
+            if (now?.itemId == itemId && (!byId || now.handoff == handoff)) return
         }
         if (!stillTarget()) return superseded()
         target.value = null

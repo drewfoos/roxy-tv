@@ -25,6 +25,10 @@ type Command struct {
 	PositionMs int64  `json:"positionMs,omitempty"`
 	// FromStart: play from the beginning, even if the player already has this item open.
 	FromStart bool `json:"fromStart,omitempty"`
+	// Handoff identifies this "play" (a phone handing playback over). A player that lists
+	// "handoff" in its caps reports it back in NowPlaying once it is playing for it, so the
+	// sender can tell its own request apart from the same item already playing there.
+	Handoff string `json:"handoff,omitempty"`
 	// seek: an absolute position; seekBy: an offset.
 	Seconds int `json:"seconds,omitempty"`
 	// From is the sender's device name, for the player's "Playing from <phone>" line.
@@ -37,6 +41,8 @@ type NowPlaying struct {
 	Title      string `json:"title,omitempty"`
 	PositionMs int64  `json:"positionMs"`
 	Paused     bool   `json:"paused"`
+	// Handoff is the last handed-over "play" this player started for this item (Command.Handoff).
+	Handoff string `json:"handoff,omitempty"`
 }
 
 // Player is one connected client as the list shows it.
@@ -46,6 +52,9 @@ type Player struct {
 	Client     string      `json:"client,omitempty"`
 	LastSeen   time.Time   `json:"lastSeen"`
 	NowPlaying *NowPlaying `json:"nowPlaying,omitempty"`
+	// Caps lists what the player supports beyond the basics ("handoff": it echoes
+	// Command.Handoff in NowPlaying). Sent with every poll.
+	Caps []string `json:"caps,omitempty"`
 }
 
 type player struct {
@@ -82,7 +91,7 @@ func New() *Hub { return &Hub{players: map[string]*player{}} }
 // touch registers or refreshes a player and returns its command queue (read under the
 // lock: a player coming back after going stale gets a new, empty queue, so commands
 // queued while it was away are never run).
-func (h *Hub) touch(deviceID, userID, name, client string) chan queued {
+func (h *Hub) touch(deviceID, userID, name, client string, caps []string) chan queued {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	p := h.players[deviceID]
@@ -100,6 +109,7 @@ func (h *Hub) touch(deviceID, userID, name, client string) chan queued {
 	if client != "" {
 		p.Client = client
 	}
+	p.Caps = caps
 	p.LastSeen = nowFn()
 	return p.cmds
 }
@@ -107,8 +117,8 @@ func (h *Hub) touch(deviceID, userID, name, client string) chan queued {
 // Wait registers the player (or refreshes it) and returns its next command, or false
 // when ctx ends first (the long poll's deadline, or the client going away).
 // Commands older than CommandTTL are dropped, not returned.
-func (h *Hub) Wait(ctx context.Context, deviceID, userID, name, client string) (Command, bool) {
-	cmds := h.touch(deviceID, userID, name, client)
+func (h *Hub) Wait(ctx context.Context, deviceID, userID, name, client string, caps []string) (Command, bool) {
+	cmds := h.touch(deviceID, userID, name, client, caps)
 	for {
 		select {
 		case q := <-cmds:

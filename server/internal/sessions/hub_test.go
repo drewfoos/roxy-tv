@@ -24,7 +24,7 @@ func TestWaitAndSendConcurrently(t *testing.T) {
 				default:
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-				h.Wait(ctx, "tv", "u1", "TV", "android")
+				h.Wait(ctx, "tv", "u1", "TV", "android", nil)
 				cancel()
 			}
 		}()
@@ -53,7 +53,7 @@ func TestSendChecksLoginAndConnection(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h.Wait(ctx, "tv", "u1", "TV", "android") // registers it, returns at once
+	h.Wait(ctx, "tv", "u1", "TV", "android", nil) // registers it, returns at once
 	if h.Send("tv", "u2", Command{Type: "play"}) {
 		t.Fatal("sent to another login's player")
 	}
@@ -74,7 +74,7 @@ func TestStaleStatusReportIsIgnored(t *testing.T) {
 	h := New()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h.Wait(ctx, "tv", "u1", "TV", "android")
+	h.Wait(ctx, "tv", "u1", "TV", "android", nil)
 	nowPlaying := func() *NowPlaying { return h.Connected("u1")["tv"].NowPlaying }
 
 	if !h.SetNowPlaying("tv", nil, 2) { // stopped, sent second, arrives first
@@ -109,7 +109,7 @@ func TestQueuedCommandsDoNotSurviveAnAbsence(t *testing.T) {
 	poll := func(d time.Duration) (Command, bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), d)
 		defer cancel()
-		return h.Wait(ctx, "tv", "u1", "TV", "android")
+		return h.Wait(ctx, "tv", "u1", "TV", "android", nil)
 	}
 	poll(0) // the TV connects
 
@@ -139,5 +139,31 @@ func TestQueuedCommandsDoNotSurviveAnAbsence(t *testing.T) {
 	}
 	if c, ok := poll(time.Second); !ok || c.Type != "toggle" {
 		t.Fatalf("fresh command: %+v %v", c, ok)
+	}
+}
+
+// A handed-over "play" carries an id that the player can report back, so the sender can
+// tell its own request apart from the same item already playing; caps say who can.
+func TestHandoffIdRoundTrip(t *testing.T) {
+	h := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.Wait(ctx, "tv", "u1", "TV", "android", []string{"handoff"})
+	if !h.Send("tv", "u1", Command{Type: "play", ItemID: "A", Handoff: "h1"}) {
+		t.Fatal("play not queued")
+	}
+	wctx, wcancel := context.WithTimeout(context.Background(), time.Second)
+	defer wcancel()
+	c, ok := h.Wait(wctx, "tv", "u1", "TV", "android", []string{"handoff"})
+	if !ok || c.Handoff != "h1" {
+		t.Fatalf("command lost its handoff id: %+v %v", c, ok)
+	}
+	h.SetNowPlaying("tv", &NowPlaying{ItemID: "A", Handoff: "h1"}, 1)
+	p := h.Connected("u1")["tv"]
+	if p.NowPlaying == nil || p.NowPlaying.Handoff != "h1" {
+		t.Fatalf("handoff id not reported back: %+v", p.NowPlaying)
+	}
+	if len(p.Caps) != 1 || p.Caps[0] != "handoff" {
+		t.Fatalf("caps not kept: %v", p.Caps)
 	}
 }
