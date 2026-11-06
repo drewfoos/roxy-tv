@@ -209,14 +209,16 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
-	// What the walk could not read. Files recorded under an unreadable folder are unknown,
-	// not gone: they used to count as vanished and their records were deleted, so a folder
-	// that lost its permissions, or a library root that could not be read at all, emptied
-	// the library.
+	// What the walk could not read. Any of it makes this scan a failed one for removals:
+	// nothing recorded is deleted until a scan that read everything shows a file is
+	// really gone (a read error can mean a failing disk or a half-mounted drive, so what
+	// looks missing elsewhere is not trusted either). Walk errors used to be logged and
+	// skipped, and everything unseen deleted, so a folder that lost its permissions, or a
+	// library root that could not be read at all, emptied the library.
 	var unreadable []string
 	var rootErr error
 
-	err = filepath.WalkDir(lib.Root, func(path string, d fs.DirEntry, walkErr error) error {
+	err = walkDir(lib.Root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if path == lib.Root {
 				rootErr = walkErr
@@ -279,7 +281,7 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 
 	removed := 0
 	for path, sourceID := range known {
-		if seen[path] || underAny(path, unreadable) {
+		if seen[path] || len(unreadable) > 0 {
 			continue
 		}
 		if err := l.store.DeleteSource(ctx, sourceID); err != nil {
@@ -300,20 +302,13 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		if len(shown) > 3 {
 			shown = shown[:3]
 		}
-		return fmt.Errorf("%d folder(s) could not be read, what was recorded there was kept: %s", len(unreadable), strings.Join(shown, ", "))
+		return fmt.Errorf("%d folder(s) could not be read, so nothing was removed this scan: %s", len(unreadable), strings.Join(shown, ", "))
 	}
 	return nil
 }
 
-// underAny: path is one of dirs or inside one of them.
-func underAny(path string, dirs []string) bool {
-	for _, d := range dirs {
-		if path == d || strings.HasPrefix(path, d+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
+// walkDir is filepath.WalkDir; tests replace it to inject read failures.
+var walkDir = filepath.WalkDir
 
 // addFileSafe wraps AddFile so a parser bug on one odd filename cannot take down a scan.
 func (l *Library) addFileSafe(ctx context.Context, lib model.Library, path string) error {

@@ -2,6 +2,8 @@ package library
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -124,8 +126,9 @@ func TestScanKeepsRecordsWhenRootIsEmpty(t *testing.T) {
 	wantRecorded(t, st, lib, paths)
 }
 
-// A subfolder that cannot be read keeps what was recorded under it; a file really
-// deleted elsewhere is still removed; the scan reports the folder.
+// A subfolder that cannot be read fails the scan for removals: nothing recorded is
+// deleted, not even a file really deleted elsewhere (that waits for a scan that reads
+// everything), and the scan reports the folder.
 func TestScanKeepsRecordsInUnreadableFolder(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads folders regardless of their permissions")
@@ -143,5 +146,44 @@ func TestScanKeepsRecordsInUnreadableFolder(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), locked) {
 		t.Fatalf("scan error: %v", err)
 	}
-	wantRecorded(t, st, lib, paths[:3]) // A/one, A/two kept; B/one kept; B/two removed
+	wantRecorded(t, st, lib, paths) // all kept, B/two too
+	// Readable again: the next scan removes the file that really is gone.
+	if err := os.Chmod(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Scan(context.Background(), lib); err != nil {
+		t.Fatal(err)
+	}
+	wantRecorded(t, st, lib, paths[:3])
+}
+
+// The same with the read failure injected into the walk, so it holds whatever user the
+// tests run as: a directory read error during traversal means no records are deleted.
+func TestScanInjectedReadFailureKeepsRecords(t *testing.T) {
+	l, st, lib, paths := recordedLibrary(t)
+	failing := filepath.Join(lib.Root, "A")
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if path == failing && err == nil && d.IsDir() {
+				// What WalkDir passes when reading a directory fails: the entry, then the error.
+				if r := fn(path, d, nil); r != nil {
+					return r
+				}
+				if r := fn(path, d, errors.New("input/output error")); r != nil && r != filepath.SkipDir {
+					return r
+				}
+				return filepath.SkipDir
+			}
+			return fn(path, d, err)
+		})
+	}
+	t.Cleanup(func() { walkDir = filepath.WalkDir })
+	if err := os.Remove(paths[3]); err != nil { // B/two.mkv really deleted
+		t.Fatal(err)
+	}
+	err := l.Scan(context.Background(), lib)
+	if err == nil || !strings.Contains(err.Error(), "nothing was removed") || !strings.Contains(err.Error(), failing) {
+		t.Fatalf("scan error: %v", err)
+	}
+	wantRecorded(t, st, lib, paths)
 }
