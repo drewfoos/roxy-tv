@@ -36,6 +36,12 @@ func watchRelevant(name string) bool {
 		strings.EqualFold(filepath.Base(name), ".ignore") || strings.EqualFold(filepath.Base(name), ".roxyignore")
 }
 
+// isIgnoreFile reports whether name is an .ignore or .roxyignore file.
+func isIgnoreFile(name string) bool {
+	b := filepath.Base(name)
+	return strings.EqualFold(b, ".ignore") || strings.EqualFold(b, ".roxyignore")
+}
+
 // Watch rescans when files change in a library folder, as Jellyfin's library monitor does:
 // a file copied in by hand (or by anything that sends no webhook) shows up within a minute
 // instead of at the next restart. Changes are gathered until the folders have been quiet
@@ -231,6 +237,18 @@ func (l *Library) Watch(ctx context.Context) {
 					if SkipDirReason(ev.Name) == "" {
 						add(ev.Name, libRootOf(ev.Name)) // a new folder (and anything already in it)
 					}
+				}
+			}
+			// An .ignore file added, changed or removed: the folders it rules on are watched
+			// again under the rules as they are now, so a folder it no longer leaves out is
+			// watched (and one it now leaves out is not). The watches were set up once, so a
+			// folder un-ignored later was scanned but never watched: nothing copied into it
+			// was noticed.
+			if isIgnoreFile(ev.Name) {
+				if root := libRootOf(ev.Name); root != "" {
+					dir := filepath.Dir(ev.Name)
+					unwatch(dir)
+					add(dir, root)
 				}
 			}
 			// A removed or renamed folder is no longer a name we can stat: count it too.

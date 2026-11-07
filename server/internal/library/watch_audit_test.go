@@ -121,3 +121,48 @@ func TestIgnoreDirOnlyRuleSkipsFiles(t *testing.T) {
 		t.Error("folder-only rule 'Bonus/' no longer ignores the folder")
 	}
 }
+
+// An .ignore rule removed while watched: the folder it left out is watched from then on,
+// so an episode copied into it later is noticed. The watches were set up once, with the
+// rules as they were, and never rebuilt when the rules changed.
+func TestWatchFollowsIgnoreRuleChanges(t *testing.T) {
+	oldQ, oldR := watchQuiet, watchRefresh
+	watchQuiet, watchRefresh = 200*time.Millisecond, time.Hour // no refresh to hide behind
+	t.Cleanup(func() { watchQuiet, watchRefresh = oldQ, oldR })
+	ctx := context.Background()
+	l, st, lib, root, _ := moveFixture(t, model.KindSeries)
+	show := filepath.Join(root, "Show")
+	rules := filepath.Join(show, ".ignore")
+	writeSized(t, filepath.Join(show, "Season 01", "Show - S01E01.mkv"), 50)
+	writeSized(t, filepath.Join(show, "Season 02", "Show - S02E01.mkv"), 60)
+	if err := os.WriteFile(rules, []byte("Season 01/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	has := func(p string) bool { part, _ := st.GetPartByPath(ctx, p); return part != nil }
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if cond() {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %s", what)
+	}
+	if has(filepath.Join(show, "Season 01", "Show - S01E01.mkv")) {
+		t.Fatal("fixture: the ignored season was scanned")
+	}
+	runWatch(t, l)
+	time.Sleep(300 * time.Millisecond)
+
+	if err := os.Remove(rules); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("the season the rule left out to be scanned", func() bool { return has(filepath.Join(show, "Season 01", "Show - S01E01.mkv")) })
+	time.Sleep(500 * time.Millisecond)
+	later := filepath.Join(show, "Season 01", "Show - S01E02.mkv")
+	writeSized(t, later, 70)
+	waitFor("an episode copied into the no-longer-ignored season", func() bool { return has(later) })
+}
