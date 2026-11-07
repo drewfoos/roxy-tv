@@ -65,7 +65,29 @@ func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs
 // statement, so a live report from another device cannot land between a separate check
 // and the write and then be wound back. False when it was not applied.
 func (s *Store) SetProgressAsOf(ctx context.Context, userID, guid string, at time.Time, positionMs int64, audio, sub *int) (bool, error) {
-	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, at.UTC().Format(TimeFormat))
+	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, asOfStamp(at))
+}
+
+// asOfStamp is the stored form of a replayed report's time, which is both what it is
+// compared against and what it records as last_played_at: the activity happened then,
+// not when the phone got round to sending it. Recording the arrival time instead made a
+// later replay of activity that really was newer look older and get dropped. A time in
+// the future (a device clock running fast) is taken as now, so it cannot outrank
+// reports made after it.
+func asOfStamp(at time.Time) string {
+	if now := time.Now(); at.After(now) {
+		at = now
+	}
+	return at.UTC().Format(TimeFormat)
+}
+
+// stampOr is the last_played_at a write records: the report's own time for a replay,
+// now for a live report.
+func stampOr(asOf string) string {
+	if asOf != "" {
+		return asOf
+	}
+	return Now()
 }
 
 // unlessNewer is the upsert condition for the AsOf writes: no activity recorded, or none
@@ -82,7 +104,7 @@ func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs
 			played = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN 1 ELSE 0 END,
 			audio_stream_index = COALESCE(excluded.audio_stream_index, user_item_data.audio_stream_index),
 			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`+unlessNewer,
-		userID, guid, positionMs, Now(), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs, asOf, asOf)
+		userID, guid, positionMs, stampOr(asOf), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs, asOf, asOf)
 	return applied(res, err)
 }
 
@@ -106,7 +128,7 @@ func (s *Store) FinishPlay(ctx context.Context, userID, guid string) error {
 // FinishPlayAsOf is FinishPlay for a report made at [at] and sent later; like
 // SetProgressAsOf it applies only if nothing newer was recorded meanwhile.
 func (s *Store) FinishPlayAsOf(ctx context.Context, userID, guid string, at time.Time) (bool, error) {
-	return s.finishPlay(ctx, userID, guid, at.UTC().Format(TimeFormat))
+	return s.finishPlay(ctx, userID, guid, asOfStamp(at))
 }
 
 func (s *Store) finishPlay(ctx context.Context, userID, guid, asOf string) (bool, error) {
@@ -115,7 +137,7 @@ func (s *Store) finishPlay(ctx context.Context, userID, guid, asOf string) (bool
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
 			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 AND user_item_data.position_ms = 0 THEN 0 ELSE 1 END,
 			position_ms = 0, played = 1, last_played_at = excluded.last_played_at`+unlessNewer,
-		userID, guid, Now(), asOf, asOf)
+		userID, guid, stampOr(asOf), asOf, asOf)
 	return applied(res, err)
 }
 
@@ -133,14 +155,14 @@ func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool
 // is not flipped back to watched. The check is part of the same statement. False when it
 // was not applied.
 func (s *Store) MarkPlayedAsOf(ctx context.Context, userID, guid string, at time.Time) (bool, error) {
-	asOf := at.UTC().Format(TimeFormat)
+	asOf := asOfStamp(at)
 	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
 		VALUES (?, ?, 0, 1, 1, ?)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0,
 			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 THEN 0 ELSE 1 END,
 			last_played_at = CASE WHEN user_item_data.played = 1 THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
 			played = 1`+unlessNewer,
-		userID, guid, Now(), asOf, asOf)
+		userID, guid, asOf, asOf, asOf)
 	return applied(res, err)
 }
 

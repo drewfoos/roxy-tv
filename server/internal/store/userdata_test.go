@@ -228,3 +228,78 @@ func TestMarkPlayedAsOf(t *testing.T) {
 		t.Fatalf("newer mark: position %d played %v count %d", p, played, n)
 	}
 }
+
+// Offline reports from two devices reach the server late and in the wrong order. Each
+// records its own time as last_played_at, so the one made later still wins even when it
+// arrives second (with the arrival time recorded it looked older and was dropped). A time
+// in the future is taken as now.
+func TestOfflineReportsRecordTheirOwnTime(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	get := func(g string) (int64, bool, string) {
+		t.Helper()
+		var pos int64
+		var played int
+		var last string
+		if err := s.db.QueryRowContext(ctx, `SELECT position_ms, played, COALESCE(last_played_at, '') FROM user_item_data WHERE scope_id = 'u' AND item_guid = ?`, g).Scan(&pos, &played, &last); err != nil {
+			t.Fatal(err)
+		}
+		return pos, played == 1, last
+	}
+	stamp := func(at time.Time) string { return at.UTC().Format(TimeFormat) }
+	base := time.Now().Add(-time.Hour)
+	phone, tablet := base, base.Add(10*time.Minute) // the tablet watched further, later
+
+	// Positions: the phone's (older) arrives first, then the tablet's.
+	if ok, err := s.SetProgressAsOf(ctx, "u", "g", phone, 100_000, nil, nil); err != nil || !ok {
+		t.Fatalf("phone report: %v %v", ok, err)
+	}
+	if _, _, last := get("g"); last != stamp(phone) {
+		t.Fatalf("last_played_at %s, want the report's own time %s", last, stamp(phone))
+	}
+	if ok, err := s.SetProgressAsOf(ctx, "u", "g", tablet, 900_000, nil, nil); err != nil || !ok {
+		t.Fatalf("newer tablet report dropped: %v %v", ok, err)
+	}
+	if pos, _, last := get("g"); pos != 900_000 || last != stamp(tablet) {
+		t.Fatalf("after the tablet: position %d at %s", pos, last)
+	}
+	// And the other way round: an older one arriving last is still dropped.
+	if ok, err := s.SetProgressAsOf(ctx, "u", "g", phone.Add(time.Minute), 200_000, nil, nil); err != nil || ok {
+		t.Fatalf("older report applied: %v %v", ok, err)
+	}
+
+	// Finish and watched marks record their own time too.
+	if ok, err := s.FinishPlayAsOf(ctx, "u", "f", phone); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if ok, err := s.SetProgressAsOf(ctx, "u", "f", tablet, 300_000, nil, nil); err != nil || !ok {
+		t.Fatalf("rewatch made after an offline finish dropped: %v %v", ok, err)
+	}
+	if ok, err := s.MarkPlayedAsOf(ctx, "u", "m", phone); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, played, last := get("m"); !played || last != stamp(phone) {
+		t.Fatalf("watched mark: played %v at %s", played, last)
+	}
+	if ok, err := s.SetProgressAsOf(ctx, "u", "m", tablet, 300_000, nil, nil); err != nil || !ok {
+		t.Fatalf("rewatch made after an offline mark dropped: %v %v", ok, err)
+	}
+
+	// A clock running fast: recorded as now, so a report made a moment later still applies.
+	if ok, err := s.SetProgressAsOf(ctx, "u", "c", time.Now().Add(24*time.Hour), 100_000, nil, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, _, last := get("c"); last > Now() {
+		t.Fatalf("future time stored: %s", last)
+	}
+	if ok, err := s.SetProgressAsOf(ctx, "u", "c", time.Now().Add(time.Second), 200_000, nil, nil); err != nil || !ok {
+		t.Fatalf("report after a fast clock's dropped: %v %v", ok, err)
+	}
+}
