@@ -63,8 +63,12 @@ sealed interface UpdateState {
     data object None : UpdateState
     data class Available(val update: AppUpdate) : UpdateState
     data class Downloading(val update: AppUpdate, val fraction: Float) : UpdateState
-    /** [profile]: the compilation profile to install with it, when one was published and fetched. */
-    data class Ready(val update: AppUpdate, val file: File, val profile: File? = null) : UpdateState
+    /**
+     * [profile]: the compilation profile to install with it, when one was published and fetched.
+     * [installing]: handed to Android and not answered yet (being copied into the installer,
+     * or waiting for the confirmation to open); Install does nothing meanwhile.
+     */
+    data class Ready(val update: AppUpdate, val file: File, val profile: File? = null, val installing: Boolean = false) : UpdateState
     data class Failed(val update: AppUpdate, val message: String) : UpdateState
 }
 
@@ -147,10 +151,15 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
             is UpdateState.Available -> s.update
             is UpdateState.Failed -> s.update
             is UpdateState.Ready -> {
+                // A second press while the first is still being handed over would start a
+                // second install (and a second confirmation).
+                if (s.installing) return
+                val busy = s.copy(installing = true)
+                _state.value = busy
                 // Checked again: the file sat in the cache since the last look.
                 scope.launch {
                     val why = withContext(Dispatchers.IO) { verifyApk(s.file) }
-                    if (why == null) installPackage(s) else { s.file.delete(); _state.value = UpdateState.Failed(s.update, why) }
+                    if (why == null) installPackage(busy) else { s.file.delete(); _state.value = UpdateState.Failed(s.update, why) }
                 }
                 return
             }
@@ -161,7 +170,7 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
             runCatching { download(u) }
                 .onSuccess { f ->
                     val profile = runCatching { downloadProfile(u) }.onFailure { Timber.w(it, "update profile skipped") }.getOrNull()
-                    val ready = UpdateState.Ready(u, f, profile)
+                    val ready = UpdateState.Ready(u, f, profile, installing = true)
                     _state.value = ready
                     installPackage(ready)
                 }
@@ -326,32 +335,52 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
 
     // ---- installing ----
 
-    /** The install in progress: what to fall back to if Android refuses it with the profile. */
-    private var installing: UpdateState.Ready? = null
+    /**
+     * The session last handed to Android and what it installs. Android's answers carry their
+     * session's id: one about any other session (an earlier attempt, since abandoned) is
+     * ignored, so it can neither open a confirmation nor be taken for this one's result.
+     * Set on the IO thread before the commit and read on the main thread by the receiver.
+     */
+    private class Attempt(val sessionId: Int, val ready: UpdateState.Ready)
+    @Volatile private var current: Attempt? = null
     private var receiverRegistered = false
+
+    /** [ready] as the screen should show it: Install offered again (installing = false). */
+    private fun settle(ready: UpdateState.Ready) {
+        if (_state.value == ready) _state.value = ready.copy(installing = false)
+    }
 
     /** Android's answers about a session: confirm with the person, done, or failed. */
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            val ready = installing
             val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
             val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+            val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+            val attempt = current
+            if (attempt == null || attempt.sessionId != sessionId) {
+                Timber.i("update: status %d for session %d ignored (current: %s)", status, sessionId, attempt?.sessionId)
+                return
+            }
+            val ready = attempt.ready
             when (status) {
                 PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                    // Install is offered again from here: someone who leaves the confirmation
+                    // with Home instead of Cancel can start over (the old session is abandoned).
+                    settle(ready)
                     @Suppress("DEPRECATION")
                     val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
                     runCatching { context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                         .onFailure { Timber.w(it, "could not open the install confirmation") }
                 }
                 PackageInstaller.STATUS_SUCCESS -> Timber.i("update installed") // this process is replaced right after
-                PackageInstaller.STATUS_FAILURE_ABORTED -> Timber.i("update install cancelled") // stays Ready: Install offers it again
+                PackageInstaller.STATUS_FAILURE_ABORTED -> { Timber.i("update install cancelled"); current = null; settle(ready) } // Install offers it again
                 else -> {
                     Timber.w("update install failed: %d %s", status, message)
-                    if (ready == null) return
+                    current = null
                     if (ready.profile != null) {
                         // Refused with the profile (an Android that does not take one): the
                         // update matters more than the profile, so install it alone.
-                        val alone = ready.copy(profile = null)
+                        val alone = ready.copy(profile = null, installing = true)
                         _state.value = alone
                         scope.launch { installPackage(alone) }
                     } else {
@@ -365,11 +394,13 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
     /**
      * Installs [ready] with a package installer session: the APK as base.apk and its profile
      * as base.dm, so Android compiles the update ahead of time while installing it. Android
-     * asks the person to confirm (see [statusReceiver]). If the session cannot be used at all,
-     * the APK alone goes to Android's installer screen, as before.
+     * asks the person to confirm (see [statusReceiver]). Sessions left from an earlier
+     * attempt (a confirmation left open, a previous run of the app) are abandoned first, so
+     * only one is ever waiting. If the session cannot be used at all, the APK alone goes to
+     * Android's installer screen, as before. [ready] is the state shown meanwhile
+     * (installing = true).
      */
     private suspend fun installPackage(ready: UpdateState.Ready) {
-        installing = ready
         val started = withContext(Dispatchers.IO) {
             runCatching {
                 if (!receiverRegistered) {
@@ -377,6 +408,10 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
                     receiverRegistered = true
                 }
                 val installer = context.packageManager.packageInstaller
+                current = null
+                for (old in installer.mySessions) {
+                    runCatching { installer.abandonSession(old.sessionId) }.onSuccess { Timber.i("update: abandoned earlier session %d", old.sessionId) }
+                }
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
                     setAppPackageName(BuildConfig.APPLICATION_ID)
                     setSize(ready.file.length() + (ready.profile?.length() ?: 0))
@@ -393,16 +428,22 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
                         ready.profile?.let { put("base.dm", it) }
                         val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
                         val pending = PendingIntent.getBroadcast(context, id, Intent(ACTION_INSTALL_STATUS).setPackage(context.packageName), flags)
+                        // Before the commit: the first answer can arrive as soon as it returns.
+                        current = Attempt(id, ready)
                         session.commit(pending.intentSender)
                     }
                     Timber.i("update session %d committed (profile: %s)", id, ready.profile != null)
                 } catch (t: Throwable) {
+                    if (current?.sessionId == id) current = null
                     runCatching { installer.abandonSession(id) }
                     throw t
                 }
             }.onFailure { Timber.w(it, "install session failed; using the installer screen") }.isSuccess
         }
-        if (!started) launchInstaller(ready.file)
+        if (!started) {
+            settle(ready)
+            launchInstaller(ready.file)
+        }
     }
 
     private fun launchInstaller(file: File) {

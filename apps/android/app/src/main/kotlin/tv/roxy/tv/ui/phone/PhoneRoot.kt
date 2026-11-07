@@ -422,7 +422,7 @@ private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp, end = 16.dp)) {
                 val title = when (state) {
                     is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}  ·  ${(state.fraction * 100).toInt()}%"
-                    is UpdateState.Ready -> "Roxy TV ${update.versionName} is ready to install"
+                    is UpdateState.Ready -> if (state.installing) "Installing Roxy TV ${update.versionName}…" else "Roxy TV ${update.versionName} is ready to install"
                     is UpdateState.Failed -> "Update failed  ·  ${state.message}"
                     else -> "Roxy TV ${update.versionName} is available"
                 }
@@ -430,7 +430,8 @@ private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -
                 val sub = listOfNotNull(update.notes.takeIf { it.isNotBlank() }, update.size.takeIf { it > 0 }?.let { formatBytes(it) }).joinToString("  ·  ")
                 if (sub.isNotEmpty() && state !is UpdateState.Downloading) Text(sub, fontSize = 11.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (state !is UpdateState.Downloading) {
+            // Nothing to press while it downloads or is being handed to Android.
+            if (state !is UpdateState.Downloading && !(state is UpdateState.Ready && state.installing)) {
                 Text(
                     when (state) { is UpdateState.Ready -> "Install"; is UpdateState.Failed -> "Retry"; else -> "Update" },
                     fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnBrand,

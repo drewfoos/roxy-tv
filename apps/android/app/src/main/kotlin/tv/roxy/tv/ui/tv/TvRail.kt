@@ -183,13 +183,13 @@ private fun TvUpdateNotice(state: UpdateState, modifier: Modifier = Modifier) {
     if (!shown) return
     val title = when (state) {
         is UpdateState.Downloading -> "Downloading Roxy TV ${update.versionName}  \u00b7  ${(state.fraction * 100).toInt()}%"
-        is UpdateState.Ready -> "Roxy TV ${update.versionName} is ready to install"
+        is UpdateState.Ready -> if (state.installing) "Installing Roxy TV ${update.versionName}" else "Roxy TV ${update.versionName} is ready to install"
         is UpdateState.Failed -> "The update didn't download"
         else -> "Roxy TV ${update.versionName} is available"
     }
     val hint = when (state) {
         is UpdateState.Downloading -> "You can keep watching. The installer opens when it's done."
-        is UpdateState.Ready -> "Press Back to open the menu, then choose Install update."
+        is UpdateState.Ready -> if (state.installing) "Android asks to confirm in a moment." else "Press Back to open the menu, then choose Install update."
         is UpdateState.Failed -> "${state.message.trimEnd('.')}. Press Back for the menu, then Retry update."
         else -> "Press Back to open the menu, then choose Update Roxy TV."
     }
@@ -287,7 +287,7 @@ private fun Rail(current: RailPage, open: Boolean, onSelect: (RailPage) -> Unit,
                 if (update !is UpdateState.None) {
                     val label = when (val u = update) {
                         is UpdateState.Downloading -> "Updating ${(u.fraction * 100).toInt()}%"
-                        is UpdateState.Ready -> "Install update"
+                        is UpdateState.Ready -> if (u.installing) "Installing…" else "Install update"
                         is UpdateState.Failed -> "Retry update"
                         else -> "Update Roxy TV"
                     }

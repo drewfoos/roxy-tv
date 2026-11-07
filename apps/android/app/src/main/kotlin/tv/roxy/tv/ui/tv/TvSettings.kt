@@ -121,7 +121,7 @@ fun TvSettings(onSwitchProfile: () -> Unit, onLoggedOut: () -> Unit) {
                 val value = when (val u = updateState) {
                     is UpdateState.Available -> "${u.update.versionName} ready"
                     is UpdateState.Downloading -> "${(u.fraction * 100).toInt()}%"
-                    is UpdateState.Ready -> "Install"
+                    is UpdateState.Ready -> if (u.installing) "Installing…" else "Install"
                     is UpdateState.Failed -> "Failed"
                     UpdateState.None -> updateNote?.substringBefore("  ·  ") ?: BuildConfig.VERSION_NAME
                 }
@@ -199,7 +199,7 @@ private fun UpdatePane(state: UpdateState, note: String?, onInstall: () -> Unit,
     val line = when (state) {
         is UpdateState.Available -> "Roxy TV ${update!!.versionName} is available. You have ${BuildConfig.VERSION_NAME}."
         is UpdateState.Downloading -> "Downloading Roxy TV ${update!!.versionName}  ·  ${(state.fraction * 100).toInt()}%"
-        is UpdateState.Ready -> "Roxy TV ${update!!.versionName} is downloaded. Install asks Android to install it; the first time, it asks to allow installs from Roxy TV."
+        is UpdateState.Ready -> if (state.installing) "Installing Roxy TV ${update!!.versionName}: Android asks to confirm in a moment." else "Roxy TV ${update!!.versionName} is downloaded. Install asks Android to install it; the first time, it asks to allow installs from Roxy TV."
         is UpdateState.Failed -> "The update failed: ${state.message}"
         UpdateState.None -> note ?: "Builds published on your server install from here. You have ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})."
     }
@@ -213,7 +213,7 @@ private fun UpdatePane(state: UpdateState, note: String?, onInstall: () -> Unit,
         when (state) {
             UpdateState.None -> OptionRow("Check now", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onCheck, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
             is UpdateState.Downloading -> OptionRow("Downloading…", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = {}, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
-            is UpdateState.Ready -> OptionRow("Install", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
+            is UpdateState.Ready -> OptionRow(if (state.installing) "Installing…" else "Install", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
             is UpdateState.Failed -> OptionRow("Retry", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
             is UpdateState.Available -> OptionRow("Update to ${update!!.versionName}", chosen = false, icon = Icons.Outlined.SystemUpdate, onClick = onInstall, modifier = Modifier.width(300.dp).focusKey(memory, "opt/update/btn").focusProperties { left = memory.requester("update") })
         }
