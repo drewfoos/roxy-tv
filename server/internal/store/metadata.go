@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -13,7 +14,11 @@ import (
 // ItemMetadata is what a provider lookup contributes to an item. Empty fields are left
 // untouched in the database, so a thin result never erases a richer earlier one.
 type ItemMetadata struct {
-	Title           string
+	Title string
+	// SortTitle: nil leaves the stored sort title alone (online providers have none);
+	// "" clears it; anything else sets it. A local .nfo sets it either way: it is the
+	// one source of sort titles, so a <sorttitle> removed from it goes away here too.
+	SortTitle       *string
 	Year            *int
 	Overview        string
 	Tagline         string
@@ -26,6 +31,13 @@ type ItemMetadata struct {
 	Studio          string
 	SeasonCount     int // series: 0 = unknown
 	ProviderIDs     map[string]string
+}
+
+func sortTitleArg(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
 }
 
 // UpdateItemMetadata applies provider metadata and stamps metadata_refreshed_at.
@@ -41,11 +53,11 @@ func (s *Store) UpdateItemMetadata(ctx context.Context, id string, m ItemMetadat
 	}
 	now := Now()
 	_, err := s.db.ExecContext(ctx, `UPDATE items SET
-		title = COALESCE(?, title), year = COALESCE(?, year), overview = COALESCE(?, overview), tagline = COALESCE(?, tagline),
+		title = COALESCE(?, title), sort_title = CASE WHEN ? THEN NULLIF(?, '') ELSE sort_title END, year = COALESCE(?, year), overview = COALESCE(?, overview), tagline = COALESCE(?, tagline),
 		genres = COALESCE(?, genres), community_rating = COALESCE(?, community_rating), official_rating = COALESCE(?, official_rating),
 		premiere_date = COALESCE(?, premiere_date), status = COALESCE(?, status), studio = COALESCE(?, studio),
 		season_count = COALESCE(?, season_count), advisories = COALESCE(?, advisories), metadata_refreshed_at = ?, date_modified = ? WHERE id = ?`,
-		nullStr(m.Title), intPtrNull(m.Year), nullStr(m.Overview), nullStr(m.Tagline), genres, nullFloat(m.CommunityRating),
+		nullStr(m.Title), m.SortTitle != nil, sortTitleArg(m.SortTitle), intPtrNull(m.Year), nullStr(m.Overview), nullStr(m.Tagline), genres, nullFloat(m.CommunityRating),
 		nullStr(m.OfficialRating), nullStr(m.Premiered), nullStr(m.Status), nullStr(m.Studio), nullInt(m.SeasonCount), advisories, now, now, id)
 	if err != nil {
 		return err

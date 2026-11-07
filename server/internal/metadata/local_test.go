@@ -73,3 +73,23 @@ func TestReadNFOEpisodeAndMissing(t *testing.T) {
 		t.Errorf("missing file: %v %v", d, err)
 	}
 }
+
+// An .nfo's <sorttitle> is the item's sort title: set from it, and cleared when the tag is
+// gone (it was parsed and dropped before). Online providers leave it alone (nil).
+func TestNFOSortTitle(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tvshow.nfo")
+	writeFile(t, p, `<tvshow><title>Bakemonogatari</title><sorttitle> Monogatari 01 </sorttitle></tvshow>`)
+	d, err := readNFO(p)
+	if err != nil || d == nil {
+		t.Fatal(d, err)
+	}
+	if m := d.meta(); m.SortTitle == nil || *m.SortTitle != "Monogatari 01" {
+		t.Fatalf("sort title = %v", m.SortTitle)
+	}
+	writeFile(t, p, `<tvshow><title>Bakemonogatari</title></tvshow>`)
+	d, _ = readNFO(p)
+	if m := d.meta(); m.SortTitle == nil || *m.SortTitle != "" {
+		t.Fatalf("an .nfo without <sorttitle> must clear it: %v", m.SortTitle)
+	}
+}

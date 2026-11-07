@@ -111,8 +111,10 @@ func (d *nfoDoc) ids() map[string]string {
 }
 
 func (d *nfoDoc) meta() store.ItemMetadata {
+	sortTitle := strings.TrimSpace(d.SortTitle) // "" clears one set before: the .nfo decides
 	m := store.ItemMetadata{
 		Title:          strings.TrimSpace(d.Title),
+		SortTitle:      &sortTitle,
 		Overview:       strings.TrimSpace(firstNonEmpty(d.Plot, d.Outline)),
 		Tagline:        strings.TrimSpace(d.Tagline),
 		OfficialRating: strings.TrimSpace(d.MPAA),

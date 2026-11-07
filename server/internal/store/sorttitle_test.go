@@ -54,3 +54,42 @@ func TestRescanKeepsSortTitle(t *testing.T) {
 		t.Fatalf("after an upsert with a sort title: %q", got)
 	}
 }
+
+// UpdateItemMetadata: a nil sort title (online providers) keeps the stored one, a value
+// sets it, "" clears it.
+func TestMetadataSortTitle(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	lib := &model.Library{Name: "Anime", Kind: model.KindSeries, Root: t.TempDir()}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertItem(ctx, &model.Item{ID: "s1", GUID: "g", LibraryID: lib.ID, Type: model.TypeSeries, Title: "Bakemonogatari"}); err != nil {
+		t.Fatal(err)
+	}
+	sortTitle := func() string {
+		t.Helper()
+		it, err := s.GetItem(ctx, "s1")
+		if err != nil || it == nil {
+			t.Fatal(it, err)
+		}
+		return it.SortTitle
+	}
+	str := func(v string) *string { return &v }
+	steps := []struct {
+		set  *string
+		want string
+	}{{str("Monogatari 01"), "Monogatari 01"}, {nil, "Monogatari 01"}, {str(""), ""}}
+	for i, st := range steps {
+		if err := s.UpdateItemMetadata(ctx, "s1", ItemMetadata{Title: "Bakemonogatari", SortTitle: st.set}); err != nil {
+			t.Fatal(err)
+		}
+		if got := sortTitle(); got != st.want {
+			t.Fatalf("step %d: %q, want %q", i, got, st.want)
+		}
+	}
+}
