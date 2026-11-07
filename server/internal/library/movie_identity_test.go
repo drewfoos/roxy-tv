@@ -1,10 +1,14 @@
 package library
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 func touch(t *testing.T, root string, rel ...string) {
@@ -22,7 +26,7 @@ func touch(t *testing.T, root string, rel ...string) {
 
 func identity(t *testing.T, root, rel string) movieID {
 	t.Helper()
-	m, err := movieIdentity(root, filepath.Join(root, rel), "")
+	m, err := movieIdentity(root, filepath.Join(root, rel), "", "")
 	if err != nil {
 		t.Fatalf("%s: %v", rel, err)
 	}
@@ -102,7 +106,88 @@ func TestMovieIdentityRootAndUnreadable(t *testing.T) {
 	}
 	readDir = func(string) ([]os.DirEntry, error) { return nil, errors.New("input/output error") }
 	t.Cleanup(func() { readDir = os.ReadDir })
-	if _, err := movieIdentity(root, filepath.Join(root, "Box/X (2001).mkv"), ""); err == nil {
+	if _, err := movieIdentity(root, filepath.Join(root, "Box/X (2001).mkv"), "", ""); err == nil {
 		t.Fatal("an unreadable folder must be an error")
 	}
+}
+
+// A film alone in a folder, watched, then joined by a second film: re-ingesting it keeps
+// its item (and so its watch history), and the newcomer gets its own. The reverse (a
+// collection that shrinks to one film) keeps it as well. The layout-based reading alone
+// moved the first film to a new item, its history left on the old one.
+func TestMovieKeepsItsItemWhenTheFolderChanges(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	root := t.TempDir()
+	lib := &model.Library{Name: "Movies", Kind: model.KindMovies, Root: root}
+	if err := st.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	l := New(st, nil, nil)
+	ingest := func(rel string) *model.Item {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		it, err := l.resolveItem(ctx, *lib, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := &model.MediaSource{ID: stableID("source", path), ItemID: it.ID, IsPrimary: true,
+			Parts: []model.MediaPart{{ID: stableID("part", path), Path: path}}}
+		if err := st.ReplaceSource(ctx, src, "{}"); err != nil {
+			t.Fatal(err)
+		}
+		return it
+	}
+
+	touch(t, root, "Collection/Movie A (2022).mkv")
+	a := ingest("Collection/Movie A (2022).mkv")
+	scope, err := st.DefaultProfileID(ctx, mustUser(t, st))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProgress(ctx, scope, a.GUID, 600_000, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	touch(t, root, "Collection/Movie B (2023).mkv")
+	b := ingest("Collection/Movie B (2023).mkv")
+	a2 := ingest("Collection/Movie A (2022).mkv") // a forced scan, a changed file, a new subtitle
+	if a2.GUID != a.GUID || a2.ID != a.ID {
+		t.Fatalf("Movie A moved from %s to %s when Movie B joined it", a.GUID, a2.GUID)
+	}
+	if b.GUID == a.GUID {
+		t.Fatal("Movie B was put on Movie A's item")
+	}
+	if a2.Title != "Movie A" {
+		t.Fatalf("Movie A's name should follow the folder as it is now: %q", a2.Title)
+	}
+	if d, err := st.GetUserItemData(ctx, scope, a2.GUID); err != nil || d == nil || d.PositionMs != 600_000 {
+		t.Fatalf("watch history: %+v %v", d, err)
+	}
+
+	// The reverse: Movie A leaves, Movie B is alone, and keeps its item.
+	if err := os.Remove(filepath.Join(root, "Collection/Movie A (2022).mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if b2 := ingest("Collection/Movie B (2023).mkv"); b2.GUID != b.GUID {
+		t.Fatalf("Movie B moved from %s to %s when it was left alone", b.GUID, b2.GUID)
+	}
+	// A new file still gets the layout's reading: alone in a new folder, the folder's.
+	touch(t, root, "Solo (2020)/solo.mkv")
+	if s := ingest("Solo (2020)/solo.mkv"); s.GUID != guidFor(nil, "movie", root, "Solo (2020)") {
+		t.Fatalf("new file: %s", s.GUID)
+	}
+}
+
+func mustUser(t *testing.T, st *store.Store) string {
+	t.Helper()
+	u := &model.User{ID: "u1", Name: "drew"}
+	if err := st.CreateUser(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	return u.ID
 }

@@ -201,6 +201,18 @@ func (s *Store) FindSourceByPathStem(ctx context.Context, stem string) (*model.M
 	return nil, rows.Err()
 }
 
+// ItemGUIDForPath is the GUID of the item a media file is recorded under, or "" when the
+// file is not in the library.
+func (s *Store) ItemGUIDForPath(ctx context.Context, path string) (string, error) {
+	var guid string
+	err := s.db.QueryRowContext(ctx, `SELECT i.guid FROM media_parts mp JOIN media_sources ms ON ms.id = mp.source_id
+		JOIN items i ON i.id = ms.item_id WHERE mp.path = ? LIMIT 1`, path).Scan(&guid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return guid, err
+}
+
 func (s *Store) GetPartByPath(ctx context.Context, path string) (*model.MediaPart, error) {
 	var p model.MediaPart
 	var mtime string

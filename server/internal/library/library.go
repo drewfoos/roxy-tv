@@ -627,7 +627,11 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	// Movies: either a movies library, or a file in a mixed/series library that carries a
 	// year and no episode numbering (anime libraries often keep films next to series).
 	if lib.Kind == model.KindMovies || LooksLikeMovie(parsed, stem, dir, len(parts)) {
-		m, err := movieIdentity(lib.Root, path, parsed.CleanTitle)
+		existing, err := l.store.ItemGUIDForPath(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		m, err := movieIdentity(lib.Root, path, parsed.CleanTitle, existing)
 		if err != nil {
 			return nil, err
 		}
@@ -771,7 +775,7 @@ type movieID struct {
 // A folder that cannot be listed is an error, not a guess: guessing differently from the
 // last scan would move the file to another item and leave its watch history behind.
 // cleanTitle is the episode parser's title, used when the movie parser finds none.
-func movieIdentity(root, path, cleanTitle string) (movieID, error) {
+func movieIdentity(root, path, cleanTitle, existing string) (movieID, error) {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return movieID{}, err
@@ -787,25 +791,21 @@ func movieIdentity(root, path, cleanTitle string) (movieID, error) {
 	if relDir == "." {
 		return movieID{guidFor(ids, "movie", root, rel), title, year, ids}, nil
 	}
-	one, err := folderHoldsOneFilm(filepath.Dir(path))
-	if err != nil {
-		return movieID{}, err
+	// The two readings of a file in a folder: its own film in a collection, or the
+	// folder's one film.
+	key := strings.ToLower(title)
+	if year != nil {
+		key = fmt.Sprintf("%s (%d)", key, *year)
 	}
-	if !one {
-		key := strings.ToLower(title)
-		if year != nil {
-			key = fmt.Sprintf("%s (%d)", key, *year)
-		}
-		if key == "" {
-			key = strings.ToLower(stem)
-		}
-		return movieID{guidFor(ids, "movie", root, relDir+"/"+key), title, year, ids}, nil
+	if key == "" {
+		key = strings.ToLower(stem)
 	}
-	dirName := filepath.Base(relDir)
-	if t, y, i := ParseMovieName(dirName); t != "" {
-		title = t
+	own := movieID{guidFor(ids, "movie", root, relDir+"/"+key), title, year, ids}
+	folder := movieID{title: title, year: year, ids: ids}
+	if t, y, i := ParseMovieName(filepath.Base(relDir)); t != "" {
+		folder.title = t
 		if y != nil {
-			year = y
+			folder.year = y
 		}
 		for k, v := range ids { // the file's ids fill in what the folder's name lacks
 			if i == nil {
@@ -815,9 +815,26 @@ func movieIdentity(root, path, cleanTitle string) (movieID, error) {
 				i[k] = v
 			}
 		}
-		ids = i
+		folder.ids = i
 	}
-	return movieID{guidFor(ids, "movie", root, relDir), title, year, ids}, nil
+	folder.guid = guidFor(folder.ids, "movie", root, relDir)
+
+	one, err := folderHoldsOneFilm(filepath.Dir(path))
+	if err != nil {
+		return movieID{}, err
+	}
+	m := own
+	if one {
+		m = folder
+	}
+	// A file already in the library keeps the item it has while that is still one of its
+	// readings: which reading fits depends on what else is in the folder, and a film that
+	// was alone there and is now joined by another (or the reverse) must not move to a
+	// new item and leave its watch history behind. Its names follow the folder as it is.
+	if existing != "" && (existing == own.guid || existing == folder.guid) {
+		m.guid = existing
+	}
+	return m, nil
 }
 
 // folderHoldsOneFilm reports whether the videos directly in dir are one film: at most
