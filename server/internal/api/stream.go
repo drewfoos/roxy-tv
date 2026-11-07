@@ -31,8 +31,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "source not found")
 		return
 	}
+	// No part asked for is the first. One that is asked for must be a whole number: "abc"
+	// (or "", "1.0") used to fail to parse and quietly serve part 0 instead, which looks
+	// like the right file and is not (as with subtitle and attachment indexes).
 	part := src.Parts[0]
-	if n, err := strconv.Atoi(r.URL.Query().Get("part")); err == nil {
+	if q := r.URL.Query(); q.Has("part") {
+		n, err := strconv.Atoi(q.Get("part"))
+		if err != nil {
+			writeError(w, 400, "invalid part")
+			return
+		}
 		if n < 0 || n >= len(src.Parts) {
 			writeError(w, 404, "no such part")
 			return

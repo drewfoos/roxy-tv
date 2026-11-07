@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,6 +179,15 @@ func TestStreamPartBoundsAndSymlink(t *testing.T) {
 		if rec := get(h, "/v1/stream/src1?part="+q); rec.Code != 404 {
 			t.Errorf("part=%s: want 404, got %d", q, rec.Code)
 		}
+	}
+	// Not a number: refused, never read as part 0.
+	for _, q := range []string{"abc", "", "1.0", "0x1", " 0"} {
+		if rec := get(h, "/v1/stream/src1?part="+url.QueryEscape(q)); rec.Code != 400 {
+			t.Errorf("part=%q: want 400, got %d", q, rec.Code)
+		}
+	}
+	if rec := get(h, "/v1/stream/src1?part=0"); rec.Code != 200 {
+		t.Errorf("part=0: %d", rec.Code)
 	}
 	// The video replaced by a symlink out of the media folder after it was scanned.
 	if err := os.Remove(video); err != nil {
