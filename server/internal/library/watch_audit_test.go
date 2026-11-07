@@ -124,8 +124,29 @@ func TestIgnoreDirOnlyRuleSkipsFiles(t *testing.T) {
 
 // An .ignore rule removed while watched: the folder it left out is watched from then on,
 // so an episode copied into it later is noticed. The watches were set up once, with the
-// rules as they were, and never rebuilt when the rules changed.
+// rules as they were, and never rebuilt when the rules changed. The rule goes three ways:
+// the file deleted; replaced atomically (a new file written beside it and renamed over
+// it, as editors and config tools do), with a rule that no longer names the season; and
+// renamed away.
 func TestWatchFollowsIgnoreRuleChanges(t *testing.T) {
+	t.Run("deleted", func(t *testing.T) {
+		watchIgnoreChange(t, func(rules string) error { return os.Remove(rules) })
+	})
+	t.Run("replaced atomically", func(t *testing.T) {
+		watchIgnoreChange(t, func(rules string) error {
+			tmp := rules + ".tmp"
+			if err := os.WriteFile(tmp, []byte("Extras/\n"), 0o644); err != nil {
+				return err
+			}
+			return os.Rename(tmp, rules)
+		})
+	})
+	t.Run("renamed away", func(t *testing.T) {
+		watchIgnoreChange(t, func(rules string) error { return os.Rename(rules, rules+".bak") })
+	})
+}
+
+func watchIgnoreChange(t *testing.T, change func(rules string) error) {
 	oldQ, oldR := watchQuiet, watchRefresh
 	watchQuiet, watchRefresh = 200*time.Millisecond, time.Hour // no refresh to hide behind
 	t.Cleanup(func() { watchQuiet, watchRefresh = oldQ, oldR })
@@ -157,7 +178,7 @@ func TestWatchFollowsIgnoreRuleChanges(t *testing.T) {
 	runWatch(t, l)
 	time.Sleep(300 * time.Millisecond)
 
-	if err := os.Remove(rules); err != nil {
+	if err := change(rules); err != nil {
 		t.Fatal(err)
 	}
 	waitFor("the season the rule left out to be scanned", func() bool { return has(filepath.Join(show, "Season 01", "Show - S01E01.mkv")) })
