@@ -68,6 +68,25 @@ func (s *Store) HasMediaUnder(ctx context.Context, id string) (bool, error) {
 }
 
 // ItemChain is the item and its parents, nearest first.
+// PathsForGUID lists the files recorded under the item with that identity.
+func (s *Store) PathsForGUID(ctx context.Context, guid string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT mp.path FROM media_parts mp JOIN media_sources ms ON ms.id = mp.source_id
+		JOIN items i ON i.id = ms.item_id WHERE i.guid = ?`, guid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ItemChain(ctx context.Context, id string) ([]ChainEntry, error) {
 	var out []ChainEntry
 	for id != "" && len(out) < 8 {
@@ -116,8 +135,14 @@ func (s *Store) CarryChain(ctx context.Context, from []ChainEntry, toID string) 
 		return false, err
 	}
 	carried := false
-	for _, f := range from {
-		if to == nil || string(to.Type) != f.Type || to.GUID == f.GUID {
+	for i, f := range from {
+		if to == nil || to.GUID == f.GUID {
+			break
+		}
+		// The file's own item may change kind (a date-named episode an older release took
+		// for a film): its history still follows. Above it, only like for like (season to
+		// season, series to series).
+		if string(to.Type) != f.Type && !(i == 0 && playableLeaf(f.Type) && playableLeaf(string(to.Type))) {
 			break
 		}
 		if old, err := s.GetItem(ctx, f.ID); err != nil {
@@ -140,6 +165,11 @@ func (s *Store) CarryChain(ctx context.Context, from []ChainEntry, toID string) 
 		}
 	}
 	return carried, nil
+}
+
+// playableLeaf is a kind of item a file belongs to and history is kept for.
+func playableLeaf(t string) bool {
+	return t == string(model.TypeMovie) || t == string(model.TypeEpisode)
 }
 
 // carryLevel moves every profile's data for one old item (by GUID: it outlives the item)

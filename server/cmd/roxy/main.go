@@ -1,7 +1,8 @@
 // Command roxy is the Roxy Server binary.
 //
 //	roxy serve            run the HTTP server (default)
-//	roxy scan             scan all configured libraries once and exit
+//	roxy scan [--force]   scan all configured libraries once and exit (--force: re-read
+//	                      every file, not only new and changed ones)
 //	roxy probe <file>     print the normalized probe result for one file
 package main
 
@@ -97,7 +98,7 @@ func run(args []string) error {
 
 	switch cmd {
 	case "scan":
-		return lib.ScanAll(context.Background(), false)
+		return lib.ScanAll(context.Background(), len(args) > 1 && args[1] == "--force")
 	case "serve":
 		return serve(cfg, db, lib, ff, authSvc)
 	default:

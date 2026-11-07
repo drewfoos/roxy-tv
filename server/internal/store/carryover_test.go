@@ -89,6 +89,47 @@ func TestCarryChain(t *testing.T) {
 	}
 }
 
+// A file whose item changes kind keeps its history: a date-named episode an older release
+// took for a film. Above the file's own item only like for like is carried.
+func TestCarryChainFilmToEpisode(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	lib := &model.Library{Name: "T", Kind: model.KindSeries, Root: t.TempDir()}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	seriesID := "series"
+	for _, it := range []*model.Item{
+		{ID: "film", GUID: "g-film", LibraryID: lib.ID, Type: model.TypeMovie, Title: "The Daily Show 2024.03.15"},
+		{ID: "series", GUID: "g-series", LibraryID: lib.ID, Type: model.TypeSeries, Title: "The Daily Show"},
+		{ID: "ep", GUID: "g-ep", LibraryID: lib.ID, Type: model.TypeEpisode, Title: "2024-03-15", ParentID: &seriesID},
+	} {
+		if err := s.UpsertItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetProgress(ctx, "p1", "g-film", 2_000, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	chain, err := s.ItemChain(ctx, "film")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.CarryChain(ctx, chain, "ep"); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if d, _ := s.GetUserItemData(ctx, "p1", "g-ep"); d == nil || d.PositionMs != 2_000 {
+		t.Fatalf("history did not follow the film that became an episode: %+v", d)
+	}
+}
+
 // Two files of exactly the same size arrive, one of them the moved file: the size alone is
 // ambiguous, so its name and length decide. It used to give up (the name rule ran only
 // when no size matched), leaving the history behind.

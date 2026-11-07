@@ -785,6 +785,30 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 		if err != nil {
 			return nil, err
 		}
+		// Files of different films merged into one item by an older release (a collection
+		// folder read as one film): only the first of them, by path, keeps that item and its
+		// watch history; the others are separate films from now on. Keeping every one of
+		// them on it would leave the merge in place forever.
+		if existing != "" && m.guid == existing {
+			if mates, err := l.store.PathsForGUID(ctx, existing); err == nil && len(mates) > 1 {
+				first := path
+				for _, p := range mates {
+					if p < first {
+						first = p
+					}
+				}
+				if first != path {
+					if fresh, err := movieIdentity(lib.Root, path, parsed.CleanTitle, ""); err == nil && fresh.guid != existing {
+						if fm, err := movieIdentity(lib.Root, first, "", ""); err == nil && fm.guid != fresh.guid {
+							m = fresh // a different film from the one that keeps the item
+						}
+					}
+				}
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 		it := &model.Item{ID: uuid.NewString(), GUID: m.guid, LibraryID: lib.ID, Type: model.TypeMovie, Title: m.title, Year: m.year, ProviderIDs: m.ids}
 		if err := l.store.UpsertItem(ctx, it); err != nil {
 			return nil, err

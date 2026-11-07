@@ -191,3 +191,61 @@ func mustUser(t *testing.T, st *store.Store) string {
 	}
 	return u.ID
 }
+
+// Older releases read a collection folder as one film, so several films share one item
+// (and its history). Rescanning such a library: the first film by path keeps the item and
+// its history, the others become films of their own with none; versions of one film that
+// share an item the same way stay together. The keep-your-item rule alone left the merge
+// in place forever.
+func TestLegacyMergedFilmsSplit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	root := t.TempDir()
+	lib := &model.Library{Name: "Movies", Kind: model.KindMovies, Root: root}
+	if err := st.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	l := New(st, nil, nil)
+	// What an old release recorded: one item per folder, every file in it a source.
+	legacy := func(folder string, files ...string) *model.Item {
+		t.Helper()
+		it := &model.Item{ID: stableID("item", folder), GUID: guidFor(nil, "movie", root, folder), LibraryID: lib.ID, Type: model.TypeMovie, Title: folder}
+		if err := st.UpsertItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			touch(t, root, filepath.Join(folder, f))
+			path := filepath.Join(root, folder, f)
+			src := &model.MediaSource{ID: stableID("source", path), ItemID: it.ID, Parts: []model.MediaPart{{ID: stableID("part", path), Path: path}}}
+			if err := st.ReplaceSource(ctx, src, "{}"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return it
+	}
+	box := legacy("Box", "Film One (2001).mkv", "Film Two (2002).mkv")
+	one, err := l.resolveItem(ctx, *lib, filepath.Join(root, "Box", "Film One (2001).mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := l.resolveItem(ctx, *lib, filepath.Join(root, "Box", "Film Two (2002).mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.GUID != box.GUID {
+		t.Fatalf("Film One (first by path) should keep the merged item %s, got %s", box.GUID, one.GUID)
+	}
+	if two.GUID == box.GUID || two.Title != "Film Two" {
+		t.Fatalf("Film Two stayed merged: %s %q", two.GUID, two.Title)
+	}
+	vers := legacy("Reze (2025)", "Reze (2025) - 1080p.mkv", "Reze (2025) - 2160p.mkv")
+	for _, f := range []string{"Reze (2025) - 1080p.mkv", "Reze (2025) - 2160p.mkv"} {
+		if it, err := l.resolveItem(ctx, *lib, filepath.Join(root, "Reze (2025)", f)); err != nil || it.GUID != vers.GUID {
+			t.Fatalf("%s: versions of one film were split: %v %v", f, it, err)
+		}
+	}
+}

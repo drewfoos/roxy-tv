@@ -43,6 +43,35 @@ jobs:
         env:
           ROXY_REQUIRE_INTEGRATION: "1"
 
+  upgrade:
+    # An independent check of upgrades: an OLD release's own build scans a library and its
+    # database gets watch history, then this build opens it and rescans. The migration
+    # tests build "old" databases from this checkout's migration files, so they cannot see
+    # an old migration edited by mistake (migrations.lock guards that) or an old release
+    # that read files differently. Pinned releases: 0.4.6 (schema 0021) and schema 0028.
+    name: Upgrade from older releases
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        old: [e49bc590da812c41b60e888b72690da57d70b7a9, b29a1339048a8497a6de84733127f6174df5fe7f]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.old }}
+          path: old-release
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: scripts/upgrade-from-release.sh ../old-release "$RUNNER_TEMP/upgrade"
+        env:
+          ROXY_REQUIRE_INTEGRATION: "1"
+
   web:
     name: Web (Vite)
     runs-on: ubuntu-latest
