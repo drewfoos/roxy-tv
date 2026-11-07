@@ -15,8 +15,10 @@ import (
 //     title above it;
 //   - a file recorded twice, or a source with no file;
 //   - two items with one identity (GUID);
-//   - watch data for an identity no item has, that no redirect leads anywhere from (it is
-//     unreachable: history lost);
+//   - watch data for an identity no item has (history no item shows). Moves carry it to
+//     the new item, so in a test library this is history a move failed to carry; in a
+//     real one it is also the history of files deleted for good, kept in case the same
+//     file comes back, so a real library is not expected to pass this one;
 //   - a redirect pointing at an item that does not exist.
 func (s *Store) CheckIntegrity(ctx context.Context) ([]string, error) {
 	var problems []string
@@ -37,7 +39,11 @@ func (s *Store) CheckIntegrity(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		n++
 	}
+	err = rows.Err()
 	rows.Close()
+	if err != nil {
+		return nil, err
+	}
 	if n > 0 {
 		add("foreign_key_check: %d rows point at nothing", n)
 	}

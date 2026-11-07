@@ -288,7 +288,11 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 	return l.scan(ctx, lib, false)
 }
 
+// inScanKey marks a context as a scan's: its ingests leave settling departures to it.
+type inScanKey struct{}
+
 func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error {
+	ctx = context.WithValue(ctx, inScanKey{}, true)
 	start := time.Now()
 	// Taken at the start, so a confirmation applies to the next scan only and is never
 	// left over for a later one (when the drive may really be missing).
@@ -755,7 +759,11 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 		slog.Warn("ranking versions", "item", item.Title, "err", err)
 	}
 	if prior == nil {
-		l.settleDepartures(ctx)
+		// During a scan the departures are settled once, after the walk: settling after
+		// every new file cost a full pass each (seconds per hundred files on a big import).
+		if ctx.Value(inScanKey{}) == nil {
+			l.settleDepartures(ctx)
+		}
 	} else if len(priorChain) > 0 && priorChain[0].ID != item.ID {
 		if _, err := l.store.CarryChain(ctx, priorChain, item.ID); err != nil {
 			slog.Warn("carrying watch history to a re-identified file", "path", path, "err", err)

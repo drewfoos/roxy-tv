@@ -158,6 +158,11 @@ func (s *Server) removeFolder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Its files are noted as departed first: added again at another path (the drive
+	// mounted elsewhere, the folder moved), their watch history follows them.
+	if err := s.store.RecordDeparturesUnder(r.Context(), lib.Root); err != nil {
+		slog.Warn("noting a removed library's files", "root", lib.Root, "err", err)
+	}
 	if err := s.store.DeleteLibrary(r.Context(), lib.ID); err != nil {
 		writeError(w, 500, err.Error())
 		return

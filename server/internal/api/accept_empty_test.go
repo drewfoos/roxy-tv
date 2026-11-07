@@ -108,3 +108,42 @@ func TestAcceptEmptyLibrary(t *testing.T) {
 		t.Fatalf("still listed after the confirmation: %v", e)
 	}
 }
+
+// Removing a library notes its files as departed: added again at another path (the drive
+// mounted elsewhere, the folder moved and added as a new library), their watch history
+// can follow them. It used to vanish with the library.
+func TestRemovedLibraryFilesAreDepartures(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	lib := &model.Library{Name: "Movies", Kind: model.KindMovies, Root: t.TempDir()}
+	if err := st.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertItem(ctx, &model.Item{ID: "m", GUID: "g-m", LibraryID: lib.ID, Type: model.TypeMovie, Title: "Film"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceSource(ctx, &model.MediaSource{ID: "src", ItemID: "m", IsPrimary: true,
+		Parts: []model.MediaPart{{ID: "part", Path: filepath.Join(lib.Root, "Film (2000).mkv"), Size: 4242}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st}
+	admin := &model.Principal{UserID: "a", User: &model.User{ID: "a", Name: "admin", IsAdmin: true}, IsAdmin: true}
+	req := httptest.NewRequest(http.MethodDelete, "/v1/library/folders/x", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", strconv.FormatInt(lib.ID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), admin))
+	rec := httptest.NewRecorder()
+	s.removeFolder(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body)
+	}
+	var n int
+	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM departures WHERE path = ?`, filepath.Join(lib.Root, "Film (2000).mkv")).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("departures for the removed library's file: %d %v", n, err)
+	}
+}

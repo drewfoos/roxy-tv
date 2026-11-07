@@ -59,7 +59,7 @@ func (s *Store) UpdateLibrary(ctx context.Context, l *model.Library) error {
 }
 
 // LibraryRootIdentity is the library folder's identity as the last scan that found files
-// in it recorded it ('' if none has).
+// in it recorded it (empty if none has).
 func (s *Store) LibraryRootIdentity(ctx context.Context, id int64) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT root_identity FROM libraries WHERE id = ?`, id).Scan(&v)

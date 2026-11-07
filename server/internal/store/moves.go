@@ -186,11 +186,19 @@ func (s *Store) carryLevel(ctx context.Context, from ChainEntry, to *model.Item)
 		pos, plays  int64
 		played, fav bool
 		last        string
+		marked      string // marked watched or unwatched by hand ('' never)
 		audio, sub  sql.NullInt64
+	}
+	// activity is the row's latest time: played, or marked watched / unwatched.
+	activity := func(r row) string {
+		if r.marked > r.last {
+			return r.marked
+		}
+		return r.last
 	}
 	read := func(guid string) (map[string]row, error) {
 		rows, err := tx.QueryContext(ctx, `SELECT scope_id, position_ms, play_count, played, is_favorite, COALESCE(last_played_at, ''),
-			audio_stream_index, subtitle_stream_index FROM user_item_data WHERE item_guid = ?`, guid)
+			COALESCE(marked_at, ''), audio_stream_index, subtitle_stream_index FROM user_item_data WHERE item_guid = ?`, guid)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +208,7 @@ func (s *Store) carryLevel(ctx context.Context, from ChainEntry, to *model.Item)
 			var scope string
 			var r row
 			var played, fav int
-			if err := rows.Scan(&scope, &r.pos, &r.plays, &played, &fav, &r.last, &r.audio, &r.sub); err != nil {
+			if err := rows.Scan(&scope, &r.pos, &r.plays, &played, &fav, &r.last, &r.marked, &r.audio, &r.sub); err != nil {
 				return nil, err
 			}
 			r.played, r.fav = played == 1, fav == 1
@@ -225,8 +233,15 @@ func (s *Store) carryLevel(ctx context.Context, from ChainEntry, to *model.Item)
 			continue
 		}
 		latest, other := n, o
-		if o.last > n.last { // TimeFormat is fixed width UTC: text order is time order
+		if activity(o) > activity(n) { // TimeFormat is fixed width UTC: text order is time order
 			latest, other = o, n
+		}
+		last, marked := o.last, o.marked
+		if n.last > last {
+			last = n.last
+		}
+		if n.marked > marked {
+			marked = n.marked
 		}
 		audio, sub := latest.audio, latest.sub
 		if !audio.Valid {
@@ -236,8 +251,8 @@ func (s *Store) carryLevel(ctx context.Context, from ChainEntry, to *model.Item)
 			sub = other.sub
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE user_item_data SET position_ms = ?, play_count = ?, played = ?, is_favorite = ?,
-			last_played_at = NULLIF(?, ''), audio_stream_index = ?, subtitle_stream_index = ? WHERE scope_id = ? AND item_guid = ?`,
-			latest.pos, o.plays+n.plays, boolInt(latest.played), boolInt(o.fav || n.fav), latest.last, audio, sub, scope, to.GUID); err != nil {
+			last_played_at = NULLIF(?, ''), marked_at = NULLIF(?, ''), audio_stream_index = ?, subtitle_stream_index = ? WHERE scope_id = ? AND item_guid = ?`,
+			latest.pos, o.plays+n.plays, boolInt(latest.played), boolInt(o.fav || n.fav), last, marked, audio, sub, scope, to.GUID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM user_item_data WHERE scope_id = ? AND item_guid = ?`, scope, from.GUID); err != nil {
@@ -380,6 +395,46 @@ func (s *Store) settled(ctx context.Context, d departure) bool {
 	return err == nil && has
 }
 
+// stillLeaving reports whether the departure's own file is still recorded as it was when
+// it left: its record is about to be removed (RecordDeparture comes first, DeleteSource
+// next, and a settle run by another ingest can land between them). Such a departure is
+// neither settled nor matched yet; it used to be dropped as "settled" by its own file.
+// A file recorded again at that path since (a re-download) is not this one.
+func (s *Store) stillLeaving(ctx context.Context, d departure) bool {
+	var probed string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(ms.probed_at, '') FROM media_parts mp JOIN media_sources ms ON ms.id = mp.source_id
+		WHERE mp.path = ?`, d.path).Scan(&probed)
+	return err == nil && probed <= d.departedAt.UTC().Format(TimeFormat)
+}
+
+// episodeNumbers is an episode's season and episode number, as its season and episode
+// items hold them.
+func (s *Store) episodeNumbers(ctx context.Context, itemID string) (season, episode int64, ok bool) {
+	err := s.db.QueryRowContext(ctx, `SELECT sea.index_aired, e.index_aired FROM items e JOIN items sea ON sea.id = e.parent_id
+		WHERE e.id = ? AND e.type = 'episode' AND sea.type = 'season' AND e.index_aired IS NOT NULL AND sea.index_aired IS NOT NULL`, itemID).Scan(&season, &episode)
+	return season, episode, err == nil
+}
+
+// sameSeriesEpisode is the episode with a file that has the departed episode's season and
+// episode number in the same series (by identity): the file was replaced by one whose
+// name gives the episode another identity ("Show - 01" by "Show S01E01", a common
+// upgrade), which neither its size nor its name can match.
+func (s *Store) sameSeriesEpisode(ctx context.Context, d departure) string {
+	top := d.chain[len(d.chain)-1]
+	if !d.season.Valid || !d.episode.Valid || top.Type != string(model.TypeSeries) {
+		return ""
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT e.id FROM items ser JOIN items sea ON sea.parent_id = ser.id JOIN items e ON e.parent_id = sea.id
+		WHERE ser.guid = ? AND sea.type = 'season' AND sea.index_aired = ? AND e.type = 'episode' AND e.index_aired = ? AND e.guid != ?
+		AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = e.id) LIMIT 1`,
+		top.GUID, d.season.Int64, d.episode.Int64, d.chain[0].GUID).Scan(&id)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
 func (s *Store) dropDeparture(ctx context.Context, id int64) {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM departures WHERE id = ?`, id); err != nil {
 		slog.Warn("moved: dropping a settled departure", "err", err)
@@ -417,8 +472,11 @@ func (s *Store) SettleDepartures(ctx context.Context) (int, error) {
 		path, itemID string
 		size, dur    int64
 	}
+	// Extras are not arrivals: history is never carried to one (a trailer of exactly the
+	// departed file's size used to take the match, and the departure was dropped).
 	rows, err := s.db.QueryContext(ctx, `SELECT mp.path, ms.item_id, mp.size, COALESCE(mp.duration_ms, 0) FROM media_parts mp
-		JOIN media_sources ms ON ms.id = mp.source_id WHERE ms.probed_at >= ?`, oldest.Add(-arrivalBefore).UTC().Format(TimeFormat))
+		JOIN media_sources ms ON ms.id = mp.source_id JOIN items i ON i.id = ms.item_id
+		WHERE ms.probed_at >= ? AND i.type != 'extra'`, oldest.Add(-arrivalBefore).UTC().Format(TimeFormat))
 	if err != nil {
 		return 0, err
 	}
@@ -435,6 +493,9 @@ func (s *Store) SettleDepartures(ctx context.Context) (int, error) {
 
 	carried := 0
 	for _, d := range deps {
+		if s.stillLeaving(ctx, d) {
+			continue
+		}
 		if s.settled(ctx, d) {
 			s.dropDeparture(ctx, d.id)
 			continue
@@ -456,13 +517,22 @@ func (s *Store) SettleDepartures(ctx context.Context) (int, error) {
 				recoded = append(recoded, a)
 			}
 		}
-		// Rule 2 also needs the top item (movie or series) to be called the same.
+		// Rule 2 also needs the top item (movie or series) to be called the same, and an
+		// episode to have the same season and episode number where both are known: a show
+		// with "Season 01/Episode 01.mkv" and "Season 02/Episode 01.mkv" used to carry a
+		// deleted S1E01's history to S2E01, and Season 1's to Season 2.
 		var named []arrival
 		for _, a := range recoded {
 			chain, err := s.ItemChain(ctx, a.itemID)
-			if err == nil && len(chain) > 0 && sameTitle(chain[len(chain)-1].Title, d.chain[len(d.chain)-1].Title) {
-				named = append(named, a)
+			if err != nil || len(chain) == 0 || !sameTitle(chain[len(chain)-1].Title, d.chain[len(d.chain)-1].Title) {
+				continue
 			}
+			if d.season.Valid && d.episode.Valid {
+				if se, ep, ok := s.episodeNumbers(ctx, a.itemID); ok && (se != d.season.Int64 || ep != d.episode.Int64) {
+					continue
+				}
+			}
+			named = append(named, a)
 		}
 		var match *arrival
 		switch {
@@ -485,6 +555,13 @@ func (s *Store) SettleDepartures(ctx context.Context) (int, error) {
 			}
 		case len(named) == 1:
 			match = &named[0]
+		}
+		if match == nil {
+			// Rule 2b: replaced in its own series by a file read as the same episode
+			// under another identity.
+			if id := s.sameSeriesEpisode(ctx, d); id != "" {
+				match = &arrival{itemID: id, path: "(same episode of the same series)"}
+			}
 		}
 		if match == nil {
 			continue

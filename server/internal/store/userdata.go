@@ -91,9 +91,12 @@ func stampOr(asOf string) string {
 }
 
 // unlessNewer is the upsert condition for the AsOf writes: no activity recorded, or none
-// after the report's time. TimeFormat is fixed width UTC, so the text compares in order.
-// An empty asOf applies always.
-const unlessNewer = ` WHERE ? = '' OR user_item_data.last_played_at IS NULL OR user_item_data.last_played_at = '' OR user_item_data.last_played_at <= ?`
+// after the report's time; activity is playing (last_played_at) and marking watched or
+// unwatched (marked_at: unmarking leaves last_played_at as it was, so an older offline
+// watched mark used to undo a newer "unwatched"). TimeFormat is fixed width UTC, so the
+// text compares in order. An empty asOf applies always. Takes asOf three times.
+const unlessNewer = ` WHERE ? = '' OR ((user_item_data.last_played_at IS NULL OR user_item_data.last_played_at = '' OR user_item_data.last_played_at <= ?)
+	AND (user_item_data.marked_at IS NULL OR user_item_data.marked_at <= ?))`
 
 func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int, asOf string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
@@ -104,7 +107,7 @@ func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs
 			played = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN 1 ELSE 0 END,
 			audio_stream_index = COALESCE(excluded.audio_stream_index, user_item_data.audio_stream_index),
 			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`+unlessNewer,
-		userID, guid, positionMs, stampOr(asOf), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs, asOf, asOf)
+		userID, guid, positionMs, stampOr(asOf), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs, asOf, asOf, asOf)
 	return applied(res, err)
 }
 
@@ -137,7 +140,7 @@ func (s *Store) finishPlay(ctx context.Context, userID, guid, asOf string) (bool
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
 			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 AND user_item_data.position_ms = 0 THEN 0 ELSE 1 END,
 			position_ms = 0, played = 1, last_played_at = excluded.last_played_at`+unlessNewer,
-		userID, guid, stampOr(asOf), asOf, asOf)
+		userID, guid, stampOr(asOf), asOf, asOf, asOf)
 	return applied(res, err)
 }
 
@@ -156,13 +159,23 @@ func (s *Store) MarkPlayed(ctx context.Context, userID, guid string, played bool
 // was not applied.
 func (s *Store) MarkPlayedAsOf(ctx context.Context, userID, guid string, at time.Time) (bool, error) {
 	asOf := asOfStamp(at)
-	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
-		VALUES (?, ?, 0, 1, 1, ?)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at, marked_at)
+		VALUES (?, ?, 0, 1, 1, ?, ?)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0,
 			play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 THEN 0 ELSE 1 END,
 			last_played_at = CASE WHEN user_item_data.played = 1 THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
-			played = 1`+unlessNewer,
-		userID, guid, asOf, asOf, asOf)
+			played = 1, marked_at = excluded.marked_at`+unlessNewer,
+		userID, guid, asOf, asOf, asOf, asOf, asOf)
+	return applied(res, err)
+}
+
+// UnmarkPlayedAsOf is MarkPlayed(false) for an unmark made at [at] and sent later: it
+// applies only if nothing newer was recorded for the item meanwhile.
+func (s *Store) UnmarkPlayedAsOf(ctx context.Context, userID, guid string, at time.Time) (bool, error) {
+	asOf := asOfStamp(at)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played, marked_at) VALUES (?, ?, 0, 0, ?)
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0, marked_at = excluded.marked_at`+unlessNewer,
+		userID, guid, asOf, asOf, asOf, asOf)
 	return applied(res, err)
 }
 
@@ -172,17 +185,20 @@ type execer interface {
 
 func markPlayed(ctx context.Context, db execer, userID, guid string, played bool) error {
 	if played {
-		_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at)
-			VALUES (?, ?, 0, 1, 1, ?)
+		now := Now()
+		_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at, marked_at)
+			VALUES (?, ?, 0, 1, 1, ?, ?)
 			ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0,
 				play_count = user_item_data.play_count + CASE WHEN user_item_data.played = 1 THEN 0 ELSE 1 END,
 				last_played_at = CASE WHEN user_item_data.played = 1 THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
-				played = 1`,
-			userID, guid, Now())
+				played = 1, marked_at = excluded.marked_at`,
+			userID, guid, now, now)
 		return err
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played) VALUES (?, ?, 0, 0)
-		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0`, userID, guid)
+	// The time of the unmark is kept (marked_at): an offline report older than it does
+	// not mark the item watched again.
+	_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played, marked_at) VALUES (?, ?, 0, 0, ?)
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0, marked_at = excluded.marked_at`, userID, guid, Now())
 	return err
 }
 

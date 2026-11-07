@@ -146,7 +146,8 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 // at: when a phone replays a watched mark it made offline, the time it was made. The mark
 // is then dropped if the item saw activity since (rewatched on another device), as with
 // the at of POST /v1/me/progress; without it an old mark always won and flipped the item
-// back to watched. Only for marking one item watched.
+// back to watched. For one item, watched (POST) or unwatched (DELETE); a series or season
+// is marked as it is asked, now.
 func (s *Server) played(w http.ResponseWriter, r *http.Request) {
 	var at int64
 	if v := r.URL.Query().Get("at"); v != "" {
@@ -162,10 +163,14 @@ func (s *Server) played(w http.ResponseWriter, r *http.Request) {
 		if it.Type == model.TypeSeries || it.Type == model.TypeSeason {
 			return s.store.MarkPlayedUnder(ctx, userID, it.ID, on)
 		}
-		if at > 0 && on {
-			ok, err := s.store.MarkPlayedAsOf(ctx, userID, it.GUID, time.UnixMilli(at))
+		if at > 0 {
+			mark := s.store.MarkPlayedAsOf
+			if !on {
+				mark = s.store.UnmarkPlayedAsOf
+			}
+			ok, err := mark(ctx, userID, it.GUID, time.UnixMilli(at))
 			if err == nil && !ok {
-				slog.Info("played: older than the item's latest activity, ignored", "item", it.Title)
+				slog.Info("played: older than the item's latest activity, ignored", "item", it.Title, "watched", on)
 			}
 			return err
 		}
