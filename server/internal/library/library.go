@@ -437,8 +437,19 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 		}
 	}
 
-	// Sidecar subtitles next to the file (Bazarr naming).
-	src.Streams = append(src.Streams, sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1)...)
+	// Sidecar subtitles next to the file (Bazarr naming), keeping the numbers they had: a
+	// profile's saved subtitle choice is a stream number, so renumbering on a re-ingest
+	// (a new sidecar sorting before an old one) moved that choice to another file.
+	var prevSidecars map[string]int
+	if old, err := l.store.GetSource(ctx, sourceID); err == nil && old != nil {
+		prevSidecars = map[string]int{}
+		for _, st := range old.Streams {
+			if st.IsExternal && st.ExternalPath != "" {
+				prevSidecars[st.ExternalPath] = st.Index
+			}
+		}
+	}
+	src.Streams = append(src.Streams, numberSidecars(sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1), prevSidecars)...)
 
 	// Eager text-subtitle extraction + language sniffing. Extracted files land where the
 	// subtitle endpoint looks for them, so this also warms that cache.
@@ -804,6 +815,46 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 		idx++
 	}
 	return out
+}
+
+// numberSidecars gives each sidecar stream the number it had before (prev: path ->
+// number, from the last ingest), and new sidecars numbers above every number in prev and
+// in use, so a re-ingest never moves a saved subtitle choice to another file. Streams
+// arrive numbered from the first number after the embedded streams (sidecarSubtitles); a
+// previous number below that (the video itself changed and has more streams now) is not
+// kept.
+func numberSidecars(streams []model.MediaStream, prev map[string]int) []model.MediaStream {
+	if len(streams) == 0 || len(prev) == 0 {
+		return streams
+	}
+	start := streams[0].Index
+	next := start
+	for _, n := range prev {
+		if n >= next {
+			next = n + 1
+		}
+	}
+	used := map[int]bool{}
+	keep := make([]bool, len(streams))
+	for i, st := range streams {
+		if n, ok := prev[st.ExternalPath]; ok && n >= start && !used[n] {
+			used[n] = true
+			keep[i] = true
+		}
+	}
+	for i := range streams {
+		if keep[i] {
+			streams[i].Index = prev[streams[i].ExternalPath]
+			continue
+		}
+		for used[next] {
+			next++
+		}
+		streams[i].Index = next
+		used[next] = true
+		next++
+	}
+	return streams
 }
 
 // sidecarFiles is the sidecar subtitle files of videoPath among its folder's entries, in
