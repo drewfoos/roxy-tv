@@ -16,12 +16,11 @@ func dirIdentity(path string) (string, error) {
 	if err := unix.Statx(unix.AT_FDCWD, path, 0, unix.STATX_INO|unix.STATX_BTIME, &st); err != nil {
 		return "", err
 	}
-	if st.Mask&unix.STATX_INO == 0 {
+	// Without a creation time the inode alone is not trusted: FUSE pools (mergerfs,
+	// Unraid's shfs) number inodes by path, so another, empty folder at the same path can
+	// carry the same device and inode. "" then: the emptied library waits for an admin.
+	if st.Mask&unix.STATX_INO == 0 || st.Mask&unix.STATX_BTIME == 0 {
 		return "", nil
 	}
-	id := fmt.Sprintf("%d:%d:%d", st.Dev_major, st.Dev_minor, st.Ino)
-	if st.Mask&unix.STATX_BTIME != 0 {
-		id += fmt.Sprintf(":%d.%09d", st.Btime.Sec, st.Btime.Nsec)
-	}
-	return id, nil
+	return fmt.Sprintf("%d:%d:%d:%d.%09d", st.Dev_major, st.Dev_minor, st.Ino, st.Btime.Sec, st.Btime.Nsec), nil
 }

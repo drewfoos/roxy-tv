@@ -196,3 +196,71 @@ func TestExtraFailuresAreReported(t *testing.T) {
 func storeMovies(lib model.Library) store.ItemQuery {
 	return store.ItemQuery{LibraryID: lib.ID, Types: []model.ItemType{model.TypeMovie}}
 }
+
+// .ignore rules that leave out everything in the library (an empty .ignore in its own
+// folder, a "*" pattern) are not a library whose files were removed: nothing is removed
+// without a confirmation, though the folder is still the same directory. They used to
+// empty the library on their own, the walk having seen no files.
+func TestIgnoreEverythingIsNotAnEmptyLibrary(t *testing.T) {
+	for name, rules := range map[string]string{"empty .ignore": "", "star pattern": "*\n", "videos pattern": "*.mkv\n"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			l, lib, root, recorded, _ := emptyFixture(t)
+			if err := os.WriteFile(filepath.Join(root, ".ignore"), []byte(rules), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := l.Scan(ctx, lib)
+			if err == nil || !strings.Contains(err.Error(), ".ignore") || recorded() != 2 {
+				t.Fatalf("rules hiding everything: err %v, %d of 2 records left", err, recorded())
+			}
+			// Confirmed by an admin, the records do go.
+			l.AcceptEmpty(lib.ID)
+			if err := l.Scan(ctx, lib); err != nil || recorded() != 0 {
+				t.Fatalf("confirmed: err %v, %d left", err, recorded())
+			}
+		})
+	}
+}
+
+// A film folder that can be listed but not entered (a "chmod -R 644"): the file cannot be
+// checked, so its record stays and nothing is removed that scan, as for a folder that
+// cannot be read. It used to be taken for a symlink out of the library and dropped; with
+// every film folder like that, the library emptied itself.
+func TestUnenterableFolderKeepsRecords(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root enters folders regardless of their permissions")
+	}
+	for _, dirs := range [][]string{{"One (2001)"}, {"One (2001)", "Two (2002)"}} {
+		t.Run(strings.Join(dirs, "+"), func(t *testing.T) {
+			ctx := context.Background()
+			l, lib, root, recorded, _ := emptyFixture(t)
+			for _, d := range dirs {
+				dir := filepath.Join(root, d)
+				if err := os.Chmod(dir, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+			}
+			err := l.Scan(ctx, lib)
+			if n := recorded(); n != 2 || err == nil {
+				t.Fatalf("unenterable folders: err %v, %d of 2 records left", err, n)
+			}
+		})
+	}
+}
+
+// A symlink to nothing is skipped, not counted as unreadable (that would stop every
+// removal in the library for as long as the dangling link exists).
+func TestDanglingSymlinkDoesNotBlockRemovals(t *testing.T) {
+	ctx := context.Background()
+	l, lib, root, recorded, _ := emptyFixture(t)
+	if err := os.Symlink(filepath.Join(root, "nowhere.mkv"), filepath.Join(root, "One (2001)", "Link (2003).mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "Two (2002)", "Two (2002).mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Scan(ctx, lib); err != nil || recorded() != 1 {
+		t.Fatalf("dangling link: err %v, %d left (want the deleted film removed)", err, recorded())
+	}
+}

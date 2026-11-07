@@ -369,6 +369,10 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	// library root that could not be read at all, emptied the library.
 	var unreadable []string
 	var rootErr error
+	// hidden counts folders and videos the library's .ignore rules left out: a walk that
+	// found nothing because the rules hide everything (an .ignore dropped in the library's
+	// own folder, a "*" pattern) is not a library whose files were removed.
+	hidden := 0
 	// Files that could not be added or updated (their details unreadable, or a probe or
 	// parse failure):
 	// the rest of the scan goes on, and the count is reported as a partial failure. They
@@ -396,20 +400,40 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		if d.IsDir() {
 			// Download folders, recycle bins, .ignore'd folders: see skip.go; and what an
 			// .ignore's patterns name, in any folder down from the root (ignore.go).
-			if path != lib.Root && (SkipDirReason(path) != "" || ignores.ignored(lib.Root, path, true)) {
+			if path != lib.Root && SkipDirReason(path) != "" {
+				return filepath.SkipDir
+			}
+			if path != lib.Root && ignores.ignored(lib.Root, path, true) {
+				hidden++
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		if ignores.ignored(lib.Root, path, false) {
+			if videoExts[strings.ToLower(filepath.Ext(path))] {
+				hidden++
+			}
 			return nil
 		}
 		if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(d.Name()) != "" {
 			return nil
 		}
 		if _, err := safefs.ResolveUnder(path, lib.Root); err != nil {
-			// A symlink out of the library: never ingested, and dropped if it was before.
-			slog.Warn("skipping file outside the library", "path", path, "err", err)
+			if errors.Is(err, safefs.ErrEscapes) || errors.Is(err, fs.ErrNotExist) {
+				// A symlink out of the library, or one to nothing: never ingested, and
+				// dropped if it was before.
+				slog.Warn("skipping file outside the library", "path", path, "err", err)
+				return nil
+			}
+			// Could not be checked (a folder that can be listed but not entered, an I/O
+			// error): like a folder the walk could not read. Its record is kept and
+			// nothing is removed this scan; it used to be taken for a symlink out of the
+			// library and its record deleted.
+			slog.Warn("checking a file's location failed", "path", path, "err", err)
+			seen[path] = true
+			if dir := filepath.Dir(path); len(unreadable) == 0 || unreadable[len(unreadable)-1] != dir {
+				unreadable = append(unreadable, dir)
+			}
 			return nil
 		}
 		seen[path] = true
@@ -518,6 +542,9 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			return err
 		}
 		switch {
+		case hidden > 0 && !accepted:
+			l.setEmptyRefused(lib.ID, len(known))
+			return fmt.Errorf("the library folder %s shows no media files because its .ignore rules leave out everything in it (%d folder(s) or file(s)); %d are recorded and nothing was removed. Change the rules, or confirm on the Library page that the files really are gone", lib.Root, hidden, len(known))
 		case accepted:
 			slog.Warn("library folder confirmed empty by an admin: removing its records", "library", lib.Name, "files", len(known))
 		case identity != "" && identity == stored:
