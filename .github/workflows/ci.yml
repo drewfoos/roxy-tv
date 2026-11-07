@@ -39,7 +39,7 @@ jobs:
           cache-dependency-path: server/go.sum
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: test "$(id -u)" != 0 && ffprobe -version | head -1
-      - run: go test -race -count=1 -v -run 'TestLibraryLifecycle|TestMKSSidecarTracks' ./internal/library
+      - run: go test -race -count=1 -v -run 'TestLibraryLifecycle|TestMKSSidecarTracks|TestLegacyMergedFilmsSplitByScan' ./internal/library
         env:
           ROXY_REQUIRE_INTEGRATION: "1"
 
