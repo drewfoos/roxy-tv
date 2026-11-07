@@ -174,20 +174,31 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 	case "Rename":
 		renamed := append(p.RenamedEpisodeFiles, p.RenamedMovieFiles...)
 		n := 0
+		var moves []library.Move
 		for _, f := range renamed {
 			// Keep the episode the old name had: the new name may be one the parser
 			// cannot read, and the payload carries no episode list for renames.
 			var hint *library.EpisodeHint
+			var mv library.Move
 			if old, ok := s.resolveKnownFile(ctx, f.PreviousPath); ok {
 				hint = s.lib.HintForPath(ctx, old)
+				// The item it had, so its watch history can follow it if the new path
+				// makes it a new item (a renamed series or movie folder).
+				mv.OldPath = old
+				mv.OldItem, _ = s.store.ItemForPath(ctx, old)
 				s.removePath(ctx, old)
 			}
 			local, ok := s.resolve(ctx, p.absolute(f))
 			if ok && s.lib.IngestPathHinted(ctx, local, hint) == nil {
 				n++
+				if mv.OldItem != nil {
+					mv.NewPath = local
+					moves = append(moves, mv)
+				}
 			}
 			ev.Path = local
 		}
+		s.lib.CarryMoves(ctx, moves) // before the old items are pruned
 		s.prune(ctx)
 		ev.Result = fmt.Sprintf("renamed %d of %d", n, len(renamed))
 	case "EpisodeFileDelete", "MovieFileDelete":

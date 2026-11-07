@@ -59,6 +59,9 @@ type Library struct {
 	forcedNext chan struct{}
 	// scanOne scans one library; nil means l.scan. Tests replace it to watch passes.
 	scanOne func(ctx context.Context, lib model.Library, force bool) error
+	// ingestOne adds or updates one file during a scan; nil means l.addFileSafe. Tests
+	// replace it, as there is no prober in tests.
+	ingestOne func(ctx context.Context, lib model.Library, path string) error
 }
 
 // ScanStatus reports whether a full scan is running, when the last one finished, and what
@@ -268,6 +271,8 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
+	// New files by size, to recognise a file that moved (see detectMoves).
+	addedBySize := map[int64][]string{}
 	// What the walk could not read. Any of it makes this scan a failed one for removals:
 	// nothing recorded is deleted until a scan that read everything shows a file is
 	// really gone (a read error can mean a failing disk or a half-mounted drive, so what
@@ -348,12 +353,18 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		} else {
 			added++
 		}
-		if err := l.addFileSafe(ctx, lib, path); err != nil {
+		ingest := l.ingestOne
+		if ingest == nil {
+			ingest = l.addFileSafe
+		}
+		if err := ingest(ctx, lib, path); err != nil {
 			slog.Error("ingest failed", "path", path, "err", err)
 			ingestFailed++
 			if len(ingestErrs) < 3 {
 				ingestErrs = append(ingestErrs, fmt.Sprintf("%s (%v)", filepath.Base(path), err))
 			}
+		} else if _, ok := known[path]; !ok {
+			addedBySize[info.Size()] = append(addedBySize[info.Size()], path)
 		}
 		return nil
 	})
@@ -371,6 +382,19 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 
 	removed := 0
+	// Files gone from where they were and found somewhere else in this scan (a renamed
+	// folder, a moved file): paired before their records go, so the watch history on
+	// their old items can follow them to the new ones.
+	var moves []Move
+	if len(unreadable) == 0 {
+		var vanished []string
+		for path := range known {
+			if !seen[path] {
+				vanished = append(vanished, path)
+			}
+		}
+		moves = l.detectMoves(ctx, vanished, addedBySize)
+	}
 	for path, sourceID := range known {
 		if seen[path] || len(unreadable) > 0 {
 			continue
@@ -381,6 +405,7 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		}
 		removed++
 	}
+	l.CarryMoves(ctx, moves) // before the old items are pruned
 	// Always: orphans can also date from before this pruning existed, and the query is cheap.
 	if n, err := l.store.PruneOrphans(ctx); err != nil {
 		slog.Warn("pruning orphaned items", "err", err)
