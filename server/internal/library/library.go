@@ -1005,24 +1005,11 @@ func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStre
 			st.Codec = strings.TrimPrefix(ext, ".")
 		}
 		st.IsTextFormat = model.IsTextSubtitleCodec(st.Codec)
-		for i, t := range tokens {
-			switch lt := strings.ToLower(t); {
-			case lt == "":
-			case lt == "forced":
-				st.IsForced = true
-			case lt == "hi" || lt == "cc" || lt == "sdh":
-				st.IsHearingImpaired = true
-			case i == 0 && len(lt) >= 2 && len(lt) <= 3:
-				st.Language = lt
-			case i == 0 && len(lt) > 3 && strings.Contains(lt, "-"):
-				st.Language = strings.SplitN(lt, "-", 2)[0]
-			default:
-				if st.Title == "" {
-					st.Title = t
-				} else {
-					st.Title += " " + t
-				}
-			}
+		tags := parseSidecarTags(tokens)
+		st.Language, st.Title, st.IsForced, st.IsHearingImpaired, st.IsDefault = tags.language, tags.title, tags.forced, tags.hi, tags.isDefault
+		if ext == ".sub" && st.Language == "" {
+			// A VobSub's language is in its .idx ("id: en, index: 0").
+			st.Language = idxLanguage(strings.TrimSuffix(st.ExternalPath, filepath.Ext(st.ExternalPath)) + ".idx")
 		}
 		out = append(out, st)
 		idx++
@@ -1092,6 +1079,73 @@ func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int)
 		next++
 	}
 	return streams
+}
+
+// sidecarTags is what a subtitle file's name says after the video's name.
+type sidecarTags struct {
+	language, title       string
+	forced, hi, isDefault bool
+}
+
+// parseSidecarTags reads the dot-separated tags between a video's name and a subtitle's
+// extension ("en", "English.forced", "forced.en", "[Group].eng", "pt-BR.sdh"), as
+// Jellyfin does: from the right, flags in any order (default; forced or foreign; sdh, cc
+// or hi for hearing impaired), the first language found (a code, an English or native
+// name, a regional tag, which is also kept in the title), and everything else is the
+// title, in its original order. The language used to have to be the first tag and a
+// bare 2-3 letter code, so "Show.English.ass" or "Show.forced.en.srt" lost it.
+func parseSidecarTags(tokens []string) sidecarTags {
+	var t sidecarTags
+	var title []string
+	for i := len(tokens) - 1; i >= 0; i-- {
+		raw := strings.TrimSpace(tokens[i])
+		tok := strings.Trim(raw, "[]() ")
+		switch lt := strings.ToLower(tok); {
+		case lt == "":
+		case lt == "default":
+			t.isDefault = true
+		case lt == "forced" || lt == "foreign":
+			t.forced = true
+		case lt == "sdh" || lt == "cc" || lt == "hi" || lt == "hearing impaired":
+			t.hi = true
+		default:
+			if t.language == "" {
+				if code, region, ok := subtitleLanguage(tok); ok {
+					t.language = code
+					if region != "" {
+						title = append([]string{region}, title...)
+					}
+					continue
+				}
+			}
+			title = append([]string{tok}, title...)
+		}
+	}
+	t.title = strings.Join(title, " ")
+	return t
+}
+
+// idxLanguage reads the language of a VobSub from its .idx ("id: en, index: 0"), as an
+// ISO 639-2 code; "" when there is none.
+func idxLanguage(path string) string {
+	b, err := readHead(path, 64<<10)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(line), "id:") {
+			continue
+		}
+		v := strings.TrimSpace(line[3:])
+		if i := strings.IndexByte(v, ','); i >= 0 {
+			v = v[:i]
+		}
+		if code, _, ok := subtitleLanguage(v); ok {
+			return code
+		}
+	}
+	return ""
 }
 
 // sidecarFiles is the sidecar subtitle files of videoPath among its folder's entries, in
