@@ -19,7 +19,7 @@ app/src/main/kotlin/tv/roxy/tv/
   MainActivity.kt            Login vs. the TV or phone graph; portrait on phones, landscape on TV; token check via GET /v1/auth/me
   api/RoxyApi.kt             suspend client + wire types (Item, UserData, HomeResponse, MediaSource, ...)
   data/Prefs.kt              DataStore: Session (server, token, user), PlayerSettings, downloads Wi-Fi-only flag, cached profiles
-  data/Updates.kt            update check against GET /v1/apps/tv/latest, APK download, package-installer hand-off
+  data/Updates.kt            update check against GET /v1/apps/tv/latest, APK and profile download, package installer session
   data/downloads/Downloads.kt   download index (JSON) + files under Android/data/<app>/files/downloads/<itemId>/; offline progress queue
   data/downloads/DownloadService.kt  dataSync foreground service: one video at a time, HTTP-range resume, images + sidecar subs, notification
   diagnostics/DeviceReport.kt SoC / display / decoder report (logged at start, shown in Settings)

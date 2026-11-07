@@ -156,6 +156,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/items/{id}/images/{type}/candidates", s.imageCandidates)
 			r.Get("/apps/{app}/latest", s.appLatest)
 			r.Get("/apps/{app}/download", s.appDownload)
+			r.Get("/apps/{app}/profile", s.appProfileFile)
 			r.Get("/items", s.listItems)
 			r.Get("/items/{id}", s.getItem)
 			r.Get("/items/{id}/images/{type}", s.getItemImage)

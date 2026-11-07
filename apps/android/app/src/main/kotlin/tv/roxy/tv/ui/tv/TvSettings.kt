@@ -199,8 +199,8 @@ private fun UpdatePane(state: UpdateState, note: String?, onInstall: () -> Unit,
     val line = when (state) {
         is UpdateState.Available -> "Roxy TV ${update!!.versionName} is available. You have ${BuildConfig.VERSION_NAME}."
         is UpdateState.Downloading -> "Downloading Roxy TV ${update!!.versionName}  ·  ${(state.fraction * 100).toInt()}%"
-        is UpdateState.Ready -> "Roxy TV ${update!!.versionName} is downloaded. Install opens Android's installer; the first time, it asks to allow installs from Roxy TV."
-        is UpdateState.Failed -> "The download failed: ${state.message}"
+        is UpdateState.Ready -> "Roxy TV ${update!!.versionName} is downloaded. Install asks Android to install it; the first time, it asks to allow installs from Roxy TV."
+        is UpdateState.Failed -> "The update failed: ${state.message}"
         UpdateState.None -> note ?: "Builds published on your server install from here. You have ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})."
     }
     Text(line, color = RoxyColors.muted, fontSize = 14.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 6.dp).widthIn(max = 560.dp))

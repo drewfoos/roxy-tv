@@ -12,6 +12,10 @@
   sign-in, built the release way. A plain debug build is debuggable, so Android never
   compiles it ahead of time and the TV feels laggy; do not ship that one.
 
+  Behind publish-apk.sh, which is the one in use: this script publishes no checksum and
+  no compilation profiles, so the app installs its update without them (it still works,
+  but is not compiled until the device does it in the background).
+
 .EXAMPLE
   .\tools\publish-apk.ps1 -Notes "Downloads, autoplay next episode"
   .\tools\publish-apk.ps1 -Variant release -DataDir \\server\roxy\data

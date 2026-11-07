@@ -498,18 +498,25 @@ acceptance after login; Account → About links both documents.
 ## App updates
 
 Self-hosted apps have no store, so Roxy Server is the update channel. After a build,
-`apps/android/tools/publish-apk.ps1 -Notes "..."` copies the APK into `<data>/apps/tv/` and
-writes `latest.json` keyed by applicationId (debug and release tracked separately).
+`apps/android/tools/publish-apk.sh -n "..."` copies the APK and its compilation profiles
+(`.dm`, one per range of Android versions) into `<data>/apps/tv/` and writes `latest.json`
+keyed by applicationId (debug and release tracked separately).
 
 - `GET /v1/apps/tv/latest?package=<applicationId>` → `{versionCode, versionName, notes,
-  publishedAt, size, url}`; 404 when nothing is published for that package.
+  publishedAt, size, sha256, url, profiles}`; 404 when nothing is published for that
+  package. `profiles`: `[{minApi, maxApi, size, sha256, url}]`, only those whose file is
+  present and whose checksum is recorded.
 - `GET /v1/apps/tv/download?package=<applicationId>` → the APK (Bearer or `api_key`).
+- `GET /v1/apps/tv/profile?package=<applicationId>&i=<n>` → the build's n-th profile.
 
 The app checks once per launch (and at most every 6 h) after the session is validated,
 compares `versionCode` with its own, and shows a bar above the bottom navigation:
-Update downloads the APK to its cache and hands it to the system installer (Android asks
-once to allow installs from Roxy); the close button hides that build until a newer one
-appears.
+Update downloads the APK (and the profile for its Android version) to its cache and installs
+them together through a package installer session, so Android compiles the update ahead of
+time while installing it and it runs smoothly from its first launch. Android asks to confirm
+(and once to allow installs from Roxy). A profile must match its checksum and hold only a
+profile; if it is refused or Android rejects the install with it, the APK installs alone.
+The close button hides that build until a newer one appears.
 
 ## Not yet (see ROADMAP)
 

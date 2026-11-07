@@ -1,10 +1,16 @@
 package tv.roxy.tv.data
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInfo
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.pm.Signature
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +27,7 @@ import tv.roxy.tv.api.RoxyApi
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 /** A newer build published on the server (see server/internal/api/apps.go). */
 @Serializable
@@ -33,6 +40,22 @@ data class AppUpdate(
     val url: String = "",
     /** Hex SHA-256 of the APK (newer servers). When present the download must match it. */
     val sha256: String? = null,
+    /** Compilation profiles for this build, one per range of Android versions (newer servers). */
+    val profiles: List<AppProfile> = emptyList(),
+)
+
+/**
+ * A compilation profile (.dm) published with a build. Installed together with the APK, it
+ * lets Android compile the update ahead of time at install, so it runs smoothly from its
+ * first launch instead of stuttering until the device compiles it in the background.
+ */
+@Serializable
+data class AppProfile(
+    val minApi: Int,
+    val maxApi: Int,
+    val size: Long = 0,
+    val sha256: String = "",
+    val url: String = "",
 )
 
 /** Where an update stands: offered, downloading, ready to install, or failed. */
@@ -40,20 +63,24 @@ sealed interface UpdateState {
     data object None : UpdateState
     data class Available(val update: AppUpdate) : UpdateState
     data class Downloading(val update: AppUpdate, val fraction: Float) : UpdateState
-    data class Ready(val update: AppUpdate, val file: File) : UpdateState
+    /** [profile]: the compilation profile to install with it, when one was published and fetched. */
+    data class Ready(val update: AppUpdate, val file: File, val profile: File? = null) : UpdateState
     data class Failed(val update: AppUpdate, val message: String) : UpdateState
 }
 
 /**
  * Checks the server for a newer build of this app (same applicationId, higher
- * versionCode) once per launch, downloads it on request and hands it to Android's
- * installer. Self-hosted apps have no store, so the server is the update channel:
+ * versionCode) once per launch, downloads it on request and installs it through Android's
+ * package installer (which asks the person to confirm), together with the build's
+ * compilation profile for this Android version when one is published. Self-hosted apps have no store, so the server is the update channel:
  * `apps/android/tools/publish-apk.sh` puts a build there after `gradlew assemblePerf`.
  *
  * The server is not trusted with what gets installed: the download URL must be one of the
  * server's own /v1/apps/ paths, a published SHA-256 must match, and before the installer
  * opens, the APK must be this app (same package), signed with the same certificate as the
- * installed one, and newer. Anything else is deleted and refused.
+ * installed one, and newer. Anything else is deleted and refused. A profile must match its
+ * published checksum and hold nothing but a profile (no compiled code); a profile that is
+ * missing or refused only means the update installs without it, as before.
  */
 class Updates(private val context: Context, private val api: RoxyApi, private val prefs: Prefs, private val scope: CoroutineScope) {
 
@@ -123,7 +150,7 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
                 // Checked again: the file sat in the cache since the last look.
                 scope.launch {
                     val why = withContext(Dispatchers.IO) { verifyApk(s.file) }
-                    if (why == null) launchInstaller(s.file) else { s.file.delete(); _state.value = UpdateState.Failed(s.update, why) }
+                    if (why == null) installPackage(s) else { s.file.delete(); _state.value = UpdateState.Failed(s.update, why) }
                 }
                 return
             }
@@ -132,7 +159,12 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
         _state.value = UpdateState.Downloading(u, 0f)
         scope.launch {
             runCatching { download(u) }
-                .onSuccess { f -> _state.value = UpdateState.Ready(u, f); launchInstaller(f) }
+                .onSuccess { f ->
+                    val profile = runCatching { downloadProfile(u) }.onFailure { Timber.w(it, "update profile skipped") }.getOrNull()
+                    val ready = UpdateState.Ready(u, f, profile)
+                    _state.value = ready
+                    installPackage(ready)
+                }
                 .onFailure { t -> Timber.w(t, "update download failed"); _state.value = UpdateState.Failed(u, t.message ?: "download failed") }
         }
     }
@@ -181,6 +213,56 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
         verifyApk(target)?.let { why -> target.delete(); throw UpdateRejected(why) }
         target
     }
+
+    /**
+     * The compilation profile for this Android version, downloaded and checked: its checksum
+     * must be published and match, and it must hold only a profile. Null when the build has
+     * none for this version. Throws when one is offered but refused (the caller installs
+     * without it).
+     */
+    private suspend fun downloadProfile(u: AppUpdate): File? = withContext(Dispatchers.IO) {
+        val p = u.profiles.firstOrNull { Build.VERSION.SDK_INT in it.minApi..it.maxApi } ?: return@withContext null
+        val path = safeAppPath(p.url) ?: throw UpdateRejected("profile from an unexpected address")
+        val expectSha = p.sha256.trim().lowercase()
+        if (!expectSha.matches(Regex("[0-9a-f]{64}"))) throw UpdateRejected("profile without a valid checksum")
+        val target = File(File(context.cacheDir, "updates"), "roxy-tv-update.dm")
+        val digest = MessageDigest.getInstance("SHA-256")
+        val req = Request.Builder().url(api.baseUrl + path).get().build()
+        api.http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("profile: HTTP ${resp.code}")
+            target.outputStream().use { out ->
+                val buf = ByteArray(64 * 1024)
+                var done = 0L
+                resp.body.byteStream().use { input ->
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        done += n
+                        if (done > MAX_PROFILE_BYTES) throw UpdateRejected("profile too large")
+                        out.write(buf, 0, n)
+                        digest.update(buf, 0, n)
+                    }
+                }
+            }
+        }
+        val got = digest.digest().joinToString("") { "%02x".format(it) }
+        if (got != expectSha) { target.delete(); throw UpdateRejected("profile checksum mismatch") }
+        if (!isProfileOnly(target)) { target.delete(); throw UpdateRejected("profile holds more than a profile") }
+        target
+    }
+
+    /**
+     * Whether [file] is a .dm holding only a profile. A .dm may also carry verification data
+     * for the code (a vdex), which a hostile server could use to weaken the device's checks
+     * of the app; the build's own profiles never have one, so anything but the profile
+     * ("primary.prof") and its metadata ("primary.profm") is refused.
+     */
+    private fun isProfileOnly(file: File): Boolean = runCatching {
+        ZipFile(file).use { zip ->
+            val names = zip.entries().toList().map { it.name }
+            "primary.prof" in names && names.all { it == "primary.prof" || it == "primary.profm" } && names.size == names.toSet().size
+        }
+    }.getOrDefault(false)
 
     /**
      * Null when [file] is a newer build of this very app signed with the installed app's
@@ -242,6 +324,87 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
         return u
     }
 
+    // ---- installing ----
+
+    /** The install in progress: what to fall back to if Android refuses it with the profile. */
+    private var installing: UpdateState.Ready? = null
+    private var receiverRegistered = false
+
+    /** Android's answers about a session: confirm with the person, done, or failed. */
+    private val statusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            val ready = installing
+            val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+            val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+            when (status) {
+                PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                    @Suppress("DEPRECATION")
+                    val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
+                    runCatching { context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onFailure { Timber.w(it, "could not open the install confirmation") }
+                }
+                PackageInstaller.STATUS_SUCCESS -> Timber.i("update installed") // this process is replaced right after
+                PackageInstaller.STATUS_FAILURE_ABORTED -> Timber.i("update install cancelled") // stays Ready: Install offers it again
+                else -> {
+                    Timber.w("update install failed: %d %s", status, message)
+                    if (ready == null) return
+                    if (ready.profile != null) {
+                        // Refused with the profile (an Android that does not take one): the
+                        // update matters more than the profile, so install it alone.
+                        val alone = ready.copy(profile = null)
+                        _state.value = alone
+                        scope.launch { installPackage(alone) }
+                    } else {
+                        _state.value = UpdateState.Failed(ready.update, "Android couldn't install it" + (message?.let { " ($it)" } ?: ""))
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Installs [ready] with a package installer session: the APK as base.apk and its profile
+     * as base.dm, so Android compiles the update ahead of time while installing it. Android
+     * asks the person to confirm (see [statusReceiver]). If the session cannot be used at all,
+     * the APK alone goes to Android's installer screen, as before.
+     */
+    private suspend fun installPackage(ready: UpdateState.Ready) {
+        installing = ready
+        val started = withContext(Dispatchers.IO) {
+            runCatching {
+                if (!receiverRegistered) {
+                    ContextCompat.registerReceiver(context, statusReceiver, IntentFilter(ACTION_INSTALL_STATUS), ContextCompat.RECEIVER_NOT_EXPORTED)
+                    receiverRegistered = true
+                }
+                val installer = context.packageManager.packageInstaller
+                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+                    setAppPackageName(BuildConfig.APPLICATION_ID)
+                    setSize(ready.file.length() + (ready.profile?.length() ?: 0))
+                }
+                val id = installer.createSession(params)
+                try {
+                    installer.openSession(id).use { session ->
+                        fun put(name: String, file: File) {
+                            file.inputStream().use { input ->
+                                session.openWrite(name, 0, file.length()).use { out -> input.copyTo(out, 256 * 1024); session.fsync(out) }
+                            }
+                        }
+                        put("base.apk", ready.file)
+                        ready.profile?.let { put("base.dm", it) }
+                        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                        val pending = PendingIntent.getBroadcast(context, id, Intent(ACTION_INSTALL_STATUS).setPackage(context.packageName), flags)
+                        session.commit(pending.intentSender)
+                    }
+                    Timber.i("update session %d committed (profile: %s)", id, ready.profile != null)
+                } catch (t: Throwable) {
+                    runCatching { installer.abandonSession(id) }
+                    throw t
+                }
+            }.onFailure { Timber.w(it, "install session failed; using the installer screen") }.isSuccess
+        }
+        if (!started) launchInstaller(ready.file)
+    }
+
     private fun launchInstaller(file: File) {
         val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.files", file)
         val intent = Intent(Intent.ACTION_VIEW)
@@ -250,5 +413,10 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
         runCatching { context.startActivity(intent) }.onFailure { Timber.w(it, "could not open the installer") }
     }
 
-    private companion object { const val MIN_INTERVAL_MS = 6 * 60 * 60 * 1000L }
+    private companion object {
+        const val MIN_INTERVAL_MS = 6 * 60 * 60 * 1000L
+        const val ACTION_INSTALL_STATUS = "${BuildConfig.APPLICATION_ID}.UPDATE_INSTALL_STATUS"
+        /** The build's profiles are ~15 KB; anything near this is not one. */
+        const val MAX_PROFILE_BYTES = 8L shl 20
+    }
 }

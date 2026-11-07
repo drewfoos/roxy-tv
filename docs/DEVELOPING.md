@@ -100,8 +100,9 @@ The debug build can prefill a server URL and login through `BuildConfig`; see
 assemblePerf`): the debug app's id, key and sign-in, built the release way. A plain debug
 build is debuggable, so Android never compiles it ahead of time and a TV feels slow. Bump
 `versionCode`, then `apps/android/tools/publish-apk.sh` (or `publish-apk.ps1` on Windows)
-copies the perf build to the server's `apps/tv` folder and writes its sha256 into
-`latest.json`, so installed phones and TVs offer the update. `apps/android/FONTS.md` explains the fallback
+copies the perf build and its compilation profiles to the server's `apps/tv` folder and
+writes their sha256 into `latest.json`, so installed phones and TVs offer the update and
+install it compiled (smooth from the first launch). `apps/android/FONTS.md` explains the fallback
 font set and how to fetch it (fonts are not in the repository).
 
 
