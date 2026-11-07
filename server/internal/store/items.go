@@ -318,6 +318,8 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 //
 // On update, fields the metadata service owns (title, year, overview) are kept once the
 // item has been matched (metadata_refreshed_at set): a rescan must not undo a lookup.
+// The sort title is only replaced by a non-empty one: the scanner never supplies one, and
+// a rescan used to clear whatever was set.
 //
 // A placeholder that becomes real (its file arrived) is the exception: what it showed
 // was the provider's guess for that slot, which need not be what the file is (an OVA
@@ -343,7 +345,7 @@ func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 		}
 		_, err = s.db.ExecContext(ctx, `UPDATE items SET library_id=?, type=?, parent_id=?,
 			title = CASE WHEN metadata_refreshed_at IS NULL THEN ? ELSE title END,
-			sort_title=?,
+			sort_title = COALESCE(?, sort_title),
 			year = CASE WHEN metadata_refreshed_at IS NULL THEN ? ELSE COALESCE(year, ?) END,
 			overview = COALESCE(overview, ?),
 			index_aired=?, season_aired=?, index_absolute=?, index_aired_end=?, runtime_ms=COALESCE(?, runtime_ms), is_virtual=?, date_modified=? WHERE id=?`,
