@@ -180,6 +180,11 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 		}()
 	}
 
+	// Rescan when files change in a library folder (copied in by hand, renamed, removed).
+	if cfg.Watch {
+		go lib.Watch(ctx)
+	}
+
 	// LAN discovery: answer the clients' "who is roxy?" broadcast with our name and port.
 	if cfg.DiscoveryPort > 0 {
 		httpPort := beacon.HTTPPort(cfg.Listen)

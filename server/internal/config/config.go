@@ -25,6 +25,7 @@ type Config struct {
 	FFprobePath   string   // ROXY_FFPROBE_PATH
 	FontsDir      string   // ROXY_FONTS_DIR, extra fonts for burn-in / client fallback
 	ScanOnStart   bool     // ROXY_SCAN_ON_START, default true
+	Watch         bool     // ROXY_WATCH, default true: rescan when files change in a library folder
 	Debug         bool     // ROXY_DEBUG
 	TMDBAPIKey    string   // ROXY_TMDB_API_KEY; empty disables the TMDB provider (AniList still runs)
 	// Discover requests are forwarded to Sonarr / Radarr when these are set; without
@@ -60,6 +61,7 @@ func Load() (*Config, error) {
 		FFprobePath:          env("ROXY_FFPROBE_PATH", ""),
 		FontsDir:             env("ROXY_FONTS_DIR", ""),
 		ScanOnStart:          envBool("ROXY_SCAN_ON_START", true),
+		Watch:                envBool("ROXY_WATCH", true),
 		Debug:                envBool("ROXY_DEBUG", false),
 		TMDBAPIKey:           env("ROXY_TMDB_API_KEY", ""),
 		SonarrURL:            strings.TrimRight(env("ROXY_SONARR_URL", ""), "/"),
