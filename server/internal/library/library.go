@@ -213,23 +213,36 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	if err != nil {
 		return err
 	}
-	dirEntries := map[string][]os.DirEntry{}
-	sidecarsChanged := func(path, sourceID string) bool {
+	type listing struct {
+		entries []os.DirEntry
+		err     error
+	}
+	dirEntries := map[string]listing{}
+	// sidecarsChanged is false with an error when the sidecars could not be checked: the
+	// video is then left as it is (a failed listing used to read as "every sidecar
+	// removed" and re-ingested the video with none), and the scan reports the folder.
+	sidecarsChanged := func(path, sourceID string) (bool, error) {
 		dir := filepath.Dir(path)
-		entries, ok := dirEntries[dir]
+		ls, ok := dirEntries[dir]
 		if !ok {
-			entries, _ = os.ReadDir(dir) // unreadable: no sidecars, as at ingest
-			dirEntries[dir] = entries
+			ls.entries, ls.err = readDir(dir)
+			dirEntries[dir] = ls
+		}
+		if ls.err != nil {
+			return false, ls.err
 		}
 		stored := storedSidecars[sourceID]
-		current := sidecarFiles(path, lib.Root, entries)
+		current, err := sidecarFiles(path, lib.Root, ls.entries)
+		if err != nil {
+			return false, err
+		}
 		if len(current) != len(stored) {
-			return true
+			return true, nil
 		}
 		for _, p := range current {
 			rec, ok := stored[p]
 			if !ok {
-				return true // added or renamed
+				return true, nil // added or renamed
 			}
 			fi, err := os.Stat(p)
 			if err != nil {
@@ -244,10 +257,10 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 				continue
 			}
 			if rec.Size != size || rec.ModTime != mtime.Format(store.TimeFormat) {
-				return true // replaced under the same name
+				return true, nil // replaced under the same name
 			}
 		}
-		return false
+		return false, nil
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
@@ -312,7 +325,16 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 				// The video is unchanged, but sidecar subtitles beside it are only read when
 				// it is ingested: one added, removed or renamed since would otherwise never
 				// show up (or never go away) until a forced scan.
-				if !sidecarsChanged(path, known[path]) {
+				changed, err := sidecarsChanged(path, known[path])
+				if err != nil {
+					// Like a folder the walk could not read: nothing recorded is removed this
+					// scan, and the scan reports it.
+					slog.Warn("checking sidecar subtitles failed", "path", path, "err", err)
+					if dir := filepath.Dir(path); len(unreadable) == 0 || unreadable[len(unreadable)-1] != dir {
+						unreadable = append(unreadable, dir)
+					}
+				}
+				if !changed {
 					skipped++
 					return nil
 				}
@@ -388,6 +410,9 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 
 // walkDir is filepath.WalkDir; tests replace it to inject read failures.
 var walkDir = filepath.WalkDir
+
+// readDir is os.ReadDir for the sidecar listings; tests replace it to inject read failures.
+var readDir = os.ReadDir
 
 // addFileSafe wraps AddFile so a parser bug on one odd filename cannot take down a scan.
 func (l *Library) addFileSafe(ctx context.Context, lib model.Library, path string) error {
@@ -466,7 +491,13 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	// Sidecar subtitles next to the file (Bazarr naming), keeping the numbers they had: a
 	// profile's saved subtitle choice is a stream number, so renumbering on a re-ingest
 	// (a new sidecar sorting before an old one) moved that choice to another file.
-	sidecars, err := l.keepSidecarNumbers(ctx, sourceID, sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1))
+	// If they cannot be read the ingest fails and the stored record (with its subtitle
+	// tracks) stays as it was, rather than being replaced by one with none.
+	found, err := sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1)
+	if err != nil {
+		return err
+	}
+	sidecars, err := l.keepSidecarNumbers(ctx, sourceID, found)
 	if err != nil {
 		return err
 	}
@@ -783,16 +814,22 @@ func allDigits(s string) bool {
 // sidecarSubtitles finds <base>.<lang>[.forced][.hi|.cc|.sdh][.tags].<ext> next to the file.
 // A sidecar that is a symlink out of the library root is skipped: it is served as-is to
 // any signed-in user, so one pointing at /config/roxy.db would leak the database.
-func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStream {
+func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStream, error) {
 	dir := filepath.Dir(videoPath)
 	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
-	entries, err := os.ReadDir(dir)
+	// A folder that cannot be listed is an error, not "no subtitles": stored as none, a
+	// passing read error would delete every sidecar track of the video.
+	entries, err := readDir(dir)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("listing subtitles beside %s: %w", filepath.Base(videoPath), err)
+	}
+	files, err := sidecarFiles(videoPath, root, entries)
+	if err != nil {
+		return nil, err
 	}
 	var out []model.MediaStream
 	idx := startIndex
-	for _, full := range sidecarFiles(videoPath, root, entries) {
+	for _, full := range files {
 		name := filepath.Base(full)
 		ext := strings.ToLower(filepath.Ext(name))
 		rest := strings.TrimSuffix(name[len(base):], filepath.Ext(name))
@@ -838,7 +875,7 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 		out = append(out, st)
 		idx++
 	}
-	return out
+	return out, nil
 }
 
 // keepSidecarNumbers numbers a source's sidecar streams for a (re-)ingest: each keeps the
@@ -911,8 +948,10 @@ func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int)
 // "Show - 10.en.ass" is not taken for "Show - 1.mkv" (a bare prefix match gave episode 1
 // episode 10's subtitles). When several videos in the folder fit ("Show - 1.mkv" and
 // "Show - 1.5.mkv" for "Show - 1.5.en.ass"), the one with the longest name has it. A .idx
-// is left out (the .sub carries the data), and so is a symlink out of the library root.
-func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
+// is left out (the .sub carries the data), and so is a symlink out of the library root or
+// to nothing. Any other failure to check a sidecar is an error, never "no such sidecar":
+// the caller would otherwise drop a subtitle track that is really there.
+func sidecarFiles(videoPath, root string, entries []os.DirEntry) ([]string, error) {
 	dir := filepath.Dir(videoPath)
 	base := strings.ToLower(strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath)))
 	// The other videos here whose names are longer than this one's: a sidecar fitting one
@@ -950,12 +989,19 @@ func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
 		}
 		full := filepath.Join(dir, name)
 		if _, err := safefs.ResolveUnder(full, root); err != nil {
-			slog.Warn("skipping sidecar outside the library", "path", full, "err", err)
+			switch {
+			case errors.Is(err, safefs.ErrEscapes):
+				slog.Warn("skipping sidecar outside the library", "path", full, "err", err)
+			case errors.Is(err, fs.ErrNotExist):
+				// Gone since the listing, or a symlink to nothing: not a subtitle.
+			default:
+				return nil, fmt.Errorf("checking subtitle %s: %w", full, err)
+			}
 			continue
 		}
 		out = append(out, full)
 	}
-	return out
+	return out, nil
 }
 
 // sidecarOf reports whether the file name (lower case) is named after the video stem

@@ -29,7 +29,10 @@ func TestSidecarSymlinkOutsideLibraryIsSkipped(t *testing.T) {
 	if err := os.Symlink(real, filepath.Join(show, "Show - S01E01.fr.srt")); err != nil {
 		t.Fatal(err)
 	}
-	got := sidecarSubtitles(video, root, 10)
+	got, err := sidecarSubtitles(video, root, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	names := map[string]bool{}
 	for _, st := range got {
 		names[filepath.Base(st.ExternalPath)] = true

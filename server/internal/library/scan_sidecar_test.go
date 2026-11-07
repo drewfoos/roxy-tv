@@ -195,7 +195,10 @@ func TestSidecarDetailsRoundTrip(t *testing.T) {
 	if err != nil || src == nil {
 		t.Fatal(src, err)
 	}
-	src.Streams = sidecarSubtitles(video, lib.Root, 1)
+	src.Streams, err = sidecarSubtitles(video, lib.Root, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(src.Streams) != 1 || src.Streams[0].ExternalModTime.IsZero() {
 		t.Fatalf("sidecar details not read: %+v", src.Streams)
 	}

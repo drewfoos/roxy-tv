@@ -43,7 +43,11 @@ func TestSidecarsOfOverlappingNames(t *testing.T) {
 	}
 	for video, w := range want {
 		var got []string
-		for _, p := range sidecarFiles(filepath.Join(dir, video), root, entries) {
+		files, err := sidecarFiles(filepath.Join(dir, video), root, entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range files {
 			got = append(got, filepath.Base(p))
 		}
 		sort.Strings(got)
@@ -53,7 +57,10 @@ func TestSidecarsOfOverlappingNames(t *testing.T) {
 		}
 	}
 	// The same through sidecarSubtitles (what an ingest stores), with languages read.
-	streams := sidecarSubtitles(filepath.Join(dir, "Show - 1.mkv"), root, 1)
+	streams, err := sidecarSubtitles(filepath.Join(dir, "Show - 1.mkv"), root, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(streams) != 3 {
 		t.Fatalf("Show - 1 streams: %+v", streams)
 	}
