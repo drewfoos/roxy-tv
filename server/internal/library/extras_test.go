@@ -84,7 +84,12 @@ func TestScanMakesExtras(t *testing.T) {
 }
 
 func TestVersionLabel(t *testing.T) {
-	video := func(h int) []model.MediaStream { return []model.MediaStream{{Type: model.StreamVideo, Height: h}} }
+	video := func(h int) []model.MediaStream {
+		if h == 0 {
+			return nil
+		}
+		return []model.MediaStream{{Type: model.StreamVideo, Width: h * 16 / 9, Height: h * 802 / 1080}} // scope: 1920x802
+	}
 	for _, c := range []struct {
 		path, want string
 		h          int

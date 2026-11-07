@@ -164,13 +164,34 @@ func versionLabel(path string, streams []model.MediaStream) string {
 			return l
 		}
 	}
-	h := 0
+	w, h := 0, 0
 	for _, st := range streams {
-		if st.Type == model.StreamVideo && st.Height > h {
-			h = st.Height
+		if st.Type == model.StreamVideo && st.Width > w {
+			w, h = st.Width, st.Height
 		}
 	}
-	if h > 0 {
+	return resolutionClass(w, h)
+}
+
+// resolutionClass is the usual name of a picture size, from its width so widescreen films
+// (1920x802) still read as "1080p", as Jellyfin labels them; "" when unknown.
+func resolutionClass(w, h int) string {
+	switch {
+	case w >= 7000:
+		return "4320p"
+	case w >= 3200:
+		return "2160p"
+	case w >= 2200:
+		return "1440p"
+	case w >= 1600:
+		return "1080p"
+	case w >= 1100:
+		return "720p"
+	case w >= 800:
+		return "576p"
+	case w > 0:
+		return "480p"
+	case h > 0:
 		return fmt.Sprintf("%dp", h)
 	}
 	return ""
