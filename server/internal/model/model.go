@@ -198,7 +198,11 @@ type MediaStream struct {
 	IsHearingImpaired bool   `json:"isHearingImpaired"`
 	IsExternal        bool   `json:"isExternal"`
 	ExternalPath      string `json:"externalPath,omitempty"`
-	IsTextFormat      bool   `json:"isTextFormat"`
+	// A sidecar's size and modification time when it was ingested (zero when unknown):
+	// a scan compares them to notice a sidecar replaced under the same name.
+	ExternalSize    int64     `json:"-"`
+	ExternalModTime time.Time `json:"-"`
+	IsTextFormat    bool      `json:"isTextFormat"`
 }
 
 type Attachment struct {

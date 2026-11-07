@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
 )
@@ -53,13 +54,17 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 		}
 	}
 	for _, st := range src.Streams {
+		var extSize, extMtime any // NULL unless a sidecar's file details are known
+		if st.IsExternal && !st.ExternalModTime.IsZero() {
+			extSize, extMtime = st.ExternalSize, st.ExternalModTime.UTC().Format(TimeFormat)
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_streams (source_id, stream_index, type, codec, profile, level, bit_depth, pix_fmt, width, height, fps,
 			color_primaries, color_transfer, color_space, range_type, dv_profile, channels, channel_layout, sample_rate, bitrate, language, title,
-			is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language, external_size, external_mtime)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			src.ID, st.Index, st.Type, st.Codec, nullStr(st.Profile), nullInt(st.Level), nullInt(st.BitDepth), nullStr(st.PixFmt), nullInt(st.Width), nullInt(st.Height), nullFloat(st.FPS),
 			nullStr(st.ColorPrimaries), nullStr(st.ColorTransfer), nullStr(st.ColorSpace), nullStr(string(st.RangeType)), nullInt(st.DVProfile), nullInt(st.Channels), nullStr(st.ChannelLayout), nullInt(st.SampleRate), nullInt64(st.Bitrate), nullStr(st.Language), nullStr(st.Title),
-			boolInt(st.IsDefault), boolInt(st.IsForced), boolInt(st.IsHearingImpaired), boolInt(st.IsExternal), nullStr(st.ExternalPath), boolInt(st.IsTextFormat), nullStr(st.DetectedLanguage)); err != nil {
+			boolInt(st.IsDefault), boolInt(st.IsForced), boolInt(st.IsHearingImpaired), boolInt(st.IsExternal), nullStr(st.ExternalPath), boolInt(st.IsTextFormat), nullStr(st.DetectedLanguage), extSize, extMtime); err != nil {
 			return err
 		}
 	}
@@ -231,26 +236,46 @@ func (s *Store) ListPartPaths(ctx context.Context, libraryID int64) (map[string]
 	return out, rows.Err()
 }
 
-// ListExternalSubtitlePaths maps each source of a library to the sidecar subtitle files
-// recorded for it, so a scan can tell when sidecars were added, removed or renamed beside
-// a video that did not change itself.
-func (s *Store) ListExternalSubtitlePaths(ctx context.Context, libraryID int64) (map[string][]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT st.source_id, st.external_path FROM media_streams st
+// SidecarStat is a sidecar subtitle file as recorded at ingest: its size and modification
+// time (TimeFormat; "" when not recorded yet).
+type SidecarStat struct {
+	Size    int64
+	ModTime string
+}
+
+// ListSidecarStats maps each source of a library to its recorded sidecar subtitle files,
+// so a scan can tell when sidecars were added, removed, renamed or replaced beside a
+// video that did not change itself.
+func (s *Store) ListSidecarStats(ctx context.Context, libraryID int64) (map[string]map[string]SidecarStat, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT st.source_id, st.external_path, COALESCE(st.external_size, 0), COALESCE(st.external_mtime, '') FROM media_streams st
 		JOIN media_sources ms ON ms.id = st.source_id JOIN items i ON i.id = ms.item_id
 		WHERE i.library_id = ? AND st.is_external = 1 AND st.external_path IS NOT NULL AND st.external_path <> ''`, libraryID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string][]string{}
+	out := map[string]map[string]SidecarStat{}
 	for rows.Next() {
 		var id, p string
-		if err := rows.Scan(&id, &p); err != nil {
+		var st SidecarStat
+		if err := rows.Scan(&id, &p, &st.Size, &st.ModTime); err != nil {
 			return nil, err
 		}
-		out[id] = append(out[id], p)
+		if out[id] == nil {
+			out[id] = map[string]SidecarStat{}
+		}
+		out[id][p] = st
 	}
 	return out, rows.Err()
+}
+
+// RecordSidecarStat fills in a sidecar's size and modification time where none is
+// recorded (rows from before they were kept), without re-ingesting its video.
+func (s *Store) RecordSidecarStat(ctx context.Context, sourceID, path string, size int64, modTime time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE media_streams SET external_size = ?, external_mtime = ?
+		WHERE source_id = ? AND external_path = ? AND is_external = 1 AND external_mtime IS NULL`,
+		size, modTime.UTC().Truncate(time.Millisecond).Format(TimeFormat), sourceID, path)
+	return err
 }
 
 // ItemPath is a media file and the item (movie or episode) it belongs to.
@@ -370,21 +395,27 @@ func (s *Store) loadSourcesChildren(ctx context.Context, srcs []*model.MediaSour
 		}
 		if err := s.eachRow(ctx, `SELECT source_id, stream_index, type, codec, profile, level, bit_depth, pix_fmt, width, height, fps,
 		color_primaries, color_transfer, color_space, range_type, dv_profile, channels, channel_layout, sample_rate, bitrate, language, title,
-		is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language FROM media_streams WHERE source_id IN (`+in+`) ORDER BY source_id, stream_index`, args, func(rows *sql.Rows) error {
+		is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language, external_size, external_mtime FROM media_streams WHERE source_id IN (`+in+`) ORDER BY source_id, stream_index`, args, func(rows *sql.Rows) error {
 			var st model.MediaStream
-			var profile, pixFmt, prim, trc, space, rng, layout, lang, title, extPath, detected sql.NullString
+			var profile, pixFmt, prim, trc, space, rng, layout, lang, title, extPath, detected, extMtime sql.NullString
+			var extSize sql.NullInt64
 			var level, depth, w, h, dv, ch, sr sql.NullInt64
 			var fps sql.NullFloat64
 			var br sql.NullInt64
 			var def, forced, hi, ext, text int
 			if err := rows.Scan(&st.SourceID, &st.Index, &st.Type, &st.Codec, &profile, &level, &depth, &pixFmt, &w, &h, &fps,
-				&prim, &trc, &space, &rng, &dv, &ch, &layout, &sr, &br, &lang, &title, &def, &forced, &hi, &ext, &extPath, &text, &detected); err != nil {
+				&prim, &trc, &space, &rng, &dv, &ch, &layout, &sr, &br, &lang, &title, &def, &forced, &hi, &ext, &extPath, &text, &detected, &extSize, &extMtime); err != nil {
 				return err
 			}
 			st.Profile, st.PixFmt, st.ColorPrimaries, st.ColorTransfer, st.ColorSpace = profile.String, pixFmt.String, prim.String, trc.String, space.String
 			st.RangeType = model.RangeType(rng.String)
 			st.ChannelLayout, st.Language, st.Title, st.ExternalPath = layout.String, lang.String, title.String, extPath.String
 			st.DetectedLanguage = detected.String
+			if extMtime.Valid {
+				if t, err := time.Parse(TimeFormat, extMtime.String); err == nil {
+					st.ExternalSize, st.ExternalModTime = extSize.Int64, t
+				}
+			}
 			st.Level, st.BitDepth, st.Width, st.Height, st.DVProfile, st.Channels, st.SampleRate = int(level.Int64), int(depth.Int64), int(w.Int64), int(h.Int64), int(dv.Int64), int(ch.Int64), int(sr.Int64)
 			st.FPS, st.Bitrate = fps.Float64, br.Int64
 			st.IsDefault, st.IsForced, st.IsHearingImpaired, st.IsExternal, st.IsTextFormat = def == 1, forced == 1, hi == 1, ext == 1, text == 1

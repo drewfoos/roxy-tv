@@ -209,7 +209,7 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	// The sidecar subtitles recorded per source, and each folder's listing read once per
 	// scan: a video that did not change is still re-ingested when its sidecars did.
-	storedSidecars, err := l.store.ListExternalSubtitlePaths(ctx, lib.ID)
+	storedSidecars, err := l.store.ListSidecarStats(ctx, lib.ID)
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,33 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			entries, _ = os.ReadDir(dir) // unreadable: no sidecars, as at ingest
 			dirEntries[dir] = entries
 		}
-		return !samePaths(sidecarFiles(path, lib.Root, entries), storedSidecars[sourceID])
+		stored := storedSidecars[sourceID]
+		current := sidecarFiles(path, lib.Root, entries)
+		if len(current) != len(stored) {
+			return true
+		}
+		for _, p := range current {
+			rec, ok := stored[p]
+			if !ok {
+				return true // added or renamed
+			}
+			fi, err := os.Stat(p)
+			if err != nil {
+				continue // cannot tell; the ingest could not have recorded it either
+			}
+			size, mtime := fi.Size(), fi.ModTime().UTC().Truncate(time.Millisecond)
+			if rec.ModTime == "" {
+				// Recorded before file details were kept: record them now, no re-ingest.
+				if err := l.store.RecordSidecarStat(ctx, sourceID, p, size, mtime); err != nil {
+					slog.Warn("recording sidecar details", "path", p, "err", err)
+				}
+				continue
+			}
+			if rec.Size != size || rec.ModTime != mtime.Format(store.TimeFormat) {
+				return true // replaced under the same name
+			}
+		}
+		return false
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
@@ -772,6 +798,9 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 		rest := strings.TrimSuffix(name[len(base):], filepath.Ext(name))
 		tokens := strings.Split(strings.Trim(rest, "."), ".")
 		st := model.MediaStream{Index: idx, Type: model.StreamSubtitle, IsExternal: true, ExternalPath: filepath.Join(dir, name)}
+		if fi, err := os.Stat(st.ExternalPath); err == nil {
+			st.ExternalSize, st.ExternalModTime = fi.Size(), fi.ModTime().UTC().Truncate(time.Millisecond)
+		}
 		switch ext {
 		case ".ass", ".ssa":
 			st.Codec = "ass"
@@ -933,24 +962,6 @@ func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
 // (lower case): the stem, then a dot.
 func sidecarOf(stem, name string) bool {
 	return len(name) > len(stem) && strings.HasPrefix(name, stem) && name[len(stem)] == '.'
-}
-
-// samePaths reports whether a and b hold the same paths, in any order.
-func samePaths(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	set := make(map[string]int, len(a))
-	for _, p := range a {
-		set[p]++
-	}
-	for _, p := range b {
-		if set[p] == 0 {
-			return false
-		}
-		set[p]--
-	}
-	return true
 }
 
 func stableID(kind, path string) string {
