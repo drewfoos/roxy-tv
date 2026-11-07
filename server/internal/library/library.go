@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/config"
@@ -310,6 +311,10 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	if err != nil {
 		return err
 	}
+	probedAt, err := l.store.SourceProbedAt(ctx, lib.ID)
+	if err != nil {
+		return err
+	}
 	type listing struct {
 		entries []os.DirEntry
 		err     error
@@ -329,9 +334,21 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			return false, ls.err
 		}
 		stored := storedSidecars[sourceID]
-		current, err := sidecarFiles(path, lib.Root, ls.entries)
+		listed, err := sidecarFiles(path, lib.Root, ls.entries)
 		if err != nil {
 			return false, err
+		}
+		// A .mks with no recorded tracks (none it holds is a text track) that has not
+		// changed since the video's last ingest was looked at then: not a change. Counted,
+		// it re-ingested the video at every scan.
+		current := listed[:0:0]
+		for _, p := range listed {
+			if _, rec := stored[p]; !rec && strings.EqualFold(filepath.Ext(p), ".mks") {
+				if fi, err := statFile(p); err == nil && !fi.ModTime().After(probedAt[sourceID]) {
+					continue
+				}
+			}
+			current = append(current, p)
 		}
 		if len(current) != len(stored) {
 			return true, nil
@@ -731,12 +748,36 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	// (a new sidecar sorting before an old one) moved that choice to another file.
 	// If they cannot be read the ingest fails and the stored record (with its subtitle
 	// tracks) stays as it was, rather than being replaced by one with none.
-	found, err := sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1)
+	// Sidecars are numbered from sidecarBase, above every number the file's own streams
+	// use (ffprobe numbers them all, including the data and cover-art streams Roxy leaves
+	// out, which counting the kept ones missed: a sidecar could get an embedded track's
+	// number and the file could not be stored).
+	found, err := sidecarSubtitles(path, lib.Root, sidecarBase)
 	if err != nil {
 		return err
 	}
-	found = l.expandSubtitleContainers(ctx, found)
-	sidecars, err := l.keepSidecarNumbers(ctx, sourceID, found)
+	// The .mks files that had tracks recorded: one of them failing to read now fails the
+	// ingest (the record and its numbers stay); one that never had any (new, or corrupt
+	// from the start) is skipped, so it cannot keep the video out of the library.
+	known := map[string]bool{}
+	if old, err := l.store.GetSource(ctx, sourceID); err == nil && old != nil {
+		for _, st := range old.Streams {
+			if st.ExternalIndex != nil {
+				known[st.ExternalPath] = true
+			}
+		}
+	}
+	if found, err = l.expandSubtitleContainers(ctx, found, known); err != nil {
+		return err
+	}
+	embedded := res.StreamCount
+	for _, st := range src.Streams {
+		embedded = max(embedded, st.Index+1)
+	}
+	for _, a := range src.Attachments {
+		embedded = max(embedded, a.Index+1)
+	}
+	sidecars, moved, err := l.keepSidecarNumbers(ctx, sourceID, found, embedded)
 	if err != nil {
 		return err
 	}
@@ -755,6 +796,14 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	src.VersionLabel = versionLabel(path, src.Streams)
 	if err := l.store.ReplaceSource(ctx, src, string(res.Raw)); err != nil {
 		return err
+	}
+	// A sidecar that had to give up its number (the video, re-encoded, now has a stream
+	// of its own there): saved subtitle choices follow it to its new number, instead of
+	// landing on the embedded track that has the old one.
+	if len(moved) > 0 {
+		if err := l.store.RemapSubtitleChoices(ctx, item.GUID, moved); err != nil {
+			slog.Warn("moving saved subtitle choices to renumbered sidecars", "item", item.Title, "err", err)
+		}
 	}
 	// Several files of one film or episode: the best one first and primary.
 	if err := l.store.RankVersions(ctx, item.ID); err != nil {
@@ -793,10 +842,14 @@ func (l *Library) dropStaleCaches(ctx context.Context, path, sourceID string, si
 		return
 	}
 	part, err := l.store.GetPartByPath(ctx, path)
-	if err != nil || part == nil {
+	if err != nil {
 		return
 	}
-	if part.Size == size && part.ModTime.Equal(modTime.UTC().Truncate(time.Millisecond)) {
+	// No record of this path: a file new here, or one whose record was removed (deleted by
+	// the arr app for an upgrade, then a new download under the same name). The caches
+	// are named by path alone, so anything there is an earlier file's: it used to be
+	// served for the new one (its subtitles, its seek previews).
+	if part != nil && part.Size == size && part.ModTime.Equal(modTime.UTC().Truncate(time.Millisecond)) {
 		return
 	}
 	for _, dir := range []string{filepath.Join(l.cfg.SubtitlesDir(), sourceID), filepath.Join(l.cfg.TrickplayDir(), sourceID)} {
@@ -1367,7 +1420,11 @@ func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStre
 	for _, full := range files {
 		name := filepath.Base(full)
 		ext := strings.ToLower(filepath.Ext(name))
-		rest := strings.TrimSuffix(name[len(base):], filepath.Ext(name))
+		cut := foldPrefixLen(name, base)
+		if cut < 0 {
+			continue // sidecarFiles matched it; cannot happen
+		}
+		rest := strings.TrimSuffix(name[cut:], filepath.Ext(name))
 		tokens := strings.Split(strings.Trim(rest, "."), ".")
 		st := model.MediaStream{Index: idx, Type: model.StreamSubtitle, IsExternal: true, ExternalPath: filepath.Join(dir, name)}
 		fi, err := statFile(st.ExternalPath)
@@ -1391,6 +1448,13 @@ func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStre
 			st.Codec = "hdmv_pgs_subtitle"
 		case ".sub", ".idx":
 			st.Codec = "dvd_subtitle"
+			// A .sub with no .idx beside it is a text one (MicroDVD), not a VobSub's
+			// pictures: it used to be offered as an image track that could not be shown.
+			if ext == ".sub" {
+				if _, err := statFile(strings.TrimSuffix(st.ExternalPath, filepath.Ext(st.ExternalPath)) + ".idx"); errors.Is(err, fs.ErrNotExist) {
+					st.Codec = "microdvd"
+				}
+			}
 		case ".smi", ".sami":
 			st.Codec = "sami"
 		default:
@@ -1409,58 +1473,110 @@ func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStre
 	return out, nil
 }
 
+// foldPrefixLen is how many bytes at the start of name spell prefix, ignoring case, or -1.
+// Byte lengths of the two can differ (the Kelvin sign is three bytes, "k" one): slicing
+// the name at the prefix's own length cut it in the wrong place, or panicked.
+func foldPrefixLen(name, prefix string) int {
+	i := 0
+	for _, pr := range prefix {
+		if i >= len(name) {
+			return -1
+		}
+		nr, size := utf8.DecodeRuneInString(name[i:])
+		if !strings.EqualFold(string(nr), string(pr)) {
+			return -1
+		}
+		i += size
+	}
+	return i
+}
+
 // keepSidecarNumbers numbers a source's sidecar streams for a (re-)ingest: each keeps the
 // number it had at the last ingest, and new ones go above the source's high-water mark
 // (see numberSidecars).
-func (l *Library) keepSidecarNumbers(ctx context.Context, sourceID string, streams []model.MediaStream) ([]model.MediaStream, error) {
+func (l *Library) keepSidecarNumbers(ctx context.Context, sourceID string, streams []model.MediaStream, embedded int) ([]model.MediaStream, map[int]int, error) {
 	floor, err := l.store.SidecarNextIndex(ctx, sourceID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var prev map[string]int
+	var prev []model.MediaStream
 	if old, err := l.store.GetSource(ctx, sourceID); err == nil && old != nil {
-		prev = map[string]int{}
 		for _, st := range old.Streams {
 			if st.IsExternal && st.ExternalPath != "" {
-				prev[sidecarKey(st)] = st.Index
+				prev = append(prev, st)
 			}
 		}
 	}
-	return numberSidecars(streams, prev, floor), nil
+	out, moved := numberSidecars(streams, prev, floor, embedded)
+	return out, moved, nil
 }
 
-// numberSidecars gives each sidecar stream the number it had before (prev: path ->
-// number, from the last ingest), and new sidecars numbers above every number in prev, in
-// use, and below floor (the source's high-water mark, store.SidecarNextIndex: every
-// number a sidecar of it has ever had), so no number is ever handed to a different file
-// and a saved subtitle choice never moves. Streams arrive numbered from the first number
-// after the embedded streams (sidecarSubtitles); a previous number below that (the video
-// itself changed and has more streams now) is not kept.
-func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int) []model.MediaStream {
-	if len(streams) == 0 || (len(prev) == 0 && floor <= streams[0].Index) {
-		return streams
+// sidecarBase is the first number a new sidecar gets: far above any file's own streams
+// (ffprobe's numbers), so a re-encode that adds streams cannot reach it.
+const sidecarBase = 1000
+
+// numberSidecars gives each sidecar stream the number it had at the last ingest (prev),
+// and new sidecars numbers from sidecarBase up, above every number in prev and the
+// source's high-water mark (floor, store.SidecarNextIndex: every number a sidecar of it
+// has ever had), so no number is ever handed to a different file and a saved subtitle
+// choice never moves.
+//
+// A previous number is kept unless the video's own streams now reach it (embedded: the
+// count of ffprobe's numbers; a re-encode with more streams): such a sidecar gets a new
+// number, reported in moved (old -> new) so saved choices can follow it. A track inside a
+// .mks keeps its number only while it is the same track (language, codec, title, flags);
+// remuxed, a track whose position in the .mks changed is found by those instead, so a
+// saved English choice never turns into the Spanish track that took its place.
+func numberSidecars(streams []model.MediaStream, prev []model.MediaStream, floor, embedded int) ([]model.MediaStream, map[int]int) {
+	if len(streams) == 0 {
+		return streams, nil
 	}
-	start := streams[0].Index
-	next := start
-	if floor > next {
-		next = floor
+	next := max(sidecarBase, floor)
+	byKey := map[string]model.MediaStream{}
+	for _, p := range prev {
+		byKey[sidecarKey(p)] = p
+		if p.Index+1 > next {
+			next = p.Index + 1
+		}
 	}
-	for _, n := range prev {
-		if n >= next {
-			next = n + 1
+	sameTrack := func(a, b model.MediaStream) bool {
+		return a.Language == b.Language && a.Codec == b.Codec && a.Title == b.Title &&
+			a.IsForced == b.IsForced && a.IsHearingImpaired == b.IsHearingImpaired
+	}
+	// Each stream's previous number, if it has one.
+	was := make([]int, len(streams))
+	claimed := map[int]bool{}
+	for i, st := range streams {
+		was[i] = -1
+		if p, ok := byKey[sidecarKey(st)]; ok && (st.ExternalIndex == nil || sameTrack(st, p)) && !claimed[p.Index] {
+			was[i] = p.Index
+			claimed[p.Index] = true
+		}
+	}
+	for i, st := range streams { // .mks tracks that moved inside their file
+		if was[i] >= 0 || st.ExternalIndex == nil {
+			continue
+		}
+		for _, p := range prev {
+			if p.ExternalPath == st.ExternalPath && p.ExternalIndex != nil && !claimed[p.Index] && sameTrack(st, p) {
+				was[i] = p.Index
+				claimed[p.Index] = true
+				break
+			}
 		}
 	}
 	used := map[int]bool{}
 	keep := make([]bool, len(streams))
-	for i, st := range streams {
-		if n, ok := prev[sidecarKey(st)]; ok && n >= start && !used[n] {
+	for i := range streams {
+		if n := was[i]; n >= 0 && n >= embedded && !used[n] {
 			used[n] = true
 			keep[i] = true
 		}
 	}
+	var moved map[int]int
 	for i := range streams {
 		if keep[i] {
-			streams[i].Index = prev[sidecarKey(streams[i])]
+			streams[i].Index = was[i]
 			continue
 		}
 		for used[next] {
@@ -1468,9 +1584,15 @@ func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int)
 		}
 		streams[i].Index = next
 		used[next] = true
+		if was[i] >= 0 {
+			if moved == nil {
+				moved = map[int]int{}
+			}
+			moved[was[i]] = next
+		}
 		next++
 	}
-	return streams
+	return streams, moved
 }
 
 // sidecarKey identifies a sidecar track across ingests: its file, and for a track inside
@@ -1488,9 +1610,9 @@ func sidecarKey(st model.MediaStream) string {
 // Image tracks (PGS, VobSub) inside one are left out: they cannot be served as files. A
 // .mks that cannot be probed is left out and logged. The streams are renumbered in order
 // from the first one's number (numberSidecars then keeps earlier numbers).
-func (l *Library) expandSubtitleContainers(ctx context.Context, streams []model.MediaStream) []model.MediaStream {
+func (l *Library) expandSubtitleContainers(ctx context.Context, streams []model.MediaStream, known map[string]bool) ([]model.MediaStream, error) {
 	if len(streams) == 0 || l.ff == nil {
-		return streams
+		return streams, nil
 	}
 	start := streams[0].Index
 	var out []model.MediaStream
@@ -1501,6 +1623,12 @@ func (l *Library) expandSubtitleContainers(ctx context.Context, streams []model.
 		}
 		res, err := probe.File(ctx, l.ff, st.ExternalPath)
 		if err != nil {
+			if known[st.ExternalPath] {
+				// Its tracks are recorded: like any sidecar that cannot be read, the ingest
+				// fails and the stored record (the tracks, their numbers) stays. Dropped, a
+				// passing failure lost the numbers for good, and saved choices with them.
+				return nil, fmt.Errorf("reading subtitle file %s: %w", st.ExternalPath, err)
+			}
 			slog.Warn("subtitle file not read", "path", st.ExternalPath, "err", err)
 			continue
 		}
@@ -1530,7 +1658,7 @@ func (l *Library) expandSubtitleContainers(ctx context.Context, streams []model.
 	for i := range out {
 		out[i].Index = start + i
 	}
-	return out
+	return out, nil
 }
 
 // sidecarTags is what a subtitle file's name says after the video's name.

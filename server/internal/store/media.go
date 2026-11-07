@@ -294,6 +294,68 @@ func (s *Store) ListSidecarStats(ctx context.Context, libraryID int64) (map[stri
 	return out, rows.Err()
 }
 
+// SourceProbedAt is when each of a library's sources was last ingested (source id ->
+// time).
+func (s *Store) SourceProbedAt(ctx context.Context, libraryID int64) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ms.id, COALESCE(ms.probed_at, '') FROM media_sources ms JOIN items i ON i.id = ms.item_id
+		WHERE i.library_id = ?`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var id, at string
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = ParseTime(at)
+	}
+	return out, rows.Err()
+}
+
+// RemapSubtitleChoices moves every profile's saved subtitle choice for an item from a
+// sidecar's old number to its new one (moved: old -> new), in one go (so a chain of
+// moves cannot apply twice).
+func (s *Store) RemapSubtitleChoices(ctx context.Context, guid string, moved map[int]int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT scope_id, subtitle_stream_index FROM user_item_data WHERE item_guid = ? AND subtitle_stream_index IS NOT NULL`, guid)
+	if err != nil {
+		return err
+	}
+	type change struct {
+		scope string
+		to    int
+	}
+	var changes []change
+	for rows.Next() {
+		var scope string
+		var n int
+		if err := rows.Scan(&scope, &n); err != nil {
+			rows.Close()
+			return err
+		}
+		if to, ok := moved[n]; ok {
+			changes = append(changes, change{scope, to})
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, c := range changes {
+		if _, err := tx.ExecContext(ctx, `UPDATE user_item_data SET subtitle_stream_index = ? WHERE scope_id = ? AND item_guid = ?`, c.to, c.scope, guid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // RecordSidecarStat fills in a sidecar's size and modification time where none is
 // recorded (rows from before they were kept), without re-ingesting its video.
 func (s *Store) RecordSidecarStat(ctx context.Context, sourceID, path string, size int64, modTime time.Time) error {

@@ -58,7 +58,10 @@ func TestMKSSidecarTracks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracks := l.expandSubtitleContainers(context.Background(), found)
+	tracks, err := l.expandSubtitleContainers(context.Background(), found, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var smi model.MediaStream
 	var inner []model.MediaStream
 	for _, st := range tracks {

@@ -28,6 +28,9 @@ type Result struct {
 	Attachments []model.Attachment  `json:"attachments"`
 	Chapters    []Chapter           `json:"chapters,omitempty"`
 	Raw         json.RawMessage     `json:"-"`
+	// StreamCount is how many streams ffprobe listed, the ones Roxy leaves out (data
+	// streams, cover art) included: every index below it is the file's own.
+	StreamCount int `json:"-"`
 }
 
 type Chapter struct {
@@ -104,7 +107,11 @@ func File(ctx context.Context, ff *ffmpeg.FFmpeg, path string) (*Result, error) 
 	if b, err := strconv.ParseInt(raw.Format.BitRate, 10, 64); err == nil {
 		res.Bitrate = b
 	}
+	res.StreamCount = len(raw.Streams)
 	for _, s := range raw.Streams {
+		if s.Index+1 > res.StreamCount {
+			res.StreamCount = s.Index + 1
+		}
 		switch s.CodecType {
 		case "video":
 			if s.Disposition["attached_pic"] == 1 {
