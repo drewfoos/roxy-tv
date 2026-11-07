@@ -426,21 +426,35 @@ func (s *Store) SettleDepartures(ctx context.Context) (int, error) {
 				recoded = append(recoded, a)
 			}
 		}
+		// Rule 2 also needs the top item (movie or series) to be called the same.
+		var named []arrival
+		for _, a := range recoded {
+			chain, err := s.ItemChain(ctx, a.itemID)
+			if err == nil && len(chain) > 0 && sameTitle(chain[len(chain)-1].Title, d.chain[len(d.chain)-1].Title) {
+				named = append(named, a)
+			}
+		}
 		var match *arrival
-		if len(bytes) == 1 {
+		switch {
+		case len(bytes) == 1:
 			match = &bytes[0]
-		} else if len(bytes) == 0 && len(recoded) > 0 {
-			// Rule 2 also needs the top item (movie or series) to be called the same.
-			var same []arrival
-			for _, a := range recoded {
-				chain, err := s.ItemChain(ctx, a.itemID)
-				if err == nil && len(chain) > 0 && sameTitle(chain[len(chain)-1].Title, d.chain[len(d.chain)-1].Title) {
-					same = append(same, a)
+		case len(bytes) > 1:
+			// Several files of exactly that size (it happens): the name and length decide
+			// between them, one left or none. Rule 2 used to be tried only when no size
+			// matched, so such a move was never matched and its history stayed behind.
+			var both []arrival
+			for _, b := range bytes {
+				for _, a := range named {
+					if a.path == b.path {
+						both = append(both, b)
+					}
 				}
 			}
-			if len(same) == 1 {
-				match = &same[0]
+			if len(both) == 1 {
+				match = &both[0]
 			}
+		case len(named) == 1:
+			match = &named[0]
 		}
 		if match == nil {
 			continue

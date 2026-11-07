@@ -88,3 +88,59 @@ func TestCarryChain(t *testing.T) {
 		t.Fatalf("unknown id resolved to %s", it.ID)
 	}
 }
+
+// Two files of exactly the same size arrive, one of them the moved file: the size alone is
+// ambiguous, so its name and length decide. It used to give up (the name rule ran only
+// when no size matched), leaving the history behind.
+func TestDepartureSameSizeDecidedByName(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	lib := &model.Library{Name: "Anime", Kind: model.KindSeries, Root: "/m"}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	add := func(id, guid, title, path string, parent *string, typ model.ItemType, size, dur int64) {
+		t.Helper()
+		if err := s.UpsertItem(ctx, &model.Item{ID: id, GUID: guid, LibraryID: lib.ID, Type: typ, Title: title, ParentID: parent}); err != nil {
+			t.Fatal(err)
+		}
+		if path != "" {
+			if err := s.ReplaceSource(ctx, &model.MediaSource{ID: "src-" + id, ItemID: id, IsPrimary: true,
+				Parts: []model.MediaPart{{ID: "p-" + id, Path: path, Size: size, DurationMs: dur}}}, "{}"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	strp := func(v string) *string { return &v }
+	add("old", "path:show:old", "Show A", "", nil, model.TypeSeries, 0, 0)
+	add("olde2", "old:e2", "Episode 2", "/m/Show A/Show A - S01E02.mkv", strp("old"), model.TypeEpisode, 5000, 3000)
+	if err := s.SetProgress(ctx, "p", "old:e2", 1500, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordDeparture(ctx, "/m/Show A/Show A - S01E02.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSource(ctx, "src-olde2"); err != nil {
+		t.Fatal(err)
+	}
+	// Arrivals: the moved episode, and another film of exactly the same size.
+	add("new", "tvdb:show:1", "Show A", "", nil, model.TypeSeries, 0, 0)
+	add("newe2", "tvdb:e2", "Episode 2", "/m/Show A {tvdb-1}/Show A - S01E02.mkv", strp("new"), model.TypeEpisode, 5000, 3000)
+	add("film", "film", "Other Film", "/m/Other/Other Film.mkv", nil, model.TypeMovie, 5000, 3000)
+	if n, err := s.SettleDepartures(ctx); err != nil || n != 1 {
+		t.Fatalf("settle: %d %v", n, err)
+	}
+	if d, _ := s.GetUserItemData(ctx, "p", "tvdb:e2"); d == nil || d.PositionMs != 1500 {
+		t.Fatalf("history did not follow the moved episode: %+v", d)
+	}
+	if d, _ := s.GetUserItemData(ctx, "p", "film"); d != nil && d.PositionMs != 0 {
+		t.Fatalf("the same-sized film got it: %+v", d)
+	}
+}
