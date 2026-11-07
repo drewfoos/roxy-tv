@@ -199,7 +199,9 @@ func (s *Service) generate(ctx context.Context, sourceID string) error {
 	start := time.Now()
 	// Keyframes only, one tile per interval, 10x10 tiles per sheet. The fps filter picks
 	// the keyframe nearest each 10 s mark; scale keeps the aspect ratio (height even).
-	vf := fmt.Sprintf("fps=1/%d,scale=%d:-2,tile=%dx%d", IntervalMs/1000, TileWidth, Columns, Rows)
+	// Full-range 4:2:0 before the JPEG encoder: it refuses limited-range input it cannot
+	// map itself (a DVD menu clip failed with "Non full-range YUV is non-standard").
+	vf := fmt.Sprintf("fps=1/%d,scale=%d:-2:out_range=full,format=yuvj420p,tile=%dx%d", IntervalMs/1000, TileWidth, Columns, Rows)
 	_, err = s.ff.Run(ctx, tmp, "-y", "-v", "error", "-skip_frame", "nokey", "-i", path, "-an", "-sn", "-dn",
 		"-vf", vf, "-qscale:v", "5", "-f", "image2", "sheet_%03d.jpg")
 	if err != nil {
