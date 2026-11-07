@@ -244,9 +244,13 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			if !ok {
 				return true, nil // added or renamed
 			}
-			fi, err := os.Stat(p)
+			fi, err := statFile(p)
+			if errors.Is(err, fs.ErrNotExist) {
+				return true, nil // gone since the listing: removed
+			}
 			if err != nil {
-				continue // cannot tell; the ingest could not have recorded it either
+				// Not "unchanged": the scan reports it like a folder it could not read.
+				return false, fmt.Errorf("reading subtitle %s: %w", p, err)
 			}
 			size, mtime := fi.Size(), fi.ModTime().UTC().Truncate(time.Millisecond)
 			if rec.ModTime == "" {
@@ -413,6 +417,9 @@ var walkDir = filepath.WalkDir
 
 // readDir is os.ReadDir for the sidecar listings; tests replace it to inject read failures.
 var readDir = os.ReadDir
+
+// statFile is os.Stat for sidecar files; tests replace it to inject read failures.
+var statFile = os.Stat
 
 // addFileSafe wraps AddFile so a parser bug on one odd filename cannot take down a scan.
 func (l *Library) addFileSafe(ctx context.Context, lib model.Library, path string) error {
@@ -835,9 +842,16 @@ func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStre
 		rest := strings.TrimSuffix(name[len(base):], filepath.Ext(name))
 		tokens := strings.Split(strings.Trim(rest, "."), ".")
 		st := model.MediaStream{Index: idx, Type: model.StreamSubtitle, IsExternal: true, ExternalPath: filepath.Join(dir, name)}
-		if fi, err := os.Stat(st.ExternalPath); err == nil {
-			st.ExternalSize, st.ExternalModTime = fi.Size(), fi.ModTime().UTC().Truncate(time.Millisecond)
+		fi, err := statFile(st.ExternalPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // gone since the listing: not a subtitle any more
 		}
+		if err != nil {
+			// The ingest fails and the stored record stays, rather than keeping a track
+			// whose details are unknown (see the folder listing above).
+			return nil, fmt.Errorf("reading subtitle %s: %w", st.ExternalPath, err)
+		}
+		st.ExternalSize, st.ExternalModTime = fi.Size(), fi.ModTime().UTC().Truncate(time.Millisecond)
 		switch ext {
 		case ".ass", ".ssa":
 			st.Codec = "ass"
