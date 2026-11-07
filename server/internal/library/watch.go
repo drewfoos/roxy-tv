@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +18,8 @@ var watchQuiet = 30 * time.Second
 
 // watchRefresh is how often the watcher re-reads the library list: libraries added since,
 // or whose folder was missing (a drive not mounted yet), start being watched; removed ones
-// stop.
+// stop; a folder that is now a different directory at the same path (a drive unmounted
+// and mounted again, a folder deleted and made again) is watched afresh.
 var watchRefresh = time.Minute
 
 // watchRelevant are the files whose arrival, change or removal a scan cares about.
@@ -39,7 +41,18 @@ func (l *Library) Watch(ctx context.Context) {
 		return
 	}
 	defer w.Close()
-	roots := map[string]bool{} // library folders being watched
+	// The library folders being watched, with the directory each one was when its watch
+	// was set up: a watch belongs to that directory, not to its path, so a drive mounted
+	// again at the same path (or a folder made again) sends nothing until it is re-added.
+	roots := map[string]fs.FileInfo{}
+	// unwatch removes the watches on a root and every folder below it.
+	unwatch := func(root string) {
+		for _, p := range w.WatchList() {
+			if p == root || strings.HasPrefix(p, root+string(filepath.Separator)) {
+				_ = w.Remove(p)
+			}
+		}
+	}
 	add := func(root string) int {
 		n := 0
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -84,14 +97,35 @@ func (l *Library) Watch(ctx context.Context) {
 			return false
 		}
 		current := map[string]bool{}
+		watched := map[string]bool{}
+		for _, p := range w.WatchList() {
+			watched[p] = true
+		}
 		added, folders := false, 0
 		for _, lib := range libs {
 			current[lib.Root] = true
-			if roots[lib.Root] {
+			if was, ok := roots[lib.Root]; ok {
+				now, err := statFile(lib.Root)
+				if err == nil && os.SameFile(was, now) && watched[lib.Root] {
+					continue // still the directory being watched
+				}
+				// Gone (an unmounted drive), or another directory at the same path, or
+				// its watch dropped by the system: the old watches see nothing of what is
+				// there now. Set up again below, or when the folder is back.
+				delete(roots, lib.Root)
+				unwatch(lib.Root)
+				if err != nil {
+					slog.Info("library folder unavailable: watching it again once it is back", "library", lib.Name, "err", err)
+					continue
+				}
+				slog.Info("library folder is a different directory now (mounted again?): watching it afresh", "library", lib.Name)
+			}
+			fi, err := statFile(lib.Root)
+			if err != nil {
 				continue
 			}
 			if n := add(lib.Root); n > 0 {
-				roots[lib.Root] = true
+				roots[lib.Root] = fi
 				added = true
 				folders += n
 				if !first {
@@ -104,11 +138,7 @@ func (l *Library) Watch(ctx context.Context) {
 				continue
 			}
 			delete(roots, root)
-			for _, p := range w.WatchList() {
-				if p == root || strings.HasPrefix(p, root+string(filepath.Separator)) {
-					_ = w.Remove(p)
-				}
-			}
+			unwatch(root)
 			slog.Info("no longer watching a removed library folder", "root", root)
 		}
 		if first {
@@ -124,8 +154,9 @@ func (l *Library) Watch(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-refresh.C:
-			// A library added (or its drive mounted) since: watched from now on, and
-			// scanned once, in case files arrived before the watch was in place.
+			// A library added (or its drive mounted, or mounted again) since: watched
+			// from now on, and scanned once, in case files arrived before the watch was
+			// in place.
 			if sync(false) {
 				poke()
 			}
