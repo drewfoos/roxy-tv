@@ -205,9 +205,10 @@ func TestWatchDropsFoldersANewIgnoreRuleLeavesOut(t *testing.T) {
 	if err := l.Scan(ctx, lib); err != nil {
 		t.Fatal(err)
 	}
-	var scans atomic.Int32
+	var scans, finished atomic.Int32 // passes started, and passes done
 	l.scanOne = func(ctx context.Context, lib model.Library, force bool) error {
 		scans.Add(1)
+		defer finished.Add(1)
 		return l.scan(ctx, lib, force)
 	}
 	runWatch(t, l)
@@ -232,15 +233,43 @@ func TestWatchDropsFoldersANewIgnoreRuleLeavesOut(t *testing.T) {
 	}
 	waitFor("Season 01 to be watched", func() bool { return watching(season1) })
 
+	// Season 02, which the rule does not name, must stay watched throughout: sampled
+	// while the rule takes effect, as rebuilding by removing every watch and adding them
+	// back left it unwatched for a moment.
+	season2 := filepath.Join(show, "Season 02")
+	var gap atomic.Bool
+	stop := make(chan struct{})
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if !watching(season2) {
+				gap.Store(true)
+			}
+		}
+	}()
 	if err := os.WriteFile(filepath.Join(show, ".ignore"), []byte("Season 01/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	waitFor("Season 01's watch to be removed", func() bool { return !watching(season1) })
-	if !watching(filepath.Join(show, "Season 02")) {
-		t.Fatal("Season 02, which the rule does not name, is no longer watched")
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	<-sampled
+	if gap.Load() || !watching(season2) {
+		t.Fatal("Season 02, which the rule does not name, was left unwatched")
 	}
-	waitFor("the scan the rule change asks for", func() bool { return scans.Load() > 0 })
-	time.Sleep(4 * watchQuiet) // that scan done, and nothing else pending
+	// The scan the rule change asks for, run to its end (scans run beside the watcher):
+	// every pass started has finished and none is running.
+	waitFor("the scan the rule change asks for to finish", func() bool {
+		running, _, _ := l.ScanStatus()
+		n := scans.Load()
+		return n > 0 && finished.Load() == n && !running
+	})
 	before := scans.Load()
 
 	// Changes inside the folder the rule now leaves out: no scan.

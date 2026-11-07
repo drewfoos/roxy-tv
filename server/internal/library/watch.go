@@ -83,8 +83,9 @@ func (l *Library) Watch(ctx context.Context) {
 	// add watches dir and the folders below it, except those a scan skips: download
 	// folders and the like, and what the library's .ignore rules leave out (their changes
 	// are of no interest, and a busy one kept the quiet period from ever ending).
-	add := func(dir, root string) int {
-		n := 0
+	// wanted lists the folders at or below dir that should be watched.
+	wanted := func(dir, root string) []string {
+		var out []string
 		ignores := ignoreCache{}
 		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 			if err != nil || !d.IsDir() {
@@ -96,11 +97,42 @@ func (l *Library) Watch(ctx context.Context) {
 			if root != "" && p != root && ignores.ignored(root, p, true) {
 				return filepath.SkipDir
 			}
+			out = append(out, p)
+			return nil
+		})
+		return out
+	}
+	// reconcile makes the watches at or below dir what the rules say now: it removes only
+	// those no longer wanted and adds only those missing, so a folder that stays watched is
+	// never without its watch (removing all and adding back left a moment when changes
+	// anywhere below dir went unseen).
+	reconcile := func(dir, root string) {
+		want := map[string]bool{}
+		for _, p := range wanted(dir, root) {
+			want[p] = true
+		}
+		have := map[string]bool{}
+		for _, p := range w.WatchList() {
+			if p == dir || strings.HasPrefix(p, dir+string(filepath.Separator)) {
+				have[p] = true
+				if !want[p] {
+					_ = w.Remove(p)
+				}
+			}
+		}
+		for p := range want {
+			if !have[p] {
+				_ = w.Add(p)
+			}
+		}
+	}
+	add := func(dir, root string) int {
+		n := 0
+		for _, p := range wanted(dir, root) {
 			if err := w.Add(p); err == nil {
 				n++
 			}
-			return nil
-		})
+		}
 		return n
 	}
 	var timer *time.Timer
@@ -249,9 +281,7 @@ func (l *Library) Watch(ctx context.Context) {
 			// was noticed.
 			if isIgnoreFile(ev.Name) {
 				if root := libRootOf(ev.Name); root != "" {
-					dir := filepath.Dir(ev.Name)
-					unwatch(dir)
-					add(dir, root)
+					reconcile(filepath.Dir(ev.Name), root)
 				}
 			}
 			// A removed or renamed folder is no longer a name we can stat: count it too.
