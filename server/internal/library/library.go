@@ -574,8 +574,13 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 		_ = l.store.UpsertItem(ctx, item)
 	}
 
+	src.VersionLabel = versionLabel(path, src.Streams)
 	if err := l.store.ReplaceSource(ctx, src, string(res.Raw)); err != nil {
 		return err
+	}
+	// Several files of one film or episode: the best one first and primary.
+	if err := l.store.RankVersions(ctx, item.ID); err != nil {
+		slog.Warn("ranking versions", "item", item.Title, "err", err)
 	}
 	if prior == nil {
 		l.settleDepartures(ctx)

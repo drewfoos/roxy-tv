@@ -82,3 +82,21 @@ func TestScanMakesExtras(t *testing.T) {
 		t.Fatalf("after a rescan: %d extras", len(again))
 	}
 }
+
+func TestVersionLabel(t *testing.T) {
+	video := func(h int) []model.MediaStream { return []model.MediaStream{{Type: model.StreamVideo, Height: h}} }
+	for _, c := range []struct {
+		path, want string
+		h          int
+	}{
+		{"/m/Film (2020)/Film (2020) - 2160p.mkv", "2160p", 2160},
+		{"/m/Film (2020)/Film (2020) - Director's Cut.mkv", "Director's Cut", 1080},
+		{"/m/Film (2020)/Film (2020).mkv", "1080p", 1080},
+		{"/m/Film (2020)/film.mkv", "720p", 720},
+		{"/m/Film (2020)/film.mkv", "", 0},
+	} {
+		if got := versionLabel(c.path, video(c.h)); got != c.want {
+			t.Errorf("%s: %q, want %q", c.path, got, c.want)
+		}
+	}
+}

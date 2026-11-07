@@ -213,6 +213,19 @@ func (s *Store) ItemGUIDForPath(ctx context.Context, path string) (string, error
 	return guid, err
 }
 
+// RankVersions orders an item's versions (several files of one film or episode) the way
+// Jellyfin does: the one with the tallest video first, then by name, and marks only that
+// one primary, which is the one the apps play. A single version is simply primary.
+func (s *Store) RankVersions(ctx context.Context, itemID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE media_sources SET is_primary = CASE WHEN id = (
+			SELECT ms.id FROM media_sources ms
+			LEFT JOIN media_streams st ON st.source_id = ms.id AND st.type = 'video'
+			WHERE ms.item_id = ?
+			GROUP BY ms.id ORDER BY COALESCE(MAX(st.height), 0) DESC, ms.name LIMIT 1) THEN 1 ELSE 0 END
+		WHERE item_id = ?`, itemID, itemID)
+	return err
+}
+
 func (s *Store) GetPartByPath(ctx context.Context, path string) (*model.MediaPart, error) {
 	var p model.MediaPart
 	var mtime string

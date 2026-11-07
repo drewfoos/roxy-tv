@@ -152,3 +152,26 @@ func (l *Library) extraUpToDate(ctx context.Context, path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && part.Size == fi.Size() && part.ModTime.Equal(fi.ModTime().UTC().Truncate(time.Millisecond))
 }
+
+// versionLabel names a version of a film for a picker, as Jellyfin does: what its file
+// name adds after the folder's name ("Film (2020) - 2160p" in "Film (2020)" is "2160p"),
+// else its video height ("1080p"), else "".
+func versionLabel(path string, streams []model.MediaStream) string {
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	folder := filepath.Base(filepath.Dir(path))
+	if len(stem) > len(folder) && strings.EqualFold(stem[:len(folder)], folder) {
+		if l := strings.Trim(stem[len(folder):], " -._[]()"); l != "" {
+			return l
+		}
+	}
+	h := 0
+	for _, st := range streams {
+		if st.Type == model.StreamVideo && st.Height > h {
+			h = st.Height
+		}
+	}
+	if h > 0 {
+		return fmt.Sprintf("%dp", h)
+	}
+	return ""
+}
