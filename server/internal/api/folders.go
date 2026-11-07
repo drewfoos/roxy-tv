@@ -127,6 +127,28 @@ func (s *Server) updateFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, lib)
 }
 
+// POST /v1/library/folders/{id}/accept-empty -> 202. The admin confirms that a library
+// the last scan found with no media files (and left alone, as it does for an unmounted
+// drive) really is empty: a scan starts and removes the records of its files. Only for a
+// library in that state (409 otherwise), so it cannot be armed ahead of a missing drive.
+func (s *Server) acceptEmptyFolder(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	lib, ok := s.folderFromURL(w, r)
+	if !ok {
+		return
+	}
+	if _, waiting := s.lib.EmptyRefused()[lib.ID]; !waiting {
+		writeError(w, 409, "this library is not waiting for that: its last scan did not find it empty")
+		return
+	}
+	s.lib.AcceptEmpty(lib.ID)
+	slog.Info("library confirmed empty by an admin", "name", lib.Name, "root", lib.Root)
+	go func() { _ = s.lib.ScanAll(context.Background(), false) }()
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // DELETE /v1/library/folders/{id} -> 204. Roxy forgets the folder; files stay on disk.
 func (s *Server) removeFolder(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {

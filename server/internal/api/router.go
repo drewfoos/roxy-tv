@@ -117,6 +117,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Post("/library/folders", s.addFolder)
 			r.Patch("/library/folders/{id}", s.updateFolder)
 			r.Delete("/library/folders/{id}", s.removeFolder)
+			r.Post("/library/folders/{id}/accept-empty", s.acceptEmptyFolder)
 			r.Get("/library/browse", s.browseFolders)
 			r.Post("/library/scan", s.libraryScan)
 			r.Post("/library/refresh", s.libraryRefresh)

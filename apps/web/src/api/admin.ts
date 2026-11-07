@@ -83,6 +83,19 @@ export interface ManageStatus {
   lastScanError?: string | null
   queue: number
   titles: ManageTitle[]
+  /**
+   * Libraries the last scan found with no media files while it has records of some, and
+   * left alone (an unmounted drive looks the same). The admin can confirm one is empty.
+   */
+  emptyLibraries?: EmptyLibrary[]
+}
+
+export interface EmptyLibrary {
+  id: string
+  name: string
+  root: string
+  /** Files on record. */
+  files: number
 }
 
 export interface LibraryFolder {

@@ -70,7 +70,65 @@ type Library struct {
 	// ingestOne adds or updates one file during a scan; nil means l.addFileSafe. Tests
 	// replace it, as there is no prober in tests.
 	ingestOne func(ctx context.Context, lib model.Library, path string) error
+
+	// Libraries whose folder had no media files while files were recorded (see scan):
+	// emptyRefused, those the last scan of left alone (id -> files recorded), for the
+	// admin screen; emptyAccepted, those an admin confirmed are really empty, for the
+	// next scan of each only.
+	emptyMu       sync.Mutex
+	emptyRefused  map[int64]int
+	emptyAccepted map[int64]bool
 }
+
+// EmptyRefused is the libraries the last scan found with no media files but records of
+// some, and left alone (id -> files recorded): an unmounted drive, or files really removed
+// from a folder that is not provably the one scanned before. AcceptEmpty confirms one.
+func (l *Library) EmptyRefused() map[int64]int {
+	l.emptyMu.Lock()
+	defer l.emptyMu.Unlock()
+	out := map[int64]int{}
+	for id, n := range l.emptyRefused {
+		out[id] = n
+	}
+	return out
+}
+
+// AcceptEmpty is an admin confirming that a library's folder really is empty now: its
+// next scan removes the records of the files it no longer has (their watch history waits
+// as departures, so it returns if the files come back within 30 days).
+func (l *Library) AcceptEmpty(id int64) {
+	l.emptyMu.Lock()
+	defer l.emptyMu.Unlock()
+	if l.emptyAccepted == nil {
+		l.emptyAccepted = map[int64]bool{}
+	}
+	l.emptyAccepted[id] = true
+}
+
+// takeEmptyAccepted reports (and forgets) whether an admin confirmed the library empty.
+func (l *Library) takeEmptyAccepted(id int64) bool {
+	l.emptyMu.Lock()
+	defer l.emptyMu.Unlock()
+	ok := l.emptyAccepted[id]
+	delete(l.emptyAccepted, id)
+	return ok
+}
+
+func (l *Library) setEmptyRefused(id int64, files int) {
+	l.emptyMu.Lock()
+	defer l.emptyMu.Unlock()
+	if files == 0 {
+		delete(l.emptyRefused, id)
+		return
+	}
+	if l.emptyRefused == nil {
+		l.emptyRefused = map[int64]int{}
+	}
+	l.emptyRefused[id] = files
+}
+
+// rootIdentity is dirIdentity; tests replace it.
+var rootIdentity = dirIdentity
 
 // ScanStatus reports whether a full scan is running, when the last one finished, and what
 // it failed on (nil when every library was scanned).
@@ -232,6 +290,10 @@ func (l *Library) Scan(ctx context.Context, lib model.Library) error {
 
 func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error {
 	start := time.Now()
+	// Taken at the start, so a confirmation applies to the next scan only and is never
+	// left over for a later one (when the drive may really be missing).
+	accepted := l.takeEmptyAccepted(lib.ID)
+	l.setEmptyRefused(lib.ID, 0) // until this scan finds otherwise
 	known, err := l.store.ListPartPaths(ctx, lib.ID)
 	if err != nil {
 		return err
@@ -313,6 +375,10 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	// used to be logged only, so such a scan still reported success.
 	ingestFailed := 0
 	var ingestErrs []string // the first few, "name (reason)"
+	// Extras (trailers, featurettes) that could not be added: reported on their own line.
+	// They used to be logged only, so a scan that failed on them reported success.
+	extrasFailed := 0
+	var extrasErrs []string
 
 	err = walkDir(lib.Root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -425,16 +491,48 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		}
 		if err := ingest(ctx, lib, path); err != nil {
 			slog.Warn("extra not added", "path", path, "err", err)
+			extrasFailed++
+			if len(extrasErrs) < 3 {
+				extrasErrs = append(extrasErrs, fmt.Sprintf("%s (%v)", filepath.Base(path), err))
+			}
 		}
 	}
 	if rootErr != nil {
 		return fmt.Errorf("the library folder %s cannot be read (%v); nothing was removed", lib.Root, rootErr)
 	}
-	// Files are recorded but the walk found none at all: the drive is most likely not
-	// mounted, and what is there is the empty folder Docker creates for a missing bind
-	// mount. Removing everything would empty the library, so nothing is.
+	// Files are recorded but the walk found none at all. Most likely the drive is not
+	// mounted and what is there is the empty folder Docker creates for a missing bind
+	// mount: removing everything would empty the library, so nothing is. But if the folder
+	// is provably the directory a scan found files in before (same device, inode and
+	// creation time), its files really were removed, and their records go; so they do
+	// when an admin confirms it (AcceptEmpty). Otherwise an emptied library kept its
+	// records, and failed every scan, for good.
+	identity, idErr := rootIdentity(lib.Root)
+	if idErr != nil {
+		slog.Warn("reading the library folder's identity", "library", lib.Name, "err", idErr)
+		identity = ""
+	}
 	if len(seen) == 0 && len(known) > 0 {
-		return fmt.Errorf("the library folder %s has no media files but %d are recorded; nothing was removed (is the drive mounted?)", lib.Root, len(known))
+		stored, err := l.store.LibraryRootIdentity(ctx, lib.ID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case accepted:
+			slog.Warn("library folder confirmed empty by an admin: removing its records", "library", lib.Name, "files", len(known))
+		case identity != "" && identity == stored:
+			slog.Warn("library folder emptied (the same folder as before, not a missing drive): removing its records", "library", lib.Name, "files", len(known))
+		default:
+			l.setEmptyRefused(lib.ID, len(known))
+			return fmt.Errorf("the library folder %s has no media files but %d are recorded; nothing was removed (is the drive mounted? If the files really are gone, confirm it on the Library page)", lib.Root, len(known))
+		}
+	}
+	if len(seen) > 0 && identity != "" {
+		if stored, err := l.store.LibraryRootIdentity(ctx, lib.ID); err == nil && stored != identity {
+			if err := l.store.SetLibraryRootIdentity(ctx, lib.ID, identity); err != nil {
+				slog.Warn("recording the library folder's identity", "library", lib.Name, "err", err)
+			}
+		}
 	}
 
 	removed := 0
@@ -478,6 +576,13 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			more = fmt.Sprintf("; and %d more", ingestFailed-len(ingestErrs))
 		}
 		problems = append(problems, fmt.Sprintf("%d file(s) could not be added or updated: %s%s", ingestFailed, strings.Join(ingestErrs, "; "), more))
+	}
+	if extrasFailed > 0 {
+		more := ""
+		if extrasFailed > len(extrasErrs) {
+			more = fmt.Sprintf("; and %d more", extrasFailed-len(extrasErrs))
+		}
+		problems = append(problems, fmt.Sprintf("%d extra(s) could not be added: %s%s", extrasFailed, strings.Join(extrasErrs, "; "), more))
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, ". "))

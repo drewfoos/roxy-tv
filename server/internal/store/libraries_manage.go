@@ -58,6 +58,23 @@ func (s *Store) UpdateLibrary(ctx context.Context, l *model.Library) error {
 	return err
 }
 
+// LibraryRootIdentity is the library folder's identity as the last scan that found files
+// in it recorded it ('' if none has).
+func (s *Store) LibraryRootIdentity(ctx context.Context, id int64) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT root_identity FROM libraries WHERE id = ?`, id).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetLibraryRootIdentity records the library folder's identity.
+func (s *Store) SetLibraryRootIdentity(ctx context.Context, id int64, v string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE libraries SET root_identity = ? WHERE id = ?`, v, id)
+	return err
+}
+
 // DeleteLibrary forgets a library and everything Roxy knew about its titles (the rows
 // cascade). Files on disk are not touched; watch state is keyed by GUID and comes back
 // if the folder is added again.

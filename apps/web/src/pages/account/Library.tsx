@@ -63,6 +63,25 @@ export function LibraryPage() {
           ))}
         </Notice>
       )}
+      {!busy &&
+        (manage.data?.emptyLibraries ?? []).map((lib) => (
+          <Notice key={lib.id} kind="error">
+            {lib.name}: the folder {lib.root} has no videos, but Roxy has {lib.files} on record, so it kept them. That is what a drive that is not mounted looks like. If the files really are gone, confirm it and the next scan removes them (anyone's watch history for them comes back if the files return within 30 days).
+            <div className="acc-actions">
+              <ActionButton
+                kind="danger"
+                done="Removing"
+                onClick={() =>
+                  window.confirm(`Remove the ${lib.files} file records of ${lib.name}? Only do this if its files really are gone, not if the drive is just unplugged.`)
+                    ? run(() => api.acceptEmptyFolder(lib.id))
+                    : Promise.resolve(false)
+                }
+              >
+                The files are gone: remove them
+              </ActionButton>
+            </div>
+          </Notice>
+        ))}
       {err && <Notice kind="error">{err}</Notice>}
       {manage.error && <Notice kind="error">{manage.error}</Notice>}
 

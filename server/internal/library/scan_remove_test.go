@@ -111,7 +111,9 @@ func TestScanKeepsRecordsWhenRootIsUnreadable(t *testing.T) {
 }
 
 // The folder is there but holds no media at all while files are recorded (the empty
-// folder Docker leaves for a drive that did not mount): nothing is removed.
+// folder Docker leaves for a drive that did not mount): nothing is removed. These records
+// were not made by a scan, so the folder's identity is not known (as for a library last
+// scanned before identities were kept): it is never cleared without a confirmation.
 func TestScanKeepsRecordsWhenRootIsEmpty(t *testing.T) {
 	l, st, lib, paths := recordedLibrary(t)
 	for _, dir := range []string{"A", "B"} {

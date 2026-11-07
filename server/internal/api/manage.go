@@ -37,6 +37,14 @@ func (s *Server) libraryManage(w http.ResponseWriter, r *http.Request) {
 	if lastErr != nil {
 		out["lastScanError"] = lastErr.Error() // which libraries failed, and why
 	}
+	// Libraries found with no media files and left alone: the admin can confirm one.
+	empty := []map[string]any{}
+	for id, files := range s.lib.EmptyRefused() {
+		if lib, err := s.store.GetLibrary(r.Context(), id); err == nil && lib != nil {
+			empty = append(empty, map[string]any{"id": strconv.FormatInt(id, 10), "name": lib.Name, "root": lib.Root, "files": files})
+		}
+	}
+	out["emptyLibraries"] = empty
 	if s.meta != nil {
 		out["queue"] = s.meta.QueueLength()
 	}

@@ -166,6 +166,7 @@ export const api = {
   addFolder: (body: { path: string; name: string; kind: string; anime: boolean }) => post<LibraryFolder>('/v1/library/folders', body),
   updateFolder: (id: string, body: { name?: string; kind?: string; anime?: boolean }) => patch<LibraryFolder>(`/v1/library/folders/${id}`, body),
   deleteFolder: (id: string) => del<void>(`/v1/library/folders/${id}`),
+  acceptEmptyFolder: (id: string) => post<void>(`/v1/library/folders/${id}/accept-empty`),
   browse: (path?: string) => get<BrowseResponse>('/v1/library/browse' + (path ? '?path=' + encodeURIComponent(path) : '')),
   identifySearch: (itemId: string, provider: 'tmdb' | 'anilist', query: string) => get<{ candidates: IdentifyCandidate[] }>(`/v1/items/${itemId}/identify?provider=${provider}&q=${encodeURIComponent(query)}`),
   identifyApply: (itemId: string, provider: 'tmdb' | 'anilist', id: string | number) => post<void>(`/v1/items/${itemId}/identify`, { provider, id: String(id) }),
