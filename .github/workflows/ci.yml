@@ -19,7 +19,13 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - run: go vet ./...
-      - run: go test -race ./... # the runner has a C compiler, which -race needs
+      - run: | # the runner has a C compiler, which -race needs
+          set -o pipefail
+          go test -race ./... 2>&1 | tee "$RUNNER_TEMP/test.log"
+      # The failing lines as annotations: the public API serves those without a login,
+      # unlike the job's log (so they can be read where there is no GitHub token).
+      - if: failure()
+        run: grep -E -- '--- FAIL|_test\.go:[0-9]+:|DATA RACE|^panic:|^FAIL' "$RUNNER_TEMP/test.log" | head -40 | sed 's/^/::error::/'
       - run: CGO_ENABLED=0 go build -trimpath -o /tmp/roxy ./cmd/roxy
 
   integration:
@@ -39,9 +45,13 @@ jobs:
           cache-dependency-path: server/go.sum
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: test "$(id -u)" != 0 && ffprobe -version | head -1
-      - run: go test -race -count=1 -v -run 'TestLibraryLifecycle|TestMKSSidecarTracks|TestLegacyMergedFilmsSplitByScan' ./internal/library
+      - run: |
+          set -o pipefail
+          go test -race -count=1 -v -run 'TestLibraryLifecycle|TestMKSSidecarTracks|TestLegacyMergedFilmsSplitByScan' ./internal/library 2>&1 | tee "$RUNNER_TEMP/test.log"
         env:
           ROXY_REQUIRE_INTEGRATION: "1"
+      - if: failure()
+        run: grep -E -- '--- FAIL|_test\.go:[0-9]+:|DATA RACE|^panic:|^FAIL' "$RUNNER_TEMP/test.log" | head -40 | sed 's/^/::error::/'
 
   upgrade:
     # An independent check of upgrades: an OLD release's own build scans a library and its
