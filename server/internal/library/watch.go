@@ -15,6 +15,11 @@ import (
 // a file being copied keeps changing, and must not be ingested half written.
 var watchQuiet = 30 * time.Second
 
+// watchRefresh is how often the watcher re-reads the library list: libraries added since,
+// or whose folder was missing (a drive not mounted yet), start being watched; removed ones
+// stop.
+var watchRefresh = time.Minute
+
 // watchRelevant are the files whose arrival, change or removal a scan cares about.
 func watchRelevant(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
@@ -34,12 +39,7 @@ func (l *Library) Watch(ctx context.Context) {
 		return
 	}
 	defer w.Close()
-	libs, err := l.store.ListLibraries(ctx)
-	if err != nil {
-		slog.Warn("watching library folders", "err", err)
-		return
-	}
-	roots := map[string]bool{}
+	roots := map[string]bool{} // library folders being watched
 	add := func(root string) int {
 		n := 0
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -56,20 +56,79 @@ func (l *Library) Watch(ctx context.Context) {
 		})
 		return n
 	}
-	total := 0
-	for _, lib := range libs {
-		roots[lib.Root] = true
-		total += add(lib.Root)
-	}
-	slog.Info("watching library folders", "libraries", len(libs), "folders", total)
-
 	var timer *time.Timer
 	var fire <-chan time.Time
 	pending := false
+	poke := func() { // a change: scan once things have been quiet for watchQuiet
+		pending = true
+		if timer == nil {
+			timer = time.NewTimer(watchQuiet)
+			fire = timer.C
+			return
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(watchQuiet)
+	}
+	// sync brings the watched folders in line with the library list. A folder that could
+	// not be watched (missing) is tried again next time. Returns whether any library
+	// started being watched.
+	sync := func(first bool) bool {
+		libs, err := l.store.ListLibraries(ctx)
+		if err != nil {
+			slog.Warn("watching library folders", "err", err)
+			return false
+		}
+		current := map[string]bool{}
+		added, folders := false, 0
+		for _, lib := range libs {
+			current[lib.Root] = true
+			if roots[lib.Root] {
+				continue
+			}
+			if n := add(lib.Root); n > 0 {
+				roots[lib.Root] = true
+				added = true
+				folders += n
+				if !first {
+					slog.Info("watching a new library folder", "library", lib.Name, "folders", n)
+				}
+			}
+		}
+		for root := range roots {
+			if current[root] {
+				continue
+			}
+			delete(roots, root)
+			for _, p := range w.WatchList() {
+				if p == root || strings.HasPrefix(p, root+string(filepath.Separator)) {
+					_ = w.Remove(p)
+				}
+			}
+			slog.Info("no longer watching a removed library folder", "root", root)
+		}
+		if first {
+			slog.Info("watching library folders", "libraries", len(roots), "folders", folders)
+		}
+		return added
+	}
+	sync(true)
+	refresh := time.NewTicker(watchRefresh)
+	defer refresh.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-refresh.C:
+			// A library added (or its drive mounted) since: watched from now on, and
+			// scanned once, in case files arrived before the watch was in place.
+			if sync(false) {
+				poke()
+			}
 		case err, ok := <-w.Errors:
 			if !ok {
 				return
@@ -92,19 +151,7 @@ func (l *Library) Watch(ctx context.Context) {
 			if !isDir && !watchRelevant(ev.Name) && ev.Op&(fsnotify.Remove|fsnotify.Rename) == 0 {
 				continue
 			}
-			pending = true
-			if timer == nil {
-				timer = time.NewTimer(watchQuiet)
-				fire = timer.C
-			} else {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(watchQuiet)
-			}
+			poke()
 		case <-fire:
 			if !pending {
 				continue

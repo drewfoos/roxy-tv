@@ -112,7 +112,8 @@ func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, st
 
 // SidecarCachePath is where a sidecar subtitle that cannot be served as it is goes once
 // extracted or converted: a track inside a .mks, or a SAMI file. Named after the track and
-// the sidecar's modification time, so a replaced file is never served from the cache.
+// the sidecar's modification time and size, so a replaced file is never served from the
+// cache.
 // "" for a sidecar served as it is.
 func SidecarCachePath(subtitlesDir, sourceID string, st model.MediaStream) string {
 	if !st.IsExternal || (st.ExternalIndex == nil && !ConvertedToSRT(st.Codec)) {
@@ -122,7 +123,9 @@ func SidecarCachePath(subtitlesDir, sourceID string, st model.MediaStream) strin
 	if ConvertedToSRT(st.Codec) || ext == "" {
 		ext = ".srt"
 	}
-	return filepath.Join(subtitlesDir, sourceID, fmt.Sprintf("%d-%d%s", st.Index, st.ExternalModTime.Unix(), ext))
+	// The time to the millisecond (as recorded) and the size: a file replaced within the
+	// same second still gets a new name, so it is never served from the old one's cache.
+	return filepath.Join(subtitlesDir, sourceID, fmt.Sprintf("%d-%d-%d%s", st.Index, st.ExternalModTime.UnixMilli(), st.ExternalSize, ext))
 }
 
 // ConvertedToSRT reports a text subtitle codec served as SubRip (converted), not as is.

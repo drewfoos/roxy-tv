@@ -84,7 +84,7 @@ func TestForcedScanCoversEveryLibrary(t *testing.T) {
 
 // A forced scan asked for while a normal one runs is not lost and does not leak into the
 // running pass: that pass stays normal, then one forced pass covers every library.
-// Two forced requests merge into one pass; a normal request during the scan adds none.
+// Two forced requests merge into one pass, and a normal request is covered by it.
 func TestForcedScanRequestedDuringNormalScan(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -139,8 +139,39 @@ func TestScanRequestsConcurrently(t *testing.T) {
 	select {
 	case <-l.forcedNext:
 		t.Fatal("a forced pass was left queued with no scan to run it")
+	case <-l.normalNext:
+		t.Fatal("a normal pass was left queued with no scan to run it")
 	default:
 	}
+}
+
+// A normal scan requested while one runs (the folder watcher, after a file was copied
+// in mid-scan) is queued, not dropped: one more normal pass runs after the current one,
+// however many such requests came in. It used to be dropped, so a file the running pass
+// had already walked past waited for the next change or restart.
+func TestNormalScanRequestedDuringScanRunsAgain(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	l, calls, mu, order := twoLibraries(t, func() {
+		once.Do(func() { close(started); <-release })
+	})
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() { done <- l.ScanAll(ctx, false) }()
+	<-started
+	for i := 0; i < 3; i++ {
+		if err := l.ScanAll(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := append([]scanCall(nil), *calls...)
+	mu.Unlock()
+	sameCalls(t, got, append(pass(order, false), pass(order, false)...))
 }
 
 // A library whose scan fails does not stop the others, and the failure is reported: by

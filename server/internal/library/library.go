@@ -62,6 +62,8 @@ type Library struct {
 	// forcedNext holds one queued forced pass: ScanAll(ctx, true) called while a scan runs.
 	// A channel (capacity 1), so repeated requests merge and no flag is shared.
 	forcedNext chan struct{}
+	// normalNext holds one queued normal pass: ScanAll(ctx, false) called while a scan runs.
+	normalNext chan struct{}
 	// scanOne scans one library; nil means l.scan. Tests replace it to watch passes.
 	scanOne func(ctx context.Context, lib model.Library, force bool) error
 	// ingestOne adds or updates one file during a scan; nil means l.addFileSafe. Tests
@@ -78,7 +80,7 @@ func (l *Library) ScanStatus() (running bool, last time.Time, lastErr error) {
 }
 
 func New(s *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Library {
-	return &Library{store: s, ff: ff, cfg: cfg, forcedNext: make(chan struct{}, 1)}
+	return &Library{store: s, ff: ff, cfg: cfg, forcedNext: make(chan struct{}, 1), normalNext: make(chan struct{}, 1)}
 }
 
 // GuardMediaRoots tells safefs every folder that holds media (configured and added in
@@ -136,11 +138,16 @@ func (l *Library) EnsureLibraries(ctx context.Context, roots []string) error {
 func (l *Library) ScanAll(ctx context.Context, force bool) error {
 	l.scanMu.Lock()
 	if l.scanning {
+		// Queued, not dropped: the running pass may already have walked past what this
+		// request is about (a file copied in mid-scan, which the folder watcher reports).
+		// Requests merge: at most one forced and one normal pass wait.
+		next := l.normalNext
 		if force {
-			select {
-			case l.forcedNext <- struct{}{}:
-			default: // one is queued already
-			}
+			next = l.forcedNext
+		}
+		select {
+		case next <- struct{}{}:
+		default: // one is queued already
 		}
 		l.scanMu.Unlock()
 		return nil
@@ -152,12 +159,21 @@ func (l *Library) ScanAll(ctx context.Context, force bool) error {
 		// The queue is checked under the lock that clears `scanning`, so a forced request
 		// cannot arrive between "nothing queued" and "not scanning" and be left waiting.
 		l.scanMu.Lock()
-		again := false
+		again, forced := false, false
 		select {
 		case <-l.forcedNext:
 			// A library that failed does not hold back the forced pass for the others.
-			again = ctx.Err() == nil
+			again, forced = ctx.Err() == nil, true
+			select { // the forced pass covers a normal one asked for too
+			case <-l.normalNext:
+			default:
+			}
 		default:
+			select {
+			case <-l.normalNext:
+				again = ctx.Err() == nil
+			default:
+			}
 		}
 		if !again {
 			l.scanning, l.lastScan, l.lastScanErr = false, time.Now(), err
@@ -165,8 +181,12 @@ func (l *Library) ScanAll(ctx context.Context, force bool) error {
 			return err
 		}
 		l.scanMu.Unlock()
-		slog.Info("a forced scan was requested during the scan: scanning again, forced")
-		force = true
+		if forced {
+			slog.Info("a forced scan was requested during the scan: scanning again, forced")
+		} else {
+			slog.Info("a scan was requested during the scan: scanning again")
+		}
+		force = forced
 	}
 }
 
