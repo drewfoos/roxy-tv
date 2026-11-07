@@ -28,6 +28,12 @@ var skipDirs = map[string]string{
 	"$recycle.bin":              "Recycle bin",
 	"system volume information": "System folder",
 	"lost+found":                "System folder",
+	"@recycle":                  "Recycle bin",
+	// Metadata and artwork folders other servers keep next to the media.
+	"metadata":    "Metadata folder",
+	"extrafanart": "Artwork folder",
+	"extrathumbs": "Artwork folder",
+	"temprec":     "Recording in progress",
 }
 
 // IgnoreMarkers: a folder holding one of these files is skipped with everything in it
@@ -48,9 +54,16 @@ func SkipDirReason(path string) string {
 	if strings.HasPrefix(lower, "_unpack_") || strings.HasPrefix(lower, "_failed_") {
 		return "Unfinished downloads"
 	}
-	for _, m := range IgnoreMarkers {
-		if _, err := os.Stat(filepath.Join(path, m)); err == nil {
-			return "Ignored (" + m + " file)"
+	if strings.HasSuffix(lower, ".trickplay") {
+		return "Seek preview folder"
+	}
+	// An .ignore with nothing in it skips its folder; one with patterns skips only what
+	// they name (ignore.go), so the folder itself is scanned.
+	if r := readIgnore(path); r != nil && r.all {
+		for _, m := range IgnoreMarkers {
+			if _, err := os.Stat(filepath.Join(path, m)); err == nil {
+				return "Ignored (" + m + " file)"
+			}
 		}
 	}
 	return ""
@@ -63,10 +76,10 @@ func SkipFileReason(name string) string {
 	if strings.HasPrefix(stem, ".") {
 		return "Hidden"
 	}
-	if stem == "sample" || strings.HasPrefix(stem, "sample.") || strings.HasPrefix(stem, "sample-") {
+	if stem == "sample" || stem == "minta" || strings.HasPrefix(stem, "sample.") || strings.HasPrefix(stem, "sample-") {
 		return "Sample"
 	}
-	for _, suf := range []string{".sample", "-sample", "_sample"} {
+	for _, suf := range []string{".sample", "-sample", "_sample", ".minta", "-minta"} {
 		if strings.HasSuffix(stem, suf) {
 			return "Sample"
 		}

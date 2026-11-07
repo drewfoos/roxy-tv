@@ -76,6 +76,12 @@ func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, st
 		return err
 	}
 	format := map[string]string{"ass": "ass", "ssa": "ass", "subrip": "srt", "srt": "srt", "webvtt": "webvtt", "vtt": "webvtt"}[codec]
+	conv := "copy"
+	if format == "" && ConvertedToSRT(codec) {
+		// Text formats no player reads (MP4's mov_text, SAMI, MicroDVD, plain text) become
+		// SubRip; ASS, SRT and WebVTT are always copied as they are.
+		format, conv = "srt", "srt"
+	}
 	if format == "" {
 		return fmt.Errorf("unsupported text subtitle codec %q", codec)
 	}
@@ -89,7 +95,7 @@ func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, st
 	tmp := tf.Name()
 	tf.Close()
 	defer func() { _ = safefs.Remove(tmp) }() // a no-op after the rename
-	if _, err := ff.Run(ctx, "", "-y", "-v", "error", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-c:s", "copy", "-fs", fmt.Sprint(MaxTextSubtitle), "-f", format, tmp); err != nil {
+	if _, err := ff.Run(ctx, "", "-y", "-v", "error", "-i", path, "-map", fmt.Sprintf("0:%d", streamIndex), "-c:s", conv, "-fs", fmt.Sprint(MaxTextSubtitle), "-f", format, tmp); err != nil {
 		return err
 	}
 	// Real tracks are a few MB even with karaoke; one at the cap is a planted bomb (an
@@ -102,6 +108,15 @@ func ExtractTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, st
 		return fmt.Errorf("subtitle track is larger than %d MB", MaxTextSubtitle>>20)
 	}
 	return safefs.Rename(tmp, dst)
+}
+
+// ConvertedToSRT reports a text subtitle codec served as SubRip (converted), not as is.
+func ConvertedToSRT(codec string) bool {
+	switch codec {
+	case "mov_text", "sami", "microdvd", "text":
+		return true
+	}
+	return false
 }
 
 // MaxTextSubtitle caps an extracted text subtitle track.

@@ -259,7 +259,11 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var path string
-	if st.ExternalPath != "" {
+	mime := st.Codec
+	if probe.ConvertedToSRT(st.Codec) {
+		mime = "subrip" // served converted (see probe.ConvertedToSRT)
+	}
+	if st.ExternalPath != "" && !probe.ConvertedToSRT(st.Codec) {
 		// A sidecar next to the media: must really be inside a media folder (a symlink to
 		// /config/roxy.db is refused).
 		p, ok := mediaFile(w, st.ExternalPath)
@@ -269,17 +273,35 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 		path = p
 	} else {
 		ext := map[string]string{"ass": ".ass", "ssa": ".ass", "subrip": ".srt", "srt": ".srt", "webvtt": ".vtt", "vtt": ".vtt"}[st.Codec]
+		if probe.ConvertedToSRT(st.Codec) {
+			ext = ".srt"
+		}
 		path = filepath.Join(s.cfg.SubtitlesDir(), src.ID, fmt.Sprintf("%d%s", st.Index, ext))
+		if st.ExternalPath != "" {
+			// A sidecar converted to SRT (a .smi): named after the sidecar's time, so a
+			// replaced file is converted again rather than served from the cache.
+			path = filepath.Join(s.cfg.SubtitlesDir(), src.ID, fmt.Sprintf("%d-%d%s", st.Index, st.ExternalModTime.Unix(), ext))
+		}
 		if _, err := os.Stat(path); err != nil {
 			if len(src.Parts) == 0 {
 				writeError(w, 404, "source has no file")
 				return
 			}
-			video, ok := mediaFile(w, src.Parts[0].Path)
-			if !ok {
-				return
+			input, index := "", st.Index
+			if st.ExternalPath != "" {
+				p, ok := mediaFile(w, st.ExternalPath)
+				if !ok {
+					return
+				}
+				input, index = p, 0 // the sidecar's own (only) stream
+			} else {
+				video, ok := mediaFile(w, src.Parts[0].Path)
+				if !ok {
+					return
+				}
+				input = video
 			}
-			if err := probe.EnsureTextSubtitle(r.Context(), s.ff, video, st.Index, st.Codec, path); err != nil {
+			if err := probe.EnsureTextSubtitle(r.Context(), s.ff, input, index, st.Codec, path); err != nil {
 				writeError(w, 500, err.Error())
 				return
 			}
@@ -296,7 +318,7 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "subtitle file missing")
 		return
 	}
-	w.Header().Set("Content-Type", subtitleMime(st.Codec))
+	w.Header().Set("Content-Type", subtitleMime(mime))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 }

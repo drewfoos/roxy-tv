@@ -32,10 +32,15 @@ import (
 
 var videoExts = map[string]bool{
 	".mkv": true, ".mp4": true, ".m4v": true, ".webm": true, ".avi": true, ".mov": true, ".ts": true, ".m2ts": true, ".wmv": true, ".flv": true, ".ogm": true,
+	// The rest of what Jellyfin accepts (older and broadcast formats; played by transcoding).
+	".mpg": true, ".mpeg": true, ".mpe": true, ".m2v": true, ".vob": true, ".mts": true, ".m2t": true, ".mk3d": true,
+	".rmvb": true, ".rm": true, ".divx": true, ".xvid": true, ".3gp": true, ".3g2": true, ".ogv": true, ".f4v": true,
+	".asf": true, ".dvr-ms": true, ".wtv": true, ".qt": true, ".nsv": true, ".dv": true,
 }
 
 var subtitleExts = map[string]bool{
 	".ass": true, ".ssa": true, ".srt": true, ".vtt": true, ".sub": true, ".idx": true, ".sup": true, ".mks": true,
+	".smi": true, ".sami": true, // SAMI: served converted to SRT (probe.ConvertedToSRT)
 }
 
 type Library struct {
@@ -271,7 +276,8 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
-	var extras []string // extras found by the walk, ingested after it
+	var extras []string      // extras found by the walk, ingested after it
+	ignores := ignoreCache{} // each folder's .ignore patterns, read once per scan
 	// What the walk could not read. Any of it makes this scan a failed one for removals:
 	// nothing recorded is deleted until a scan that read everything shows a file is
 	// really gone (a read error can mean a failing disk or a half-mounted drive, so what
@@ -301,10 +307,14 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			return ctx.Err()
 		}
 		if d.IsDir() {
-			// Download folders, extras, recycle bins, .ignore'd folders: see skip.go.
-			if path != lib.Root && SkipDirReason(path) != "" {
+			// Download folders, recycle bins, .ignore'd folders: see skip.go; and what an
+			// .ignore's patterns name, in any folder down from the root (ignore.go).
+			if path != lib.Root && (SkipDirReason(path) != "" || ignores.ignored(lib.Root, path, true)) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if ignores.ignored(lib.Root, path, false) {
 			return nil
 		}
 		if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(d.Name()) != "" {
@@ -1099,6 +1109,8 @@ func sidecarSubtitles(videoPath, root string, startIndex int) ([]model.MediaStre
 			st.Codec = "hdmv_pgs_subtitle"
 		case ".sub", ".idx":
 			st.Codec = "dvd_subtitle"
+		case ".smi", ".sami":
+			st.Codec = "sami"
 		default:
 			st.Codec = strings.TrimPrefix(ext, ".")
 		}

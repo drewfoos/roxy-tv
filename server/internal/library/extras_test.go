@@ -22,8 +22,8 @@ func TestExtraOf(t *testing.T) {
 		{"Show/Season 01/Extras/Clean OP.mkv", "extra", "Show/Season 01", "", true},
 		{"Show/Featurettes/Interview.mkv", "featurette", "Show", "", true},
 		{"Film (2020)/Film (2020).mkv", "", "", "", false},
-		{"Trailers/Thing.mkv", "", "", "", false},               // a folder at the root is a title
-		{"Film (2020)/trailer.mkv", "", "", "", false},          // nothing before the suffix
+		{"Trailers/Thing.mkv", "", "", "", false},      // a folder at the root is a title
+		{"Film (2020)/trailer.mkv", "", "", "", false}, // nothing before the suffix
 		{"Show/Season 01/Show - S01E01 - The Interview.mkv", "", "", "", false},
 		{"Scenes From a Marriage (1973)/Scenes From a Marriage (1973).mkv", "", "", "", false},
 	}
