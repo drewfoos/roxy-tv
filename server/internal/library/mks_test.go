@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,11 +21,11 @@ import (
 // is; and a SAMI sidecar is served converted to SubRip. Needs ffmpeg and ffprobe on PATH.
 func TestMKSSidecarTracks(t *testing.T) {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
-		t.Skip("ffmpeg/ffprobe not installed")
+		skipUnlessRequired(t, "ffmpeg/ffprobe not installed")
 	}
 	ff, err := ffmpeg.New("", "")
 	if err != nil {
-		t.Skip(err)
+		skipUnlessRequired(t, err.Error())
 	}
 	root := t.TempDir()
 	data := t.TempDir()
@@ -47,7 +48,7 @@ func TestMKSSidecarTracks(t *testing.T) {
 		"-map", "0", "-map", "1", "-c:s:0", "copy", "-c:s:1", "copy",
 		"-metadata:s:s:0", "language=jpn", "-metadata:s:s:0", "title=Signs", "-metadata:s:s:1", "language=spa", "-f", "matroska", mks).CombinedOutput()
 	if err != nil {
-		t.Skipf("could not build a .mks with this ffmpeg: %v %s", err, out)
+		skipUnlessRequired(t, fmt.Sprintf("could not build a .mks with this ffmpeg: %v %s", err, out))
 	}
 	if err := os.WriteFile(filepath.Join(dir, "Show - S01E01.mkv"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

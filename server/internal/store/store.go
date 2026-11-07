@@ -22,7 +22,11 @@ type Store struct {
 	db *sql.DB
 }
 
-func Open(path string) (*Store, error) {
+func Open(path string) (*Store, error) { return openUpTo(path, "") }
+
+// openUpTo is Open applying only the migrations up to and including last ("" for all):
+// tests build a database as an older version of Roxy left it, then upgrade it.
+func openUpTo(path, last string) (*Store, error) {
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -31,7 +35,7 @@ func Open(path string) (*Store, error) {
 	// SQLite is happiest with one writer; the pool just serialises for us.
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
-	if err := s.migrate(context.Background()); err != nil {
+	if err := s.migrate(context.Background(), last); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -42,7 +46,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) DB() *sql.DB { return s.db }
 
-func (s *Store) migrate(ctx context.Context) error {
+func (s *Store) migrate(ctx context.Context, last string) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
@@ -73,6 +77,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if last != "" && name > last {
+			break
+		}
 		if applied[name] {
 			continue
 		}

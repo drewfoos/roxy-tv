@@ -22,6 +22,27 @@ jobs:
       - run: go test -race ./... # the runner has a C compiler, which -race needs
       - run: CGO_ENABLED=0 go build -trimpath -o /tmp/roxy ./cmd/roxy
 
+  integration:
+    # The tests the server job skips: they need ffmpeg (real videos are made, probed and
+    # extracted) and a non-root user (the runner's), and ROXY_REQUIRE_INTEGRATION makes
+    # them fail instead of skip if either is missing, so a green job means they ran.
+    name: Server integration (ffmpeg, non-root)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: test "$(id -u)" != 0 && ffprobe -version | head -1
+      - run: go test -race -count=1 -v -run 'TestLibraryLifecycle|TestMKSSidecarTracks' ./internal/library
+        env:
+          ROXY_REQUIRE_INTEGRATION: "1"
+
   web:
     name: Web (Vite)
     runs-on: ubuntu-latest

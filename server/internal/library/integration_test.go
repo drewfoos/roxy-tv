@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,14 +38,14 @@ import (
 //	   go test ./internal/library -run Lifecycle -v"'
 func TestLibraryLifecycle(t *testing.T) {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
-		t.Skip("ffmpeg/ffprobe not installed")
+		skipUnlessRequired(t, "ffmpeg/ffprobe not installed")
 	}
 	if os.Geteuid() == 0 {
-		t.Skip("runs as an ordinary user (root reads unreadable folders)")
+		skipUnlessRequired(t, "runs as an ordinary user (root reads unreadable folders)")
 	}
 	ff, err := ffmpeg.New("", "")
 	if err != nil {
-		t.Skip(err)
+		skipUnlessRequired(t, err.Error())
 	}
 	oldQ, oldR := watchQuiet, watchRefresh
 	watchQuiet, watchRefresh = 400*time.Millisecond, 400*time.Millisecond
@@ -292,7 +293,9 @@ func TestLibraryLifecycle(t *testing.T) {
 	if err := os.Rename(filepath.Join(anime.Root, "Kids", "Bluey"), filepath.Join(anime.Root, "Bluey")); err != nil {
 		t.Fatal(err)
 	}
-	wait("the moved film and show", func() bool { return recorded(ownFolder) && recorded(newBluey) && !recorded(filmOne) && !recorded(bluey) })
+	wait("the moved film and show", func() bool {
+		return recorded(ownFolder) && recorded(newBluey) && !recorded(filmOne) && !recorded(bluey)
+	})
 	if d := userData(ownFolder); d == nil || !d.Played {
 		t.Fatalf("Film One's watched mark after the move: %+v", d)
 	}
@@ -355,12 +358,42 @@ func TestLibraryLifecycle(t *testing.T) {
 	}
 	check("library folder back")
 
-	// 8. A file copied in while a scan runs: picked up (the request is queued, or the
-	// watcher's next scan finds it).
-	go func() { _ = l.ScanAll(ctx, true) }()
+	// 8. A file copied in after a running scan has read its folder. The scan is held right
+	// after its walk of the Movies library (afterWalk), the file is made then, so that
+	// pass cannot see it; the watcher's request for a scan arrives while the pass is
+	// still running and must be queued, not dropped: the same ScanAll call then runs it
+	// and returns with the file recorded.
+	settled()
+	reached, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	hold := func(lib model.Library) {
+		if lib.ID == movies.ID {
+			once.Do(func() { close(reached); <-release })
+		}
+	}
+	afterWalk.Store(&hold)
+	defer afterWalk.Store(nil)
+	done := make(chan error, 1)
+	go func() { done <- l.ScanAll(ctx, true) }()
+	<-reached
 	late := filepath.Join(movies.Root, "Late (2025)", "Late (2025).mkv")
 	video(late)
-	wait("a film copied in during a scan", func() bool { return recorded(late) })
+	if recorded(late) {
+		t.Fatal("the held pass saw a file made after its walk")
+	}
+	for deadline := time.Now().Add(30 * time.Second); len(l.normalNext) == 0; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the watcher never asked for a scan while one was running")
+		}
+	}
+	afterWalk.Store(nil)
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("the scan and its queued pass: %v", err)
+	}
+	if !recorded(late) {
+		t.Fatal("a scan asked for during a scan was lost: the file copied in is not recorded")
+	}
 	check("copied in during a scan")
 
 	// 9. Subtitles beside an episode: added, replaced, removed.

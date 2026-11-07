@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -405,6 +406,9 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	if err != nil {
 		return err
 	}
+	if hook := afterWalk.Load(); hook != nil {
+		(*hook)(lib) // tests: hold the scan here, after it has read every folder
+	}
 	for _, path := range extras {
 		ingest := l.ingestOne
 		if ingest == nil {
@@ -489,6 +493,11 @@ var readDir = os.ReadDir
 
 // statFile is os.Stat for sidecar files; tests replace it to inject read failures.
 var statFile = os.Stat
+
+// afterWalk, when set, is called by a scan once its walk of a library is done, before it
+// ingests extras and removes vanished files. Tests use it to hold a scan at that point
+// and change the library underneath it (nil in the server).
+var afterWalk atomic.Pointer[func(lib model.Library)]
 
 // addFileSafe wraps AddFile so a parser bug on one odd filename cannot take down a scan.
 func (l *Library) addFileSafe(ctx context.Context, lib model.Library, path string) error {
