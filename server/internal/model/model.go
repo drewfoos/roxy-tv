@@ -214,7 +214,10 @@ type MediaStream struct {
 	// a scan compares them to notice a sidecar replaced under the same name.
 	ExternalSize    int64     `json:"-"`
 	ExternalModTime time.Time `json:"-"`
-	IsTextFormat    bool      `json:"isTextFormat"`
+	// ExternalIndex: for a track inside a sidecar container (a .mks with several), its
+	// stream number in that file; nil when the sidecar is the track itself.
+	ExternalIndex *int `json:"-"`
+	IsTextFormat  bool `json:"isTextFormat"`
 }
 
 type Attachment struct {

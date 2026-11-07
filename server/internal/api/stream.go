@@ -263,7 +263,8 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 	if probe.ConvertedToSRT(st.Codec) {
 		mime = "subrip" // served converted (see probe.ConvertedToSRT)
 	}
-	if st.ExternalPath != "" && !probe.ConvertedToSRT(st.Codec) {
+	sidecarCache := probe.SidecarCachePath(s.cfg.SubtitlesDir(), src.ID, *st)
+	if st.ExternalPath != "" && sidecarCache == "" {
 		// A sidecar next to the media: must really be inside a media folder (a symlink to
 		// /config/roxy.db is refused).
 		p, ok := mediaFile(w, st.ExternalPath)
@@ -277,10 +278,10 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 			ext = ".srt"
 		}
 		path = filepath.Join(s.cfg.SubtitlesDir(), src.ID, fmt.Sprintf("%d%s", st.Index, ext))
-		if st.ExternalPath != "" {
-			// A sidecar converted to SRT (a .smi): named after the sidecar's time, so a
-			// replaced file is converted again rather than served from the cache.
-			path = filepath.Join(s.cfg.SubtitlesDir(), src.ID, fmt.Sprintf("%d-%d%s", st.Index, st.ExternalModTime.Unix(), ext))
+		if sidecarCache != "" {
+			// A track inside a .mks, or a SAMI file: extracted or converted into the cache
+			// under the sidecar's time, so a replaced file is never served stale.
+			path = sidecarCache
 		}
 		if _, err := os.Stat(path); err != nil {
 			if len(src.Parts) == 0 {
@@ -294,6 +295,9 @@ func (s *Server) getSubtitle(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				input, index = p, 0 // the sidecar's own (only) stream
+				if st.ExternalIndex != nil {
+					index = *st.ExternalIndex // a track inside a .mks
+				}
 			} else {
 				video, ok := mediaFile(w, src.Parts[0].Path)
 				if !ok {

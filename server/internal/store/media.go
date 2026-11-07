@@ -60,11 +60,11 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_streams (source_id, stream_index, type, codec, profile, level, bit_depth, pix_fmt, width, height, fps,
 			color_primaries, color_transfer, color_space, range_type, dv_profile, channels, channel_layout, sample_rate, bitrate, language, title,
-			is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language, external_size, external_mtime)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language, external_size, external_mtime, external_index)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			src.ID, st.Index, st.Type, st.Codec, nullStr(st.Profile), nullInt(st.Level), nullInt(st.BitDepth), nullStr(st.PixFmt), nullInt(st.Width), nullInt(st.Height), nullFloat(st.FPS),
 			nullStr(st.ColorPrimaries), nullStr(st.ColorTransfer), nullStr(st.ColorSpace), nullStr(string(st.RangeType)), nullInt(st.DVProfile), nullInt(st.Channels), nullStr(st.ChannelLayout), nullInt(st.SampleRate), nullInt64(st.Bitrate), nullStr(st.Language), nullStr(st.Title),
-			boolInt(st.IsDefault), boolInt(st.IsForced), boolInt(st.IsHearingImpaired), boolInt(st.IsExternal), nullStr(st.ExternalPath), boolInt(st.IsTextFormat), nullStr(st.DetectedLanguage), extSize, extMtime); err != nil {
+			boolInt(st.IsDefault), boolInt(st.IsForced), boolInt(st.IsHearingImpaired), boolInt(st.IsExternal), nullStr(st.ExternalPath), boolInt(st.IsTextFormat), nullStr(st.DetectedLanguage), extSize, extMtime, intPtrNull(st.ExternalIndex)); err != nil {
 			return err
 		}
 	}
@@ -420,22 +420,23 @@ func (s *Store) loadSourcesChildren(ctx context.Context, srcs []*model.MediaSour
 		}
 		if err := s.eachRow(ctx, `SELECT source_id, stream_index, type, codec, profile, level, bit_depth, pix_fmt, width, height, fps,
 		color_primaries, color_transfer, color_space, range_type, dv_profile, channels, channel_layout, sample_rate, bitrate, language, title,
-		is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language, external_size, external_mtime FROM media_streams WHERE source_id IN (`+in+`) ORDER BY source_id, stream_index`, args, func(rows *sql.Rows) error {
+		is_default, is_forced, is_hearing_impaired, is_external, external_path, is_text_format, detected_language, external_size, external_mtime, external_index FROM media_streams WHERE source_id IN (`+in+`) ORDER BY source_id, stream_index`, args, func(rows *sql.Rows) error {
 			var st model.MediaStream
 			var profile, pixFmt, prim, trc, space, rng, layout, lang, title, extPath, detected, extMtime sql.NullString
-			var extSize sql.NullInt64
+			var extSize, extIndex sql.NullInt64
 			var level, depth, w, h, dv, ch, sr sql.NullInt64
 			var fps sql.NullFloat64
 			var br sql.NullInt64
 			var def, forced, hi, ext, text int
 			if err := rows.Scan(&st.SourceID, &st.Index, &st.Type, &st.Codec, &profile, &level, &depth, &pixFmt, &w, &h, &fps,
-				&prim, &trc, &space, &rng, &dv, &ch, &layout, &sr, &br, &lang, &title, &def, &forced, &hi, &ext, &extPath, &text, &detected, &extSize, &extMtime); err != nil {
+				&prim, &trc, &space, &rng, &dv, &ch, &layout, &sr, &br, &lang, &title, &def, &forced, &hi, &ext, &extPath, &text, &detected, &extSize, &extMtime, &extIndex); err != nil {
 				return err
 			}
 			st.Profile, st.PixFmt, st.ColorPrimaries, st.ColorTransfer, st.ColorSpace = profile.String, pixFmt.String, prim.String, trc.String, space.String
 			st.RangeType = model.RangeType(rng.String)
 			st.ChannelLayout, st.Language, st.Title, st.ExternalPath = layout.String, lang.String, title.String, extPath.String
 			st.DetectedLanguage = detected.String
+			st.ExternalIndex = ptrInt(extIndex)
 			if extMtime.Valid {
 				if t, err := time.Parse(TimeFormat, extMtime.String); err == nil {
 					st.ExternalSize, st.ExternalModTime = extSize.Int64, t

@@ -568,6 +568,7 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	if err != nil {
 		return err
 	}
+	found = l.expandSubtitleContainers(ctx, found)
 	sidecars, err := l.keepSidecarNumbers(ctx, sourceID, found)
 	if err != nil {
 		return err
@@ -644,7 +645,19 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 			continue
 		}
 		var textPath string
-		if st.IsExternal {
+		if cache := probe.SidecarCachePath(l.cfg.SubtitlesDir(), src.ID, *st); cache != "" {
+			// A track inside a .mks (or a SAMI file): read from its extracted copy, which
+			// also warms the cache the subtitle endpoint serves from.
+			input, index := st.ExternalPath, 0
+			if st.ExternalIndex != nil {
+				index = *st.ExternalIndex
+			}
+			if err := probe.EnsureTextSubtitle(ctx, l.ff, input, index, st.Codec, cache); err != nil {
+				slog.Warn("subtitle extraction failed", "file", filepath.Base(input), "stream", index, "err", err)
+				continue
+			}
+			textPath = cache
+		} else if st.IsExternal {
 			textPath = st.ExternalPath
 		} else {
 			ext := map[string]string{"ass": ".ass", "ssa": ".ass", "subrip": ".srt", "srt": ".srt", "webvtt": ".vtt", "vtt": ".vtt"}[st.Codec]
@@ -1149,7 +1162,7 @@ func (l *Library) keepSidecarNumbers(ctx context.Context, sourceID string, strea
 		prev = map[string]int{}
 		for _, st := range old.Streams {
 			if st.IsExternal && st.ExternalPath != "" {
-				prev[st.ExternalPath] = st.Index
+				prev[sidecarKey(st)] = st.Index
 			}
 		}
 	}
@@ -1180,14 +1193,14 @@ func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int)
 	used := map[int]bool{}
 	keep := make([]bool, len(streams))
 	for i, st := range streams {
-		if n, ok := prev[st.ExternalPath]; ok && n >= start && !used[n] {
+		if n, ok := prev[sidecarKey(st)]; ok && n >= start && !used[n] {
 			used[n] = true
 			keep[i] = true
 		}
 	}
 	for i := range streams {
 		if keep[i] {
-			streams[i].Index = prev[streams[i].ExternalPath]
+			streams[i].Index = prev[sidecarKey(streams[i])]
 			continue
 		}
 		for used[next] {
@@ -1198,6 +1211,66 @@ func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int)
 		next++
 	}
 	return streams
+}
+
+// sidecarKey identifies a sidecar track across ingests: its file, and for a track inside
+// a .mks its stream number there.
+func sidecarKey(st model.MediaStream) string {
+	if st.ExternalIndex != nil {
+		return fmt.Sprintf("%s#%d", st.ExternalPath, *st.ExternalIndex)
+	}
+	return st.ExternalPath
+}
+
+// expandSubtitleContainers replaces each .mks sidecar (a Matroska file holding only
+// subtitles, often several) with one stream per text subtitle track in it, with that
+// track's language, title and flags (the file name's tags fill in what a track lacks).
+// Image tracks (PGS, VobSub) inside one are left out: they cannot be served as files. A
+// .mks that cannot be probed is left out and logged. The streams are renumbered in order
+// from the first one's number (numberSidecars then keeps earlier numbers).
+func (l *Library) expandSubtitleContainers(ctx context.Context, streams []model.MediaStream) []model.MediaStream {
+	if len(streams) == 0 || l.ff == nil {
+		return streams
+	}
+	start := streams[0].Index
+	var out []model.MediaStream
+	for _, st := range streams {
+		if !strings.EqualFold(filepath.Ext(st.ExternalPath), ".mks") {
+			out = append(out, st)
+			continue
+		}
+		res, err := probe.File(ctx, l.ff, st.ExternalPath)
+		if err != nil {
+			slog.Warn("subtitle file not read", "path", st.ExternalPath, "err", err)
+			continue
+		}
+		for _, in := range res.Streams {
+			if in.Type != model.StreamSubtitle {
+				continue
+			}
+			if !model.IsTextSubtitleCodec(in.Codec) {
+				slog.Info("image subtitle track in a .mks left out", "path", st.ExternalPath, "stream", in.Index, "codec", in.Codec)
+				continue
+			}
+			t := st
+			n := in.Index
+			t.ExternalIndex = &n
+			t.Codec, t.IsTextFormat = in.Codec, true
+			if code, _, ok := subtitleLanguage(in.Language); ok {
+				t.Language = code
+			}
+			if in.Title != "" {
+				t.Title = in.Title
+			}
+			t.IsForced = st.IsForced || in.IsForced
+			t.IsDefault = st.IsDefault || in.IsDefault
+			out = append(out, t)
+		}
+	}
+	for i := range out {
+		out[i].Index = start + i
+	}
+	return out
 }
 
 // sidecarTags is what a subtitle file's name says after the video's name.
