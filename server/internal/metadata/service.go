@@ -865,9 +865,32 @@ func joinedTitle(hit *EpisodeResult, span int, byPref []*Result, toProvider func
 			}
 			titles = append(titles, t)
 		}
+		// One story in parts ("Psych: The Musical", or "Title (1)" / "Title (2)", "Title,
+		// Part 2"): the shared title once, not repeated.
+		if base := partlessTitle(titles[0]); base != "" {
+			same := true
+			for _, t := range titles[1:] {
+				if partlessTitle(t) != base {
+					same = false
+					break
+				}
+			}
+			if same {
+				return strings.TrimSpace(reTitlePart.ReplaceAllString(titles[0], ""))
+			}
+		}
 		return strings.Join(titles, " / ")
 	}
 	return hit.Title
+}
+
+// reTitlePart is a part number at the end of an episode title: " (1)", " (Part 2)",
+// ", Part 2", " - Part II", " Pt. 3".
+var reTitlePart = regexp.MustCompile(`(?i)[\s,:-]*(?:\((?:part|pt\.?)?\s*(?:\d+|[ivx]+)\)|(?:part|pt\.?)\s*(?:\d+|[ivx]+|one|two|three))\s*$`)
+
+// partlessTitle is a title without its part number, lower case, for comparing parts.
+func partlessTitle(t string) string {
+	return strings.ToLower(strings.TrimSpace(reTitlePart.ReplaceAllString(t, "")))
 }
 
 // tmdbFirst lists the non-nil results with TMDB's first.

@@ -261,3 +261,33 @@ func TestAbsoluteNumbersContinuingInALaterSeasonFolder(t *testing.T) {
 		t.Errorf("absolute 13 = %q, want B1", it.Title)
 	}
 }
+
+// Parts of one story are titled once; different episodes are joined; a title that has a
+// "/" of its own is left alone.
+func TestJoinedTitleParts(t *testing.T) {
+	se := func(titles ...string) *Season {
+		s := &Season{Number: 1}
+		for i, tt := range titles {
+			s.Episodes = append(s.Episodes, EpisodeResult{Season: 1, Episode: i + 1, Title: tt})
+		}
+		return s
+	}
+	r := &Result{Provider: "tmdb"}
+	to := func(*Result) (int, int, bool) { return 1, 1, true }
+	for _, c := range []struct {
+		titles []string
+		want   string
+	}{
+		{[]string{"Help Wanted", "Reef Blower", "Tea at the Treedome"}, "Help Wanted / Reef Blower / Tea at the Treedome"},
+		{[]string{"Psych: The Musical", "Psych: The Musical"}, "Psych: The Musical"},
+		{[]string{"The Finale (1)", "The Finale (2)"}, "The Finale"},
+		{[]string{"Into the Woods, Part 1", "Into the Woods, Part 2"}, "Into the Woods"},
+		{[]string{"To Be/Not to Be", "Another"}, "To Be/Not to Be / Another"},
+	} {
+		s := se(c.titles...)
+		fetch := func(*Result, int) *Season { return s }
+		if got := joinedTitle(&s.Episodes[0], len(c.titles)-1, []*Result{r}, to, fetch); got != c.want {
+			t.Errorf("%q: %q, want %q", c.titles, got, c.want)
+		}
+	}
+}
