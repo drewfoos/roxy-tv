@@ -74,6 +74,9 @@ type Library struct {
 	// replace it, as there is no prober in tests.
 	ingestOne func(ctx context.Context, lib model.Library, path string) error
 
+	// watchList, while Watch runs, lists the folders it watches (tests read it).
+	watchList atomic.Pointer[func() []string]
+
 	// Libraries whose folder had no media files while files were recorded (see scan):
 	// emptyRefused, those the last scan of left alone (id -> files recorded), for the
 	// admin screen; emptyAccepted, those an admin confirmed are really empty, for the

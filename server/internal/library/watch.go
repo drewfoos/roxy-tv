@@ -56,6 +56,9 @@ func (l *Library) Watch(ctx context.Context) {
 	defer w.Close()
 	var scans sync.WaitGroup
 	defer scans.Wait() // the scans it started end before it returns
+	list := w.WatchList
+	l.watchList.Store(&list)
+	defer l.watchList.Store(nil)
 	// The library folders being watched, with the directory each one was when its watch
 	// was set up: a watch belongs to that directory, not to its path, so a drive mounted
 	// again at the same path (or a folder made again) sends nothing until it is re-added.

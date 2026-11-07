@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -186,4 +187,70 @@ func watchIgnoreChange(t *testing.T, change func(rules string) error) {
 	later := filepath.Join(show, "Season 01", "Show - S01E02.mkv")
 	writeSized(t, later, 70)
 	waitFor("an episode copied into the no-longer-ignored season", func() bool { return has(later) })
+}
+
+// The reverse: an .ignore rule added while watched stops the folder it leaves out being
+// watched (its watches are removed), and a change inside it no longer asks for a scan.
+func TestWatchDropsFoldersANewIgnoreRuleLeavesOut(t *testing.T) {
+	oldQ, oldR := watchQuiet, watchRefresh
+	watchQuiet, watchRefresh = 200*time.Millisecond, time.Hour
+	t.Cleanup(func() { watchQuiet, watchRefresh = oldQ, oldR })
+	ctx := context.Background()
+	l, _, lib, root, _ := moveFixture(t, model.KindSeries)
+	show := filepath.Join(root, "Show")
+	season1 := filepath.Join(show, "Season 01")
+	ep := filepath.Join(season1, "Show - S01E01.mkv")
+	writeSized(t, ep, 50)
+	writeSized(t, filepath.Join(show, "Season 02", "Show - S02E01.mkv"), 60)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	var scans atomic.Int32
+	l.scanOne = func(ctx context.Context, lib model.Library, force bool) error {
+		scans.Add(1)
+		return l.scan(ctx, lib, force)
+	}
+	runWatch(t, l)
+	watching := func(dir string) bool {
+		if f := l.watchList.Load(); f != nil {
+			for _, p := range (*f)() {
+				if p == dir {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if cond() {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %s", what)
+	}
+	waitFor("Season 01 to be watched", func() bool { return watching(season1) })
+
+	if err := os.WriteFile(filepath.Join(show, ".ignore"), []byte("Season 01/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("Season 01's watch to be removed", func() bool { return !watching(season1) })
+	if !watching(filepath.Join(show, "Season 02")) {
+		t.Fatal("Season 02, which the rule does not name, is no longer watched")
+	}
+	waitFor("the scan the rule change asks for", func() bool { return scans.Load() > 0 })
+	time.Sleep(4 * watchQuiet) // that scan done, and nothing else pending
+	before := scans.Load()
+
+	// Changes inside the folder the rule now leaves out: no scan.
+	for i := 0; i < 3; i++ {
+		writeSized(t, ep, 80+i)
+		writeSized(t, filepath.Join(season1, "Show - S01E02.mkv"), 90+i)
+		time.Sleep(100 * time.Millisecond)
+	}
+	time.Sleep(8 * watchQuiet) // well past the quiet period a scan would wait for
+	if n := scans.Load(); n != before {
+		t.Fatalf("changes in a folder the rules leave out asked for %d scan(s)", n-before)
+	}
 }
