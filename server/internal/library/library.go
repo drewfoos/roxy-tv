@@ -207,6 +207,22 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	if err != nil {
 		return err
 	}
+	// The sidecar subtitles recorded per source, and each folder's listing read once per
+	// scan: a video that did not change is still re-ingested when its sidecars did.
+	storedSidecars, err := l.store.ListExternalSubtitlePaths(ctx, lib.ID)
+	if err != nil {
+		return err
+	}
+	dirEntries := map[string][]os.DirEntry{}
+	sidecarsChanged := func(path, sourceID string) bool {
+		dir := filepath.Dir(path)
+		entries, ok := dirEntries[dir]
+		if !ok {
+			entries, _ = os.ReadDir(dir) // unreadable: no sidecars, as at ingest
+			dirEntries[dir] = entries
+		}
+		return !samePaths(sidecarFiles(path, lib.Root, entries), storedSidecars[sourceID])
+	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
 	// What the walk could not read. Any of it makes this scan a failed one for removals:
@@ -267,8 +283,14 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		if _, ok := known[path]; ok {
 			part, err := l.store.GetPartByPath(ctx, path)
 			if !force && err == nil && part != nil && part.Size == info.Size() && part.ModTime.Equal(info.ModTime().UTC().Truncate(time.Millisecond)) {
-				skipped++
-				return nil
+				// The video is unchanged, but sidecar subtitles beside it are only read when
+				// it is ingested: one added, removed or renamed since would otherwise never
+				// show up (or never go away) until a forced scan.
+				if !sidecarsChanged(path, known[path]) {
+					skipped++
+					return nil
+				}
+				slog.Info("sidecar subtitles changed, re-ingesting", "path", path)
 			}
 			updated++
 		} else {
@@ -738,19 +760,9 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 	}
 	var out []model.MediaStream
 	idx := startIndex
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
+	for _, full := range sidecarFiles(videoPath, root, entries) {
+		name := filepath.Base(full)
 		ext := strings.ToLower(filepath.Ext(name))
-		if !subtitleExts[ext] || !strings.HasPrefix(strings.ToLower(name), strings.ToLower(base)) {
-			continue
-		}
-		if _, err := safefs.ResolveUnder(filepath.Join(dir, name), root); err != nil {
-			slog.Warn("skipping sidecar outside the library", "path", filepath.Join(dir, name), "err", err)
-			continue
-		}
 		rest := strings.TrimSuffix(name[len(base):], filepath.Ext(name))
 		tokens := strings.Split(strings.Trim(rest, "."), ".")
 		st := model.MediaStream{Index: idx, Type: model.StreamSubtitle, IsExternal: true, ExternalPath: filepath.Join(dir, name)}
@@ -788,13 +800,54 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 				}
 			}
 		}
-		if ext == ".idx" {
-			continue // the .sub carries the data; .idx is its index
-		}
 		out = append(out, st)
 		idx++
 	}
 	return out
+}
+
+// sidecarFiles is the sidecar subtitle files of videoPath among its folder's entries, in
+// the folder's order: the files sidecarSubtitles makes streams of. A .idx is left out
+// (the .sub carries the data), and so is a symlink out of the library root.
+func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
+	dir := filepath.Dir(videoPath)
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath)))
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if !subtitleExts[ext] || ext == ".idx" || !strings.HasPrefix(strings.ToLower(name), base) {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		if _, err := safefs.ResolveUnder(full, root); err != nil {
+			slog.Warn("skipping sidecar outside the library", "path", full, "err", err)
+			continue
+		}
+		out = append(out, full)
+	}
+	return out
+}
+
+// samePaths reports whether a and b hold the same paths, in any order.
+func samePaths(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]int, len(a))
+	for _, p := range a {
+		set[p]++
+	}
+	for _, p := range b {
+		if set[p] == 0 {
+			return false
+		}
+		set[p]--
+	}
+	return true
 }
 
 func stableID(kind, path string) string {

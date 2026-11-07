@@ -218,6 +218,28 @@ func (s *Store) ListPartPaths(ctx context.Context, libraryID int64) (map[string]
 	return out, rows.Err()
 }
 
+// ListExternalSubtitlePaths maps each source of a library to the sidecar subtitle files
+// recorded for it, so a scan can tell when sidecars were added, removed or renamed beside
+// a video that did not change itself.
+func (s *Store) ListExternalSubtitlePaths(ctx context.Context, libraryID int64) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT st.source_id, st.external_path FROM media_streams st
+		JOIN media_sources ms ON ms.id = st.source_id JOIN items i ON i.id = ms.item_id
+		WHERE i.library_id = ? AND st.is_external = 1 AND st.external_path IS NOT NULL AND st.external_path <> ''`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id, p string
+		if err := rows.Scan(&id, &p); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], p)
+	}
+	return out, rows.Err()
+}
+
 // ItemPath is a media file and the item (movie or episode) it belongs to.
 type ItemPath struct {
 	ItemID string
