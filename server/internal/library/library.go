@@ -440,16 +440,11 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	// Sidecar subtitles next to the file (Bazarr naming), keeping the numbers they had: a
 	// profile's saved subtitle choice is a stream number, so renumbering on a re-ingest
 	// (a new sidecar sorting before an old one) moved that choice to another file.
-	var prevSidecars map[string]int
-	if old, err := l.store.GetSource(ctx, sourceID); err == nil && old != nil {
-		prevSidecars = map[string]int{}
-		for _, st := range old.Streams {
-			if st.IsExternal && st.ExternalPath != "" {
-				prevSidecars[st.ExternalPath] = st.Index
-			}
-		}
+	sidecars, err := l.keepSidecarNumbers(ctx, sourceID, sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1))
+	if err != nil {
+		return err
 	}
-	src.Streams = append(src.Streams, numberSidecars(sidecarSubtitles(path, lib.Root, len(src.Streams)+len(src.Attachments)+1), prevSidecars)...)
+	src.Streams = append(src.Streams, sidecars...)
 
 	// Eager text-subtitle extraction + language sniffing. Extracted files land where the
 	// subtitle endpoint looks for them, so this also warms that cache.
@@ -817,18 +812,42 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 	return out
 }
 
+// keepSidecarNumbers numbers a source's sidecar streams for a (re-)ingest: each keeps the
+// number it had at the last ingest, and new ones go above the source's high-water mark
+// (see numberSidecars).
+func (l *Library) keepSidecarNumbers(ctx context.Context, sourceID string, streams []model.MediaStream) ([]model.MediaStream, error) {
+	floor, err := l.store.SidecarNextIndex(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	var prev map[string]int
+	if old, err := l.store.GetSource(ctx, sourceID); err == nil && old != nil {
+		prev = map[string]int{}
+		for _, st := range old.Streams {
+			if st.IsExternal && st.ExternalPath != "" {
+				prev[st.ExternalPath] = st.Index
+			}
+		}
+	}
+	return numberSidecars(streams, prev, floor), nil
+}
+
 // numberSidecars gives each sidecar stream the number it had before (prev: path ->
-// number, from the last ingest), and new sidecars numbers above every number in prev and
-// in use, so a re-ingest never moves a saved subtitle choice to another file. Streams
-// arrive numbered from the first number after the embedded streams (sidecarSubtitles); a
-// previous number below that (the video itself changed and has more streams now) is not
-// kept.
-func numberSidecars(streams []model.MediaStream, prev map[string]int) []model.MediaStream {
-	if len(streams) == 0 || len(prev) == 0 {
+// number, from the last ingest), and new sidecars numbers above every number in prev, in
+// use, and below floor (the source's high-water mark, store.SidecarNextIndex: every
+// number a sidecar of it has ever had), so no number is ever handed to a different file
+// and a saved subtitle choice never moves. Streams arrive numbered from the first number
+// after the embedded streams (sidecarSubtitles); a previous number below that (the video
+// itself changed and has more streams now) is not kept.
+func numberSidecars(streams []model.MediaStream, prev map[string]int, floor int) []model.MediaStream {
+	if len(streams) == 0 || (len(prev) == 0 && floor <= streams[0].Index) {
 		return streams
 	}
 	start := streams[0].Index
 	next := start
+	if floor > next {
+		next = floor
+	}
 	for _, n := range prev {
 		if n >= next {
 			next = n + 1

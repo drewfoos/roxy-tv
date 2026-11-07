@@ -28,6 +28,19 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 		src.ID, src.ItemID, nullStr(src.Name), nullStr(src.Container), src.Size, src.DurationMs, nullInt64(src.Bitrate), nullStr(src.VersionLabel), boolInt(src.IsPrimary), now, nullStr(probeJSON)); err != nil {
 		return err
 	}
+	// Raise the sidecar high-water mark past every sidecar number this ingest gives out
+	// (it never goes down: see SidecarNextIndex).
+	next := 0
+	for _, st := range src.Streams {
+		if st.IsExternal && st.Index+1 > next {
+			next = st.Index + 1
+		}
+	}
+	if next > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE media_sources SET sidecar_next_index = MAX(sidecar_next_index, ?) WHERE id = ?`, next, src.ID); err != nil {
+			return err
+		}
+	}
 	for _, t := range []string{"media_parts", "media_streams", "attachments", "media_segments", "segment_detection"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE source_id = ?`, src.ID); err != nil {
 			return err
@@ -310,6 +323,18 @@ func (s *Store) AllSourceIDs(ctx context.Context) ([]string, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// SidecarNextIndex is the lowest stream number a new sidecar subtitle of the source may
+// take: above every number its sidecars have ever had (0 for none yet, or no source). A
+// saved subtitle choice is a stream number, so a number is never reused for another file.
+func (s *Store) SidecarNextIndex(ctx context.Context, sourceID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT sidecar_next_index FROM media_sources WHERE id = ?`, sourceID).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
 }
 
 func (s *Store) DeleteSource(ctx context.Context, id string) error {
