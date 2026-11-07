@@ -467,6 +467,15 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	if err != nil {
 		return err
 	}
+	// The item it is recorded under, and that item's parents: if this ingest reads it as
+	// something else (a parser that now understands its name, an .nfo, a folder renamed
+	// above it), its watch history follows it to the new item.
+	var priorChain []store.ChainEntry
+	if prior != nil {
+		if old, err := l.store.ItemForPath(ctx, path); err == nil && old != nil {
+			priorChain, _ = l.store.ItemChain(ctx, old.ID)
+		}
+	}
 	item, err := l.resolveItemHinted(ctx, lib, path, hint)
 	if err != nil {
 		return err
@@ -544,6 +553,10 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	}
 	if prior == nil {
 		l.settleDepartures(ctx)
+	} else if len(priorChain) > 0 && priorChain[0].ID != item.ID {
+		if _, err := l.store.CarryChain(ctx, priorChain, item.ID); err != nil {
+			slog.Warn("carrying watch history to a re-identified file", "path", path, "err", err)
+		}
 	}
 	slog.Info("ingested", "item", item.Title, "type", item.Type, "file", filepath.Base(path), "streams", len(src.Streams), "fonts", len(src.Attachments))
 	if l.OnItemIngested != nil {
@@ -640,6 +653,27 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 			parsed.applyHint(h)
 		}
 	}
+	// Still no number: the looser shapes (a bracketed number, "ep01", a name starting with
+	// its number), then the number in the episode's own folder name ("Show - 05/video.mkv").
+	// After the hint, so they never override the arr app's numbers. Not for a file that
+	// looks like a film (its year would be read as an episode).
+	weakStem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	if lib.Kind != model.KindMovies && parsed.Episode == nil && parsed.Absolute == nil && len(parts) > 1 &&
+		!LooksLikeMovie(parsed, weakStem, parts[0], len(parts)) {
+		if n, ok := ParseWeakEpisode(weakStem); ok {
+			parsed.Episode = &n
+		} else if len(parts) > 2 {
+			if _, isSeason := ParseSeasonDir(parts[len(parts)-2]); !isSeason {
+				folder := ParseEpisodeFile(parts[len(parts)-2])
+				switch {
+				case folder.Episode != nil:
+					parsed.Episode, parsed.Season = folder.Episode, folder.Season
+				case folder.Absolute != nil:
+					parsed.Absolute = folder.Absolute
+				}
+			}
+		}
+	}
 
 	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	dir := ""
@@ -693,6 +727,15 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 		ID: uuid.NewString(), GUID: fmt.Sprintf("%s:season:%d", series.GUID, seasonNum), LibraryID: lib.ID, Type: model.TypeSeason,
 		ParentID: &series.ID, Title: seasonTitle(seasonNum), IndexAired: &seasonNum,
 	}
+	// Ids on the season's folder ("Season 2 [anidbid-5678]"): anime seasons are often
+	// separate entries at AniDB / AniList.
+	if len(parts) > 2 {
+		if ids := idTags(parts[len(parts)-2]); len(ids) > 0 {
+			if _, isSeason := ParseSeasonDir(parts[len(parts)-2]); isSeason {
+				season.ProviderIDs = ids
+			}
+		}
+	}
 	if err := l.store.UpsertItem(ctx, season); err != nil {
 		return nil, err
 	}
@@ -714,6 +757,16 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	epGUID, err := l.episodeGUID(ctx, series.GUID, season.ID, seasonNum, parsed, path)
 	if err != nil {
 		return nil, err
+	}
+	// A file once identified by its own path (its name gave no number) keeps that identity
+	// when it later has numbers from elsewhere: an .nfo, or the numbers its item was given
+	// (read back as a hint on the next ingest). That identity belongs to this path alone,
+	// so keeping it can collide with nothing, and switching would leave its watch history
+	// behind (412 One Pace episodes would have moved on a forced rescan).
+	if own := "file:" + hashHex(path); epGUID != own {
+		if cur, err := l.store.ItemGUIDForPath(ctx, path); err == nil && cur == own {
+			epGUID = own
+		}
 	}
 	var epEnd *int
 	if parsed.Episode != nil && parsed.EpisodeEnd != nil && *parsed.EpisodeEnd > *parsed.Episode {

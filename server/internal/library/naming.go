@@ -12,8 +12,12 @@ import (
 // Handles TRaSH-style names and the common anime shapes. Webhook ingest supersedes this.
 
 var (
-	reSxxExx  = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})(?:-?E?(\d{1,4}))?(?:v\d)?\b`) // "S02E01v2": a release-version suffix glued on
-	reAbsDash = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`)                            // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
+	// "S02E01", "S02E01v2" (a release-version suffix glued on), and more episodes after it:
+	// "S01E01-E02", "S01E01E02E03", "S01E01-02" (group 3; "-1080p" is not one: a word
+	// follows the digits).
+	reSxxExx   = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})((?:-?E\d{1,4}|-\d{1,4})*)(?:v\d)?\b`)
+	reChainNum = regexp.MustCompile(`\d{1,4}`)
+	reAbsDash  = regexp.MustCompile(`\s-\s(\d{1,4})(?:v\d)?\s-\s`) // "Title - S01E01 - 001 - Ep"  or "Title - 001 - Ep"
 	// "[Group] Title S2 - 01 (1080p)", "Title 2nd Season - 03", "Title Season 2 - 03": a
 	// season token before the dash makes the number an episode of that season, not an
 	// absolute number.
@@ -23,11 +27,26 @@ var (
 	reAbsUnderscore = regexp.MustCompile(`_-_(\d{1,4})(?:v\d)?(?:_|\(|\[|$)`)
 	// "Episode 1 - The Golden Age" (Berserk Memorial Edition): an episode of the folder's season.
 	reEpisodeWord = regexp.MustCompile(`(?i)(?:^|[\s._\-\]])episode[\s._]*(\d{1,4})(?:v\d)?(?:$|[\s._\-\[(])`)
-	reIDTag       = regexp.MustCompile(`(?i)[\[{](tvdbid|tmdbid|imdbid|tvdb|tmdb|imdb)[-=](tt\d+|\d+)[\]}]`)
-	reYear        = regexp.MustCompile(`\((19|20)\d{2}\)`)
-	reSeasonDir   = regexp.MustCompile(`(?i)^(?:season|s)\s*(\d{1,3})$`)
-	reSpecials    = regexp.MustCompile(`(?i)^specials?$`)
-	reRlsGroup    = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
+	// Provider ids in a folder or file name: [tmdbid-123], {tvdb-1}, (imdb=tt1), [anilist-5]
+	// (Jellyfin reads the same set, in any of the three brackets, with - or =).
+	reIDTag = regexp.MustCompile(`(?i)[\[{(](tvdbid|tmdbid|imdbid|tvmazeid|anidbid|anilistid|anisearchid|tvdb|tmdb|imdb|tvmaze|anidb|anilist|anisearch)[-=](tt\d+|\d+)[\]})]`)
+	// "1x01", "01x05", with "-1x02" / "x02" for more episodes. Two-digit episode at least,
+	// so a resolution such as 1920x1080 (four digits each side) never matches.
+	reNxM     = regexp.MustCompile(`(?i)(?:^|[\s._\-\[(])(\d{1,2})x(\d{2,3})((?:-?(?:\d{1,2})?x\d{2,3})*)(?:$|[\s._\-\])])`)
+	reNxMMore = regexp.MustCompile(`(?i)x(\d{2,3})`)
+	// "Season 1 Episode 2", "Season 01 - Episode 02".
+	reSeasonEpisodeWords = regexp.MustCompile(`(?i)season[\s._]*(\d{1,3})[\s._\-]*episode[\s._]*(\d{1,4})`)
+	reYear               = regexp.MustCompile(`\((19|20)\d{2}\)`)
+	// Season folders: "Season 2", "S2", "Season 2 - Arc name", "Season 02 (2023)", the word
+	// in other languages ("Staffel 2", "Saison 2", "Temporada 2", ...), "2nd Season",
+	// "第2季", "シーズン2", "시즌 2".
+	reSeasonDir     = regexp.MustCompile(`(?i)^(?:season|series|s|staffel|saison|temporada|temporadas|stagione|seizoen|sezon|sezona|säsong|sæson|sesong|kausi|évad|evad|sezóna|сезон|сезона|σεζόν|mevsim|musim)[\s._-]*(\d{1,3})(?:$|[\s._\-(\[])`)
+	reSeasonOrdinal = regexp.MustCompile(`(?i)^(\d{1,3})(?:st|nd|rd|th)[\s._-]+season\b`)
+	reSeasonCJK     = regexp.MustCompile(`^(?:第\s*(\d{1,3})\s*季|シーズン\s*(\d{1,3})|시즌\s*(\d{1,3})|(\d{1,3})\s*시즌)`)
+	// A release folder holding a season pack: "Show.S02.1080p.WEB" / "Show S02 [1080p]".
+	reSeasonRelease = regexp.MustCompile(`(?i)[\s._\-\[]S(\d{1,2})(?:[\s._\-\]]|$)`)
+	reSpecials      = regexp.MustCompile(`(?i)^specials?$`)
+	reRlsGroup      = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
 	// Scene-style "Title.Of.Film.2019.1080p.BluRay.x265-GRP": the first bare year token
 	// separated by dots/underscores/spaces ends the title.
 	reSceneYear = regexp.MustCompile(`(?:^|[. _(\[])((?:19|20)\d{2})(?:[. _)\]]|$)`)
@@ -87,14 +106,29 @@ func ParseEpisodeFile(name string) ParsedName {
 		s, _ := strconv.Atoi(stem[loc[2]:loc[3]])
 		e, _ := strconv.Atoi(stem[loc[4]:loc[5]])
 		p.Season, p.Episode = &s, &e
-		if loc[6] >= 0 {
-			ee, _ := strconv.Atoi(stem[loc[6]:loc[7]])
-			p.EpisodeEnd = &ee
+		// The last number of the chain is the last episode the file holds.
+		if nums := reChainNum.FindAllString(stem[loc[6]:loc[7]], -1); len(nums) > 0 {
+			if ee, _ := strconv.Atoi(nums[len(nums)-1]); ee > e {
+				p.EpisodeEnd = &ee
+			}
 		}
 		// "... - S01E01 - 001 - ..." : the first " - NNN - " after SxxExx is the absolute number
 		if a := reAbsDash.FindStringSubmatch(stem[loc[1]:]); a != nil {
 			n, _ := strconv.Atoi(a[1])
 			p.Absolute = &n
+		}
+	} else if a := reSeasonEpisodeWords.FindStringSubmatch(stem); a != nil {
+		s, _ := strconv.Atoi(a[1])
+		e, _ := strconv.Atoi(a[2])
+		p.Season, p.Episode = &s, &e
+	} else if loc := reNxM.FindStringSubmatchIndex(stem); loc != nil && !isYear(stem[loc[4]:loc[5]]) {
+		s, _ := strconv.Atoi(stem[loc[2]:loc[3]])
+		e, _ := strconv.Atoi(stem[loc[4]:loc[5]])
+		p.Season, p.Episode = &s, &e
+		for _, m := range reNxMMore.FindAllStringSubmatch(stem[loc[6]:loc[7]], -1) {
+			if ee, _ := strconv.Atoi(m[1]); ee > e {
+				p.EpisodeEnd = &ee
+			}
 		}
 	} else if a := reSeasonDash.FindStringSubmatch(stem); a != nil {
 		s, _ := strconv.Atoi(firstNonEmpty(a[1], a[2], a[3]))
@@ -155,7 +189,24 @@ func ParseSeasonDir(name string) (int, bool) {
 	if reSpecials.MatchString(strings.TrimSpace(name)) {
 		return 0, true
 	}
-	if m := reSeasonDir.FindStringSubmatch(strings.TrimSpace(name)); m != nil {
+	name = strings.TrimSpace(name)
+	if m := reSeasonDir.FindStringSubmatch(name); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n, true
+	}
+	if m := reSeasonOrdinal.FindStringSubmatch(name); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n, true
+	}
+	if m := reSeasonCJK.FindStringSubmatch(name); m != nil {
+		n, _ := strconv.Atoi(firstNonEmpty(m[1], m[2], m[3], m[4]))
+		return n, true
+	}
+	// A bare number ("01", "2"): a season folder in a show folder (never a year).
+	if n, err := strconv.Atoi(name); err == nil && n >= 0 && len(name) <= 3 {
+		return n, true
+	}
+	if m := reSeasonRelease.FindStringSubmatch(name); m != nil {
 		n, _ := strconv.Atoi(m[1])
 		return n, true
 	}
@@ -168,12 +219,8 @@ func idTags(s string) map[string]string {
 		key := strings.ToLower(m[1])
 		key = strings.TrimSuffix(key, "id")
 		switch key {
-		case "tvdb":
-			out["tvdb"] = m[2]
-		case "tmdb":
-			out["tmdb"] = m[2]
-		case "imdb":
-			out["imdb"] = m[2]
+		case "tvdb", "tmdb", "imdb", "tvmaze", "anidb", "anilist", "anisearch":
+			out[key] = m[2]
 		}
 	}
 	if len(out) == 0 {
@@ -194,7 +241,13 @@ func cleanTitle(stem string) string {
 	if i := reSeasonDash.FindStringIndex(s); i != nil {
 		s = s[:i[0]]
 	}
-	s = strings.TrimRight(s, " -")
+	if i := reSeasonEpisodeWords.FindStringIndex(s); i != nil {
+		s = s[:i[0]]
+	}
+	if i := reNxM.FindStringIndex(s); i != nil {
+		s = s[:i[0]]
+	}
+	s = strings.TrimRight(s, " -._")
 	return strings.TrimSpace(s)
 }
 
@@ -227,4 +280,47 @@ func FolderTitleNumber(stem, dir string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+var (
+	// "[Group] Show [04][1080p]", "[Group][Show][21]", "Show [12v2]": a bracket holding only
+	// an episode number (not a year or a resolution).
+	reBracketNumber = regexp.MustCompile(`[\[(](\d{1,4})(?:v\d)?[\])]`)
+	// "Show ep01", "Show.E01.1080p", "Show_ep_03".
+	reEpToken = regexp.MustCompile(`(?i)(?:^|[\s._\-\]])(?:ep[\s._]?(\d{1,4})|e(\d{2,4}))(?:v\d)?(?:$|[\s._\-\[(])`)
+	// "01.mkv", "01 - Title", "01.Title", "012v2": a file named by its number.
+	reLeadingNumber = regexp.MustCompile(`^(\d{1,4})(?:v\d)?(?:$|[\s._\-])`)
+)
+
+var resolutions = map[string]bool{"240": true, "360": true, "480": true, "540": true, "576": true, "720": true, "1080": true, "1440": true, "2160": true, "4320": true}
+
+// ParseWeakEpisode reads episode numbers from names the main parser leaves alone, as
+// Jellyfin also accepts: a number in its own brackets after the title (fansub style), an
+// "ep01" / ".E01." token, or a name that starts with the number. These are guesses about
+// loosely named files, so the scanner tries them only after the arr app's numbers (the
+// hint) and only when nothing else gave a number. ok false when none fits.
+func ParseWeakEpisode(stem string) (n int, ok bool) {
+	// The first bracket is usually the release group; any later one holding only a
+	// number is the episode.
+	for i, m := range reBracketNumber.FindAllStringSubmatchIndex(stem, -1) {
+		v := stem[m[2]:m[3]]
+		if (i == 0 && m[0] == 0) || isYear(v) || resolutions[v] {
+			continue
+		}
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n, true
+		}
+	}
+	if m := reEpToken.FindStringSubmatch(stem); m != nil {
+		v := firstNonEmpty(m[1], m[2])
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && !isYear(v) {
+			return n, true
+		}
+	}
+	if m := reLeadingNumber.FindStringSubmatch(stem); m != nil && !isYear(m[1]) && !resolutions[m[1]] {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n, true
+		}
+	}
+	return 0, false
 }
