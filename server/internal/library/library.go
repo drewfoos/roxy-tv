@@ -627,20 +627,11 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	// Movies: either a movies library, or a file in a mixed/series library that carries a
 	// year and no episode numbering (anime libraries often keep films next to series).
 	if lib.Kind == model.KindMovies || LooksLikeMovie(parsed, stem, dir, len(parts)) {
-		title, year, ids := ParseMovieName(stem)
-		if dir != "" {
-			if t, y, i := ParseMovieName(dir); t != "" {
-				title, ids = t, i
-				if y != nil {
-					year = y
-				}
-			}
+		m, err := movieIdentity(lib.Root, path, parsed.CleanTitle)
+		if err != nil {
+			return nil, err
 		}
-		if t := parsed.CleanTitle; title == "" && t != "" {
-			title = t
-		}
-		guid := guidFor(ids, "movie", lib.Root, parts[0])
-		it := &model.Item{ID: uuid.NewString(), GUID: guid, LibraryID: lib.ID, Type: model.TypeMovie, Title: title, Year: year, ProviderIDs: ids}
+		it := &model.Item{ID: uuid.NewString(), GUID: m.guid, LibraryID: lib.ID, Type: model.TypeMovie, Title: m.title, Year: m.year, ProviderIDs: m.ids}
 		if err := l.store.UpsertItem(ctx, it); err != nil {
 			return nil, err
 		}
@@ -754,6 +745,114 @@ func (l *Library) episodeGUID(ctx context.Context, seriesGUID, seasonID string, 
 		return legacy, nil
 	}
 	return guid, nil
+}
+
+// movieID is what a movie file belongs to: the item's GUID and what it is called.
+type movieID struct {
+	guid  string
+	title string
+	year  *int
+	ids   map[string]string
+}
+
+// movieIdentity decides which movie item a file in a movies folder belongs to.
+//
+// A file directly in the library root is a movie of its own. A file in a folder belongs
+// to the folder's film when the folder holds one film: a single video, or videos that are
+// all named after the folder ("Film (2022) - 1080p", "Film (2022) - 2160p") or all name
+// the same film (versions of it). Title, year and provider ids then come from the folder
+// (the file's own ids fill in what the folder lacks), and the identity is the folder.
+// Otherwise the folder is a collection ("Studio Collection/Movie A (2022).mkv",
+// "Studio Collection/Movie B (2023).mkv", or a series folder holding its films): each film
+// is told apart by its own name, title and year, so versions of one film there still share
+// an item. Identity used to be the top folder alone, which merged every film in a
+// collection folder into one item with one title and one watch history.
+//
+// A folder that cannot be listed is an error, not a guess: guessing differently from the
+// last scan would move the file to another item and leave its watch history behind.
+// cleanTitle is the episode parser's title, used when the movie parser finds none.
+func movieIdentity(root, path, cleanTitle string) (movieID, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return movieID{}, err
+	}
+	rel = filepath.ToSlash(rel)
+	fileName := filepath.Base(path)
+	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	title, year, ids := ParseMovieName(stem)
+	if title == "" {
+		title = cleanTitle
+	}
+	relDir := filepath.ToSlash(filepath.Dir(rel))
+	if relDir == "." {
+		return movieID{guidFor(ids, "movie", root, rel), title, year, ids}, nil
+	}
+	one, err := folderHoldsOneFilm(filepath.Dir(path))
+	if err != nil {
+		return movieID{}, err
+	}
+	if !one {
+		key := strings.ToLower(title)
+		if year != nil {
+			key = fmt.Sprintf("%s (%d)", key, *year)
+		}
+		if key == "" {
+			key = strings.ToLower(stem)
+		}
+		return movieID{guidFor(ids, "movie", root, relDir+"/"+key), title, year, ids}, nil
+	}
+	dirName := filepath.Base(relDir)
+	if t, y, i := ParseMovieName(dirName); t != "" {
+		title = t
+		if y != nil {
+			year = y
+		}
+		for k, v := range ids { // the file's ids fill in what the folder's name lacks
+			if i == nil {
+				i = map[string]string{}
+			}
+			if _, ok := i[k]; !ok {
+				i[k] = v
+			}
+		}
+		ids = i
+	}
+	return movieID{guidFor(ids, "movie", root, relDir), title, year, ids}, nil
+}
+
+// folderHoldsOneFilm reports whether the videos directly in dir are one film: at most
+// one video, or all named after the folder, or all parsing to the same title and year.
+func folderHoldsOneFilm(dir string) (bool, error) {
+	entries, err := readDir(dir)
+	if err != nil {
+		return false, fmt.Errorf("listing %s: %w", dir, err)
+	}
+	folder := strings.ToLower(filepath.Base(dir))
+	var stems []string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !videoExts[strings.ToLower(filepath.Ext(n))] || SkipFileReason(n) != "" {
+			continue
+		}
+		stems = append(stems, strings.TrimSuffix(n, filepath.Ext(n)))
+	}
+	if len(stems) <= 1 {
+		return true, nil
+	}
+	named := true
+	films := map[string]bool{}
+	for _, st := range stems {
+		if !strings.HasPrefix(strings.ToLower(st), folder) {
+			named = false
+		}
+		t, y, _ := ParseMovieName(st)
+		k := strings.ToLower(t)
+		if y != nil {
+			k = fmt.Sprintf("%s (%d)", k, *y)
+		}
+		films[k] = true
+	}
+	return named || len(films) == 1, nil
 }
 
 func guidFor(ids map[string]string, kind, root, dir string) string {
