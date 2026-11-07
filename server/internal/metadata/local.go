@@ -369,6 +369,11 @@ type local struct {
 	dir, stem string
 	paths     []store.ItemPath
 	nfo       *nfoDoc
+	// shared: a movie in a folder of several films (a collection). The folder's own files
+	// (movie.nfo, poster.jpg, fanart.jpg) are then not this film's: only its <file>.nfo
+	// and <file>-poster are. They used to be read for every film in the folder, giving
+	// each one the folder's provider ids, title and artwork.
+	shared bool
 }
 
 func (s *Service) localFor(ctx context.Context, it *model.Item) (*local, error) {
@@ -380,7 +385,9 @@ func (s *Service) localFor(ctx context.Context, it *model.Item) (*local, error) 
 	if it.Type == model.TypeMovie {
 		loc.dir = filepath.Dir(paths[0].Path)
 		loc.stem = strings.TrimSuffix(filepath.Base(paths[0].Path), filepath.Ext(paths[0].Path))
-		if loc.nfo, err = readNFO(filepath.Join(loc.dir, loc.stem+".nfo")); err == nil && loc.nfo == nil {
+		one, ferr := library.FolderHoldsOneFilm(loc.dir)
+		loc.shared = ferr != nil || !one
+		if loc.nfo, err = readNFO(filepath.Join(loc.dir, loc.stem+".nfo")); err == nil && loc.nfo == nil && !loc.shared {
 			loc.nfo, err = readNFO(filepath.Join(loc.dir, "movie.nfo"))
 		}
 	} else {
@@ -523,6 +530,10 @@ func (s *Service) localArtwork(ctx context.Context, it *model.Item, loc *local) 
 	}
 	backdrop := []string{"fanart", "backdrop", "background", "art", "fanart1", "backdrop1"}
 	logo := []string{"clearlogo", "logo"}
+	if it.Type == model.TypeMovie && loc.shared {
+		// A film in a collection folder: only the artwork named after its own file.
+		poster, backdrop, logo = []string{loc.stem + "-poster"}, nil, nil
+	}
 	if it.Type == model.TypeMovie {
 		backdrop = append([]string{loc.stem + "-fanart", loc.stem + "-backdrop"}, backdrop...)
 		logo = append([]string{loc.stem + "-clearlogo", loc.stem + "-logo"}, logo...)

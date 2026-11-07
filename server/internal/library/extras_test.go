@@ -15,8 +15,19 @@ func TestExtraOf(t *testing.T) {
 		ok                     bool
 	}{
 		{"Film (2020)/Film (2020)-trailer.mkv", "trailer", "Film (2020)", "Film (2020)", true},
-		{"Film (2020)/Film (2020).featurette2.mkv", "featurette", "Film (2020)", "Film (2020)", true},
-		{"Film (2020)/Film (2020)_deletedscene.mkv", "deleted", "Film (2020)", "Film (2020)", true},
+		{"Film (2020)/Film (2020)-featurette2.mkv", "featurette", "Film (2020)", "Film (2020)", true},
+		{"Film (2020)/Film (2020)-deletedscene.mkv", "deleted", "Film (2020)", "Film (2020)", true},
+		{"Film (2020)/Film (2020).trailer.mkv", "trailer", "Film (2020)", "Film (2020)", true},
+		{"Film (2020)/Film (2020)_trailer2.mkv", "trailer", "Film (2020)", "Film (2020)", true},
+		{"Show/Season 01/Show - S01E01-deleted.mkv", "deleted", "Show/Season 01", "Show - S01E01", true},
+		// Kinds other than trailer only after a dash, as Jellyfin reads them: after a dot or
+		// underscore they are titles (these were all taken for extras, found by an audit).
+		{"MASH/Season 4/M.A.S.H.S04E24.The.Interview.mkv", "", "", "", false},
+		{"Show/Season 1/Show.S01E05.The.Other.mkv", "", "", "", false},
+		{"Show/Season 1/Show_-_S01E03_-_The_Short.mkv", "", "", "", false},
+		{"Show/Season 2/Show.S02E01.Theme.mkv", "", "", "", false},
+		{"The Other (1972)/The.Other.1972.mkv", "", "", "", false},
+		{"Film (2020)/Film (2020).featurette2.mkv", "", "", "", false},
 		{"Film (2020)/Trailers/Teaser.mkv", "trailer", "Film (2020)", "", true},
 		{"Film (2020)/Behind The Scenes/Making of.mkv", "behindthescenes", "Film (2020)", "", true},
 		{"Show/Season 01/Extras/Clean OP.mkv", "extra", "Show/Season 01", "", true},

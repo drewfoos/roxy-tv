@@ -17,10 +17,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/roxy-media/roxy/server/internal/config"
@@ -878,13 +880,24 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	fileName := parts[len(parts)-1]
+	parsed, hinted := l.parseEpisodePath(ctx, lib, path, parts, true, hint)
+	return l.resolveParsed(ctx, lib, path, parts, fileName, parsed, hinted)
+}
+
+// parseEpisodePath reads a file's numbers from its name and folders. With useHints, a name
+// with no episode number takes the arr app's numbers (hint) or the ones its item already
+// has (a hint from an earlier import, an .nfo); hinted says whether it did.
+func (l *Library) parseEpisodePath(ctx context.Context, lib model.Library, path string, parts []string, useHints bool, hint *EpisodeHint) (ParsedName, bool) {
+	fileName := parts[len(parts)-1]
 	parsed := ParseEpisodeFile(fileName)
+	hinted := false
 	// A name with no episode number at all: take the arr app's numbers, or keep the ones
 	// this file already has (a hint from an earlier import), so a rescan of a name the
 	// parser cannot read does not turn a numbered episode back into a bare filename.
-	if lib.Kind != model.KindMovies && parsed.Episode == nil && parsed.Absolute == nil {
+	if useHints && lib.Kind != model.KindMovies && parsed.Episode == nil && parsed.Absolute == nil {
 		if h := l.episodeHintFor(ctx, path, hint); h != nil {
 			parsed.applyHint(h)
+			hinted = true
 		}
 	}
 	// Still no number: the looser shapes (a bracketed number, "ep01", a name starting with
@@ -908,7 +921,27 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 			}
 		}
 	}
+	return parsed, hinted
+}
 
+// seasonNumberFor is the season a file belongs to: its name's, or a season folder's below
+// the series folder (parts[si]).
+func seasonNumberFor(parsed ParsedName, parts []string, si int) int {
+	seasonNum := 1
+	if parsed.Season != nil {
+		seasonNum = *parsed.Season
+	}
+	if len(parts) > si+2 {
+		for _, dir := range parts[si+1 : len(parts)-1] {
+			if n, ok := ParseSeasonDir(dir); ok {
+				seasonNum = n
+			}
+		}
+	}
+	return seasonNum
+}
+
+func (l *Library) resolveParsed(ctx context.Context, lib model.Library, path string, parts []string, fileName string, parsed ParsedName, hinted bool) (*model.Item, error) {
 	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	dir := ""
 	if len(parts) > 1 {
@@ -926,17 +959,12 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 			return nil, err
 		}
 		// Files of different films merged into one item by an older release (a collection
-		// folder read as one film): only the first of them, by path, keeps that item and its
-		// watch history; the others are separate films from now on. Keeping every one of
+		// folder read as one film): only one of them keeps that item and its watch history
+		// (legacyKeeper), the others are separate films from now on. Keeping every one of
 		// them on it would leave the merge in place forever.
 		if existing != "" && m.guid == existing {
 			if mates, err := l.store.PathsForGUID(ctx, existing); err == nil && len(mates) > 1 {
-				first := path
-				for _, p := range mates {
-					if p < first {
-						first = p
-					}
-				}
+				first := legacyKeeper(mates)
 				if first != path {
 					if fresh, err := movieIdentity(lib.Root, path, parsed.CleanTitle, ""); err == nil && fresh.guid != existing {
 						if fm, err := movieIdentity(lib.Root, first, "", ""); err == nil && fm.guid != fresh.guid {
@@ -971,17 +999,7 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 		return nil, err
 	}
 
-	seasonNum := 1
-	if parsed.Season != nil {
-		seasonNum = *parsed.Season
-	}
-	if len(parts) > si+2 {
-		for _, dir := range parts[si+1 : len(parts)-1] {
-			if n, ok := ParseSeasonDir(dir); ok {
-				seasonNum = n
-			}
-		}
-	}
+	seasonNum := seasonNumberFor(parsed, parts, si)
 	season := &model.Item{
 		ID: uuid.NewString(), GUID: fmt.Sprintf("%s:season:%d", series.GUID, seasonNum), LibraryID: lib.ID, Type: model.TypeSeason,
 		ParentID: &series.ID, Title: seasonTitle(seasonNum), IndexAired: &seasonNum,
@@ -1025,6 +1043,21 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	if own := "file:" + hashHex(path); epGUID != own {
 		if cur, err := l.store.ItemGUIDForPath(ctx, path); err == nil && cur == own {
 			epGUID = own
+		}
+	}
+	// Likewise a file whose numbers came from a hint (the numbers its item was given by
+	// metadata or an .nfo, read back on the next ingest) keeps the identity its path alone
+	// gives, when that is the one it has: a date-named episode stays :date: once metadata
+	// numbers it, and a loosely numbered one ("[05]") stays s01e0005 once an .nfo places it
+	// in season 2. The hint used to change the identity on the next rescan, leaving the
+	// watch history behind. Only the identity this very path gives is kept, so it can
+	// merge the file with no other.
+	if hinted {
+		pathParsed, _ := l.parseEpisodePath(ctx, lib, path, parts, false, nil)
+		if pg, err := l.episodeGUID(ctx, series.GUID, "", seasonNumberFor(pathParsed, parts, si), pathParsed, path); err == nil && pg != epGUID {
+			if cur, err := l.store.ItemGUIDForPath(ctx, path); err == nil && cur == pg {
+				epGUID = pg
+			}
 		}
 	}
 	var epEnd *int
@@ -1091,6 +1124,35 @@ func (l *Library) episodeGUID(ctx context.Context, seriesGUID, seasonID string, 
 		return legacy, nil
 	}
 	return guid, nil
+}
+
+// legacyKeeper is which of the files an older release merged into one item keeps it (and
+// its watch history): the one named as its folder's film ("Film (2020)/Film (2020).mkv"
+// over "Film (2020)/Deleted Scenes.mkv", which used to keep the item by sorting first,
+// moving the film itself to a new item with none), else the first by path.
+func legacyKeeper(paths []string) string {
+	sorted := append([]string(nil), paths...)
+	sort.Strings(sorted)
+	for _, p := range sorted {
+		ft, fy, _ := ParseMovieName(filepath.Base(filepath.Dir(p)))
+		stem := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+		t, y, _ := ParseMovieName(stem)
+		if ft != "" && looseTitle(t) == looseTitle(ft) && (fy == nil || (y != nil && *y == *fy)) {
+			return p
+		}
+	}
+	return sorted[0]
+}
+
+// looseTitle is a title for comparing: lower case, letters and digits only.
+func looseTitle(t string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(t) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // movieID is what a movie file belongs to: the item's GUID and what it is called.
@@ -1181,6 +1243,11 @@ func movieIdentity(root, path, cleanTitle, existing string) (movieID, error) {
 
 // folderHoldsOneFilm reports whether the videos directly in dir are one film: at most
 // one video, or all named after the folder, or all parsing to the same title and year.
+// FolderHoldsOneFilm reports whether a folder is one film's own folder (its versions, its
+// extras), not a collection of films: what folder-wide files (movie.nfo, poster.jpg)
+// belong to.
+func FolderHoldsOneFilm(dir string) (bool, error) { return folderHoldsOneFilm(dir) }
+
 func folderHoldsOneFilm(dir string) (bool, error) {
 	entries, err := readDir(dir)
 	if err != nil {

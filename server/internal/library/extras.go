@@ -36,9 +36,27 @@ var extraFolders = map[string]string{
 	"theme-videos":      "theme",
 }
 
-// "Film (2020)-trailer", "Film (2020).featurette2", "Show - S01E01_deleted": a suffix after
-// a dash, dot or underscore, with an optional number.
-var reExtraSuffix = regexp.MustCompile(`(?i)[-._](trailer|featurette|behindthescenes|deletedscene|deleted|interview|scene|clip|short|extra|other|theme)\d*$`)
+// "Film (2020)-trailer", "Film (2020)-featurette2", "Show - S01E01-deleted": a suffix after
+// a dash, with an optional number; a trailer also after a dot or underscore ("Film.trailer"),
+// as Jellyfin reads them. Other kinds after a dot or underscore are not extras: they are
+// episode titles ("M.A.S.H.S04E24.The.Interview", "Show.S01E05.The.Other", "Show_-_S01E03_-_
+// The_Short"), which used to be taken for extras and dropped from their season.
+var reExtraSuffix = regexp.MustCompile(`(?i)(?:[-._](trailer)|-(featurette|behindthescenes|deletedscene|deleted|interview|scene|clip|short|extra|other|theme))(\d*)$`)
+
+// extraSuffix finds an extra suffix at the end of a file name without extension: where it
+// starts, its kind word (lower case) and its number ("" when none).
+func extraSuffix(stem string) (start int, kind, num string, ok bool) {
+	m := reExtraSuffix.FindStringSubmatchIndex(stem)
+	if m == nil || m[0] == 0 {
+		return 0, "", "", false
+	}
+	if m[2] >= 0 {
+		kind = stem[m[2]:m[3]]
+	} else {
+		kind = stem[m[4]:m[5]]
+	}
+	return m[0], strings.ToLower(kind), stem[m[6]:m[7]], true
+}
 
 var extraSuffixKind = map[string]string{"deletedscene": "deleted", "other": "extra"}
 
@@ -56,12 +74,11 @@ func ExtraOf(rel string) (kind, ownerDir, base string, ok bool) {
 	}
 	name := parts[len(parts)-1]
 	stem := strings.TrimSuffix(name, filepath.Ext(name))
-	if m := reExtraSuffix.FindStringSubmatchIndex(stem); m != nil && m[0] > 0 {
-		k := strings.ToLower(stem[m[2]:m[3]])
+	if start, k, _, found := extraSuffix(stem); found {
 		if alt, ok := extraSuffixKind[k]; ok {
 			k = alt
 		}
-		return k, strings.Join(parts[:len(parts)-1], "/"), strings.TrimSpace(stem[:m[0]]), true
+		return k, strings.Join(parts[:len(parts)-1], "/"), strings.TrimSpace(stem[:start]), true
 	}
 	return "", "", "", false
 }
@@ -71,9 +88,9 @@ func ExtraOf(rel string) (kind, ownerDir, base string, ok bool) {
 // tags, or the kind when nothing is left.
 func extraTitle(name, kind string) string {
 	stem := strings.TrimSuffix(name, filepath.Ext(name))
-	if m := reExtraSuffix.FindStringSubmatchIndex(stem); m != nil && m[0] > 0 {
+	if _, _, num, found := extraSuffix(stem); found {
 		t := extraKindName(kind)
-		if n := strings.TrimLeft(stem[m[3]:], "0"); n != "" {
+		if n := strings.TrimLeft(num, "0"); n != "" {
 			t += " " + n
 		}
 		return t

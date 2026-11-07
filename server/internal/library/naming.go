@@ -63,10 +63,33 @@ func ParseMovieName(name string) (title string, year *int, ids map[string]string
 		s = strings.ReplaceAll(s, ".", " ")
 	}
 	s = strings.ReplaceAll(s, "_", " ")
-	if m := reSceneYear.FindStringSubmatchIndex(s); m != nil {
-		y, _ := strconv.Atoi(s[m[2]:m[3]])
+	// The last year with something before it is the film's, as Jellyfin reads it: a year
+	// that starts the name, or one before the release year, is part of the title ("1917
+	// (2019)", "2001 A Space Odyssey (1968)", "Blade Runner 2049 (2017)"). The first year
+	// used to win, so these came out with the wrong title and year (and no match).
+	var ym []int
+	for from := 0; from < len(s); {
+		m := reSceneYear.FindStringSubmatchIndex(s[from:])
+		if m == nil {
+			break
+		}
+		for i := range m {
+			m[i] += from
+		}
+		if m[2] > 0 && strings.TrimSpace(strings.Trim(s[:m[2]], "([ ._")) != "" {
+			ym = m
+		}
+		from = m[3] // the separator after a year can start the next one ("2049.2017")
+	}
+	if ym == nil {
+		if m := reSceneYear.FindStringSubmatchIndex(s); m != nil && m[2] > 0 {
+			ym = m
+		}
+	}
+	if ym != nil {
+		y, _ := strconv.Atoi(s[ym[2]:ym[3]])
 		year = &y
-		s = s[:m[2]] // everything before the year is the title
+		s = s[:ym[2]] // everything before the year is the title
 	}
 	s = stripBrackets(s)
 	if year == nil {
@@ -363,7 +386,20 @@ var resolutions = map[string]bool{"240": true, "360": true, "480": true, "540": 
 // "ep01" / ".E01." token, or a name that starts with the number. These are guesses about
 // loosely named files, so the scanner tries them only after the arr app's numbers (the
 // hint) and only when nothing else gave a number. ok false when none fits.
+// reNotAnEpisode: words that mark a loosely numbered file as something else (a creditless
+// opening or ending, an OVA, a recap, a preview, a menu): "[Grp] Show NCED [02]" is not
+// episode 2. Short tags only in capitals ("Ed, Edd n Eddy [05]" is an episode).
+var (
+	reNotAnEpisode     = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(?:nc ?op|nc ?ed|ova|oad|recap|preview|menu|teaser|trailer)\d*(?:[^\p{L}\p{N}]|$)`)
+	reNotAnEpisodeTags = regexp.MustCompile(`(?:^|[^\p{L}\p{N}])(?:OP|ED|PV|CM|SP)\d*(?:[^\p{L}\p{N}]|$)`)
+)
+
 func ParseWeakEpisode(stem string) (n int, ok bool) {
+	// Loose numbers are a guess: an NCED, OVA or recap carrying the same number became
+	// that episode (several of them one item, as "versions", beside the real one).
+	if reNotAnEpisode.MatchString(stem) || reNotAnEpisodeTags.MatchString(stem) {
+		return 0, false
+	}
 	// The first bracket is usually the release group; any later one holding only a
 	// number is the episode.
 	for i, m := range reBracketNumber.FindAllStringSubmatchIndex(stem, -1) {
