@@ -8,6 +8,8 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png" // AniList covers are sometimes PNG (re-encoded to JPEG); logos are kept as PNG
+
+	_ "golang.org/x/image/webp" // artwork next to the media may be .webp (re-encoded to JPEG/PNG)
 	"io"
 	"log/slog"
 	"net/http"
@@ -221,6 +223,9 @@ func (s *Service) process(ctx context.Context, j job) error {
 	if handled, err := s.applyLocal(ctx, it); handled || err != nil {
 		return err
 	}
+	// After the lookup below, however it ends: what the .nfo sets, episode .nfo files and
+	// artwork next to the media win over the provider's (Jellyfin's order).
+	defer s.overlayLocal(ctx, it)
 	startedAt := time.Now()
 	attempted, _ := s.store.MetadataAttemptedAt(ctx, it.ID)
 	onlyNewEpisodes := false

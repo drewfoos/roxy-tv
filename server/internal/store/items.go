@@ -17,7 +17,7 @@ import (
 var itemColNames = []string{"id", "guid", "library_id", "type", "parent_id", "title", "sort_title", "year", "overview",
 	"index_aired", "season_aired", "index_absolute", "runtime_ms", "date_created", "date_modified",
 	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual",
-	"season_count", "related_count", "advisories", "index_aired_end"}
+	"season_count", "related_count", "advisories", "index_aired_end", "airs_before_season", "airs_before_episode", "airs_after_season"}
 
 var itemCols = strings.Join(itemColNames, ", ")
 
@@ -33,13 +33,13 @@ func itemColsFor(alias string) string {
 func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, error) {
 	var it model.Item
 	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed, advisories sql.NullString
-	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount, idxEnd sql.NullInt64
+	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount, idxEnd, beforeSeason, beforeEp, afterSeason sql.NullInt64
 	var rating sql.NullFloat64
 	var created, modified string
 	var virtual int
 	dest := []any{&it.ID, &it.GUID, &it.LibraryID, &it.Type, &parent, &it.Title, &sortTitle, &year, &overview,
 		&idxAired, &seasonAired, &idxAbs, &runtime, &created, &modified,
-		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd}
+		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd, &beforeSeason, &beforeEp, &afterSeason}
 	dest = append(dest, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return nil, err
@@ -52,6 +52,7 @@ func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, er
 	it.SeasonAired = ptrInt(seasonAired)
 	it.IndexAbsolute = ptrInt(idxAbs)
 	it.IndexAiredEnd = ptrInt(idxEnd)
+	it.AirsBeforeSeason, it.AirsBeforeEpisode, it.AirsAfterSeason = ptrInt(beforeSeason), ptrInt(beforeEp), ptrInt(afterSeason)
 	it.RuntimeMs = ptrInt64(runtime)
 	it.DateCreated = ParseTime(created)
 	it.DateModified = ParseTime(modified)
@@ -505,6 +506,13 @@ func (s *Store) PruneOrphans(ctx context.Context) (int, error) {
 		total += int(n)
 	}
 	return total, nil
+}
+
+// SetSpecialPlacement records where a special belongs in story order (nil clears each).
+func (s *Store) SetSpecialPlacement(ctx context.Context, id string, beforeSeason, beforeEpisode, afterSeason *int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE items SET airs_before_season = ?, airs_before_episode = ?, airs_after_season = ? WHERE id = ?`,
+		intPtrNull(beforeSeason), intPtrNull(beforeEpisode), intPtrNull(afterSeason), id)
+	return err
 }
 
 // ResetEpisodeMetadata clears provider-sourced episode fields under a season (title back

@@ -170,7 +170,7 @@ after the last scan appears with the next scan. Re-ingesting the same file is ha
 | TMDB | Movies and series: titles, overviews, images, seasons and episodes, ratings, cast, recommendations |
 | AniList | Anime: titles, descriptions, characters (profile avatars), MAL and AniList links |
 | fanart.tv (optional) | Logos and extra artwork |
-| Local `.nfo` and artwork | Kodi-style sidecars, for titles no provider lists (fan edits, home video) |
+| Local `.nfo` and artwork | Kodi / Jellyfin sidecars. An `.nfo` without ids (or with `<lockdata>`) is the metadata; one with ids steers the lookup, then its own fields win field by field. Episode `.nfo` files are always read (title, plot, ids, `<season>`/`<episode>`, multi-episode blocks, a special's `airsbefore`/`airsafter` place, which next-up follows). Artwork next to the media wins over fetched art (art picked by hand stays) |
 
 Matching uses the IDs and names that ingest found; admins can fix a match (Identify),
 refresh a title, pick other images or edit its metadata from the app. Outside images

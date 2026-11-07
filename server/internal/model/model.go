@@ -29,23 +29,29 @@ type Library struct {
 }
 
 type Item struct {
-	ID            string            `json:"id"`
-	GUID          string            `json:"guid"`
-	LibraryID     int64             `json:"libraryId"`
-	Type          ItemType          `json:"type"`
-	ParentID      *string           `json:"parentId,omitempty"`
-	Title         string            `json:"title"`
-	SortTitle     string            `json:"sortTitle,omitempty"`
-	Year          *int              `json:"year,omitempty"`
-	Overview      string            `json:"overview,omitempty"`
-	IndexAired    *int              `json:"indexAired,omitempty"`
-	SeasonAired   *int              `json:"seasonAired,omitempty"`
-	IndexAbsolute *int              `json:"indexAbsolute,omitempty"`
-	IndexAiredEnd *int              `json:"indexAiredEnd,omitempty"` // last episode a multi-episode file covers (S01E01-E03: 3)
-	RuntimeMs     *int64            `json:"runtimeMs,omitempty"`
-	ProviderIDs   map[string]string `json:"providerIds,omitempty"`
-	DateCreated   time.Time         `json:"dateCreated"`
-	DateModified  time.Time         `json:"dateModified"`
+	ID            string   `json:"id"`
+	GUID          string   `json:"guid"`
+	LibraryID     int64    `json:"libraryId"`
+	Type          ItemType `json:"type"`
+	ParentID      *string  `json:"parentId,omitempty"`
+	Title         string   `json:"title"`
+	SortTitle     string   `json:"sortTitle,omitempty"`
+	Year          *int     `json:"year,omitempty"`
+	Overview      string   `json:"overview,omitempty"`
+	IndexAired    *int     `json:"indexAired,omitempty"`
+	SeasonAired   *int     `json:"seasonAired,omitempty"`
+	IndexAbsolute *int     `json:"indexAbsolute,omitempty"`
+	IndexAiredEnd *int     `json:"indexAiredEnd,omitempty"` // last episode a multi-episode file covers (S01E01-E03: 3)
+	// A special's place in story order: before episode AirsBeforeEpisode of season
+	// AirsBeforeSeason (episode missing: before the season), or after season
+	// AirsAfterSeason. From its .nfo; next-up follows it.
+	AirsBeforeSeason  *int              `json:"airsBeforeSeason,omitempty"`
+	AirsBeforeEpisode *int              `json:"airsBeforeEpisode,omitempty"`
+	AirsAfterSeason   *int              `json:"airsAfterSeason,omitempty"`
+	RuntimeMs         *int64            `json:"runtimeMs,omitempty"`
+	ProviderIDs       map[string]string `json:"providerIds,omitempty"`
+	DateCreated       time.Time         `json:"dateCreated"`
+	DateModified      time.Time         `json:"dateModified"`
 
 	// Provider metadata (docs/api/native.md "Metadata and images"). Empty until the
 	// metadata service matched the item.

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"sort"
 
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -43,7 +42,7 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 	}
 
 	// 2. The latest finished episode of each series.
-	rows, err := s.db.QueryContext(ctx, `SELECT se.parent_id, se.index_aired, i.index_aired, u.last_played_at
+	rows, err := s.db.QueryContext(ctx, `SELECT se.parent_id, i.id, se.index_aired, i.index_aired, u.last_played_at
 		FROM user_item_data u
 		JOIN items i ON i.guid = u.item_guid AND i.type = 'episode'
 		JOIN items se ON se.id = i.parent_id
@@ -53,7 +52,7 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		return nil, err
 	}
 	type finished struct {
-		series        string
+		series, item  string
 		season, epNum int
 		at            string
 	}
@@ -62,7 +61,7 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 	for rows.Next() {
 		var f finished
 		var season, ep *int
-		if err := rows.Scan(&f.series, &season, &ep, &f.at); err != nil {
+		if err := rows.Scan(&f.series, &f.item, &season, &ep, &f.at); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -86,12 +85,12 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		if at, ok := seriesAt[f.series]; ok && at >= f.at {
 			continue // a half-watched episode of this show is more recent
 		}
-		it, err := s.nextEpisodeAfter(ctx, scopeID, f.series, f.season, f.epNum, true)
+		it, err := s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, f.season, f.epNum, true)
 		if err != nil || it == nil {
 			// Nothing unwatched after it. On a rewatch (every episode already watched)
 			// the next one in order still comes up; otherwise this was the last there is.
 			if all, err2 := s.allEpisodesPlayed(ctx, scopeID, f.series); err2 == nil && all {
-				it, err = s.nextEpisodeAfter(ctx, scopeID, f.series, f.season, f.epNum, false)
+				it, err = s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, f.season, f.epNum, false)
 			}
 			if err != nil || it == nil {
 				continue
@@ -137,26 +136,89 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 	return out, nil
 }
 
-// nextEpisodeAfter is the first real regular episode of a series after (season, ep), in
-// order; with unplayedOnly, the first the profile has not watched.
-func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID string, season, ep int, unplayedOnly bool) (*model.Item, error) {
-	played := ""
-	if unplayedOnly {
-		played = ` AND COALESCE(u.played, 0) = 0`
+// storyKey orders a series' episodes as they are meant to be watched: regular episodes by
+// season and number, and a special with a place in story order (airs before an episode,
+// before a season, or after a season) at that place. A special without one has no place
+// (ok false): next-up skips it, as it always has.
+func storyKey(season, ep, special int, beforeSeason, beforeEp, afterSeason *int) (key [3]int, ok bool) {
+	switch {
+	case season > 0:
+		return [3]int{season, ep * 2, 0}, true
+	case beforeSeason != nil && *beforeSeason > 0:
+		e := 1
+		if beforeEp != nil && *beforeEp > 0 {
+			e = *beforeEp
+		}
+		return [3]int{*beforeSeason, e*2 - 1, special}, true
+	case afterSeason != nil && *afterSeason > 0:
+		return [3]int{*afterSeason, 1 << 30, special}, true
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT `+itemColsFor("i")+` FROM items i
-		JOIN items se ON se.id = i.parent_id
+	return key, false
+}
+
+func keyLess(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+// nextEpisodeAfter is the first real episode of a series after the one just finished
+// (afterID, at season/ep), in story order (storyKey: specials placed by their .nfo come in
+// between); with unplayedOnly, the first the profile has not watched.
+func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID, afterID string, season, ep int, unplayedOnly bool) (*model.Item, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id, COALESCE(se.index_aired, 0), COALESCE(i.index_aired, 0),
+		i.airs_before_season, i.airs_before_episode, i.airs_after_season, COALESCE(u.played, 0)
+		FROM items i JOIN items se ON se.id = i.parent_id
 		LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
-		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0`+played+`
-		  AND COALESCE(se.index_aired, 0) > 0
-		  AND (COALESCE(se.index_aired, 0) > ? OR (COALESCE(se.index_aired, 0) = ? AND COALESCE(i.index_aired, 0) > ?))
-		ORDER BY COALESCE(se.index_aired, 0), COALESCE(i.index_aired, 0) LIMIT 1`,
-		scopeID, seriesID, season, season, ep)
-	it, err := scanItem(row)
-	if errors.Is(err, sql.ErrNoRows) {
+		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0`, scopeID, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	type cand struct {
+		id     string
+		key    [3]int
+		played bool
+	}
+	var cands []cand
+	// A special with no place in story order keeps (0, n): everything placed comes after it.
+	after := [3]int{season, ep * 2, 0}
+	for rows.Next() {
+		var id string
+		var sn, en, played int
+		var bs, be, as sql.NullInt64
+		if err := rows.Scan(&id, &sn, &en, &bs, &be, &as, &played); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		k, ok := storyKey(sn, en, en, ptrInt(bs), ptrInt(be), ptrInt(as))
+		if id == afterID && ok {
+			after = k
+		}
+		if ok {
+			cands = append(cands, cand{id, k, played == 1})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var best *cand
+	for i := range cands {
+		c := &cands[i]
+		if c.id == afterID || !keyLess(after, c.key) || (unplayedOnly && c.played) {
+			continue
+		}
+		if best == nil || keyLess(c.key, best.key) {
+			best = c
+		}
+	}
+	if best == nil {
 		return nil, nil
 	}
-	return it, err
+	return s.GetItem(ctx, best.id)
 }
 
 // allEpisodesPlayed reports whether the profile has watched every real regular episode
