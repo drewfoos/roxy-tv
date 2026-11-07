@@ -807,11 +807,27 @@ func sidecarSubtitles(videoPath, root string, startIndex int) []model.MediaStrea
 }
 
 // sidecarFiles is the sidecar subtitle files of videoPath among its folder's entries, in
-// the folder's order: the files sidecarSubtitles makes streams of. A .idx is left out
-// (the .sub carries the data), and so is a symlink out of the library root.
+// the folder's order: the files sidecarSubtitles makes streams of. A sidecar is named
+// <video name>.<anything>.<ext>: the video's name must be followed by a dot, so
+// "Show - 10.en.ass" is not taken for "Show - 1.mkv" (a bare prefix match gave episode 1
+// episode 10's subtitles). When several videos in the folder fit ("Show - 1.mkv" and
+// "Show - 1.5.mkv" for "Show - 1.5.en.ass"), the one with the longest name has it. A .idx
+// is left out (the .sub carries the data), and so is a symlink out of the library root.
 func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
 	dir := filepath.Dir(videoPath)
 	base := strings.ToLower(strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath)))
+	// The other videos here whose names are longer than this one's: a sidecar fitting one
+	// of them belongs to it.
+	var longer []string
+	for _, e := range entries {
+		if n := e.Name(); !e.IsDir() && videoExts[strings.ToLower(filepath.Ext(n))] {
+			// Only a name that itself starts with this one's plus a dot can compete for the
+			// same sidecar ("Show - 1.5" against "Show - 1").
+			if stem := strings.ToLower(strings.TrimSuffix(n, filepath.Ext(n))); sidecarOf(base, stem) {
+				longer = append(longer, stem)
+			}
+		}
+	}
 	var out []string
 	for _, e := range entries {
 		if e.IsDir() {
@@ -819,7 +835,18 @@ func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
 		}
 		name := e.Name()
 		ext := strings.ToLower(filepath.Ext(name))
-		if !subtitleExts[ext] || ext == ".idx" || !strings.HasPrefix(strings.ToLower(name), base) {
+		lower := strings.ToLower(name)
+		if !subtitleExts[ext] || ext == ".idx" || !sidecarOf(base, lower) {
+			continue
+		}
+		taken := false
+		for _, stem := range longer {
+			if sidecarOf(stem, lower) {
+				taken = true
+				break
+			}
+		}
+		if taken {
 			continue
 		}
 		full := filepath.Join(dir, name)
@@ -830,6 +857,12 @@ func sidecarFiles(videoPath, root string, entries []os.DirEntry) []string {
 		out = append(out, full)
 	}
 	return out
+}
+
+// sidecarOf reports whether the file name (lower case) is named after the video stem
+// (lower case): the stem, then a dot.
+func sidecarOf(stem, name string) bool {
+	return len(name) > len(stem) && strings.HasPrefix(name, stem) && name[len(stem)] == '.'
 }
 
 // samePaths reports whether a and b hold the same paths, in any order.
