@@ -34,7 +34,7 @@ func TestLiveIdentityCheck(t *testing.T) {
 			if old == nil {
 				continue
 			}
-			it, err := l.resolveItem(ctx, lib, p)
+			it, err := l.resolveForIngest(ctx, lib, p, nil)
 			total++
 			if err != nil {
 				t.Logf("ERR %s: %v", p, err)

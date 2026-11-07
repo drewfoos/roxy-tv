@@ -562,6 +562,13 @@ func (s *Store) ItemsWithMediaUnder(ctx context.Context, dir string) (map[string
 	return out, rows.Err()
 }
 
+// SetAirDateIfUnset records an episode's air date when it has none (a file named by its
+// date), without marking its metadata as looked up.
+func (s *Store) SetAirDateIfUnset(ctx context.Context, id, date string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE items SET premiere_date = ? WHERE id = ? AND (premiere_date IS NULL OR premiere_date = '')`, date, id)
+	return err
+}
+
 // SetSpecialPlacement records where a special belongs in story order (nil clears each).
 func (s *Store) SetSpecialPlacement(ctx context.Context, id string, beforeSeason, beforeEpisode, afterSeason *int) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE items SET airs_before_season = ?, airs_before_episode = ?, airs_after_season = ? WHERE id = ?`,

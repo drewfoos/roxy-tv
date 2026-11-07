@@ -177,3 +177,31 @@ func TestNFOSpecialPlacement(t *testing.T) {
 		t.Fatalf("ova placement: %v %v", ova.AirsBeforeSeason, ova.AirsAfterSeason)
 	}
 }
+
+// A daily show's episode named by its date is filed under the provider episode that aired
+// that day, with its number and title.
+func TestDatedEpisodeMatchedByAirDate(t *testing.T) {
+	f := newFixture(t, false)
+	sn := 1
+	f.upsert(&model.Item{ID: "season1", GUID: f.series.GUID + ":season:1", LibraryID: f.lib.ID, Type: model.TypeSeason, ParentID: &f.series.ID, Title: "Season 1", IndexAired: &sn})
+	sid := "season1"
+	f.upsert(&model.Item{ID: "d", GUID: f.series.GUID + ":date:2024-03-15", LibraryID: f.lib.ID, Type: model.TypeEpisode, ParentID: &sid, SeasonAired: &sn, Title: "The Daily Show 2024.03.15"})
+	if err := f.st.SetAirDateIfUnset(f.ctx, "d", "2024-03-15"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.ReplaceSource(f.ctx, &model.MediaSource{ID: "srcd", ItemID: "d", IsPrimary: true, Parts: []model.MediaPart{{ID: "pd", Path: filepath.Join(f.lib.Root, "Show", "d.mkv")}}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.tmdb.result = &Result{Provider: "tmdb", ProviderIDs: map[string]string{"tmdb": "1"}, Title: "Show", Seasons: []SeasonInfo{{Number: 29, EpisodeCount: 2}}}
+	f.tmdb.seasons[29] = &Season{Number: 29, Episodes: []EpisodeResult{
+		{Season: 29, Episode: 73, Title: "Guest A", AirDate: "2024-03-14"},
+		{Season: 29, Episode: 74, Title: "Guest B", AirDate: "2024-03-15"},
+	}}
+	if err := f.run(false); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := f.st.GetItem(f.ctx, "d")
+	if d.IndexAired == nil || *d.IndexAired != 74 || d.SeasonAired == nil || *d.SeasonAired != 29 || d.Title != "Guest B" {
+		t.Fatalf("dated episode: S%v E%v %q", d.SeasonAired, d.IndexAired, d.Title)
+	}
+}

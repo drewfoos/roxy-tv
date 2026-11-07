@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -447,5 +448,28 @@ func TestHistoryFollowsAnEpisodeByProviderID(t *testing.T) {
 	}
 	if d, _ := st.GetUserItemData(ctx, scope, newSeries.GUID); d == nil || !d.IsFavorite {
 		t.Fatalf("the series' watchlist mark did not follow: %+v", d)
+	}
+}
+
+// A show inside a grouping folder ("Kids/Show/Season 01/...") is the show, not "Kids", and
+// a daily show's episode named by its date gets the date as its identity and air date.
+func TestResolveNestedShowAndDatedEpisode(t *testing.T) {
+	ctx := context.Background()
+	l, st, lib, root, _ := moveFixture(t, model.KindSeries)
+	nested := filepath.Join(root, "Kids", "Bluey", "Season 01", "Bluey - S01E02.mkv")
+	daily := filepath.Join(root, "The Daily Show", "The Daily Show 2024.03.15.mkv")
+	writeSized(t, nested, 10)
+	writeSized(t, daily, 11)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	ep := itemAt(t, st, nested)
+	series := mustParent(t, st, mustParent(t, st, ep))
+	if series.Title != "Bluey" || ep.IndexAired == nil || *ep.IndexAired != 2 {
+		t.Fatalf("nested: series %q episode %v", series.Title, ep.IndexAired)
+	}
+	d := itemAt(t, st, daily)
+	if !strings.HasSuffix(d.GUID, ":date:2024-03-15") || !strings.HasPrefix(d.Premiered, "2024-03-15") {
+		t.Fatalf("dated: guid %s premiered %q", d.GUID, d.Premiered)
 	}
 }

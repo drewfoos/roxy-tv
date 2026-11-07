@@ -598,6 +598,14 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 		cache[key] = se
 		return se
 	}
+	// Episodes named by their air date (daily shows): filed under the provider's episode
+	// that aired that day, before the numbered pass below.
+	if n := s.matchDatedEpisodes(ctx, series, tmdbFirst(primary, secondary), fetch); n > 0 {
+		slog.Info("metadata: episodes found by air date", "series", series.Title, "count", n)
+		if seasons, err = s.store.Children(ctx, series.ID, model.TypeSeason); err != nil {
+			return 0
+		}
+	}
 	// How the library's seasons line up with each provider's (see layout.go).
 	lengths := s.realSeasonLengths(ctx, seasons)
 	layouts := map[*Result]*seasonLayout{}
@@ -771,6 +779,55 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	s.createPlaceholders(ctx, series, seasons, src, otherResult(src, primary, secondary), fetch, layouts, lengths, claimed)
 	s.storeSeasonIDs(ctx, series, primary, secondary, layouts, lengths)
 	return updated
+}
+
+// matchDatedEpisodes files each real episode of the series that has an air date but no
+// number (a file named "Show 2024.03.15") under the provider episode that aired that day:
+// its season, number, title and synopsis. Returns how many were placed.
+func (s *Service) matchDatedEpisodes(ctx context.Context, series *model.Item, results []*Result, fetch func(*Result, int) *Season) int {
+	eps, _, err := s.store.ListItems(ctx, store.ItemQuery{ParentID: series.ID, Recursive: true, Types: []model.ItemType{model.TypeEpisode}})
+	if err != nil {
+		return 0
+	}
+	var dated []model.Item
+	for _, e := range eps {
+		if e.IndexAired == nil && e.IndexAbsolute == nil && !e.IsVirtual && len(e.Premiered) >= 10 {
+			dated = append(dated, e)
+		}
+	}
+	if len(dated) == 0 {
+		return 0
+	}
+	byDate := map[string]EpisodeResult{}
+	for _, r := range results {
+		for _, si := range r.Seasons {
+			if se := fetch(r, si.Number); se != nil {
+				for _, ep := range se.Episodes {
+					if _, seen := byDate[ep.AirDate]; !seen && ep.AirDate != "" {
+						byDate[ep.AirDate] = ep
+					}
+				}
+			}
+		}
+		if len(byDate) > 0 {
+			break // the preferred provider's dates are enough
+		}
+	}
+	placed := 0
+	for _, e := range dated {
+		hit, ok := byDate[e.Premiered[:10]]
+		if !ok {
+			continue
+		}
+		season := s.seasonByNumber(ctx, series, hit.Season, "")
+		n := hit.Episode
+		if err := s.placeInSeason(ctx, e.ID, season, &n, nil); err != nil {
+			continue
+		}
+		_ = s.store.UpdateItemMetadata(ctx, e.ID, store.ItemMetadata{Title: hit.Title, Overview: hit.Overview, Premiered: hit.AirDate})
+		placed++
+	}
+	return placed
 }
 
 // tmdbFirst lists the non-nil results with TMDB's first.

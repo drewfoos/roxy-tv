@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -94,6 +95,51 @@ func TestIDTagsMore(t *testing.T) {
 	for k, v := range want {
 		if ids[k] != v {
 			t.Errorf("%s: %q, want %q (all %v)", k, ids[k], v, ids)
+		}
+	}
+}
+
+// A film name with no year ends at its first release tag.
+func TestParseMovieNameCleansReleaseTags(t *testing.T) {
+	for in, want := range map[string]string{
+		"Movie 1080p BluRay x264":         "Movie",
+		"Some.Movie.720p.WEB-DL.x265-GRP": "Some Movie",
+		"Movie Title (2019) 1080p":        "Movie Title", // the year ends it, as before
+		"Bladerunner":                     "Bladerunner",
+		"Hdtv Story":                      "Hdtv Story", // a tag word first stays (nothing before it)
+		"Dvd Club 1080p":                  "Dvd Club",
+	} {
+		if got, _, _ := ParseMovieName(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseAirDate(t *testing.T) {
+	for in, want := range map[string]string{
+		"The Daily Show 2024.03.15":  "2024-03-15",
+		"Show - 2024-03-15 - Guest":  "2024-03-15",
+		"Show 15.03.2024":            "2024-03-15",
+		"Show 2024.02.30":            "", // no such day
+		"Show 1080p 2024":            "",
+		"Show - S01E01 - 2024.03.15": "", // a numbered episode keeps its number
+	} {
+		if got := ParseEpisodeFile(in + ".mkv").AirDate; got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSeriesFolderIndex(t *testing.T) {
+	for in, want := range map[string]int{
+		"Show/Season 01/x.mkv":                        0,
+		"Kids/Show/Season 01/x.mkv":                   1, // a grouping folder above the show
+		"Show/Season 01/extras/x.mkv":                 0, // live layout: extras under a season
+		"One Pace/[One Pace][1-7] Romance Dawn/x.mp4": 0,
+		"Show/x.mkv":                                  0,
+	} {
+		if got := SeriesFolderIndex(strings.Split(in, "/")); got != want {
+			t.Errorf("%s: %d, want %d", in, got, want)
 		}
 	}
 }

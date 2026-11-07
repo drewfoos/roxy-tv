@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -68,17 +69,32 @@ func ParseMovieName(name string) (title string, year *int, ids map[string]string
 		s = s[:m[2]] // everything before the year is the title
 	}
 	s = stripBrackets(s)
+	if year == nil {
+		// No year to end the title: it ends at the first release tag instead ("Movie
+		// 1080p BluRay x264" is "Movie"), as Jellyfin's CleanStrings do.
+		for _, m := range reReleaseTag.FindAllStringIndex(s, -1) {
+			if m[0] > 0 { // a tag word that starts the name is part of the title
+				s = s[:m[0]]
+				break
+			}
+		}
+	}
 	s = strings.TrimRight(strings.TrimSpace(s), " -([")
 	return strings.TrimSpace(s), year, ids
 }
+
+// reReleaseTag finds the first release tag in a name: resolution, source, codec, audio,
+// language and edition words that are never part of a film's title (Jellyfin's
+// CleanStrings list), separated by spaces, dots, dashes or underscores.
+var reReleaseTag = regexp.MustCompile(`(?i)(?:^|[ _.,\-])(?:3d|hsbs|htab|fsbs|ftab|sbs|mvc|hdr|hdr10|dv|uhd|ultrahd|4k|2160p|1080p|1080i|720p|720i|576p|576i|480p|480i|ac3|dts|aac|truehd|atmos|ddp5\.1|dd5\.1|dc|divx|divx5|dsr|dsrip|dvd|dvdrip|dvdscr|dvdscreener|screener|cam|hdtv|hdrip|hdtvrip|internal|limited|multi|ntsc|pal|pdtv|proper|repack|rerip|retail|cd[1-9]|r5|bd5|bd|svcd|unrated|ws|telesync|telecine|brrip|bdrip|bluray|blu-ray|remux|web-?dl|web-?rip|webrip|x264|x265|h\.?264|h\.?265|hevc|avc|xvid|10bit|8bit|extended|remastered|imax)(?:[ _.,\-]|$)`)
 
 // LooksLikeMovie reports whether a file in a series library is better treated as a
 // movie: no season/episode/absolute numbering, and a year in the file name, or in the
 // folder name when the file sits directly in that folder (depth 2 = <dir>/<file>).
 // Files deeper than that are inside a season folder and stay episodes.
 func LooksLikeMovie(p ParsedName, fileStem, dir string, depth int) bool {
-	if p.Season != nil || p.Episode != nil || p.Absolute != nil {
-		return false
+	if p.Season != nil || p.Episode != nil || p.Absolute != nil || p.AirDate != "" {
+		return false // numbered, or named by a full date (a daily show's episode)
 	}
 	if reSceneYear.MatchString(fileStem) {
 		return true
@@ -97,6 +113,9 @@ type ParsedName struct {
 	ProviderIDs  map[string]string
 	ReleaseGroup string
 	CleanTitle   string
+	// AirDate (YYYY-MM-DD) of a file named by its date ("Show 2024.03.15"), read only when
+	// the name carries no episode number: daily shows. The metadata pass finds its episode.
+	AirDate string
 }
 
 func ParseEpisodeFile(name string) ParsedName {
@@ -149,6 +168,9 @@ func ParseEpisodeFile(name string) ParsedName {
 		n, _ := strconv.Atoi(a[1])
 		p.Episode = &n
 	}
+	if p.Season == nil && p.Episode == nil && p.Absolute == nil {
+		p.AirDate = parseAirDate(stem)
+	}
 	if m := reRlsGroup.FindStringSubmatch(stripBrackets(stem)); m != nil {
 		p.ReleaseGroup = m[1]
 	}
@@ -182,6 +204,48 @@ func ParseSeriesDir(name string) (title string, year *int, ids map[string]string
 	t := reIDTag.ReplaceAllString(name, "")
 	t = reYear.ReplaceAllString(t, "")
 	return strings.TrimSpace(t), year, ids
+}
+
+var (
+	reDateYMD = regexp.MustCompile(`(?:^|[\s._\-\[(])((?:19|20)\d{2})[.\-_ ](\d{1,2})[.\-_ ](\d{1,2})(?:$|[\s._\-\])])`)
+	reDateDMY = regexp.MustCompile(`(?:^|[\s._\-\[(])(\d{1,2})[.\-_ ](\d{1,2})[.\-_ ]((?:19|20)\d{2})(?:$|[\s._\-\])])`)
+)
+
+// parseAirDate reads a date in a file name, "2024.03.15" / "2024-03-15" or "15.03.2024",
+// as YYYY-MM-DD; "" when there is none (or it is not a real date).
+func parseAirDate(stem string) string {
+	var y, m, d string
+	if a := reDateYMD.FindStringSubmatch(stem); a != nil {
+		y, m, d = a[1], a[2], a[3]
+	} else if a := reDateDMY.FindStringSubmatch(stem); a != nil {
+		y, m, d = a[3], a[2], a[1]
+	} else {
+		return ""
+	}
+	yi, _ := strconv.Atoi(y)
+	mi, _ := strconv.Atoi(m)
+	di, _ := strconv.Atoi(d)
+	t := time.Date(yi, time.Month(mi), di, 0, 0, 0, 0, time.UTC)
+	if mi < 1 || mi > 12 || di < 1 || t.Day() != di {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+// SeriesFolderIndex is which folder of a file's path (relative to the library root, split
+// on "/") is its show: the first, or the second when the show sits inside a grouping folder
+// ("Kids/Show/Season 01/x.mkv": the third folder is a season and the first two are not), as
+// Jellyfin finds shows at any depth.
+func SeriesFolderIndex(parts []string) int {
+	if len(parts) >= 4 {
+		_, s0 := ParseSeasonDir(parts[0])
+		_, s1 := ParseSeasonDir(parts[1])
+		_, s2 := ParseSeasonDir(parts[2])
+		if s2 && !s0 && !s1 {
+			return 1
+		}
+	}
+	return 0
 }
 
 // ParseSeasonDir returns the season number for "Season 01", "S2", "Specials" (0).

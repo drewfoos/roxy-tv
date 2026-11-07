@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -587,7 +588,7 @@ func (s *Service) showDir(ctx context.Context, it *model.Item, file string) stri
 		if len(parts) < 2 {
 			return "" // a loose file in the root: no show folder to read
 		}
-		return filepath.Join(l.Root, filepath.FromSlash(parts[0]))
+		return filepath.Join(l.Root, filepath.Join(parts[:library.SeriesFolderIndex(parts)+1]...))
 	}
 	return ""
 }

@@ -750,8 +750,9 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 		return it, nil
 	}
 
-	// Series library: <root>/<Series dir>/[Season NN/]<file>
-	seriesDir := parts[0]
+	// Series library: <root>/[<grouping folder>/]<Series dir>/[Season NN/]<file>
+	si := SeriesFolderIndex(parts)
+	seriesDir := parts[si]
 	if len(parts) == 1 {
 		seriesDir = parsed.CleanTitle
 		if seriesDir == "" {
@@ -759,7 +760,7 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 		}
 	}
 	title, year, ids := ParseSeriesDir(seriesDir)
-	series := &model.Item{ID: uuid.NewString(), GUID: guidFor(ids, "series", lib.Root, seriesDir), LibraryID: lib.ID, Type: model.TypeSeries, Title: title, Year: year, ProviderIDs: ids}
+	series := &model.Item{ID: uuid.NewString(), GUID: guidFor(ids, "series", lib.Root, filepath.Join(parts[:si+1]...)), LibraryID: lib.ID, Type: model.TypeSeries, Title: title, Year: year, ProviderIDs: ids}
 	if err := l.store.UpsertItem(ctx, series); err != nil {
 		return nil, err
 	}
@@ -768,8 +769,8 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	if parsed.Season != nil {
 		seasonNum = *parsed.Season
 	}
-	if len(parts) > 2 {
-		for _, dir := range parts[1 : len(parts)-1] {
+	if len(parts) > si+2 {
+		for _, dir := range parts[si+1 : len(parts)-1] {
 			if n, ok := ParseSeasonDir(dir); ok {
 				seasonNum = n
 			}
@@ -831,6 +832,11 @@ func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path
 	if err := l.store.UpsertItem(ctx, ep); err != nil {
 		return nil, err
 	}
+	if parsed.AirDate != "" && epNum == nil {
+		if err := l.store.SetAirDateIfUnset(ctx, ep.ID, parsed.AirDate); err != nil {
+			return nil, err
+		}
+	}
 	return ep, nil
 }
 
@@ -852,6 +858,9 @@ func (l *Library) episodeGUID(ctx context.Context, seriesGUID, seasonID string, 
 		guid = fmt.Sprintf("%s:s%02dabs%04d", seriesGUID, seasonNum, *parsed.Absolute)
 	case parsed.Absolute != nil:
 		return fmt.Sprintf("%s:abs%04d", seriesGUID, *parsed.Absolute), nil
+	case parsed.AirDate != "":
+		// A daily show's episode, named by its date: the date is its identity.
+		return fmt.Sprintf("%s:date:%s", seriesGUID, parsed.AirDate), nil
 	default:
 		return "file:" + hashHex(path), nil
 	}
