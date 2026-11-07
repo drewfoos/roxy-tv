@@ -2,6 +2,7 @@ package library
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -106,10 +107,16 @@ func (r *ignoreRules) match(rel string, isDir bool) (ignored, decided bool) {
 		return true, true
 	}
 	for _, rule := range r.rules {
-		if rule.dirOnly && !isDir && !strings.Contains(rel, "/") {
-			continue
+		target := rel
+		if rule.dirOnly && !isDir {
+			// A folder-only rule ("Bonus/") reaches a file through its folders, never by
+			// the file's own name: a file called "Bonus" in a subfolder used to be ignored.
+			target = path.Dir(rel)
+			if target == "." {
+				continue
+			}
 		}
-		if rule.re.MatchString(rel) {
+		if rule.re.MatchString(target) {
 			ignored, decided = !rule.negate, true
 		}
 	}

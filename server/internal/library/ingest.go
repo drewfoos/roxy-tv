@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -35,27 +36,65 @@ func (l *Library) IngestPathHinted(ctx context.Context, path string, hint *Episo
 		if insideSkipped(lib.Root, path) {
 			return nil // a download folder, extras, .ignore'd... (same rules as a scan)
 		}
+		// The library's .ignore rules too, as a scan applies them: a file they leave out
+		// used to be added by a webhook, then removed again by the next scan.
+		ignores := ignoreCache{}
+		if ignores.ignored(lib.Root, path, info.IsDir()) {
+			return nil
+		}
 		if !info.IsDir() {
 			if !videoExts[strings.ToLower(filepath.Ext(path))] || SkipFileReason(info.Name()) != "" {
 				return nil
 			}
 			return l.addFileSafeHinted(ctx, lib, path, hint)
 		}
-		return filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
+		// A folder: every video in it. Extras after the titles they belong to (as a scan
+		// does: "Film-trailer.mkv" sorts before "Film.mkv"), and one file failing does not
+		// stop the others; the first error stopped the walk, so a trailer whose film was
+		// not in yet kept the film out until the next scan.
+		var extras []string
+		var errs []error
+		ingest := l.ingestOne
+		if ingest == nil {
+			ingest = l.addFileSafe
+		}
+		add := func(p string) {
+			if err := ingest(ctx, lib, p); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		err = filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return nil
 			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if d.IsDir() {
-				if p != path && SkipDirReason(p) != "" {
+				if p != path && (SkipDirReason(p) != "" || ignores.ignored(lib.Root, p, true)) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !videoExts[strings.ToLower(filepath.Ext(p))] || SkipFileReason(d.Name()) != "" {
+			if !videoExts[strings.ToLower(filepath.Ext(p))] || SkipFileReason(d.Name()) != "" || ignores.ignored(lib.Root, p, false) {
 				return nil
 			}
-			return l.addFileSafe(ctx, lib, p)
+			if rel, err := filepath.Rel(lib.Root, p); err == nil {
+				if _, _, _, isExtra := ExtraOf(filepath.ToSlash(rel)); isExtra {
+					extras = append(extras, p)
+					return nil
+				}
+			}
+			add(p)
+			return nil
 		})
+		if err != nil {
+			return err
+		}
+		for _, p := range extras {
+			add(p)
+		}
+		return errors.Join(errs...)
 	}
 	return fmt.Errorf("path %s is not under any library root", path)
 }
