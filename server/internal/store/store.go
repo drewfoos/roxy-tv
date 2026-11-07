@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -117,6 +118,67 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 		}
 		slog.Info("applied migration", "name", name)
 	}
+	if last == "" || last >= "0034_extras.sql" {
+		if err := s.ensureExtraType(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reTypeCheck finds the items table's CHECK on type, however it is spaced or quoted.
+var reTypeCheck = regexp.MustCompile(`(?is)(CHECK\s*\(\s*"?type"?\s+IN\s*\()([^)]*)(\)\s*\))`)
+
+// ensureExtraType makes sure the items table accepts extras. Migration 0034 widens the
+// type CHECK by replacing its exact text: on a table whose text differs at all (spacing,
+// quoting, a database rebuilt by hand) that replacement does nothing, yet the migration
+// is recorded as applied, and every extra was refused from then on, with no way back.
+// The CHECK is found here by pattern and widened the same way; if it cannot be found,
+// opening the database fails rather than running without extras.
+func (s *Store) ensureExtraType(ctx context.Context) error {
+	var sqlText string
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'`).Scan(&sqlText); err != nil {
+		return err
+	}
+	m := reTypeCheck.FindStringSubmatchIndex(sqlText)
+	if m == nil {
+		return fmt.Errorf("the items table has no type CHECK that extras can be added to; its definition: %s", sqlText)
+	}
+	if strings.Contains(strings.ToLower(sqlText[m[4]:m[5]]), "'extra'") {
+		return nil
+	}
+	fixed := sqlText[:m[5]] + ", 'extra'" + sqlText[m[5]:]
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var v int
+	if err := tx.QueryRowContext(ctx, `PRAGMA schema_version`).Scan(&v); err != nil {
+		return err
+	}
+	for _, q := range []string{`PRAGMA writable_schema = ON`} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'items'`, fixed); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA writable_schema = OFF`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA schema_version = %d`, v+1)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	var ic string
+	if err := s.db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&ic); err != nil || ic != "ok" {
+		return fmt.Errorf("after letting the items table accept extras: integrity_check %q %v", ic, err)
+	}
+	slog.Warn("the items table did not accept extras (migration 0034 found a different table text): fixed")
 	return nil
 }
 

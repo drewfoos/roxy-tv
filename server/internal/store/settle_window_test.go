@@ -89,3 +89,35 @@ func TestExtraIsNotAnArrival(t *testing.T) {
 		t.Fatalf("the film's history did not follow it after a same-sized trailer arrived: %+v", d)
 	}
 }
+
+// Found by an audit: the redirect check looked one hop ahead, so a cycle of redirects
+// between two items that are both gone passed. Chains are followed now.
+func TestIntegrityFindsRedirectCycle(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	lib := &model.Library{Name: "M", Kind: model.KindMovies, Root: "/m"}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	s.UpsertItem(ctx, &model.Item{ID: "c", GUID: "g-c", LibraryID: lib.ID, Type: model.TypeMovie, Title: "C"})
+	s.ReplaceSource(ctx, &model.MediaSource{ID: "s-c", ItemID: "c", Parts: []model.MediaPart{{ID: "p-c", Path: "/m/C.mkv"}}}, "{}")
+	// a -> b -> c reaches an item: fine.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO item_redirects (old_id, new_id, created_at) VALUES ('a','b','x'), ('b','c','x')`); err != nil {
+		t.Fatal(err)
+	}
+	if probs, err := s.CheckIntegrity(ctx); err != nil || len(probs) != 0 {
+		t.Fatalf("a chain to an item: %v %v", probs, err)
+	}
+	// x -> y -> x: neither exists.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO item_redirects (old_id, new_id, created_at) VALUES ('x','y','x'), ('y','x','x')`); err != nil {
+		t.Fatal(err)
+	}
+	probs, err := s.CheckIntegrity(ctx)
+	if err != nil || len(probs) != 1 || probs[0] != "2 redirects that lead to no item" {
+		t.Fatalf("a cycle: %v %v", probs, err)
+	}
+}

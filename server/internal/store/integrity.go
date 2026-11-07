@@ -19,7 +19,8 @@ import (
 //     the new item, so in a test library this is history a move failed to carry; in a
 //     real one it is also the history of files deleted for good, kept in case the same
 //     file comes back, so a real library is not expected to pass this one;
-//   - a redirect pointing at an item that does not exist.
+//   - a redirect that leads to no item, followed hop by hop as clients are (a chain that
+//     ends nowhere, or a cycle).
 func (s *Store) CheckIntegrity(ctx context.Context) ([]string, error) {
 	var problems []string
 	add := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
@@ -54,11 +55,18 @@ func (s *Store) CheckIntegrity(ctx context.Context) ([]string, error) {
 		{"files recorded twice", `SELECT COUNT(*) FROM (SELECT path FROM media_parts GROUP BY path HAVING COUNT(*) > 1)`},
 		{"sources with no file", `SELECT COUNT(*) FROM media_sources WHERE NOT EXISTS (SELECT 1 FROM media_parts mp WHERE mp.source_id = media_sources.id)`},
 		{"identities held by two items", `SELECT COUNT(*) FROM (SELECT guid FROM items GROUP BY guid HAVING COUNT(*) > 1)`},
-		{"watch data no item and no redirect reaches (history lost)", `SELECT COUNT(*) FROM user_item_data u
+		{"pieces of watch history no item shows (history lost)", `SELECT COUNT(*) FROM user_item_data u
 			WHERE (u.position_ms > 0 OR u.played = 1 OR u.is_favorite = 1)
 			AND NOT EXISTS (SELECT 1 FROM items i WHERE i.guid = u.item_guid)`},
-		{"redirects to items that do not exist", `SELECT COUNT(*) FROM item_redirects r WHERE NOT EXISTS (SELECT 1 FROM items i WHERE i.id = r.new_id)
-			AND NOT EXISTS (SELECT 1 FROM item_redirects r2 WHERE r2.old_id = r.new_id)`},
+		// Followed as GetItemOrMoved does (up to 8 hops): a chain that reaches no item, a
+		// cycle among them, used to pass when each hop pointed at another redirect.
+		{"redirects that lead to no item", `WITH RECURSIVE walk(start, cur, depth) AS (
+				SELECT old_id, new_id, 1 FROM item_redirects
+				UNION ALL
+				SELECT w.start, r.new_id, w.depth + 1 FROM walk w JOIN item_redirects r ON r.old_id = w.cur
+				WHERE w.depth < 8 AND NOT EXISTS (SELECT 1 FROM items i WHERE i.id = w.cur))
+			SELECT COUNT(*) FROM item_redirects ro WHERE NOT EXISTS (
+				SELECT 1 FROM walk w JOIN items i ON i.id = w.cur WHERE w.start = ro.old_id)`},
 	} {
 		var c int
 		if err := s.db.QueryRowContext(ctx, q.sql).Scan(&c); err != nil {
