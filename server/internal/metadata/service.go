@@ -759,7 +759,13 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 				slog.Debug("metadata: no episode data", "series", series.Title, "season", sn, "episode", en)
 				continue
 			}
-			meta := store.ItemMetadata{Title: hit.Title, Overview: hit.Overview, Premiered: hit.AirDate}
+			title := hit.Title
+			if ep.IndexAired != nil && ep.IndexAiredEnd != nil && *ep.IndexAiredEnd > *ep.IndexAired {
+				// A file holding several episodes (SpongeBob's segments as they aired):
+				// every one's title, as Jellyfin shows them.
+				title = joinedTitle(hit, *ep.IndexAiredEnd-*ep.IndexAired, byPref, toProvider, fetch)
+			}
+			meta := store.ItemMetadata{Title: title, Overview: hit.Overview, Premiered: hit.AirDate}
 			if err := s.store.UpdateItemMetadata(ctx, ep.ID, meta); err != nil {
 				slog.Warn("metadata: updating episode", "episode", ep.ID, "err", err)
 				continue
@@ -828,6 +834,40 @@ func (s *Service) matchDatedEpisodes(ctx context.Context, series *model.Item, re
 		placed++
 	}
 	return placed
+}
+
+// joinedTitle is the title of a file that holds span+1 episodes starting at hit: the
+// provider's titles of all of them in order, joined with " / " ("Help Wanted / Reef Blower
+// / Tea at the Treedome"). Taken from the provider season hit came from; hit's own title
+// when that season does not list them all.
+func joinedTitle(hit *EpisodeResult, span int, byPref []*Result, toProvider func(*Result) (int, int, bool), fetch func(*Result, int) *Season) string {
+	for _, r := range byPref {
+		ps, _, ok := toProvider(r)
+		if !ok {
+			continue
+		}
+		se := fetch(r, ps)
+		if se == nil {
+			continue
+		}
+		byNum := map[int]string{}
+		for _, e := range se.Episodes {
+			byNum[e.Episode] = e.Title
+		}
+		if byNum[hit.Episode] != hit.Title {
+			continue // hit came from another provider's season
+		}
+		titles := make([]string, 0, span+1)
+		for n := hit.Episode; n <= hit.Episode+span; n++ {
+			t, ok := byNum[n]
+			if !ok || t == "" {
+				return hit.Title
+			}
+			titles = append(titles, t)
+		}
+		return strings.Join(titles, " / ")
+	}
+	return hit.Title
 }
 
 // tmdbFirst lists the non-nil results with TMDB's first.

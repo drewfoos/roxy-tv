@@ -194,7 +194,9 @@ func TestMultiEpisodeFileCoversItsRange(t *testing.T) {
 	if r, v := countVirtual(got[1]); r != 1 || v != 2 || !got[1][3].virtual || !got[1][4].virtual {
 		t.Errorf("S1: %d real, %d placeholders %v; want the file and E3, E4", r, v, got[1])
 	}
-	if got[1][1].title != "Help Wanted" {
+	// Titled after every episode it holds, as Jellyfin shows them (it used to read
+	// "Help Wanted" alone).
+	if got[1][1].title != "Help Wanted / Reef Blower" {
 		t.Errorf("E1 = %q", got[1][1].title)
 	}
 	it, _ := f.st.GetItem(f.ctx, "s1e1")
