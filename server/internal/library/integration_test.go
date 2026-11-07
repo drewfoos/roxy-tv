@@ -247,7 +247,7 @@ func TestLibraryLifecycle(t *testing.T) {
 	}
 	check("watch history")
 
-	go l.Watch(ctx)
+	runWatch(t, l)
 	time.Sleep(time.Second) // watches in place
 
 	// 3. The show's folder renamed, with an id tag: a new identity for every episode.

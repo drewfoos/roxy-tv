@@ -25,7 +25,7 @@ func TestWatchPicksUpChanges(t *testing.T) {
 	if err := l.Scan(ctx, lib); err != nil {
 		t.Fatal(err)
 	}
-	go l.Watch(ctx)
+	runWatch(t, l)
 	time.Sleep(300 * time.Millisecond) // watches in place
 
 	has := func(p string) bool {
@@ -64,7 +64,7 @@ func TestWatchPicksUpNewLibrary(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	l, st, _, _, _ := moveFixture(t, model.KindMovies)
-	go l.Watch(ctx)
+	runWatch(t, l)
 	time.Sleep(300 * time.Millisecond)
 
 	lib := addLibrary(t, st, model.KindMovies)
@@ -99,7 +99,7 @@ func TestWatchFollowsReplacedLibraryFolder(t *testing.T) {
 			if err := l.Scan(ctx, lib); err != nil {
 				t.Fatal(err)
 			}
-			go l.Watch(ctx)
+			runWatch(t, l)
 			time.Sleep(300 * time.Millisecond)
 
 			// The drive goes and another (or the same, mounted again) comes back at the path.
@@ -139,15 +139,32 @@ func TestWatchLeavesUnchangedFolderAlone(t *testing.T) {
 	oldQ, oldR := watchQuiet, watchRefresh
 	watchQuiet, watchRefresh = 100*time.Millisecond, 100*time.Millisecond
 	t.Cleanup(func() { watchQuiet, watchRefresh = oldQ, oldR })
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	l, _, _, root, _ := moveFixture(t, model.KindMovies)
 	writeSized(t, filepath.Join(root, "Old (2000)", "Old (2000).mkv"), 50)
 	var scans atomic.Int32
 	l.scanOne = func(context.Context, model.Library, bool) error { scans.Add(1); return nil }
-	go l.Watch(ctx)
+	runWatch(t, l)
 	time.Sleep(1500 * time.Millisecond) // many refreshes, and time for any scan they asked for
 	if n := scans.Load(); n != 0 {
 		t.Fatalf("an unchanged library folder was rescanned %d times", n)
 	}
+}
+
+// runWatch starts the watcher for a test and, when the test ends, stops it and waits for
+// it to return, before any earlier cleanup runs (cleanups run last-added first). Tests
+// restore watchQuiet and watchRefresh in a cleanup: a watcher still running then read
+// them as they were written, a data race that failed the package under -race now and
+// then.
+func runWatch(t *testing.T, l *Library) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		l.Watch(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 }
