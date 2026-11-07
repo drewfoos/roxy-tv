@@ -30,7 +30,7 @@ type relatedEntry struct {
 func (s *Server) related(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")
-	it, err := s.store.GetItem(ctx, id)
+	it, err := s.store.GetItemOrMoved(ctx, id)
 	if err != nil || it == nil {
 		writeError(w, 404, "item not found")
 		return

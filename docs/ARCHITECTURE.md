@@ -135,6 +135,7 @@ Library ──< Item (movie | series | season | episode) ──< MediaSource ─
 | `media_segments`, `segment_detection`, `audio_fingerprints` | Intro / outro / preview ranges and the data used to find them |
 | `users`, `profiles`, `devices`, `api_keys`, `device_codes` | Logins, up to six viewer profiles each, signed-in devices (a token is a device row), webhook keys, TV sign-in codes |
 | `user_item_data` | Position, played, play count, favourite (Watchlist), chosen tracks. **Keyed by profile and item GUID**, so a re-import or re-match keeps history |
+| `departures`, `item_redirects` | Files that left the library in the last 30 days, matched against files that arrive so watch history follows a move (see §8), and old item ids mapped to their new items for clients that still hold them |
 | `requests` | Discover requests and their state |
 | `webhook_events`, `ingest_events` | What the arr apps sent, for the Webhooks page and debugging |
 | `settings`, `series_characters*` | Admin settings (arr, TMDB, fanart.tv, transcoding); AniList characters for profile avatars |
@@ -355,6 +356,14 @@ image is published to a registry yet.
 
 - **Stable GUIDs.** Watch state and URLs use an item's GUID, never its row id, so
   re-matching or re-importing keeps history.
+- **History follows moved files.** A GUID comes from a file's path or the id tag in it,
+  so a renamed folder, a move to another library or a re-encode makes a new item. A file
+  whose record is removed is noted as a departure and matched against files that arrive,
+  in any library and either order: the same bytes (size and extension), the same name
+  and length under a title of the same name, or, once matched to a provider, the same
+  film or the same series episode. The old item's watch state, Watchlist marks and
+  hand-picked artwork move to the new one (merged if it has its own), up through season
+  and series, and the old id redirects to the new one (`store/moves.go`).
 - **Never convert subtitles.** ASS/SSA are served byte for byte; remux leaves them for the
   client, transcode copies them. No WebVTT, no burn-in.
 - **Extract at ingest.** Fonts and text tracks are extracted when a file arrives, so no

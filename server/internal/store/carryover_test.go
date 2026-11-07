@@ -9,10 +9,10 @@ import (
 	"github.com/roxy-media/roxy/server/internal/model"
 )
 
-// CarryOver: data only on the old item moves; data on both is merged (the more recently
+// CarryChain: data only on the old item moves; data on both is merged (the more recently
 // played one's position and choices, plays added up, watchlist if either); hand-picked
 // artwork moves over the new item's fetched one; another profile's data is untouched.
-func TestCarryOver(t *testing.T) {
+func TestCarryChain(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -51,8 +51,12 @@ func TestCarryOver(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.CarryOver(ctx, "old", "new"); err != nil {
+	chain, err := s.ItemChain(ctx, "old")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if ok, err := s.CarryChain(ctx, chain, "new"); err != nil || !ok {
+		t.Fatal(ok, err)
 	}
 	p1, _ := s.GetUserItemData(ctx, "p1", "g-new")
 	if p1 == nil || p1.PositionMs != 100_000 || p1.AudioStreamIndex == nil || *p1.AudioStreamIndex != 1 {
@@ -71,5 +75,16 @@ func TestCarryOver(t *testing.T) {
 	var locked int
 	if err := s.db.QueryRowContext(ctx, `SELECT path, locked FROM item_images WHERE item_id = 'new' AND type = 'poster'`).Scan(&path, &locked); err != nil || path != "/picked.jpg" || locked != 1 {
 		t.Fatalf("artwork: %q %d %v", path, locked, err)
+	}
+	// A client still holding the old id (a phone's download) is sent to the new item once
+	// the old one is gone.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM items WHERE id = 'old'`); err != nil {
+		t.Fatal(err)
+	}
+	if it, err := s.GetItemOrMoved(ctx, "old"); err != nil || it == nil || it.ID != "new" {
+		t.Fatalf("redirect: %+v %v", it, err)
+	}
+	if it, _ := s.GetItemOrMoved(ctx, "nothing"); it != nil {
+		t.Fatalf("unknown id resolved to %s", it.ID)
 	}
 }

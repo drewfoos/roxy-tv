@@ -200,6 +200,16 @@ func (s *Service) process(ctx context.Context, j job) error {
 	// with a picture: a frame of its own file where no still came from a provider or
 	// from a file next to the media.
 	defer s.fillStills(ctx, it)
+	// Once it is matched to a provider (here or by its .nfo), a film or episode that left
+	// the library under another name can be recognised by that identity and its watch
+	// history brought over (store.SettleByProvider). Deferred: it needs this job's ids.
+	defer func() {
+		if n, err := s.store.SettleByProvider(ctx, it.ID); err != nil {
+			slog.Warn("moved: matching departures by provider id", "item", it.Title, "err", err)
+		} else if n > 0 {
+			slog.Info("moved: watch history followed by provider id", "item", it.Title, "count", n)
+		}
+	}()
 	s.force = j.force
 	s.replaceImages = j.images
 	// Details set by hand (or a custom show no provider knows) stay as they are.

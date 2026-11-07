@@ -148,7 +148,7 @@ func (s *Server) fillSeriesRefs(ctx context.Context, items []model.Item) {
 }
 
 func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

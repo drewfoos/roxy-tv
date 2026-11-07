@@ -102,7 +102,7 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		off := SubtitlesOff
 		body.SubtitleIndex = &off
 	}
-	it, err := s.store.GetItem(r.Context(), body.ItemID)
+	it, err := s.store.GetItemOrMoved(r.Context(), body.ItemID)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -185,7 +185,7 @@ func (s *Server) setFlag(w http.ResponseWriter, r *http.Request, set func(ctx co
 	if p == nil {
 		return
 	}
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "itemId"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "itemId"))
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

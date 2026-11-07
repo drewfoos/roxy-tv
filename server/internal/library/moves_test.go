@@ -10,6 +10,9 @@ import (
 	"github.com/roxy-media/roxy/server/internal/store"
 )
 
+// durations gives test files a duration by name (the prober would read it).
+var durations = map[string]int64{}
+
 // moveFixture is a store, a library of the given kind, a Library whose scan ingests with
 // the real item resolution but no prober, and a profile to keep watch data for.
 func moveFixture(t *testing.T, kind model.LibraryKind) (*Library, *store.Store, model.Library, string, string) {
@@ -26,7 +29,14 @@ func moveFixture(t *testing.T, kind model.LibraryKind) (*Library, *store.Store, 
 		t.Fatal(err)
 	}
 	l := New(st, nil, nil)
+	// AddFile without the prober: the same item resolution, a source with the file's
+	// size (and a duration from durations, when set), and the same departure check for a
+	// file new to the library.
 	l.ingestOne = func(ctx context.Context, lib model.Library, path string) error {
+		prior, err := st.GetPartByPath(ctx, path)
+		if err != nil {
+			return err
+		}
 		it, err := l.resolveItem(ctx, lib, path)
 		if err != nil {
 			return err
@@ -35,8 +45,14 @@ func moveFixture(t *testing.T, kind model.LibraryKind) (*Library, *store.Store, 
 		if err != nil {
 			return err
 		}
-		return st.ReplaceSource(ctx, &model.MediaSource{ID: stableID("source", path), ItemID: it.ID, IsPrimary: true, Size: fi.Size(),
-			Parts: []model.MediaPart{{ID: stableID("part", path), Path: path, Size: fi.Size(), ModTime: fi.ModTime().UTC()}}}, "{}")
+		if err := st.ReplaceSource(ctx, &model.MediaSource{ID: stableID("source", path), ItemID: it.ID, IsPrimary: true, Size: fi.Size(),
+			Parts: []model.MediaPart{{ID: stableID("part", path), Path: path, Size: fi.Size(), ModTime: fi.ModTime().UTC(), DurationMs: durations[filepath.Base(path)]}}}, "{}"); err != nil {
+			return err
+		}
+		if prior == nil {
+			l.settleDepartures(ctx)
+		}
+		return nil
 	}
 	scope, err := st.DefaultProfileID(ctx, mustUser(t, st))
 	if err != nil {
@@ -227,7 +243,8 @@ func TestCarryMovesExplicitAndStillInUse(t *testing.T) {
 	if err := st.DeleteSource(ctx, part.SourceID); err != nil {
 		t.Fatal(err)
 	}
-	l.CarryMoves(ctx, []Move{{OldPath: v2, OldItem: film, NewPath: moved}})
+	chain, _ := st.ItemChain(ctx, film.ID)
+	l.CarryMoves(ctx, []Move{{OldPath: v2, OldChain: chain, NewPath: moved}})
 	if d, _ := st.GetUserItemData(ctx, scope, film.GUID); d == nil || d.PositionMs != 42_000 {
 		t.Fatalf("the film still has its 1080p file and must keep its history: %+v", d)
 	}
@@ -248,8 +265,187 @@ func TestCarryMovesExplicitAndStillInUse(t *testing.T) {
 	if err := st.DeleteSource(ctx, part.SourceID); err != nil {
 		t.Fatal(err)
 	}
-	l.CarryMoves(ctx, []Move{{OldPath: v1, OldItem: film, NewPath: renamed}})
+	l.CarryMoves(ctx, []Move{{OldPath: v1, OldChain: chain, NewPath: renamed}})
 	if d, _ := st.GetUserItemData(ctx, scope, itemAt(t, st, renamed).GUID); d == nil || d.PositionMs != 42_000 {
 		t.Fatalf("history did not follow the renamed film: %+v", d)
+	}
+}
+
+// twoLibraries2 is moveFixture with a second library in the same store, scanned with the
+// same fake ingest.
+func addLibrary(t *testing.T, st *store.Store, kind model.LibraryKind) model.Library {
+	t.Helper()
+	lib := &model.Library{Name: "L2", Kind: kind, Root: t.TempDir()}
+	if err := st.CreateLibrary(context.Background(), lib); err != nil {
+		t.Fatal(err)
+	}
+	return *lib
+}
+
+// A film moved from one library to another (Anime to Anime Movies). The two libraries are
+// scanned separately, in either order, so the move is never seen within one scan: the
+// departure noted by the source's scan meets the file the destination's scan added.
+func TestHistoryFollowsAFilmToAnotherLibrary(t *testing.T) {
+	for _, destFirst := range []bool{false, true} {
+		ctx := context.Background()
+		l, st, src, root, scope := moveFixture(t, model.KindSeries)
+		dst := addLibrary(t, st, model.KindMovies)
+		old := filepath.Join(root, "Film (2020)", "Film (2020).mkv")
+		writeSized(t, old, 4321)
+		writeSized(t, filepath.Join(root, "Show", "Show - S01E01.mkv"), 10)
+		if err := l.Scan(ctx, src); err != nil {
+			t.Fatal(err)
+		}
+		before := itemAt(t, st, old)
+		if before.Type != model.TypeMovie {
+			t.Fatalf("expected a movie, got %s", before.Type)
+		}
+		if err := st.SetProgress(ctx, scope, before.GUID, 777_000, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		moved := filepath.Join(dst.Root, "Film (2020)", "Film (2020).mkv")
+		writeSized(t, moved, 4321)
+		if err := os.Remove(old); err != nil {
+			t.Fatal(err)
+		}
+		order := []model.Library{src, dst}
+		if destFirst {
+			order = []model.Library{dst, src}
+		}
+		for _, lib := range order {
+			if err := l.Scan(ctx, lib); err != nil {
+				t.Fatal(err)
+			}
+		}
+		after := itemAt(t, st, moved)
+		if d, _ := st.GetUserItemData(ctx, scope, after.GUID); d == nil || d.PositionMs != 777_000 {
+			t.Fatalf("destination scanned first=%v: history did not follow: %+v", destFirst, d)
+		}
+	}
+}
+
+// Moved and re-encoded (a remux: other size, same name and length) follows too; a file of
+// the same name and length under another show (generic "Episode 01" names) does not.
+func TestHistoryFollowsAMovedRemux(t *testing.T) {
+	ctx := context.Background()
+	l, st, lib, root, scope := moveFixture(t, model.KindSeries)
+	durations["Episode 01.mkv"], durations["Episode 01.mp4"] = 1_420_000, 1_420_500
+	t.Cleanup(func() { delete(durations, "Episode 01.mkv"); delete(durations, "Episode 01.mp4") })
+	old := filepath.Join(root, "Show", "Season 01", "Episode 01.mkv")
+	writeSized(t, old, 800)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	ep := itemAt(t, st, old)
+	if err := st.SetProgress(ctx, scope, ep.GUID, 300_000, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Remuxed to .mp4 (another size) in a renamed folder, and another show's Episode 01
+	// of the same length arrives in the same scan.
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+	remux := filepath.Join(root, "Show (2019)", "Season 01", "Episode 01.mp4")
+	writeSized(t, remux, 650)
+	other := filepath.Join(root, "Other Show", "Season 01", "Episode 01.mp4")
+	writeSized(t, other, 640)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := st.GetUserItemData(ctx, scope, itemAt(t, st, remux).GUID); d == nil || d.PositionMs != 300_000 {
+		t.Fatalf("history did not follow the remux: %+v", d)
+	}
+	if d, _ := st.GetUserItemData(ctx, scope, itemAt(t, st, other).GUID); d != nil && d.PositionMs != 0 {
+		t.Fatalf("another show's Episode 01 got the history: %+v", d)
+	}
+}
+
+// Renamed, re-encoded and moved all at once: nothing in the file ties it to the old one
+// until the metadata lookup matches it to the same provider id. Then the film (and, for a
+// series, the episode with the same season and episode number, and the series) follows.
+func TestHistoryFollowsByProviderID(t *testing.T) {
+	ctx := context.Background()
+	l, st, lib, root, scope := moveFixture(t, model.KindMovies)
+	old := filepath.Join(root, "Old Name (2010)", "old.name.2010.720p.mkv")
+	writeSized(t, old, 900)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	film := itemAt(t, st, old)
+	if err := st.SetProviderIDs(ctx, film.ID, map[string]string{"tmdb": "555"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkPlayed(ctx, scope, film.GUID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+	fresh := filepath.Join(root, "Proper Title (2010)", "Proper.Title.2010.2160p.mkv")
+	writeSized(t, fresh, 5000)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	nw := itemAt(t, st, fresh)
+	if d, _ := st.GetUserItemData(ctx, scope, nw.GUID); d != nil && d.Played {
+		t.Fatal("carried before anything tied the two together")
+	}
+	// The metadata lookup matches it.
+	if err := st.SetProviderIDs(ctx, nw.ID, map[string]string{"tmdb": "555"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.SettleByProvider(ctx, nw.ID); err != nil || n != 1 {
+		t.Fatalf("settle by provider: %d %v", n, err)
+	}
+	if d, _ := st.GetUserItemData(ctx, scope, nw.GUID); d == nil || !d.Played {
+		t.Fatalf("history did not follow by provider id: %+v", d)
+	}
+}
+
+func TestHistoryFollowsAnEpisodeByProviderID(t *testing.T) {
+	ctx := context.Background()
+	l, st, lib, root, scope := moveFixture(t, model.KindSeries)
+	old := filepath.Join(root, "Show JP", "Show JP - S01E02.mkv")
+	writeSized(t, old, 111)
+	writeSized(t, filepath.Join(root, "Show JP", "Show JP - S01E01.mkv"), 112)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	ep := itemAt(t, st, old)
+	series := mustParent(t, st, mustParent(t, st, ep))
+	if err := st.SetProviderIDs(ctx, series.ID, map[string]string{"tvdb": "999"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProgress(ctx, scope, ep.GUID, 50_000, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetFavorite(ctx, scope, series.GUID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "Show JP")); err != nil {
+		t.Fatal(err)
+	}
+	e1, e2 := filepath.Join(root, "Show EN", "Show EN - S01E01.mkv"), filepath.Join(root, "Show EN", "Show EN - S01E02.mkv")
+	writeSized(t, e1, 2001)
+	writeSized(t, e2, 2002)
+	if err := l.Scan(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	newEp := itemAt(t, st, e2)
+	newSeries := mustParent(t, st, mustParent(t, st, newEp))
+	if err := st.SetProviderIDs(ctx, newSeries.ID, map[string]string{"tvdb": "999"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SettleByProvider(ctx, newSeries.ID); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := st.GetUserItemData(ctx, scope, newEp.GUID); d == nil || d.PositionMs != 50_000 {
+		t.Fatalf("episode 2's history did not follow: %+v", d)
+	}
+	if d, _ := st.GetUserItemData(ctx, scope, itemAt(t, st, e1).GUID); d != nil && d.PositionMs != 0 {
+		t.Fatalf("episode 1 got episode 2's history: %+v", d)
+	}
+	if d, _ := st.GetUserItemData(ctx, scope, newSeries.GUID); d == nil || !d.IsFavorite {
+		t.Fatalf("the series' watchlist mark did not follow: %+v", d)
 	}
 }

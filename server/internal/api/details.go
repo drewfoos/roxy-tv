@@ -64,7 +64,7 @@ var (
 
 func (s *Server) itemDetails(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	it, err := s.store.GetItem(ctx, chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(ctx, chi.URLParam(r, "id"))
 	if err != nil || it == nil {
 		writeError(w, 404, "item not found")
 		return

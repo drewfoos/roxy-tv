@@ -271,8 +271,6 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
-	// New files by size, to recognise a file that moved (see detectMoves).
-	addedBySize := map[int64][]string{}
 	// What the walk could not read. Any of it makes this scan a failed one for removals:
 	// nothing recorded is deleted until a scan that read everything shows a file is
 	// really gone (a read error can mean a failing disk or a half-mounted drive, so what
@@ -363,8 +361,6 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			if len(ingestErrs) < 3 {
 				ingestErrs = append(ingestErrs, fmt.Sprintf("%s (%v)", filepath.Base(path), err))
 			}
-		} else if _, ok := known[path]; !ok {
-			addedBySize[info.Size()] = append(addedBySize[info.Size()], path)
 		}
 		return nil
 	})
@@ -382,22 +378,14 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 
 	removed := 0
-	// Files gone from where they were and found somewhere else in this scan (a renamed
-	// folder, a moved file): paired before their records go, so the watch history on
-	// their old items can follow them to the new ones.
-	var moves []Move
-	if len(unreadable) == 0 {
-		var vanished []string
-		for path := range known {
-			if !seen[path] {
-				vanished = append(vanished, path)
-			}
-		}
-		moves = l.detectMoves(ctx, vanished, addedBySize)
-	}
 	for path, sourceID := range known {
 		if seen[path] || len(unreadable) > 0 {
 			continue
+		}
+		// Noted first, so its watch history can follow it if it turns up elsewhere (this
+		// scan, another library's, or later).
+		if err := l.store.RecordDeparture(ctx, path); err != nil {
+			slog.Warn("noting a vanished file", "path", path, "err", err)
 		}
 		if err := l.store.DeleteSource(ctx, sourceID); err != nil {
 			slog.Warn("removing vanished source", "path", path, "err", err)
@@ -405,7 +393,7 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 		}
 		removed++
 	}
-	l.CarryMoves(ctx, moves) // before the old items are pruned
+	l.settleDepartures(ctx) // before the old items are pruned
 	// Always: orphans can also date from before this pruning existed, and the query is cheap.
 	if n, err := l.store.PruneOrphans(ctx); err != nil {
 		slog.Warn("pruning orphaned items", "err", err)
@@ -471,6 +459,12 @@ func (l *Library) AddFile(ctx context.Context, lib model.Library, path string) e
 func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) error {
 	// The file must really be inside the library: a symlink out of it is not media.
 	if _, err := safefs.ResolveUnder(path, lib.Root); err != nil {
+		return err
+	}
+	// A file new to the library may be one that left it elsewhere (moved, renamed,
+	// re-encoded): checked against departures once it is in (see settleDepartures).
+	prior, err := l.store.GetPartByPath(ctx, path)
+	if err != nil {
 		return err
 	}
 	item, err := l.resolveItemHinted(ctx, lib, path, hint)
@@ -547,6 +541,9 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 
 	if err := l.store.ReplaceSource(ctx, src, string(res.Raw)); err != nil {
 		return err
+	}
+	if prior == nil {
+		l.settleDepartures(ctx)
 	}
 	slog.Info("ingested", "item", item.Title, "type", item.Type, "file", filepath.Base(path), "streams", len(src.Streams), "fonts", len(src.Attachments))
 	if l.OnItemIngested != nil {

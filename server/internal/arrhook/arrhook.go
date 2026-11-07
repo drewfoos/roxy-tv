@@ -185,13 +185,15 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 				// The item it had, so its watch history can follow it if the new path
 				// makes it a new item (a renamed series or movie folder).
 				mv.OldPath = old
-				mv.OldItem, _ = s.store.ItemForPath(ctx, old)
+				if it, _ := s.store.ItemForPath(ctx, old); it != nil {
+					mv.OldChain, _ = s.store.ItemChain(ctx, it.ID)
+				}
 				s.removePath(ctx, old)
 			}
 			local, ok := s.resolve(ctx, p.absolute(f))
 			if ok && s.lib.IngestPathHinted(ctx, local, hint) == nil {
 				n++
-				if mv.OldItem != nil {
+				if len(mv.OldChain) > 0 {
 					mv.NewPath = local
 					moves = append(moves, mv)
 				}
@@ -199,6 +201,7 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 			ev.Path = local
 		}
 		s.lib.CarryMoves(ctx, moves) // before the old items are pruned
+		s.lib.SettleDepartures(ctx)  // a rename whose new path could not be ingested now
 		s.prune(ctx)
 		ev.Result = fmt.Sprintf("renamed %d of %d", n, len(renamed))
 	case "EpisodeFileDelete", "MovieFileDelete":
@@ -215,6 +218,7 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 			break
 		}
 		if s.removePath(ctx, local) {
+			s.lib.SettleDepartures(ctx)
 			s.prune(ctx)
 			ev.Result = "removed"
 		} else {
@@ -227,11 +231,16 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 			ev.Result = "ignored: unknown folder"
 			break
 		}
+		// Noted first: the same show or film added again elsewhere gets its history back.
+		if err := s.store.RecordDeparturesUnder(ctx, local); err != nil {
+			slog.Warn("webhook: noting removed files", "folder", local, "err", err)
+		}
 		n, err := s.store.DeleteSourcesUnder(ctx, local)
 		if err != nil {
 			ev.Result = "error: " + err.Error()
 			break
 		}
+		s.lib.SettleDepartures(ctx)
 		s.prune(ctx)
 		ev.Result = fmt.Sprintf("removed %d file(s)", n)
 	case "Test":
@@ -333,11 +342,16 @@ func (s *Service) IngestArrFiles(ctx context.Context, paths []string) int {
 	return n
 }
 
-// removePath drops the source whose first part is at path. True when one was there.
+// removePath drops the source whose first part is at path, noting its departure first so
+// its watch history can follow it if it turns up again (moved, renamed, fetched again).
+// True when one was there.
 func (s *Service) removePath(ctx context.Context, path string) bool {
 	part, err := s.store.GetPartByPath(ctx, path)
 	if err != nil || part == nil {
 		return false
+	}
+	if err := s.store.RecordDeparture(ctx, path); err != nil {
+		slog.Warn("webhook: noting a removed file", "path", path, "err", err)
 	}
 	return s.store.DeleteSource(ctx, part.SourceID) == nil
 }
