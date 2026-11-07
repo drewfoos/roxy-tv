@@ -37,7 +37,7 @@ func moveFixture(t *testing.T, kind model.LibraryKind) (*Library, *store.Store, 
 		if err != nil {
 			return err
 		}
-		it, err := l.resolveItem(ctx, lib, path)
+		it, err := l.resolveForIngest(ctx, lib, path, nil)
 		if err != nil {
 			return err
 		}

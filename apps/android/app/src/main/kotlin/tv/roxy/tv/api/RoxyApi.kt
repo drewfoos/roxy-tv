@@ -227,6 +227,9 @@ class RoxyApi(private val prefs: Prefs) {
     /** Franchise view: movies/OVAs/side stories linked to an item, and the series it is part of. */
     suspend fun related(id: String): RelatedResponse = get("/v1/items/$id/related")
 
+    /** A film's or show's trailers, featurettes and other extras (each plays like any item). */
+    suspend fun extras(id: String): List<Item> = get<ItemsResponse>("/v1/items/$id/extras").items
+
     suspend fun source(id: String): MediaSource = get("/v1/sources/$id")
 
     /** The "More details" page: item, library facts, TMDB extras, provider links. */
@@ -798,6 +801,8 @@ data class Item(
     val relatedCount: Int = 0,
     val indexAired: Int? = null,
     val seasonAired: Int? = null,
+    /** An extra (type "extra"): trailer, featurette, behindthescenes, deleted, interview, scene, short, clip, theme or extra. */
+    val extraType: String? = null,
     val indexAbsolute: Int? = null,
     val runtimeMs: Long? = null,
     val dateCreated: String? = null,

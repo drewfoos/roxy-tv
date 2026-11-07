@@ -11,6 +11,7 @@ import { GridSkeleton, Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
+import { ExtrasRow } from '../components/Extras'
 
 /**
  * A series, laid out like Crunchyroll's: the banner with the info over its left side,
@@ -114,6 +115,7 @@ export function Series() {
               </button>
             </div>
           )}
+          <ExtrasRow id={id} />
           {relatedItems.length > 0 && (
             <Row title="Movies & OVAs">
               {relatedItems.map((it) => (

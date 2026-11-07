@@ -88,6 +88,19 @@ func (s *Store) migrate(ctx context.Context) error {
 			tx.Rollback()
 			return fmt.Errorf("migration %s: %w", name, err)
 		}
+		// A migration that edits sqlite_master directly (writable_schema) must bump the
+		// schema cookie, or connections keep using the schema they parsed before it.
+		if strings.Contains(string(body), "writable_schema") {
+			var v int
+			if err := tx.QueryRowContext(ctx, `PRAGMA schema_version`).Scan(&v); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %s: %w", name, err)
+			}
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA schema_version = %d`, v+1)); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %s: %w", name, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, name, Now()); err != nil {
 			tx.Rollback()
 			return err

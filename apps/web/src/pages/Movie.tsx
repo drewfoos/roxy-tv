@@ -11,6 +11,7 @@ import { Spinner } from '../components/Skeleton'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
+import { ExtrasRow } from '../components/Extras'
 
 /** A film: the same frame as a series, the film as one card under a "Movie" tab, and "Part of" links. */
 export function Movie() {
@@ -95,6 +96,7 @@ export function Movie() {
               </div>
             </div>
           </div>
+          <ExtrasRow id={movie.id} />
           {relatedItems.length > 0 && (
             <Row title="Related">
               {relatedItems.map((it) => (

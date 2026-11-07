@@ -23,6 +23,10 @@ data class SeriesUiState(
     val related: List<RelatedEntry> = emptyList(),
     /** The "Movies & OVAs" tab is selected instead of a season. */
     val showRelated: Boolean = false,
+    /** The show's trailers, featurettes and other extras. */
+    val extras: List<Item> = emptyList(),
+    /** The "Extras" entry is selected instead of a season. */
+    val showExtras: Boolean = false,
     /** What Play plays, across all seasons (null until the episode list is in). */
     val upNext: Item? = null,
 )
@@ -106,18 +110,21 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
             runCatching { api.related(seriesId).related }
                 .onSuccess { rel -> relatedLoaded = true; _state.value = _state.value.copy(related = rel) }
                 .onFailure { Timber.w(it, "related load failed") } // older server: no row, nothing else breaks
+            runCatching { api.extras(seriesId) }
+                .onSuccess { x -> _state.value = _state.value.copy(extras = x) }
+                .onFailure { Timber.w(it, "extras load failed") }
         }
     }
 
     fun selectSeason(index: Int) {
         val s = _state.value
         if (index !in s.seasons.indices) return
-        if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showRelated) return
+        if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showRelated && !s.showExtras) return
         userPicked = true
         // A different season empties the list until its episodes land, so the old season's
         // episodes are never shown (or played) under the new season's name.
         val other = index != s.selectedSeason
-        _state.value = s.copy(selectedSeason = index, showRelated = false, episodes = if (other) emptyList() else s.episodes)
+        _state.value = s.copy(selectedSeason = index, showRelated = false, showExtras = false, episodes = if (other) emptyList() else s.episodes)
         if (other || s.episodes.isEmpty()) loadEpisodes(s.seasons[index].id)
     }
 
@@ -125,7 +132,11 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     private var episodesJob: Job? = null
 
     fun selectRelated() {
-        _state.value = _state.value.copy(showRelated = true)
+        _state.value = _state.value.copy(showRelated = true, showExtras = false)
+    }
+
+    fun selectExtras() {
+        _state.value = _state.value.copy(showExtras = true, showRelated = false)
     }
 
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {

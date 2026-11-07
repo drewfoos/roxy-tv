@@ -239,8 +239,8 @@ func (s *Store) RecordDeparture(ctx context.Context, path string) error {
 		return err
 	}
 	it, err := s.ItemForPath(ctx, path)
-	if err != nil || it == nil || it.IsVirtual {
-		return err
+	if err != nil || it == nil || it.IsVirtual || it.Type == model.TypeExtra {
+		return err // an extra's file leaving needs no history carried
 	}
 	chain, err := s.ItemChain(ctx, it.ID)
 	if err != nil || len(chain) == 0 {

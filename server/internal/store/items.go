@@ -17,7 +17,7 @@ import (
 var itemColNames = []string{"id", "guid", "library_id", "type", "parent_id", "title", "sort_title", "year", "overview",
 	"index_aired", "season_aired", "index_absolute", "runtime_ms", "date_created", "date_modified",
 	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual",
-	"season_count", "related_count", "advisories", "index_aired_end", "airs_before_season", "airs_before_episode", "airs_after_season"}
+	"season_count", "related_count", "advisories", "index_aired_end", "airs_before_season", "airs_before_episode", "airs_after_season", "extra_type"}
 
 var itemCols = strings.Join(itemColNames, ", ")
 
@@ -32,14 +32,14 @@ func itemColsFor(alias string) string {
 // scanItem reads one item row; extra receives any columns selected after itemCols.
 func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, error) {
 	var it model.Item
-	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed, advisories sql.NullString
+	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed, advisories, extraType sql.NullString
 	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount, idxEnd, beforeSeason, beforeEp, afterSeason sql.NullInt64
 	var rating sql.NullFloat64
 	var created, modified string
 	var virtual int
 	dest := []any{&it.ID, &it.GUID, &it.LibraryID, &it.Type, &parent, &it.Title, &sortTitle, &year, &overview,
 		&idxAired, &seasonAired, &idxAbs, &runtime, &created, &modified,
-		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd, &beforeSeason, &beforeEp, &afterSeason}
+		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd, &beforeSeason, &beforeEp, &afterSeason, &extraType}
 	dest = append(dest, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return nil, err
@@ -53,6 +53,7 @@ func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, er
 	it.IndexAbsolute = ptrInt(idxAbs)
 	it.IndexAiredEnd = ptrInt(idxEnd)
 	it.AirsBeforeSeason, it.AirsBeforeEpisode, it.AirsAfterSeason = ptrInt(beforeSeason), ptrInt(beforeEp), ptrInt(afterSeason)
+	it.ExtraType = extraType.String
 	it.RuntimeMs = ptrInt64(runtime)
 	it.DateCreated = ParseTime(created)
 	it.DateModified = ParseTime(modified)
@@ -240,6 +241,10 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 			args = append(args, string(t))
 		}
 		where = append(where, "type IN ("+strings.Join(ph, ",")+")")
+	} else {
+		// Extras are listed only when asked for (ItemsExtras); never with a title's
+		// children or a library's items.
+		where = append(where, "type <> 'extra'")
 	}
 	if q.ParentID != "" {
 		if q.Recursive {
@@ -349,18 +354,21 @@ func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 			sort_title = COALESCE(?, sort_title),
 			year = CASE WHEN metadata_refreshed_at IS NULL THEN ? ELSE COALESCE(year, ?) END,
 			overview = COALESCE(overview, ?),
-			index_aired=?, season_aired=?, index_absolute=?, index_aired_end=?, runtime_ms=COALESCE(?, runtime_ms), is_virtual=?, date_modified=? WHERE id=?`,
+			index_aired=?, season_aired=?, index_absolute=?, index_aired_end=?, runtime_ms=COALESCE(?, runtime_ms), is_virtual=?,
+			extra_type=COALESCE(?, extra_type), date_modified=? WHERE id=?`,
 			it.LibraryID, it.Type, strPtrNull(it.ParentID), it.Title, nullStr(it.SortTitle), intPtrNull(it.Year), intPtrNull(it.Year), nullStr(it.Overview),
-			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual), now, it.ID)
+			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual),
+			nullStr(it.ExtraType), now, it.ID)
 	} else {
 		if it.ID == "" {
 			return errors.New("UpsertItem: new item needs an ID")
 		}
 		it.DateCreated = ParseTime(now)
 		_, err = s.db.ExecContext(ctx, `INSERT INTO items (id, guid, library_id, type, parent_id, title, sort_title, year, overview,
-			index_aired, season_aired, index_absolute, index_aired_end, runtime_ms, is_virtual, date_created, date_modified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			index_aired, season_aired, index_absolute, index_aired_end, runtime_ms, is_virtual, extra_type, date_created, date_modified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			it.ID, it.GUID, it.LibraryID, it.Type, strPtrNull(it.ParentID), it.Title, nullStr(it.SortTitle), intPtrNull(it.Year), nullStr(it.Overview),
-			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual), now, now)
+			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual),
+			nullStr(it.ExtraType), now, now)
 		if err == nil {
 			_, err = s.db.ExecContext(ctx, `INSERT INTO items_fts (rowid, title) SELECT rowid, title FROM items WHERE id = ?`, it.ID)
 		}
@@ -493,7 +501,7 @@ func (s *Store) DeleteShadowedPlaceholders(ctx context.Context, seriesID string)
 func (s *Store) PruneOrphans(ctx context.Context) (int, error) {
 	total := 0
 	for _, q := range []string{
-		`DELETE FROM items WHERE type IN ('episode','movie') AND is_virtual = 0 AND NOT EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = items.id)`,
+		`DELETE FROM items WHERE type IN ('episode','movie','extra') AND is_virtual = 0 AND NOT EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = items.id)`,
 		`DELETE FROM items WHERE ` + shadowedPlaceholders,
 		`DELETE FROM items WHERE type = 'season' AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
 		`DELETE FROM items WHERE type = 'series' AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
@@ -506,6 +514,52 @@ func (s *Store) PruneOrphans(ctx context.Context) (int, error) {
 		total += int(n)
 	}
 	return total, nil
+}
+
+// Extras lists the extras of a film or show (trailers, featurettes, ...), by kind then
+// title, with their files.
+func (s *Store) Extras(ctx context.Context, ownerID string) ([]model.Item, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items WHERE parent_id = ? AND type = 'extra'
+		ORDER BY CASE extra_type WHEN 'trailer' THEN 0 ELSE 1 END, extra_type, title COLLATE NOCASE`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	var out []model.Item
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, *it)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.fillItemExtras(ctx, out)
+}
+
+// ItemsWithMediaUnder lists the titles (top-level items: movies and series) whose files
+// sit at or below dir, with the file paths, extras left out.
+func (s *Store) ItemsWithMediaUnder(ctx context.Context, dir string) (map[string]string, error) {
+	dir = strings.TrimRight(dir, `\/`)
+	rows, err := s.db.QueryContext(ctx, `SELECT mp.path, ms.item_id FROM media_parts mp JOIN media_sources ms ON ms.id = mp.source_id
+		JOIN items i ON i.id = ms.item_id WHERE i.type <> 'extra' AND `+strings.ReplaceAll(underDir, "path", "mp.path"), underDirArgs(dir)...)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{} // path -> item id
+	for rows.Next() {
+		var p, id string
+		if err := rows.Scan(&p, &id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out[p] = id
+	}
+	rows.Close()
+	return out, rows.Err()
 }
 
 // SetSpecialPlacement records where a special belongs in story order (nil clears each).

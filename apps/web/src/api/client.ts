@@ -196,6 +196,8 @@ export const api = {
   item: (id: string) => get<Item>(`/v1/items/${id}`),
   source: (id: string) => get<MediaSource>(`/v1/sources/${id}`),
   related: (id: string) => get<RelatedResponse>(`/v1/items/${id}/related`),
+  /** A film's or show's trailers, featurettes and other extras (each plays like any item). */
+  extras: (id: string) => get<{ items: Item[] }>(`/v1/items/${id}/extras`),
   similar: (id: string) => get<{ items: DiscoverItem[] }>(`/v1/items/${id}/similar`),
   /** The Watchlist: the profile's favourites, newest first (the same query as the phone). */
   favorites: (limit = 200) => get<ItemsResponse>(`/v1/items?type=series,movie&recursive=1&favorites=1&sort=date_created&desc=1&limit=${limit}`),

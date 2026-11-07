@@ -9,7 +9,7 @@ import timber.log.Timber
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
 
-data class MovieUiState(val loading: Boolean = true, val error: String? = null, val movie: Item? = null, val partOf: List<Item> = emptyList())
+data class MovieUiState(val loading: Boolean = true, val error: String? = null, val movie: Item? = null, val partOf: List<Item> = emptyList(), val extras: List<Item> = emptyList())
 
 class MovieViewModel(private val api: RoxyApi, private val movieId: String, initial: Item? = null) : ViewModel() {
     private val _state = MutableStateFlow(MovieUiState(movie = initial))
@@ -19,7 +19,7 @@ class MovieViewModel(private val api: RoxyApi, private val movieId: String, init
     fun load() {
         viewModelScope.launch {
             runCatching { api.item(movieId) }
-                .onSuccess { _state.value = MovieUiState(loading = false, movie = it, partOf = _state.value.partOf) }
+                .onSuccess { _state.value = MovieUiState(loading = false, movie = it, partOf = _state.value.partOf, extras = _state.value.extras) }
                 .onFailure { t ->
                     Timber.e(t, "movie load failed")
                     // A failed reload keeps the page; only a first load shows the error.
@@ -32,6 +32,10 @@ class MovieViewModel(private val api: RoxyApi, private val movieId: String, init
             runCatching { api.related(movieId).partOf }
                 .onSuccess { p -> relatedLoaded = true; _state.value = _state.value.copy(partOf = p) }
                 .onFailure { Timber.w(it, "related load failed") }
+            // Trailers, featurettes and the like (an older server has none to list).
+            runCatching { api.extras(movieId) }
+                .onSuccess { x -> _state.value = _state.value.copy(extras = x) }
+                .onFailure { Timber.w(it, "extras load failed") }
         }
     }
 }

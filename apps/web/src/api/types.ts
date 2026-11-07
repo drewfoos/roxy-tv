@@ -123,6 +123,8 @@ export interface Item {
   seasonCount?: number | null
   relatedCount?: number
   indexAired?: number | null
+  /** An extra (type "extra"): trailer, featurette, behindthescenes, deleted, interview, scene, short, clip, theme or extra. */
+  extraType?: string
   seasonAired?: number | null
   indexAbsolute?: number | null
   runtimeMs?: number | null

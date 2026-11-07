@@ -11,6 +11,9 @@ const (
 	TypeSeries  ItemType = "series"
 	TypeSeason  ItemType = "season"
 	TypeEpisode ItemType = "episode"
+	// TypeExtra is a trailer, featurette, deleted scene and the like, under the film or
+	// show it belongs to (ExtraType says which). Never listed with the library's titles.
+	TypeExtra ItemType = "extra"
 )
 
 type LibraryKind string
@@ -45,13 +48,16 @@ type Item struct {
 	// A special's place in story order: before episode AirsBeforeEpisode of season
 	// AirsBeforeSeason (episode missing: before the season), or after season
 	// AirsAfterSeason. From its .nfo; next-up follows it.
-	AirsBeforeSeason  *int              `json:"airsBeforeSeason,omitempty"`
-	AirsBeforeEpisode *int              `json:"airsBeforeEpisode,omitempty"`
-	AirsAfterSeason   *int              `json:"airsAfterSeason,omitempty"`
-	RuntimeMs         *int64            `json:"runtimeMs,omitempty"`
-	ProviderIDs       map[string]string `json:"providerIds,omitempty"`
-	DateCreated       time.Time         `json:"dateCreated"`
-	DateModified      time.Time         `json:"dateModified"`
+	AirsBeforeSeason  *int `json:"airsBeforeSeason,omitempty"`
+	AirsBeforeEpisode *int `json:"airsBeforeEpisode,omitempty"`
+	AirsAfterSeason   *int `json:"airsAfterSeason,omitempty"`
+	// ExtraType, for an extra: trailer, featurette, behindthescenes, deleted, interview,
+	// scene, short, clip, theme or extra.
+	ExtraType    string            `json:"extraType,omitempty"`
+	RuntimeMs    *int64            `json:"runtimeMs,omitempty"`
+	ProviderIDs  map[string]string `json:"providerIds,omitempty"`
+	DateCreated  time.Time         `json:"dateCreated"`
+	DateModified time.Time         `json:"dateModified"`
 
 	// Provider metadata (docs/api/native.md "Metadata and images"). Empty until the
 	// metadata service matched the item.

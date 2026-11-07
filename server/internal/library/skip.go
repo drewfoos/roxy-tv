@@ -18,18 +18,9 @@ var skipDirs = map[string]string{
 	"torrents":     "Download client folder",
 	"incomplete":   "Unfinished downloads",
 	"intermediate": "Unfinished downloads",
-	// Extras that belong to a title, not titles of their own.
-	"extras":            "Extras",
-	"featurettes":       "Extras",
-	"behind the scenes": "Extras",
-	"deleted scenes":    "Extras",
-	"interviews":        "Extras",
-	"scenes":            "Extras",
-	"shorts":            "Extras",
-	"trailers":          "Extras",
-	"clips":             "Extras",
-	"sample":            "Samples",
-	"samples":           "Samples",
+	// Extras folders are not skipped: their videos become extras of the title (extras.go).
+	"sample":  "Samples",
+	"samples": "Samples",
 	// NAS and OS housekeeping.
 	"@eadir":                    "System folder",
 	"#recycle":                  "Recycle bin",

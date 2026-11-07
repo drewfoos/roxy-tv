@@ -170,6 +170,31 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, one[0])
 }
 
+// GET /v1/items/{id}/extras -> {items}: a film's or show's trailers, featurettes and the
+// like, trailers first, each with its file (play one like any item).
+func (s *Server) itemExtras(w http.ResponseWriter, r *http.Request) {
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if it == nil {
+		writeError(w, 404, "item not found")
+		return
+	}
+	extras, err := s.store.Extras(r.Context(), it.ID)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if extras == nil {
+		extras = []model.Item{}
+	}
+	fillAvailability(extras)
+	s.attachUserData(r.Context(), extras)
+	writeJSON(w, 200, map[string]any{"items": extras})
+}
+
 func (s *Server) getSource(w http.ResponseWriter, r *http.Request) {
 	src, err := s.store.GetSource(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

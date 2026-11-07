@@ -271,6 +271,7 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	}
 	seen := map[string]bool{}
 	var added, updated, skipped int
+	var extras []string // extras found by the walk, ingested after it
 	// What the walk could not read. Any of it makes this scan a failed one for removals:
 	// nothing recorded is deleted until a scan that read everything shows a file is
 	// really gone (a read error can mean a failing disk or a half-mounted drive, so what
@@ -315,6 +316,13 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 			return nil
 		}
 		seen[path] = true
+		// Extras wait until the titles are in: "Film-trailer.mkv" sorts before "Film.mkv".
+		if rel, err := filepath.Rel(lib.Root, path); err == nil {
+			if _, _, _, isExtra := ExtraOf(filepath.ToSlash(rel)); isExtra {
+				extras = append(extras, path)
+				return nil
+			}
+		}
 		info, err := d.Info()
 		if err != nil {
 			// Seen, so its record is kept; but it could not be checked or updated, and the
@@ -366,6 +374,24 @@ func (l *Library) scan(ctx context.Context, lib model.Library, force bool) error
 	})
 	if err != nil {
 		return err
+	}
+	for _, path := range extras {
+		ingest := l.ingestOne
+		if ingest == nil {
+			ingest = l.addFileSafe
+		}
+		if l.extraUpToDate(ctx, path) {
+			skipped++
+			continue
+		}
+		if _, ok := known[path]; ok {
+			updated++
+		} else {
+			added++
+		}
+		if err := ingest(ctx, lib, path); err != nil {
+			slog.Warn("extra not added", "path", path, "err", err)
+		}
 	}
 	if rootErr != nil {
 		return fmt.Errorf("the library folder %s cannot be read (%v); nothing was removed", lib.Root, rootErr)
@@ -476,7 +502,7 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 			priorChain, _ = l.store.ItemChain(ctx, old.ID)
 		}
 	}
-	item, err := l.resolveItemHinted(ctx, lib, path, hint)
+	item, err := l.resolveForIngest(ctx, lib, path, hint)
 	if err != nil {
 		return err
 	}
@@ -633,6 +659,17 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 }
 
 // resolveItem maps a file to its item using folder structure and filename (fallback mode).
+// resolveForIngest is the item a file being ingested belongs to: an extra under its title
+// (extras.go), or the movie or episode its name and folders say.
+func (l *Library) resolveForIngest(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) (*model.Item, error) {
+	if rel, err := filepath.Rel(lib.Root, path); err == nil {
+		if kind, ownerDir, base, isExtra := ExtraOf(filepath.ToSlash(rel)); isExtra {
+			return l.resolveExtra(ctx, lib, path, kind, ownerDir, base)
+		}
+	}
+	return l.resolveItemHinted(ctx, lib, path, hint)
+}
+
 func (l *Library) resolveItem(ctx context.Context, lib model.Library, path string) (*model.Item, error) {
 	return l.resolveItemHinted(ctx, lib, path, nil)
 }
@@ -925,6 +962,9 @@ func folderHoldsOneFilm(dir string) (bool, error) {
 		n := e.Name()
 		if e.IsDir() || !videoExts[strings.ToLower(filepath.Ext(n))] || SkipFileReason(n) != "" {
 			continue
+		}
+		if _, _, _, isExtra := ExtraOf("x/" + n); isExtra {
+			continue // "Film (2020)-trailer.mkv" is the film's extra, not another version
 		}
 		stems = append(stems, strings.TrimSuffix(n, filepath.Ext(n)))
 	}

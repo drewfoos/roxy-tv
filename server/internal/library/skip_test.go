@@ -30,12 +30,13 @@ func TestSkipDirReason(t *testing.T) {
 		}
 		return p
 	}
-	for _, n := range []string{"downloads", "Incomplete", "Featurettes", "@eaDir", "#recycle", "_UNPACK_Frieren", ".grab"} {
+	for _, n := range []string{"downloads", "Incomplete", "Samples", "@eaDir", "#recycle", "_UNPACK_Frieren", ".grab"} {
 		if SkipDirReason(mk(n)) == "" {
 			t.Errorf("%q should be skipped", n)
 		}
 	}
-	for _, n := range []string{"Frieren (2023)", "Season 01", "Specials", "Shomin Sample (2015)", "Downloaded Memories (2020)"} {
+	// Extras folders are scanned: their videos become extras of the title (extras.go).
+	for _, n := range []string{"Frieren (2023)", "Season 01", "Specials", "Shomin Sample (2015)", "Downloaded Memories (2020)", "Featurettes", "Trailers"} {
 		if r := SkipDirReason(mk(n)); r != "" {
 			t.Errorf("%q should be scanned, got %q", n, r)
 		}

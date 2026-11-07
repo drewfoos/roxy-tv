@@ -133,7 +133,24 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                         onMarkWatched = { on -> scope.launch { app.markWatched(movie.id, on) } },
                     )
                 }
+                if (state.extras.isNotEmpty()) {
+                    item(key = "extras-head") { ExtrasHeading() }
+                    items(state.extras, key = { "extra:" + it.id }) { x ->
+                        PhoneEpisodeRow(
+                            x, app.api,
+                            onClick = { scope.launch { playItem(context, x) } },
+                            onDownload = { startDownload(listOf(x), movie, null) },
+                            onMarkWatched = { on -> scope.launch { app.markWatched(x.id, on) } },
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+/** "Extras" over a title's trailers, featurettes and the like. */
+@Composable
+internal fun ExtrasHeading() {
+    Text("Extras", color = RoxyColors.onBackground, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.padding(start = PhonePad, end = PhonePad, top = 22.dp, bottom = 6.dp))
 }

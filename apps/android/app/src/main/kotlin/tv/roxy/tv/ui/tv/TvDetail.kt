@@ -173,14 +173,17 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
         ),
     )
     var tab by rememberSaveable(seriesId) { mutableStateOf(0) }
-    TitlePage(title = series, play = next, api = app.api, actions = actions, tabs = listOf("Episodes", "Details", "More like this"), tab = tab, onTab = { tab = it }) { first ->
-        when (tab) {
-            0 -> EpisodesTab(
+    // An "Extras" tab only for a show with trailers, featurettes and the like.
+    val tabs = listOf("Episodes", "Details") + (if (state.extras.isNotEmpty()) listOf("Extras") else emptyList()) + "More like this"
+    TitlePage(title = series, play = next, api = app.api, actions = actions, tabs = tabs, tab = tab.coerceIn(0, tabs.lastIndex), onTab = { tab = it }) { first ->
+        when (tabs[tab.coerceIn(0, tabs.lastIndex)]) {
+            "Episodes" -> EpisodesTab(
                 seasons = state.seasons, selected = state.selectedSeason, onSelectSeason = vm::selectSeason,
                 episodes = state.episodes, loading = state.episodesLoading, api = app.api, onPlay = ::play, first = first,
                 onPlayFromStart = { ep -> scope.launch { playItem(context, ep, fromStart = true).onFailure { Timber.w(it, "play failed") } } },
             )
-            1 -> DetailsTab(series, app.api, first)
+            "Details" -> DetailsTab(series, app.api, first)
+            "Extras" -> ExtrasTab(state.extras, app.api, first)
             else -> MoreLikeThisTab(series, app.api, related = state.related.mapNotNull { if (it.inLibrary) it.item else null }, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, onOpenDiscover = onOpenDiscover, first = first)
         }
     }
@@ -211,9 +214,10 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
         if (started) add(TitleAction(key = "restart", label = "Start over", icon = Icons.Filled.Replay, onClick = { play(fromStart = true) }))
     }
     var tab by rememberSaveable(movieId) { mutableStateOf(0) }
-    TitlePage(title = movie, play = movie, api = app.api, actions = actions, tabs = listOf("Movie", "Details", "More like this"), tab = tab, onTab = { tab = it }) { first ->
-        when (tab) {
-            0 -> Row(modifier = Modifier.fillMaxSize()) {
+    val tabs = listOf("Movie", "Details") + (if (state.extras.isNotEmpty()) listOf("Extras") else emptyList()) + "More like this"
+    TitlePage(title = movie, play = movie, api = app.api, actions = actions, tabs = tabs, tab = tab.coerceIn(0, tabs.lastIndex), onTab = { tab = it }) { first ->
+        when (tabs[tab.coerceIn(0, tabs.lastIndex)]) {
+            "Movie" -> Row(modifier = Modifier.fillMaxSize()) {
                 // No seasons on a movie: the film takes the seasons' place at the left, under its tab.
                 Spacer(Modifier.width(PageStart - TvDims.FocusBorder))
                 Column(modifier = Modifier.padding(top = 27.dp)) {
@@ -223,8 +227,29 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
                     if (movie.isPlayable) Text("Hold OK for options", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = TvDims.FocusBorder, top = 10.dp))
                 }
             }
-            1 -> DetailsTab(movie, app.api, first)
+            "Details" -> DetailsTab(movie, app.api, first)
+            "Extras" -> ExtrasTab(state.extras, app.api, first)
             else -> MoreLikeThisTab(movie, app.api, related = state.partOf, onOpenSeries = onOpenSeries, onOpenMovie = onOpenMovie, onOpenDiscover = onOpenDiscover, first = first)
+        }
+    }
+}
+
+/** A title's trailers, featurettes and other extras, one row each; OK plays one. */
+@Composable
+private fun ExtrasTab(extras: List<Item>, api: RoxyApi, first: FocusRequester) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Row(modifier = Modifier.fillMaxSize()) {
+        Spacer(Modifier.width(PageStart - TvDims.FocusBorder))
+        androidx.compose.foundation.lazy.LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 27.dp, bottom = 48.dp)) {
+            items(extras.size, key = { extras[it].id }) { i ->
+                val x = extras[i]
+                EpisodeRow(
+                    x, api, index = i,
+                    onClick = { scope.launch { playItem(context, x).onFailure { Timber.w(it, "play failed") } } },
+                    modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                )
+            }
         }
     }
 }
