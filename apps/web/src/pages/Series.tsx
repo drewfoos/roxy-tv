@@ -26,7 +26,7 @@ export function Series() {
   const { data: seasonsRes } = useAsync(`seasons:${id}`, () => api.items({ type: 'season', parent: id, sort: 'index' }), [id])
   // The season list in release order: the seasons, the specials between them ("OVAs") and
   // the franchise's films, as entries of their own (the plain list from an older server).
-  const { data: sections } = useAsync(`sections:${id}`, () => api.sections(id).catch(() => null), [id])
+  const { data: sections, reload: reloadSections } = useAsync(`sections:${id}`, () => api.sections(id).catch(() => null), [id])
   const seasons: SeasonEntry[] = useMemo(() => {
     const list = seasonsRes?.items ?? []
     return sectionEntries(sections, list) ?? plainEntries(list)
@@ -39,7 +39,7 @@ export function Series() {
   const flat = seasonsRes != null && seasons.length === 0
   const season = seasons[Math.min(seasonIndex, Math.max(0, seasons.length - 1))]
   const epsKey = flat ? `episodes:${id}` : season ? `episodes:${season.key}` : null
-  const { data: epsRes, loading: epsLoading } = useAsync(
+  const { data: epsRes, loading: epsLoading, error: epsError, reload: reloadEpisodes } = useAsync(
     epsKey,
     () =>
       // A film of the franchise: its one row (with its file, to play).
@@ -57,6 +57,10 @@ export function Series() {
   const shown = useMemo(() => (newest ? episodes.slice().reverse() : episodes), [episodes, newest])
   // Part of the list did not load (the read was cut short, or a group of specials is missing
   // one it names): the page says so instead of a partial list passing for the whole.
+  const retryEpisodes = () => {
+    if (season?.ids) reloadSections()
+    reloadEpisodes()
+  }
   const completeness = entryCompleteness(season?.movie || flat ? undefined : season, episodes, epsRes as ItemsResponse | undefined)
   // Play looks across every season, like the apps, not just the one picked in the dropdown.
   // What Play plays, worked out by the server (it used to need every episode of the show).
@@ -108,14 +112,24 @@ export function Series() {
               <IconExpand size={18} style={{ transform: newest ? 'rotate(180deg)' : undefined }} /> {newest ? 'Newest' : 'Oldest'}
             </button>
           </div>
-          {!epsLoading && epsRes && !completeness.complete && (
-            <div className="notice" style={{ margin: '0 var(--gutter) 16px' }}>
-              Some episodes could not be loaded ({episodes.length} of {completeness.expected}). Reload the page to try again.
+          {/* Three states: loaded; part loaded (the list says how much, Try again reads it
+              again); failed (Try again). Try again reads this list only, not the page; for a
+              group of specials the season list too, since it names them. */}
+          {!epsLoading && epsRes && !epsError && !completeness.complete && (
+            <div className="notice notice--action" style={{ margin: '0 var(--gutter) 16px' }}>
+              <span>Some episodes could not be loaded ({episodes.length} of {completeness.expected}).</span>
+              <button className="btn btn--grey" onClick={retryEpisodes}>Try again</button>
+            </div>
+          )}
+          {!epsLoading && epsError && (
+            <div className="notice notice--error notice--action" style={{ margin: '0 var(--gutter) 16px' }}>
+              <span>{epsRes ? 'Could not refresh the episodes; showing the last ones loaded.' : "Couldn't load the episodes."}</span>
+              <button className="btn btn--grey" onClick={retryEpisodes}>Try again</button>
             </div>
           )}
           {epsLoading && !epsRes ? (
             <GridSkeleton thumbs count={10} />
-          ) : episodes.length === 0 ? (
+          ) : episodes.length === 0 && epsError ? null : episodes.length === 0 ? (
             <div className="empty">No episodes in this season.</div>
           ) : (
             <div className="grid grid--episodes">

@@ -28,6 +28,12 @@ data class SeriesUiState(
      */
     val episodesIncomplete: Boolean = false,
     val episodesExpected: Int = 0,
+    /**
+     * The list could not be read at all (a failed request): the screens say "Couldn't load
+     * the episodes" with a retry. Three states: loaded, part loaded ([episodesIncomplete]),
+     * failed (this); see withEpisodes.
+     */
+    val episodesError: String? = null,
     /** Movies / OVAs / side stories of this franchise the provider links (More like this). */
     val related: List<RelatedEntry> = emptyList(),
     /**
@@ -82,6 +88,29 @@ fun episodeRows(source: SectionSource?, read: ItemsResponse): EpisodeRows = when
         maxOf(read.total, read.items.size), read.complete,
     )
 }
+
+/**
+ * The page with an entry's list as it came: loaded (the rows), part loaded (the rows there
+ * are, incomplete, of how many), or failed (no rows: the last entry's must not stay under
+ * this one's name; an error to retry). A failed read used to leave the screen as it was,
+ * with nothing to say it had failed.
+ */
+fun SeriesUiState.withEpisodes(result: Result<EpisodeRows>, numbers: (List<Item>) -> Map<String, Int?>): SeriesUiState =
+    result.fold(
+        onSuccess = { rows ->
+            copy(
+                episodes = rows.items, episodesLoading = false, rowNumbers = numbers(rows.items),
+                episodesIncomplete = !rows.complete, episodesExpected = rows.expected, episodesError = null,
+            )
+        },
+        onFailure = { t ->
+            copy(
+                episodes = emptyList(), episodesLoading = false, rowNumbers = emptyMap(),
+                episodesIncomplete = false, episodesExpected = 0,
+                episodesError = tv.roxy.tv.data.friendlyError(t, "the episodes"),
+            )
+        },
+    )
 
 /** Where an entry of the season list that is not a season gets its rows. */
 sealed interface SectionSource {
@@ -234,7 +263,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     fun retryEpisodes() = load()
 
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {
-        _state.value = _state.value.copy(episodesLoading = true, episodesIncomplete = false)
+        _state.value = _state.value.copy(episodesLoading = true, episodesIncomplete = false, episodesError = null)
         // Only the latest request counts: two quick season picks cannot land out of order.
         episodesJob?.cancel()
         val source = sources[parentId]
@@ -252,20 +281,15 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 episodeRows(source, read)
             }
                 .onSuccess { rows ->
-                    val eps = rows.items
                     // Read by ops' tv-measure.sh (load time of a long list on the device).
-                    Timber.i("episodes: %d loaded in %d ms", eps.size, android.os.SystemClock.elapsedRealtime() - started)
-                    if (!rows.complete) Timber.w("episodes: %d of %d loaded; the list is incomplete", eps.size, rows.expected)
-                    _state.value = _state.value.copy(
-                        episodes = eps, episodesLoading = false, rowNumbers = rowNumbersFor(source, eps),
-                        episodesIncomplete = !rows.complete, episodesExpected = rows.expected,
-                    )
+                    Timber.i("episodes: %d loaded in %d ms", rows.items.size, android.os.SystemClock.elapsedRealtime() - started)
+                    if (!rows.complete) Timber.w("episodes: %d of %d loaded; the list is incomplete", rows.items.size, rows.expected)
                 }
                 .onFailure { t ->
                     if (t is kotlinx.coroutines.CancellationException) throw t
                     Timber.e(t, "episodes load failed")
-                    _state.value = _state.value.copy(episodesLoading = false)
                 }
+                .let { result -> _state.value = _state.value.withEpisodes(result) { eps -> rowNumbersFor(source, eps) } }
         }
     }
 }

@@ -54,4 +54,33 @@ class EpisodeRowsTest {
         val f = Item(id = "f", type = "movie", title = "Film")
         assertEquals(true, episodeRows(SectionSource.Movie(f), ItemsResponse(listOf(f), 1)).complete)
     }
+
+    // The three states the page can be in after reading an entry's list.
+    private val before = SeriesUiState(episodes = listOf(ep("old1", 1, 1)), episodesLoading = true)
+    private val noNumbers: (List<Item>) -> Map<String, Int?> = { emptyMap() }
+
+    @Test fun loadedState() {
+        val s = before.withEpisodes(Result.success(EpisodeRows(listOf(ep("e1", 2, 1)), 1, true)), noNumbers)
+        assertEquals(listOf("e1"), s.episodes.map { it.id })
+        assertEquals(false, s.episodesIncomplete)
+        assertEquals(null, s.episodesError)
+        assertEquals(false, s.episodesLoading)
+    }
+
+    @Test fun partlyLoadedState() {
+        val s = before.withEpisodes(Result.success(EpisodeRows(listOf(ep("e1", 2, 1)), 5, false)), noNumbers)
+        assertEquals(true, s.episodesIncomplete)
+        assertEquals(5, s.episodesExpected)
+        assertEquals(null, s.episodesError)
+    }
+
+    // A failed read: an error to retry, and the last entry's episodes gone (they used to stay
+    // on screen under the new season's name, with nothing said).
+    @Test fun failedState() {
+        val s = before.withEpisodes(Result.failure(java.io.IOException("connection reset")), noNumbers)
+        assertEquals(true, s.episodesError != null)
+        assertEquals(emptyList<Item>(), s.episodes)
+        assertEquals(false, s.episodesIncomplete)
+        assertEquals(false, s.episodesLoading)
+    }
 }

@@ -296,7 +296,16 @@ fun PhoneSeries(
                         }
                     }
                 } else {
-                    if (!state.episodesLoading && !state.loading && state.episodes.isEmpty()) {
+                    if (state.episodesError != null && !state.episodesLoading) {
+                        // The list could not be read: said, with Try again (not "no episodes").
+                        item(key = "eps-error") {
+                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp).background(RoxyColors.surfaceHigh, RoundedCornerShape(6.dp)).padding(12.dp)) {
+                                Text("Couldn't load the episodes.", fontSize = 14.sp, color = RoxyColors.onBackground)
+                                Text(state.episodesError.orEmpty(), fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 2.dp))
+                                Text("Try again", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.padding(top = 6.dp).clickable { vm.retryEpisodes() }.padding(vertical = 4.dp))
+                            }
+                        }
+                    } else if (!state.episodesLoading && !state.loading && state.episodes.isEmpty()) {
                         item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
                     } else if (state.episodes.isNotEmpty() && state.episodes.none { it.isPlayable }) {
                         // Nothing on disk for this season (provider placeholders only): offer to request it.
