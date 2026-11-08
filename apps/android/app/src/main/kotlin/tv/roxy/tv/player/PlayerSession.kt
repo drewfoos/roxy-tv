@@ -234,7 +234,8 @@ class PlayerSession(
     private var advisoryJob: kotlinx.coroutines.Job? = null
 
     // Lost connection: the stream ended (or would not open) well before the end of the file.
-    private var reconnectAttempts = 0
+    /** Reconnects in a row; reset only once a reopened stream has really played on. */
+    private val reconnects = ReconnectBudget()
     private var reconnecting = false
     private var reconnectJob: Job? = null
     /** After the quick attempts: waits for the server to answer, then reopens at [waitingAt]. */
@@ -306,7 +307,6 @@ class PlayerSession(
                 endReported = false
                 if (reconnecting) { reconnecting = false; flashOsd(null) }
                 stallTicks = 0; stallShown = false; waitingAt = null
-                reconnectAttempts = 0
                 applyTrackPicks()
                 // Ask the display for the film's rate (24p on a TV that has it).
                 player.containerFps()?.let { player.hintFrameRate(it.toFloat()) }
@@ -434,6 +434,9 @@ class PlayerSession(
                 tick++
                 refreshUi()
                 watchStall()
+                // Real playback (not a reconnect or a switch in progress) far enough past the
+                // last reconnect: the stream recovered.
+                if (!reconnecting && !switching) player.timePosSeconds()?.let { reconnects.progress(it) }
                 if (startState.value == StartState.Loading) startProbeSec?.let { prev ->
                     val pos = player.timePosSeconds()
                     if (pos != null) {
@@ -629,6 +632,7 @@ class PlayerSession(
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
         switching = true
         changingItem = true
+        reconnects.reset() // a new item starts afresh
         next = null
         itemId = req.item.id
         sourceId = req.sourceId
@@ -699,16 +703,17 @@ class PlayerSession(
         if (destroyed) return
         reconnectJob?.cancel()
         waitJob?.cancel(); waitingAt = null
-        if (reconnectAttempts >= RECONNECT_DELAYS_MS.size) {
+        if (reconnects.used >= RECONNECT_DELAYS_MS.size) {
             Timber.w("reconnects used up at %.1f s; waiting for the server", at)
             reconnecting = false
             switching = false
             reloadTarget = null
-            reconnectAttempts = 0
+            reconnects.reset()
             waitForServer(at)
             return
         }
-        val wait = RECONNECT_DELAYS_MS[reconnectAttempts++]
+        val wait = RECONNECT_DELAYS_MS[reconnects.used]
+        reconnects.reconnected(at)
         reconnecting = true
         switching = true // the dropped stream's end events are not the end of the episode
         reloadTarget = at
@@ -720,7 +725,7 @@ class PlayerSession(
         reconnectJob = scope.launch {
             delay(wait)
             if (destroyed) return@launch
-            Timber.i("reconnect %d at %.1f s", reconnectAttempts, at)
+            Timber.i("reconnect %d at %.1f s", reconnects.used, at)
             if (transcoding) { restartTranscode(at); return@launch }
             // A fresh media token: a long session can outlive the one in the old URL, and a
             // restarted server has forgotten the old one.
