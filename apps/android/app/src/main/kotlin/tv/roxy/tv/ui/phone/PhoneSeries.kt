@@ -680,8 +680,8 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
     Column(
         modifier = Modifier.fillMaxWidth().clickable(enabled = !placeholder, onClick = onClick).padding(horizontal = PhonePad, vertical = 10.dp).alpha(if (placeholder) 0.45f else 1f),
     ) {
-        // Crunchyroll's row: the name sits a little below the thumbnail's top edge, with
-        // the download and menu under it at the right; no synopsis in the list.
+        // Crunchyroll's row: the name with the audio, download and menu line just under it,
+        // centred on the thumbnail; no synopsis in the list.
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(modifier = Modifier.width(thumbWidth).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {
                 RoxyImage(api.imageUrl(ep, "thumb", widthPx(thumbWidth) * 2) ?: api.imageUrl(ep, "backdrop", widthPx(thumbWidth) * 2), ep.episodeCode.ifEmpty { ep.title }, modifier = Modifier.fillMaxSize().alpha(if (watched) 0.45f else 1f), placeholderTextSize = 12)
@@ -691,16 +691,18 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
                     if (tag != null) ThumbTag(tag, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
                 }
             }
-            Column(modifier = Modifier.weight(1f).heightIn(min = thumbWidth * 9f / 16f)) {
+            // The name and the audio/download line as one block, centred on the thumbnail
+            // (Crunchyroll's), rather than the name at the top and the line at the bottom.
+            Column(modifier = Modifier.weight(1f).heightIn(min = thumbWidth * 9f / 16f), verticalArrangement = Arrangement.Center) {
                 val n = (ep.indexAired ?: ep.indexAbsolute)?.let { "$it. " } ?: ""
-                Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val sub = listOfNotNull(
                     badge,
                     if (placeholder && ep.availability == "missing") ep.airDate?.let { friendlyDate(it) }?.let { "Aired $it" } else null,
                 ).joinToString("  ·  ")
                 if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 3.dp))
                 if (!placeholder) {
-                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.height(2.dp))
                     // Crunchyroll's line: the audio ("Dub | Sub") at the left, the download and
                     // the menu at the right, all on one centre line.
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
