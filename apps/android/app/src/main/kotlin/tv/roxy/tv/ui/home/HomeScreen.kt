@@ -112,7 +112,7 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
                     // A newly added episode is just what arrived last (a season's E12): Play
                     // starts where the title page's Play would, the show's next episode.
                     val play = if (picked.isEpisode && !continuing) {
-                        runCatching { api.items(type = "episode", parent = title.id, recursive = true, sort = "index").items }
+                        runCatching { api.allItems(type = "episode", parent = title.id, recursive = true, sort = "index").items }
                             .onFailure { Timber.w(it, "episodes for hero up next") }.getOrNull()
                             ?.let { upNextOf(it) } ?: picked
                     } else picked

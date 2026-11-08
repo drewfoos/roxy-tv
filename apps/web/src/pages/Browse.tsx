@@ -53,7 +53,7 @@ export function Browse() {
   const q = (params.get('q') ?? '').trim().toLowerCase()
   // ?type=movie is the old Movies link; old bookmarks still land on Movies.
   const selected = params.get('c') ?? (params.get('type') === 'movie' ? 'movies' : 'new')
-  const { data, error, loading } = useAsync('library', () => api.items({ type: 'series,movie', recursive: true, sort: 'title', limit: 2000 }), [], LIBRARY_FRESH_MS)
+  const { data, error, loading } = useAsync('library', () => api.allItems({ type: 'series,movie', recursive: true, sort: 'title' }), [], LIBRARY_FRESH_MS)
 
   const all = useMemo(() => data?.items ?? [], [data])
   const cats = useMemo(() => categories(all), [all])

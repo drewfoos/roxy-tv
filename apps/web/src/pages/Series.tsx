@@ -45,7 +45,7 @@ export function Series() {
       // A film of the franchise: its one row (with its file, to play).
       season?.movie && !flat
         ? api.item(season.movie.id).then((it) => ({ items: [it] }))
-        : api.items({ type: 'episode', parent: flat ? id : season!.seasonId!, recursive: flat, includeSources: true, sort: 'index' }),
+        : api.allItems({ type: 'episode', parent: flat ? id : season!.seasonId!, recursive: flat, includeSources: true, sort: 'index' }),
     [epsKey],
   )
   const episodes = useMemo(() => {
@@ -57,7 +57,7 @@ export function Series() {
   const shown = useMemo(() => (newest ? episodes.slice().reverse() : episodes), [episodes, newest])
   // Play looks across every season, like the apps, not just the one picked in the dropdown.
   const allKey = seasonsRes == null ? null : flat ? epsKey : `episodes-all:${id}`
-  const { data: allRes, loading: allLoading } = useAsync(allKey, () => api.items({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' }), [allKey])
+  const { data: allRes, loading: allLoading } = useAsync(allKey, () => api.allItems({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' }), [allKey])
 
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
 

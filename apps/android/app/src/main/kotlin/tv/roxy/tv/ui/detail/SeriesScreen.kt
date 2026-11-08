@@ -174,7 +174,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
         val opening = firstLoad
         firstLoad = false
         viewModelScope.launch {
-            val all = runCatching { api.items(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
+            val all = runCatching { api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
                 .onFailure { Timber.w(it, "episodes for up next") }.getOrNull()
             val next = all?.let { upNextOf(it) }
             _state.value = _state.value.copy(upNext = next)
@@ -229,10 +229,10 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                     is SectionSource.Movie -> listOf(api.item(source.item.id))
                     // Some of the Specials season, in the order the section lists them.
                     is SectionSource.Specials -> {
-                        val all = api.items(type = "episode", parent = source.seasonId, includeSources = true, sort = "index").items.associateBy { it.id }
+                        val all = api.allItems(type = "episode", parent = source.seasonId, includeSources = true, sort = "index").items.associateBy { it.id }
                         source.episodeIds.mapNotNull { all[it] }
                     }
-                    null -> api.items(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index").items
+                    null -> api.allItems(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index").items
                         .sortedWith(compareBy({ it.seasonAired ?: 0 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
                 }
             }

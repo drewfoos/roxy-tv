@@ -138,6 +138,7 @@ class RoxyApi(private val prefs: Prefs) {
         limit: Int? = null,
         includeSources: Boolean = false,
         favorites: Boolean = false,
+        offset: Int? = null,
     ): ItemsResponse {
         val q = buildList {
             add("type=$type")
@@ -146,11 +147,21 @@ class RoxyApi(private val prefs: Prefs) {
             sort?.let { add("sort=$it") }
             if (desc) add("desc=1")
             limit?.let { add("limit=$it") }
+            offset?.takeIf { it > 0 }?.let { add("offset=$it") }
             if (includeSources) add("include=sources")
             if (favorites) add("favorites=1")
         }.joinToString("&")
         return get("/v1/items?$q")
     }
+
+    /**
+     * Every item a query matches, page after page: /v1/items sends 100 by default and at
+     * most 2000 a request, so a long show's episodes came back cut off (and the next
+     * episode was picked from the first page only). For whole lists: a show's or a
+     * season's episodes.
+     */
+    suspend fun allItems(type: String, parent: String? = null, recursive: Boolean = false, sort: String? = null, includeSources: Boolean = false): ItemsResponse =
+        collectPages(ITEMS_PAGE) { offset -> items(type = type, parent = parent, recursive = recursive, sort = sort, limit = ITEMS_PAGE, includeSources = includeSources, offset = offset) }
 
     suspend fun item(id: String): Item = get("/v1/items/$id")
 
@@ -711,6 +722,21 @@ data class CharactersResponse(val characters: List<Character> = emptyList())
 
 @Serializable
 data class ItemsResponse(val items: List<Item> = emptyList(), val total: Int = 0)
+
+/** The largest page /v1/items sends. */
+const val ITEMS_PAGE = 2000
+
+/** Pages of [page] from [fetch] (given the offset) until a short page or [ItemsResponse.total]. */
+suspend fun collectPages(page: Int, fetch: suspend (offset: Int) -> ItemsResponse): ItemsResponse {
+    val out = mutableListOf<Item>()
+    var offset = 0
+    while (true) {
+        val r = fetch(offset)
+        out += r.items
+        if (r.items.size < page || out.size >= r.total) return ItemsResponse(out, maxOf(r.total, out.size))
+        offset += page
+    }
+}
 
 @Serializable
 data class HomeResponse(val rows: List<HomeRow> = emptyList())

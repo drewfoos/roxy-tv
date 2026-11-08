@@ -23,7 +23,7 @@ export function itemPath(it: Item): string {
 export async function playPath(id: string, type: string): Promise<string> {
   if (type === 'series') {
     try {
-      const eps = await api.items({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' })
+      const eps = await api.allItems({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' })
       const next = nextToPlay(eps.items ?? [])
       if (next) return `/watch/${next.id}`
     } catch {

@@ -223,7 +223,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     }
     LaunchedEffect(episode?.seriesId, watchedKey) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
-        runCatching { app.api.items(type = "episode", parent = seriesId, recursive = true, includeSources = true, sort = "index").items }
+        runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, includeSources = true, sort = "index").items }
             .onSuccess { eps ->
                 siblings = eps.sortedWith(compareBy({ (it.seasonAired ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
             }

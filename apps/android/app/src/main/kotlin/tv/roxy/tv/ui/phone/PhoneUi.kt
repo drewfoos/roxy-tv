@@ -440,7 +440,7 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
         runCatching {
             when {
                 item.isSeries -> {
-                    val eps = api.items(type = "episode", parent = item.id, recursive = true, includeSources = true, sort = "index").items
+                    val eps = api.allItems(type = "episode", parent = item.id, recursive = true, includeSources = true, sort = "index").items
                     eps.groupBy { it.seasonAired ?: 0 }.forEach { (season, list) ->
                         startDownload(list, item, if (season == 0) "Specials" else "Season $season")
                     }

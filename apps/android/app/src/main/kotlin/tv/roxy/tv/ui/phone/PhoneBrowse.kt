@@ -154,7 +154,7 @@ class LibraryViewModel(private val api: RoxyApi, private val favoritesOnly: Bool
         viewModelScope.launch {
             runCatching {
                 if (favoritesOnly) api.favorites().items
-                else api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items
+                else api.allItems(type = "series,movie", recursive = true, sort = "title").items
             }
                 .onSuccess { loadedAt = System.currentTimeMillis(); _state.value = LibraryUiState(items = it) }
                 .onFailure { t -> Timber.e(t, "library load failed"); _state.value = _state.value.copy(error = tv.roxy.tv.data.friendlyError(t, "the library"), refreshing = false) }

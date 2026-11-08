@@ -195,6 +195,21 @@ export const api = {
       '/v1/items' +
         q({ type: query.type, parent: query.parent, recursive: query.recursive, sort: query.sort, desc: query.desc, limit: query.limit, offset: query.offset, include: query.includeSources ? 'sources' : undefined, favorites: query.favorites }),
     ),
+  /**
+   * Every item a query matches, page after page: /v1/items sends 100 by default and at
+   * most 2000 a request, so a long show's episodes (SpongeBob's 700) came back cut off
+   * and "next episode" was picked from the first page only. For whole lists (a show's or
+   * a season's episodes), not for rows that want the first few.
+   */
+  allItems: async (query: Omit<ItemsQuery, 'limit' | 'offset'>): Promise<ItemsResponse> => {
+    const page = 2000
+    const items: Item[] = []
+    for (let offset = 0; ; offset += page) {
+      const r = await api.items({ ...query, limit: page, offset })
+      items.push(...r.items)
+      if (r.items.length < page || (r.total != null && items.length >= r.total)) return { items, total: r.total ?? items.length }
+    }
+  },
   item: (id: string) => get<Item>(`/v1/items/${id}`),
   source: (id: string) => get<MediaSource>(`/v1/sources/${id}`),
   related: (id: string) => get<RelatedResponse>(`/v1/items/${id}/related`),

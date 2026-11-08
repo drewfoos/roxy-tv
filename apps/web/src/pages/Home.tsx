@@ -37,7 +37,7 @@ async function resolveHeroes(rows: HomeRow[]): Promise<HeroPick[]> {
         // where the title page's Play would, the show's next episode.
         let play = item
         if (!continuing) {
-          const all = await api.items({ type: 'episode', parent: item.seriesId, recursive: true, sort: 'index' }).catch(() => null)
+          const all = await api.allItems({ type: 'episode', parent: item.seriesId, recursive: true, sort: 'index' }).catch(() => null)
           play = (all && nextToPlay(all.items)) ?? item
         }
         return { title, play }

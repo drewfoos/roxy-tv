@@ -95,7 +95,7 @@ private fun rememberLibrary(): Pair<List<Item>?, String?> {
     var items by remember { mutableStateOf(LibraryCache.items) }
     var error by remember { mutableStateOf<String?>(null) }
     fun fetch() = scope.launch {
-        runCatching { app.api.items(type = "series,movie", recursive = true, sort = "title", limit = 1000).items }
+        runCatching { app.api.allItems(type = "series,movie", recursive = true, sort = "title").items }
             .onSuccess { items = it; error = null; LibraryCache.items = it; LibraryCache.at = System.currentTimeMillis() }
             .onFailure { if (items == null) error = tv.roxy.tv.data.friendlyError(it, "the library") }
     }
