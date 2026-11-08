@@ -12,6 +12,14 @@ import (
 // ffmpegWaitDelay bounds the wait for ffmpeg once it has been told to stop.
 const ffmpegWaitDelay = 5 * time.Second
 
+// pipeStall is how long the player may take to accept the next piece of the stream. One
+// that stops reading but keeps the connection open (paused with its buffer full, a phone
+// whose app was put away) used to hold ffmpeg, and the transcode slot, for as long as
+// the connection lived: four of those and no one could transcode. Past it the stream is
+// ended; Roxy's player reopens it where it was when playback goes on (a stream that ends
+// well before the end of the file is a dropped connection to it). A variable for tests.
+var pipeStall = 10 * time.Minute
+
 // pipeFFmpeg runs ffmpeg with args and streams its stdout to the player as Matroska,
 // returning once ffmpeg has exited. what ("transcode", "remux") and attrs label the logs.
 //
@@ -43,11 +51,13 @@ func (s *Server) pipeFFmpeg(w http.ResponseWriter, r *http.Request, what string,
 	w.WriteHeader(200)
 	buf := make([]byte, 256*1024)
 	flusher, _ := w.(http.Flusher)
+	rc := http.NewResponseController(w)
 	var sent int64
 	playerGone := false
 	for {
 		n, rerr := stdout.Read(buf)
 		if n > 0 {
+			_ = rc.SetWriteDeadline(time.Now().Add(pipeStall)) // not supported by every writer: then no limit
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				playerGone = true
 				cancel() // stop ffmpeg now; nothing reads its output any more

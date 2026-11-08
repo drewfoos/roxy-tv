@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -203,6 +204,10 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 		// WriteTimeout: streams legitimately run for hours.
 		ReadTimeout: 2 * time.Minute,
 		IdleTimeout: 2 * time.Minute,
+		// Requests end with the server: on SIGTERM their contexts are cancelled, which stops
+		// the ffmpeg each stream runs. Shutdown alone waits for them (a stream is never idle)
+		// and gave up after 5 s, leaving them running as the process exited.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	go func() {
 		<-ctx.Done()

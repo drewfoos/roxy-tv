@@ -62,8 +62,24 @@ func EnsureTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, str
 	if _, err := os.Stat(dst); err == nil {
 		return nil
 	}
+	// A few at a time across all files: each reads its whole video to find the track's
+	// packets, and nothing limited how many ran at once (a season's worth of episodes
+	// opened together, a scan detecting languages while people press play). Others wait
+	// their turn, or give up when their request ends.
+	select {
+	case extractSlots <- struct{}{}:
+		defer func() { <-extractSlots }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if _, err := os.Stat(dst); err == nil { // made while this one waited
+		return nil
+	}
 	return ExtractTextSubtitle(ctx, ff, path, streamIndex, codec, dst)
 }
+
+// extractSlots caps simultaneous subtitle extractions.
+var extractSlots = make(chan struct{}, 4)
 
 // ExtractTextSubtitle copies one embedded text subtitle stream (ASS/SSA/SRT/VTT) to dst
 // without conversion. Never converts between formats: ASS stays ASS byte for byte.
