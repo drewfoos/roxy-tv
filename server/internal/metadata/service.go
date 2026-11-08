@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,79 @@ type Service struct {
 	// OnSeasonMal is called with a season's id when it gets a new MyAnimeList id, so skip
 	// segments can be looked up for it (main wires it to the segment detector).
 	OnSeasonMal func(seasonID string)
+
+	// airDates gives the air dates of a series' episodes from Sonarr, in TheTVDB's
+	// numbering (UseEpisodeAirDates); nil without it. airDatesTried: series id -> last ask.
+	airDates      func(ctx context.Context, tvdbID int) (map[[2]int]string, error)
+	airDatesTried map[string]time.Time
+}
+
+// UseEpisodeAirDates gives the service a source of episode air dates in TheTVDB's
+// numbering (Sonarr's): fillAirDates uses it for episodes no provider dated.
+func (s *Service) UseEpisodeAirDates(f func(ctx context.Context, tvdbID int) (map[[2]int]string, error)) {
+	s.mu.Lock()
+	s.airDates = f
+	s.mu.Unlock()
+}
+
+// airDatesRetry is how long a series whose undated episodes Sonarr could not date waits
+// before it is asked again.
+const airDatesRetry = 24 * time.Hour
+
+// fillAirDates gives a series' real episodes that have no air date the one Sonarr has for
+// the same season and episode number. Specials are the ones without: Sonarr names their
+// files in TheTVDB's numbering, where TMDB's specials of the same number are other videos
+// (High School DxD's S00E01 is the first OVA there, a short on TMDB), so the provider's
+// data is refused for them and they had no date at all, which left them nowhere to go in
+// release order. Never replaces a date; asks Sonarr only when something is missing, and
+// at most once a day per series.
+func (s *Service) fillAirDates(ctx context.Context, it *model.Item) {
+	s.mu.Lock()
+	source := s.airDates
+	last, tried := s.airDatesTried[it.ID]
+	s.mu.Unlock()
+	if source == nil || it.Type != model.TypeSeries || (tried && time.Since(last) < airDatesRetry) {
+		return
+	}
+	tvdb, err := strconv.Atoi(it.ProviderIDs["tvdb"])
+	if err != nil || tvdb <= 0 {
+		return
+	}
+	eps, _, err := s.store.ListItems(ctx, store.ItemQuery{ParentID: it.ID, Recursive: true, Types: []model.ItemType{model.TypeEpisode}})
+	if err != nil {
+		return
+	}
+	var undated []model.Item
+	for _, e := range eps {
+		if !e.IsVirtual && e.IndexAired != nil && e.SeasonAired != nil && len(e.Premiered) < 10 {
+			undated = append(undated, e)
+		}
+	}
+	if len(undated) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.airDatesTried == nil {
+		s.airDatesTried = map[string]time.Time{}
+	}
+	s.airDatesTried[it.ID] = time.Now()
+	s.mu.Unlock()
+	dates, err := source(ctx, tvdb)
+	if err != nil {
+		slog.Warn("metadata: air dates from Sonarr", "series", it.Title, "err", err)
+		return
+	}
+	filled := 0
+	for _, e := range undated {
+		if d, ok := dates[[2]int{*e.SeasonAired, *e.IndexAired}]; ok {
+			if err := s.store.SetAirDateIfUnset(ctx, e.ID, d); err == nil {
+				filled++
+			}
+		}
+	}
+	if filled > 0 {
+		slog.Info("metadata: air dates from Sonarr", "series", it.Title, "count", filled)
+	}
 }
 
 type job struct {
@@ -202,6 +276,9 @@ func (s *Service) process(ctx context.Context, j job) error {
 	// with a picture: a frame of its own file where no still came from a provider or
 	// from a file next to the media.
 	defer s.fillStills(ctx, it)
+	// Episodes no provider dated (specials numbered as Sonarr names them) get Sonarr's
+	// date, so they have a place in release order.
+	defer s.fillAirDates(ctx, it)
 	// Once it is matched to a provider (here or by its .nfo), a film or episode that left
 	// the library under another name can be recognised by that identity and its watch
 	// history brought over (store.SettleByProvider). Deferred: it needs this job's ids.

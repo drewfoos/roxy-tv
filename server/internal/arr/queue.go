@@ -164,6 +164,7 @@ type Episode struct {
 	HasFile        bool       `json:"hasFile"`
 	Monitored      bool       `json:"monitored"`
 	AirDateUTC     *time.Time `json:"airDateUtc"`
+	AirDate        string     `json:"airDate"` // YYYY-MM-DD, the day it aired where it aired
 	LastSearchTime *time.Time `json:"lastSearchTime"`
 }
 
@@ -330,4 +331,18 @@ func (cmd Command) Covers(seriesID int, e Episode, movieID int) bool {
 // (RefreshMonitoredDownloads), so a status read right after is fresh.
 func (c *Client) RefreshDownloads(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/command", nil, map[string]any{"name": "RefreshMonitoredDownloads"}, nil)
+}
+
+// SeriesIDByTVDB is the id Sonarr has for the series with that TheTVDB id (0: none).
+func (c *Client) SeriesIDByTVDB(ctx context.Context, tvdbID int) (int, error) {
+	var out []struct {
+		ID int `json:"id"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/series", url.Values{"tvdbId": {strconv.Itoa(tvdbID)}}, nil, &out); err != nil {
+		return 0, err
+	}
+	if len(out) == 0 {
+		return 0, nil
+	}
+	return out[0].ID, nil
 }

@@ -374,3 +374,38 @@ func TestAddMovieExistingIsMonitoredAndSearched(t *testing.T) {
 		t.Errorf("calls %v, want a MoviesSearch last", calls)
 	}
 }
+
+// A series found by its TheTVDB id, and its episodes' air dates (the day as Sonarr has
+// it), which date specials TMDB numbers differently.
+func TestSeriesByTVDBAndAirDates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/series":
+			if r.URL.Query().Get("tvdbId") == "254653" {
+				_, _ = w.Write([]byte(`[{"id":42,"title":"High School DxD"}]`))
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
+		case "/api/v3/episode":
+			if r.URL.Query().Get("seriesId") != "42" {
+				t.Errorf("episodes of series %s", r.URL.Query().Get("seriesId"))
+			}
+			_, _ = w.Write([]byte(`[{"id":1,"seasonNumber":0,"episodeNumber":1,"airDate":"2012-04-11","airDateUtc":"2012-04-10T15:00:00Z"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k"})
+	ctx := context.Background()
+	if id, err := c.SeriesIDByTVDB(ctx, 254653); err != nil || id != 42 {
+		t.Fatalf("by tvdb: %d %v", id, err)
+	}
+	if id, err := c.SeriesIDByTVDB(ctx, 1); err != nil || id != 0 {
+		t.Fatalf("unknown tvdb: %d %v", id, err)
+	}
+	eps, err := c.Episodes(ctx, 42)
+	if err != nil || len(eps) != 1 || eps[0].AirDate != "2012-04-11" {
+		t.Fatalf("episodes: %+v %v", eps, err)
+	}
+}

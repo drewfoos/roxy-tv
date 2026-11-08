@@ -1318,3 +1318,30 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 	}
 	return out, nil
 }
+
+// EpisodeAirDates is the air date (YYYY-MM-DD) of each episode Sonarr has of the series
+// with that TheTVDB id, by season and episode number in TheTVDB's numbering (Sonarr's,
+// and so the numbering of the files it named): nil without Sonarr or when Sonarr does not
+// have the series. Specials are where it matters: TMDB numbers them differently, so a
+// special named by Sonarr can get no date from TMDB.
+func (s *Service) EpisodeAirDates(ctx context.Context, tvdbID int) (map[[2]int]string, error) {
+	sonarr, _ := s.clients()
+	if sonarr == nil || tvdbID <= 0 {
+		return nil, nil
+	}
+	id, err := sonarr.SeriesIDByTVDB(ctx, tvdbID)
+	if err != nil || id == 0 {
+		return nil, err
+	}
+	eps, err := sonarr.Episodes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := map[[2]int]string{}
+	for _, e := range eps {
+		if len(e.AirDate) >= 10 {
+			out[[2]int{e.SeasonNumber, e.EpisodeNumber}] = e.AirDate[:10]
+		}
+	}
+	return out, nil
+}
