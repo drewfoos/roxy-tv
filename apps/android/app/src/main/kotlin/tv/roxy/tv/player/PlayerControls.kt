@@ -128,7 +128,7 @@ data class PlayerUiState(
     val segments: List<MediaSegment> = emptyList(),
     val autoSkip: Boolean = false,
     /** Seconds the Skip button stays after a segment starts (0 = until it ends). */
-    val skipWindowSec: Int = 15,
+    val skipWindowSec: Int = 20,
     /** Hosted on a page: false = in its 16:9 box, true = filling the screen; null = the player owns the screen. */
     val fullscreen: Boolean? = null,
     /** The age rating card flashed at the start of a title (null = not showing). */

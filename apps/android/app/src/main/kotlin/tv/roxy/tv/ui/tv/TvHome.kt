@@ -127,6 +127,8 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
     // Hold OK on an episode or film in a row: play from the start, go to its show / film,
     // mark it watched, file info.
     var menuFor by remember { mutableStateOf<Item?>(null) }
+    // Hold OK on a show or film poster (or the banner): its menu (TvTitleMenu).
+    var titleMenuFor by remember { mutableStateOf<Item?>(null) }
 
     fun open(item: Item) {
         when {
@@ -148,6 +150,9 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
             },
             onDismiss = { menuFor = null },
         )
+    }
+    titleMenuFor?.let { item ->
+        TvTitleMenu(item, onDismiss = { titleMenuFor = null }, onOpen = { if (item.isMovie) onOpenMovie(item) else onOpenSeries(item) })
     }
     when (val s = state) {
         HomeUiState.Loading -> HomeSkeleton()
@@ -191,7 +196,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         pick = hero, api = app.api, memory = memory,
                         onPlay = { play -> if (play.isEpisode || play.isMovie) scope.launch { playItem(context, play).onFailure { Timber.w(it, "play failed") } } else open(play) },
                         onInfo = { title -> open(title) },
-                        onHold = { title -> toggleWatchlist(context, scope, title) },
+                        onHold = { title -> titleMenuFor = title },
                         onFocused = { focusedRow.value = 0 },
                         downKey = { lastKey(0) },
                         upNext = hero != null && rows.firstOrNull { it.key == "continue" }?.items?.any { it.id == hero.play.id } == true,
@@ -204,7 +209,7 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
                         upKey = { if (i == 0) "hero/play" else lastKey(i - 1) }, downKey = { lastKey(i + 1) },
                         // Hold OK: episodes (and everything in Continue Watching) open the
                         // options menu; a show or film poster goes on or off the Watchlist.
-                        onLongClick = { item -> if (row.key == "continue" || item.isEpisode) menuFor = item else toggleWatchlist(context, scope, item) },
+                        onLongClick = { item -> if (row.key == "continue" || item.isEpisode) menuFor = item else titleMenuFor = item },
                     )
                 }
                 item(key = "footer") {

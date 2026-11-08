@@ -211,7 +211,7 @@ class PlayerSession(
     // Next-episode queue (Netflix): resolved in the background once an episode starts;
     // the card appears at the outro (or the last 15 s) and counts down when autoplay is on.
     private var autoplay = true
-    private var skipWindowSec = 15
+    private var skipWindowSec = 20
     private var nextCardEnabled = false
     private var next: PlayRequest? = null
     var nextCard by mutableStateOf<NextCard?>(null); private set

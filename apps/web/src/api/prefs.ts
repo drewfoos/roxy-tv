@@ -19,7 +19,7 @@ export interface Prefs {
   autoplay: boolean
 }
 
-export const DEFAULT_PREFS: Prefs = { audioLang: 'eng', subLang: 'eng', subMode: 'full', quality: 'original', autoSkip: false, skipWindowSec: 15, autoplay: true }
+export const DEFAULT_PREFS: Prefs = { audioLang: 'eng', subLang: 'eng', subMode: 'full', quality: 'original', autoSkip: false, skipWindowSec: 20, autoplay: true }
 
 export const SUB_MODES: { id: SubMode; label: string; hint: string }[] = [
   { id: 'signs', label: 'Signs & songs with a dub', hint: 'Full subtitles with the original audio; only signs and songs when you watch a dub' },
@@ -57,10 +57,14 @@ function read(): Prefs {
     const raw = localStorage.getItem(KEY)
     if (raw) p = { ...p, ...(JSON.parse(raw) as Partial<Prefs>) }
     else if (localStorage.getItem('roxy.autoplay') === 'off') p.autoplay = false
-    // Full subtitles became the default (2026-10-28); earlier saves carried the old one.
-    if (localStorage.getItem('roxy.prefs.v') !== '2') {
-      p.subMode = 'full'
-      localStorage.setItem('roxy.prefs.v', '2')
+    // Defaults that changed: every save stores the whole set, so a save made before carried
+    // the old default. v2 (2026-10-28): full subtitles. v3 (2026-11-08): the Skip button
+    // stays 20 s, not 15 (a saved 15 was the old default; any other choice is kept).
+    const v = Number(localStorage.getItem('roxy.prefs.v')) || 1
+    if (v < 3) {
+      if (v < 2) p.subMode = 'full'
+      if (p.skipWindowSec === 15) p.skipWindowSec = 20
+      localStorage.setItem('roxy.prefs.v', '3')
       if (raw) localStorage.setItem(KEY, JSON.stringify(p))
     }
   } catch {

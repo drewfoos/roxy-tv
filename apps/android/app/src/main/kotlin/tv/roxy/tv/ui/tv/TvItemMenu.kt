@@ -10,6 +10,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.outlined.BookmarkAdd
+import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Movie
@@ -100,19 +102,64 @@ fun TvItemMenu(
 }
 
 /**
- * Hold OK on a show or film poster (or Home's banner): add it to the Watchlist, or take it
- * off when it is already there, with a short toast saying which. The card may not carry
- * the flag, so the title is asked for first. Goes through setWatchlist, so every list on
- * screen reloads.
+ * Hold OK on a show or film poster (Home's rows and banner, a title page's More like this,
+ * the Watchlist): a menu like the one for episodes, instead of putting it on (or off) the
+ * Watchlist straight away. Go to the show / film, Add to / Remove from Watchlist, Mark as
+ * watched / unwatched (a show: all its episodes), and a film's File info. The card may not
+ * carry the Watchlist and watched flags, so the title is asked for; until it answers the
+ * rows use the card's.
  */
-fun toggleWatchlist(context: android.content.Context, scope: kotlinx.coroutines.CoroutineScope, item: Item) {
-    val app = RoxyApp.get(context)
-    scope.launch {
-        val saved = (runCatching { app.api.item(item.id) }.getOrNull() ?: item).userData?.isFavorite == true
-        val title = item.title.ifBlank { "This title" }
-        app.setWatchlist(item.id, !saved)
-            .onSuccess { android.widget.Toast.makeText(context.applicationContext, if (saved) "Removed $title from your Watchlist" else "Added $title to your Watchlist", android.widget.Toast.LENGTH_SHORT).show() }
-            .onFailure { android.widget.Toast.makeText(context.applicationContext, "Couldn't update your Watchlist", android.widget.Toast.LENGTH_SHORT).show() }
+@Composable
+fun TvTitleMenu(item: Item, onDismiss: () -> Unit, onOpen: () -> Unit) {
+    val app = RoxyApp.get(LocalContext.current)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var fresh by remember(item.id) { mutableStateOf(item) }
+    LaunchedEffect(item.id) { runCatching { app.api.item(item.id) }.onSuccess { fresh = it } }
+    var info by remember { mutableStateOf(false) }
+    val saved = fresh.userData?.isFavorite == true
+    val watched = fresh.userData?.played == true
+    val name = item.title.ifBlank { "This title" }
+    fun then(action: () -> Unit) { onDismiss(); action() }
+    fun toast(text: String) = android.widget.Toast.makeText(context.applicationContext, text, android.widget.Toast.LENGTH_SHORT).show()
+    Dialog(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.width(520.dp).background(RoxyColors.surfaceHigh).padding(vertical = 18.dp)) {
+            Text(item.title, color = RoxyColors.onBackground, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 24.dp))
+            Column(modifier = Modifier.padding(top = 12.dp)) {
+                if (info) {
+                    FileInfo(fresh, onBack = { info = false })
+                } else {
+                    val first = remember { FocusRequester() }
+                    TvListRow(label = if (item.isMovie) "Go to movie" else "Go to show", icon = if (item.isMovie) Icons.Outlined.Movie else Icons.Outlined.Tv, selected = true, onClick = { then(onOpen) }, modifier = Modifier.fillMaxWidth().focusRequester(first))
+                    TvListRow(
+                        label = if (saved) "Remove from Watchlist" else "Add to Watchlist",
+                        icon = if (saved) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd, selected = true,
+                        onClick = {
+                            then {
+                                scope.launch {
+                                    app.setWatchlist(item.id, !saved)
+                                        .onSuccess { toast(if (saved) "Removed $name from your Watchlist" else "Added $name to your Watchlist") }
+                                        .onFailure { toast("Couldn't update your Watchlist") }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (item.isMovie) {
+                        TvListRow(
+                            label = if (watched) "Mark as unwatched" else "Mark as watched",
+                            icon = if (watched) Icons.Filled.Replay else Icons.Outlined.Check, selected = true,
+                            onClick = { then { scope.launch { app.markWatched(item.id, !watched) } } }, modifier = Modifier.fillMaxWidth(),
+                        )
+                        TvListRow(label = "File info", icon = Icons.Outlined.Info, selected = true, onClick = { info = true }, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        TvListRow(label = "Mark all episodes as watched", icon = Icons.Outlined.Check, selected = true, onClick = { then { scope.launch { app.markWatched(item.id, true) } } }, modifier = Modifier.fillMaxWidth())
+                        TvListRow(label = "Mark all episodes as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { then { scope.launch { app.markWatched(item.id, false) } } }, modifier = Modifier.fillMaxWidth())
+                    }
+                    LaunchedEffect(Unit) { retryEachFrame("title menu: first option") { first.tryFocus() } }
+                }
+            }
+        }
     }
 }
 

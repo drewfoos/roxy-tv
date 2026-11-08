@@ -114,14 +114,16 @@ private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) 
     // The page's scope, not the app's: leaving the page cancels the request.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { load() } }
     OnUserDataChanged { scope.launch { load() } }
+    var titleMenuFor by remember { mutableStateOf<Item?>(null) }
+    titleMenuFor?.let { t -> TvTitleMenu(t, onDismiss = { titleMenuFor = null }, onOpen = { if (t.isMovie) onOpenMovie(t) else onOpenSeries(t) }) }
 
     val list = items
     when {
         list == null && error != null -> ListMessage(error!!, color = RoxyColors.error)
         list == null -> Unit
         list.isEmpty() -> ListMessage("Titles you add to your watchlist show up here.")
-        // Hold OK on a card takes it off the Watchlist (the page reloads without it).
-        else -> CardGrid(list, memory, key = "watchlist", upKey = upKey, secondLine = { audioBadge(it) ?: it.year?.toString() }, onLongClick = { toggleWatchlist(holdContext, scope, it) }) { item ->
+        // Hold OK on a card: its menu (Remove from Watchlist there; the page reloads without it).
+        else -> CardGrid(list, memory, key = "watchlist", upKey = upKey, secondLine = { audioBadge(it) ?: it.year?.toString() }, onLongClick = { titleMenuFor = it }) { item ->
             if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
         }
     }

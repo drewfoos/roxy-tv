@@ -79,7 +79,7 @@ data class PlayerSettings(
     /** Jump over intro/outro segments automatically instead of showing a Skip button. */
     val autoSkip: Boolean = false,
     /** How long the Skip intro/outro button stays up once a segment starts, in seconds. 0 = the whole segment. */
-    val skipWindowSec: Int = 15,
+    val skipWindowSec: Int = 20,
     /**
      * Netflix's next-episode countdown card over the last seconds. Off by default: anime
      * often puts a scene or the preview there, and Next sits in the player's top bar.
@@ -306,7 +306,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_STATS] = s.showStats
             it[KEY_AUTOPLAY] = s.autoplay
             it[KEY_AUTOSKIP] = s.autoSkip
-            it[KEY_SKIP_WINDOW] = s.skipWindowSec
+            it[KEY_SKIP_WINDOW_2] = s.skipWindowSec
             it[KEY_NEXT_CARD] = s.nextCard
             it[KEY_PASSTHROUGH] = s.passthrough
             it[KEY_QUALITY_WIFI] = s.qualityWifi
@@ -348,7 +348,10 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             showStats = this[KEY_STATS] ?: d.showStats,
             autoplay = this[KEY_AUTOPLAY] ?: d.autoplay,
             autoSkip = this[KEY_AUTOSKIP] ?: d.autoSkip,
-            skipWindowSec = this[KEY_SKIP_WINDOW] ?: d.skipWindowSec,
+            // The default went from 15 to 20 s (2026-11-08); every settings save stored the old
+            // one, so a 15 saved before then counts as the default. A choice made since is
+            // kept under its own key.
+            skipWindowSec = this[KEY_SKIP_WINDOW_2] ?: this[KEY_SKIP_WINDOW]?.takeIf { it != 15 } ?: d.skipWindowSec,
             nextCard = this[KEY_NEXT_CARD] ?: d.nextCard,
             passthrough = this[KEY_PASSTHROUGH] ?: d.passthrough,
             qualityWifi = this[KEY_QUALITY_WIFI] ?: d.qualityWifi,
@@ -383,6 +386,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
         val KEY_AUTOSKIP = booleanPreferencesKey("auto_skip")
         val KEY_SKIP_WINDOW = intPreferencesKey("skip_window_sec")
+        val KEY_SKIP_WINDOW_2 = intPreferencesKey("skip_window_sec_2")
         val KEY_NEXT_CARD = booleanPreferencesKey("next_card")
         val KEY_PASSTHROUGH = stringPreferencesKey("audio_passthrough")
         val KEY_QUALITY_WIFI = stringPreferencesKey("quality_wifi")
