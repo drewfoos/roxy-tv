@@ -235,7 +235,8 @@ export function EpisodeCard({ ep: given, seriesTitle, number }: { ep: Item; seri
   const n = number !== undefined ? number : (ep.indexAired ?? ep.indexAbsolute)
   const art = (
     <div className="ep__art">
-      <Art url={api.imageUrl(ep, 'thumb', px(420))} title={episodeCode(ep) || ep.title} />
+      {/* A film's row (a film entry of the season list) has no still: its backdrop, else its poster. */}
+      <Art url={api.imageUrl(ep, 'thumb', px(420)) ?? api.imageUrl(ep, 'backdrop', px(420)) ?? api.imageUrl(ep, 'poster', px(420))} title={episodeCode(ep) || ep.title} />
       {playable &&
         (watched ? (
           <div className="watched-overlay">

@@ -49,6 +49,14 @@
 @media (min-width: 1600px) { :root { --row-cols: 6.35; --grid-min: 210px; --thumb-min: 320px; --content-max: 1480px; } }
 /* ultra */
 @media (min-width: 2200px) { :root { --gutter: 96px; --card-gap: 36px; --row-cols: 7.35; --grid-min: 240px; --thumb-min: 360px; --content-max: 1800px; } }
+/* Ultrawide (21:9, 32:9): as wide as an ultra screen but no taller than a 16:9 one, so
+   cards sized by width alone grew taller than half the screen (2560x1080: 300x450 posters).
+   Wide aspect ratios get more, smaller cards across; very wide screens a tier of their own. */
+@media (min-width: 2200px) and (min-aspect-ratio: 2/1) { :root { --row-cols: 8.35; --grid-min: 210px; --thumb-min: 340px; } }
+@media (min-width: 2800px) { :root { --gutter: 112px; --card-gap: 40px; --row-cols: 8.35; --grid-min: 250px; --thumb-min: 380px; --content-max: 2200px; } }
+@media (min-width: 2800px) and (min-aspect-ratio: 2/1) { :root { --row-cols: 9.35; --grid-min: 230px; } }
+@media (min-width: 3800px) { :root { --row-cols: 10.35; --content-max: 2800px; } }
+@media (min-width: 3800px) and (min-aspect-ratio: 3/1) { :root { --row-cols: 12.35; --grid-min: 220px; } }
 /* desktop S */
 @media (max-width: 1279px) { :root { --gutter: 48px; --card-gap: 20px; --row-cols: 4.35; --grid-min: 170px; --thumb-min: 260px; } }
 /* tablet */
