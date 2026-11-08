@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sort"
 	"strconv"
 	"time"
 
@@ -65,79 +66,140 @@ func (s *Service) requestStoryFilm(ctx context.Context, series *store.Request, r
 	if have, err := s.store.ItemsByProviderIDs(ctx, rel.Provider, []string{rel.ProviderID}); err == nil && len(have) > 0 {
 		return
 	}
+	// One TMDB lookup per relation a day, checked and noted under one lock.
 	key := rel.Provider + ":" + rel.ProviderID
 	s.mu.Lock()
-	last, tried := s.storyFilmTried[key]
-	s.mu.Unlock()
-	if tried && time.Since(last) < storyFilmRetry {
+	if last, tried := s.storyFilmTried[key]; tried && time.Since(last) < storyFilmRetry {
+		s.mu.Unlock()
 		return
 	}
-	s.mu.Lock()
 	if s.storyFilmTried == nil {
 		s.storyFilmTried = map[string]time.Time{}
 	}
 	s.storyFilmTried[key] = time.Now()
 	s.mu.Unlock()
 
-	tmdbID, err := s.findFilm(ctx, rel.Title, rel.Year)
+	tmdbID, why, err := s.findFilm(ctx, rel.Title, rel.Year)
 	if err != nil || tmdbID == 0 {
-		slog.Info("discover: story film not found on TMDB", "series", series.Title, "film", rel.Title, "year", rel.Year, "err", err)
+		slog.Info("discover: story film not requested", "series", series.Title, "film", rel.Title, "year", rel.Year, "why", why, "err", err)
 		return
 	}
+	// The film is claimed before anything else happens: one statement that only one caller
+	// can win (store.ClaimSetting), so two runs at once cannot both pass a "not requested
+	// yet" check and both send it. The claim stays (a film request someone deletes is not
+	// made again); it is given back only when this attempt stops before saving anything.
 	marker := fmt.Sprintf("storyfilm:%d", tmdbID)
-	var done string
-	if ok, err := s.store.GetSetting(ctx, marker, &done); err != nil || ok {
-		return // requested once already (and maybe deleted since): not again
+	won, err := s.store.ClaimSetting(ctx, marker, series.ID)
+	if err != nil || !won {
+		return
 	}
-	if existing, err := s.store.GetRequest(ctx, "movie", tmdbID); err == nil && existing != nil {
-		_ = s.store.SetSetting(ctx, marker, series.ID)
+	release := func() { _ = s.store.DeleteSetting(ctx, marker) }
+	if existing, err := s.store.GetRequest(ctx, "movie", tmdbID); err != nil {
+		release()
+		return
+	} else if existing != nil {
 		return
 	}
 	det, err := s.Detail(ctx, "movie", tmdbID)
 	if err != nil {
+		release()
 		return
 	}
 	if det.LibraryItemID != "" {
-		_ = s.store.SetSetting(ctx, marker, series.ID)
 		return
 	}
+	// The request is saved before Radarr hears of it, as "pending". If the send works and
+	// the save after it fails, Roxy still knows the request: the pending row is sent again
+	// by RetryPending, and adding a film Radarr already has returns that film (arr.AddMovie)
+	// rather than a second one. A send nobody recorded cannot happen.
 	r := &store.Request{ID: newID(), MediaType: "movie", TMDBID: tmdbID, Title: det.Title, Year: det.Year, PosterPath: det.Poster,
 		UserID: series.UserID, UserName: series.UserName, Status: "pending"}
-	s.send(ctx, r, det)
 	if err := s.store.UpsertRequest(ctx, r); err != nil {
 		slog.Warn("discover: saving story film request", "film", det.Title, "err", err)
+		release()
 		return
 	}
-	_ = s.store.SetSetting(ctx, marker, series.ID)
+	s.send(ctx, r, det)
+	if err := s.store.UpsertRequest(ctx, r); err != nil {
+		slog.Warn("discover: saving story film request after sending (retried as pending)", "film", det.Title, "err", err)
+	}
 	slog.Info("discover: story film requested with its series", "series", series.Title, "film", det.Title, "tmdb", tmdbID, "status", r.Status)
 }
 
-// findFilm is TMDB's id for a film AniList names: a search by title, the closest title
-// released within a year of AniList's (0 when nothing is close enough).
-func (s *Service) findFilm(ctx context.Context, title string, year int) (int, error) {
+// findFilm is TMDB's id for a film AniList names (see pickFilm); why says why there is
+// none.
+func (s *Service) findFilm(ctx context.Context, title string, year int) (int, string, error) {
 	var resp tmdbList
 	if err := s.tmdb.Get(ctx, "/search/movie", url.Values{"query": {title}, "include_adult": {"false"}}, &resp); err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return pickFilm(title, year, resp.Results), nil
+	id, why := pickFilm(title, year, resp.Results)
+	return id, why, nil
 }
 
-// pickFilm chooses among TMDB search results: the title most like AniList's (at least
-// storyFilmMinSimilarity), released within a year of it when the year is known.
-func pickFilm(title string, year int, results []tmdbListEntry) int {
-	best, bestScore := 0, 0.0
+// tmdbAnimation is TMDB's Animation genre.
+const tmdbAnimation = 16
+
+// storyFilmMargin: how far the best title must score above the next one for the choice
+// to be clear.
+const storyFilmMargin = 0.05
+
+// pickFilm chooses TMDB's film for an AniList story film, or none when the search does not
+// say clearly which: a wrong film would be downloaded with nobody asking. A candidate
+// must be animated (a live-action remake of the same name is not it), released within a
+// year of AniList's (its exact year preferred over a neighbour's), and titled at least
+// storyFilmMinSimilarity alike; the best must beat the next by storyFilmMargin. Two
+// candidates as good as each other (two films of one name and year) give none.
+func pickFilm(title string, year int, results []tmdbListEntry) (int, string) {
+	type cand struct {
+		id    int
+		score float64
+		exact bool
+	}
+	var cs []cand
+	seen := map[int]bool{}
 	for _, e := range results {
-		if year > 0 {
-			y, _ := strconv.Atoi(firstN(e.ReleaseDate, 4))
-			if y == 0 || y < year-1 || y > year+1 {
-				continue
-			}
+		if seen[e.ID] {
+			continue
 		}
-		if sc := metadata.TitleSimilarity(title, e.Title); sc >= storyFilmMinSimilarity && sc > bestScore {
-			best, bestScore = e.ID, sc
+		seen[e.ID] = true
+		if len(e.GenreIDs) > 0 && !containsInt(e.GenreIDs, tmdbAnimation) {
+			continue
+		}
+		y, _ := strconv.Atoi(firstN(e.ReleaseDate, 4))
+		if year > 0 && (y == 0 || y < year-1 || y > year+1) {
+			continue
+		}
+		if sc := metadata.TitleSimilarity(title, e.Title); sc >= storyFilmMinSimilarity {
+			cs = append(cs, cand{e.ID, sc, year > 0 && y == year})
 		}
 	}
-	return best
+	if len(cs) == 0 {
+		return 0, "no animated film of that name and year"
+	}
+	var exact []cand
+	for _, c := range cs {
+		if c.exact {
+			exact = append(exact, c)
+		}
+	}
+	if len(exact) > 0 {
+		cs = exact
+	}
+	sort.SliceStable(cs, func(i, j int) bool { return cs[i].score > cs[j].score })
+	if len(cs) > 1 && cs[0].score-cs[1].score < storyFilmMargin {
+		return 0, "ambiguous: several films match about as well"
+	}
+	return cs[0].id, ""
+}
+
+func containsInt(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func firstN(s string, n int) string {

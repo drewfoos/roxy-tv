@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
+import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, nextToPlay, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
 import { IconBookmark, IconBookmarkOutline, IconCalendar, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
@@ -13,6 +13,50 @@ export function itemPath(it: Item): string {
   if (isEpisode(it)) return `/watch/${it.id}`
   if (it.seriesId) return `/series/${it.seriesId}`
   return '/'
+}
+
+/**
+ * Where Play goes for a library title: a film or an episode straight to the player; a
+ * show to the episode it is up to (asked for when pressed, not on hover), or its page when
+ * nothing in it plays. The hover panels' Play buttons used to open the title's page.
+ */
+export async function playPath(id: string, type: string): Promise<string> {
+  if (type === 'series') {
+    try {
+      const eps = await api.items({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' })
+      const next = nextToPlay(eps.items ?? [])
+      if (next) return `/watch/${next.id}`
+    } catch {
+      /* the show's page instead */
+    }
+    return `/series/${id}`
+  }
+  return `/watch/${id}`
+}
+
+/** A Play button for a library title (see playPath). */
+export function PlayButton({ id, type, className, children, label = 'Play' }: { id: string; type: string; className: string; children: ReactNode; label?: string }) {
+  const nav = useNavigate()
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label={label}
+      title={label}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          nav(await playPath(id, type))
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      {children}
+    </button>
+  )
 }
 
 /**
@@ -105,9 +149,9 @@ export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; wid
             {item.overview && <p>{item.overview}</p>}
           </Link>
           <div className="card__hover-actions">
-            <Link to={itemPath(item)} className="card__hover-btn" aria-label="Play" title="Play">
+            <PlayButton id={item.id} type={isMovie(item) ? 'movie' : 'series'} className="card__hover-btn">
               <IconPlay size={24} />
-            </Link>
+            </PlayButton>
             <SaveButton item={item} />
           </div>
         </div>

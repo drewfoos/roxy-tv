@@ -1,6 +1,6 @@
 import { Link } from 'react-router'
 import type { DiscoverItem, DownloadGroup, DownloadStatus, EpisodeDownload } from '../api/types'
-import { Art, useHoverPanel } from './Cards'
+import { Art, PlayButton, useHoverPanel } from './Cards'
 import { IconAdd, IconCheck, IconClose, IconDownload, IconHistory, IconPlay } from './Icons'
 
 /*
@@ -218,7 +218,6 @@ export function DiscoverCard({ item }: { item: DiscoverItem }) {
   const kind = item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : 'Series'
   const sub = [item.year, item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : null].filter(Boolean).join('  ·  ')
   const hover = useHoverPanel()
-  const libPath = item.libraryItemId ? (item.type === 'movie' ? `/movie/${item.libraryItemId}` : `/series/${item.libraryItemId}`) : null
   const rating = item.rating ? (item.rating / 2).toFixed(1) : null
   const rs = item.requestStatus
   const asked = rs && rs !== 'failed' && rs !== 'declined'
@@ -249,10 +248,10 @@ export function DiscoverCard({ item }: { item: DiscoverItem }) {
             {item.overview && <p>{item.overview}</p>}
           </Link>
           <div className="card__hover-actions">
-            {libPath ? (
-              <Link to={libPath} className="card__hover-cta">
+            {item.libraryItemId ? (
+              <PlayButton id={item.libraryItemId} type={item.type === 'movie' ? 'movie' : 'series'} className="card__hover-cta">
                 <IconPlay size={22} /> Play
-              </Link>
+              </PlayButton>
             ) : (
               <Link to={discoverPath(item)} className="card__hover-cta">
                 {asked ? <IconCheck size={20} /> : <IconAdd size={20} />} {asked ? 'Requested' : 'Request'}

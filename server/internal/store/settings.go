@@ -34,6 +34,27 @@ func (s *Store) SetSetting(ctx context.Context, key string, v any) error {
 	return err
 }
 
+// ClaimSetting stores v under key only when nothing is stored there yet, in one statement:
+// true for the one caller that wrote it, false for every other (however many ask at once).
+func (s *Store) ClaimSetting(ctx context.Context, key string, v any) (bool, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return false, err
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO NOTHING`, key, string(b), Now())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// DeleteSetting removes key (a claim given back).
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
+	return err
+}
+
 // ServerID is this installation's stable random id, made the first time it is asked
 // for. Clients use it to tell servers apart (and, later, to pair a TV by QR code).
 func (s *Store) ServerID(ctx context.Context) (string, error) {
