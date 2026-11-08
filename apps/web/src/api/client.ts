@@ -21,6 +21,7 @@ import type {
   Profile,
   ProfilesResponse,
   RelatedResponse,
+  Section,
   SetupStatus,
   SystemInfo,
   TrickplayManifest,
@@ -197,6 +198,7 @@ export const api = {
   item: (id: string) => get<Item>(`/v1/items/${id}`),
   source: (id: string) => get<MediaSource>(`/v1/sources/${id}`),
   related: (id: string) => get<RelatedResponse>(`/v1/items/${id}/related`),
+  sections: (id: string) => get<{ sections: Section[] }>(`/v1/items/${id}/sections`).then((r) => r.sections),
   /** A film's or show's trailers, featurettes and other extras (each plays like any item). */
   extras: (id: string) => get<{ items: Item[] }>(`/v1/items/${id}/extras`),
   similar: (id: string) => get<{ items: DiscoverItem[] }>(`/v1/items/${id}/similar`),

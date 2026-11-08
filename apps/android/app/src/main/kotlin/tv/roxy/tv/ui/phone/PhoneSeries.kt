@@ -148,16 +148,6 @@ fun PhoneSeries(
     // Episodes per season (TVDB numbering) for the Seasons page's counts.
     var seasonEpisodes by remember(series.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
-    // A Movies & OVAs entry that is not a title of its own in the library, tapped.
-    var relatedInfo by remember { mutableStateOf<RelatedEntry?>(null) }
-    relatedInfo?.let { rel ->
-        val specials = state.seasons.indexOfFirst { it.indexAired == 0 }
-        RelatedInfoDialog(rel, specialsAvailable = specials >= 0, onGoToSpecials = {
-            relatedInfo = null
-            selectedExtra = null
-            vm.selectSeason(specials)
-        }, onDismiss = { relatedInfo = null })
-    }
     // Fetched once per show (not again when the library's seasons arrive); which of its
     // seasons the library lacks is worked out from what is on hand.
     var providerSeasons by remember(series.id) { mutableStateOf<List<DiscoverSeason>>(emptyList()) }
@@ -176,7 +166,6 @@ fun PhoneSeries(
     }
     val seasonLabel = when {
         selectedExtra != null -> "Season $selectedExtra"
-        state.showRelated -> "Movies & OVAs"
         state.showExtras -> "Extras"
         state.seasons.isEmpty() -> "Episodes"
         else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
@@ -206,8 +195,8 @@ fun PhoneSeries(
         // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
         // the list is a skeleton: the header is drawn from the card that opened the page
         // and the episodes simply appear under the season row when they land.
-        // Two tabs; the films and OVAs are an entry in the season dropdown, not a tab.
-        val hasRelated = series.relatedCount > 0 || state.related.isNotEmpty()
+        // Two tabs. The franchise's films and the OVAs are entries in the season list, in
+        // release order (GET /v1/items/{id}/sections), not a page of their own.
         val tabs = listOf("Episodes", "More like this")
         // "More like this": TMDB's recommendations, fetched the first time the tab is opened.
         var moreLike by rememberSaveable(seriesId) { mutableStateOf(false) }
@@ -243,7 +232,7 @@ fun PhoneSeries(
                     } }
                 }
             } else {
-                if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty() || hasRelated) {
+                if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty()) {
                     item(key = "seasons") {
                         var seasonsOpen by remember { mutableStateOf(false) }
                         if (seasonsOpen) {
@@ -251,9 +240,10 @@ fun PhoneSeries(
                             val entries = buildList {
                                 state.seasons.forEachIndexed { i, season ->
                                     val n = season.indexAired
-                                    val count = (n?.let { seasonEpisodes[it] } ?: 0).takeIf { it > 0 }
-                                        ?: if (selectedExtra == null && i == state.selectedSeason && !state.showRelated && !state.showExtras) state.episodes.size else 0
-                                    add(SeasonEntry("s$i", season.title.ifEmpty { "Season ${n ?: i + 1}" }, episodesLabel(count), selected = selectedExtra == null && !state.showRelated && !state.showExtras && i == state.selectedSeason))
+                                    // A group of specials or a film: the server's count for the entry.
+                                    val count = state.sectionCounts[season.id] ?: (n?.let { seasonEpisodes[it] } ?: 0).takeIf { it > 0 }
+                                        ?: if (selectedExtra == null && i == state.selectedSeason && !state.showExtras) state.episodes.size else 0
+                                    add(SeasonEntry("s$i", season.title.ifEmpty { "Season ${n ?: i + 1}" }, state.sectionLabels[season.id] ?: episodesLabel(count), selected = selectedExtra == null && !state.showExtras && i == state.selectedSeason))
                                 }
                                 extraSeasons.forEach { sn ->
                                     val coming = seasonComing(sn.airDate)
@@ -262,13 +252,11 @@ fun PhoneSeries(
                                         else SeasonEntry("x${sn.number}", sn.name.ifEmpty { "Season ${sn.number}" }, episodesLabel(sn.episodes), selected = selectedExtra == sn.number, note = if (sn.requested) "Requested" else "Not in your library"),
                                     )
                                 }
-                                if (hasRelated) add(SeasonEntry("related", "Movies & OVAs", (state.related.size.takeIf { it > 0 } ?: series.relatedCount).takeIf { it > 0 }?.let { "$it ${if (it == 1) "Title" else "Titles"}" }, selected = state.showRelated && selectedExtra == null))
                                 if (state.extras.isNotEmpty()) add(SeasonEntry("extras", "Extras", "${state.extras.size} ${if (state.extras.size == 1) "Video" else "Videos"}", selected = state.showExtras && selectedExtra == null))
                             }
                             SeasonsPage(entries, onDismiss = { seasonsOpen = false }, onPick = { e ->
                                 seasonsOpen = false
                                 when {
-                                    e.key == "related" -> { selectedExtra = null; vm.selectRelated() }
                                     e.key == "extras" -> { selectedExtra = null; vm.selectExtras() }
                                     e.key.startsWith("x") -> selectedExtra = e.key.drop(1).toInt()
                                     else -> { selectedExtra = null; vm.selectSeason(e.key.drop(1).toInt()) }
@@ -280,23 +268,13 @@ fun PhoneSeries(
                             onOpen = { seasonsOpen = true },
                             trailing = {
                                 // Season download lives at the end of the season row as an icon, not a row of its own.
-                                if (selectedExtra == null && !state.showRelated && !state.showExtras && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
+                                if (selectedExtra == null && !state.showExtras && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
                             },
                         )
                     }
                 }
                 val extra = extraSeasons.firstOrNull { it.number == selectedExtra }
-                if (state.showRelated && selectedExtra == null) {
-                    item(key = "related-top") { Spacer(Modifier.height(10.dp)) }
-                    items(state.related.chunked(2)) { row ->
-                        RelatedGridRow(row, app.api, onOpen = { rel ->
-                            // Not a title of its own in the library: say what it is (and where an
-                            // OVA or special usually is) instead of doing nothing.
-                            val item = rel.item ?: run { relatedInfo = rel; return@RelatedGridRow }
-                            if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
-                        })
-                    }
-                } else if (state.showExtras && selectedExtra == null) {
+                if (state.showExtras && selectedExtra == null) {
                     item(key = "extras-top") { Spacer(Modifier.height(6.dp)) }
                     items(state.extras, key = { "extra:" + it.id }) { x ->
                         PhoneEpisodeRow(
@@ -880,57 +858,3 @@ internal fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (Rela
     }
 }
 
-/**
- * What a Movies & OVAs entry the library does not hold as its own title is: its poster,
- * format, year and episodes. An OVA or special often is in the library all the same, as
- * episodes of this show's Specials (AniList lists them as titles of their own, the
- * library files them as S00 episodes): the dialog offers to go there. Tapping one used to
- * do nothing.
- */
-@Composable
-private fun RelatedInfoDialog(rel: RelatedEntry, specialsAvailable: Boolean, onGoToSpecials: () -> Unit, onDismiss: () -> Unit) {
-    val format = rel.format?.uppercase()
-    val special = format in setOf("OVA", "ONA", "SPECIAL", "TV_SHORT")
-    val facts = listOfNotNull(
-        format?.let { relatedFormatLabel(it) },
-        rel.year?.toString(),
-        rel.episodes?.takeIf { it > 0 }?.let { "$it ${if (it == 1) "episode" else "episodes"}" },
-    ).joinToString("  ·  ")
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
-        title = { Text(rel.title, fontSize = 17.sp) },
-        text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Box(modifier = Modifier.width(84.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surface)) {
-                    RoxyImage(rel.posterUrl, rel.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 11)
-                }
-                Column {
-                    if (facts.isNotEmpty()) Text(facts, fontSize = 13.sp, color = RoxyColors.muted)
-                    Text(
-                        when {
-                            special && specialsAvailable -> "Not a title of its own in your library. OVAs and specials are usually filed as this show's Specials."
-                            else -> "Not in your library."
-                        },
-                        fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            if (special && specialsAvailable) TextButton(onClick = onGoToSpecials) { Text("Go to Specials", color = RoxyColors.accent) }
-            else TextButton(onClick = onDismiss) { Text("OK", color = RoxyColors.accent) }
-        },
-        dismissButton = { if (special && specialsAvailable) TextButton(onClick = onDismiss) { Text("Close", color = RoxyColors.muted) } },
-    )
-}
-
-/** AniList's format, as a word: OVA, Special, Film, Short. */
-internal fun relatedFormatLabel(format: String): String = when (format.uppercase()) {
-    "MOVIE" -> "Film"
-    "SPECIAL" -> "Special"
-    "TV_SHORT" -> "Short"
-    "TV" -> "TV series"
-    "OVA", "ONA" -> format.uppercase()
-    else -> format.lowercase().replaceFirstChar { it.uppercase() }
-}

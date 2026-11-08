@@ -189,6 +189,19 @@ export interface RelatedResponse {
   partOf?: Item[]
 }
 
+/** One entry of a series' season list, in release order (GET /v1/items/{id}/sections). */
+export interface Section {
+  kind: 'season' | 'specials' | 'movie'
+  title: string
+  /** The season whose episodes it shows (specials: the Specials season, narrowed to episodeIds). */
+  seasonId?: string
+  episodeIds?: string[]
+  /** A film: the entry's one row. */
+  item?: Item
+  episodes: number
+  year?: number
+}
+
 export interface DiscoverItem {
   type: 'tv' | 'movie' | string
   tmdbId: number

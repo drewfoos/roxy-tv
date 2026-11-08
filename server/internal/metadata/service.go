@@ -110,7 +110,7 @@ func (s *Service) fillAirDates(ctx context.Context, it *model.Item) {
 	if err != nil || tvdb <= 0 {
 		return
 	}
-	eps, _, err := s.store.ListItems(ctx, store.ItemQuery{ParentID: it.ID, Recursive: true, Types: []model.ItemType{model.TypeEpisode}})
+	eps, err := s.store.EpisodesOf(ctx, it.ID)
 	if err != nil {
 		return
 	}
@@ -868,7 +868,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 // number (a file named "Show 2024.03.15") under the provider episode that aired that day:
 // its season, number, title and synopsis. Returns how many were placed.
 func (s *Service) matchDatedEpisodes(ctx context.Context, series *model.Item, results []*Result, fetch func(*Result, int) *Season) int {
-	eps, _, err := s.store.ListItems(ctx, store.ItemQuery{ParentID: series.ID, Recursive: true, Types: []model.ItemType{model.TypeEpisode}})
+	eps, err := s.store.EpisodesOf(ctx, series.ID)
 	if err != nil {
 		return 0
 	}

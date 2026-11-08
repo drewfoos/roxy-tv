@@ -227,6 +227,12 @@ class RoxyApi(private val prefs: Prefs) {
     /** Franchise view: movies/OVAs/side stories linked to an item, and the series it is part of. */
     suspend fun related(id: String): RelatedResponse = get("/v1/items/$id/related")
 
+    /**
+     * A series' season list in release order: its seasons, the specials that came out
+     * between them ("OVAs"), and the franchise's films the library holds.
+     */
+    suspend fun sections(id: String): List<Section> = get<SectionsResponse>("/v1/items/$id/sections").sections
+
     /** A film's or show's trailers, featurettes and other extras (each plays like any item). */
     suspend fun extras(id: String): List<Item> = get<ItemsResponse>("/v1/items/$id/extras").items
 
@@ -743,6 +749,24 @@ data class TrickplayManifest(
 
 @Serializable
 data class RelatedResponse(val related: List<RelatedEntry> = emptyList(), val partOf: List<Item> = emptyList())
+
+@Serializable
+data class SectionsResponse(val sections: List<Section> = emptyList())
+
+/** One entry of a series' season list (see [RoxyApi.sections]). */
+@Serializable
+data class Section(
+    /** season | specials | movie */
+    val kind: String,
+    val title: String = "",
+    /** The season whose episodes it shows (for specials, the Specials season, narrowed to [episodeIds]). */
+    val seasonId: String? = null,
+    val episodeIds: List<String> = emptyList(),
+    /** A film: the entry's one row. */
+    val item: Item? = null,
+    val episodes: Int = 0,
+    val year: Int? = null,
+)
 
 @Serializable
 data class RelatedEntry(

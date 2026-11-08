@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -58,5 +59,41 @@ func TestExtrasOfferAFrameThumb(t *testing.T) {
 	}
 	if got["gone"] != "" {
 		t.Errorf("an extra with no file offers %q", got["gone"])
+	}
+}
+
+// EpisodesOf reads a long show whole (ListItems answers 100 at a time by default; callers
+// that took that saw the first 100 of SpongeBob's 716).
+func TestEpisodesOfReadsEveryEpisode(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	lib := &model.Library{Name: "TV", Kind: model.KindSeries, Root: "/t"}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	series := "series"
+	if err := s.UpsertItem(ctx, &model.Item{ID: series, GUID: "g-series", LibraryID: lib.ID, Type: model.TypeSeries, Title: "Long"}); err != nil {
+		t.Fatal(err)
+	}
+	const seasons, perSeason = 3, 250
+	for n := 1; n <= seasons; n++ {
+		sid := fmt.Sprintf("season%d", n)
+		if err := s.UpsertItem(ctx, &model.Item{ID: sid, GUID: "g-" + sid, LibraryID: lib.ID, Type: model.TypeSeason, ParentID: &series}); err != nil {
+			t.Fatal(err)
+		}
+		for e := 1; e <= perSeason; e++ {
+			id := fmt.Sprintf("%s-e%d", sid, e)
+			if err := s.UpsertItem(ctx, &model.Item{ID: id, GUID: "g-" + id, LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: &sid}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	eps, err := s.EpisodesOf(ctx, series)
+	if err != nil || len(eps) != seasons*perSeason {
+		t.Fatalf("%d episodes read, want %d (%v)", len(eps), seasons*perSeason, err)
 	}
 }

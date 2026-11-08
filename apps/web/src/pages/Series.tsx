@@ -4,7 +4,7 @@ import { api, px } from '../api/client'
 import { audioBadge, episodeCode, isPlayable, nextToPlay, playLabel, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
-import { Art, CardMenu, ProgressBar, Row, SaveButton, TitleCard, isWatched, useWatchedState, withPlayed } from '../components/Cards'
+import { Art, CardMenu, ProgressBar, SaveButton, isWatched, useWatchedState, withPlayed } from '../components/Cards'
 import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
@@ -12,6 +12,7 @@ import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
 import { ExtrasRow } from '../components/Extras'
+import { entryRows, plainEntries, sectionEntries, type SeasonEntry } from '../api/sections'
 
 /**
  * A series, laid out like Crunchyroll's: the banner with the info over its left side,
@@ -23,14 +24,13 @@ export function Series() {
   const nav = useNavigate()
   const { data: series, error, loading, reload } = useAsync(`item:${id}`, () => api.item(id), [id])
   const { data: seasonsRes } = useAsync(`seasons:${id}`, () => api.items({ type: 'season', parent: id, sort: 'index' }), [id])
-  const seasons = useMemo(() => {
+  // The season list in release order: the seasons, the specials between them ("OVAs") and
+  // the franchise's films, as entries of their own (the plain list from an older server).
+  const { data: sections } = useAsync(`sections:${id}`, () => api.sections(id).catch(() => null), [id])
+  const seasons: SeasonEntry[] = useMemo(() => {
     const list = seasonsRes?.items ?? []
-    const key = (s: Item) => {
-      const n = s.indexAired ?? Number.MAX_SAFE_INTEGER
-      return n === 0 ? Number.MAX_SAFE_INTEGER - 1 : n
-    }
-    return list.slice().sort((a, b) => key(a) - key(b))
-  }, [seasonsRes])
+    return sectionEntries(sections, list) ?? plainEntries(list)
+  }, [seasonsRes, sections])
   const [seasonIndex, setSeasonIndex] = useState(0)
   const [newest, setNewest] = useState(false)
   const [tab, setTab] = useState(0)
@@ -38,15 +38,27 @@ export function Series() {
 
   const flat = seasonsRes != null && seasons.length === 0
   const season = seasons[Math.min(seasonIndex, Math.max(0, seasons.length - 1))]
-  const epsKey = flat ? `episodes:${id}` : season ? `episodes:${season.id}` : null
-  const { data: epsRes, loading: epsLoading } = useAsync(epsKey, () => api.items({ type: 'episode', parent: flat ? id : season!.id, recursive: flat, includeSources: true, sort: 'index' }), [epsKey])
-  const episodes = useMemo(() => sortEpisodes(epsRes?.items ?? []), [epsRes])
+  const epsKey = flat ? `episodes:${id}` : season ? `episodes:${season.key}` : null
+  const { data: epsRes, loading: epsLoading } = useAsync(
+    epsKey,
+    () =>
+      // A film of the franchise: its one row (with its file, to play).
+      season?.movie && !flat
+        ? api.item(season.movie.id).then((it) => ({ items: [it] }))
+        : api.items({ type: 'episode', parent: flat ? id : season!.seasonId!, recursive: flat, includeSources: true, sort: 'index' }),
+    [epsKey],
+  )
+  const episodes = useMemo(() => {
+    const items = epsRes?.items ?? []
+    if (season?.movie && !flat) return items
+    // A group of specials: its own episodes, in its order.
+    return season?.ids && !flat ? entryRows(season, items) : sortEpisodes(items)
+  }, [epsRes, season, flat])
   const shown = useMemo(() => (newest ? episodes.slice().reverse() : episodes), [episodes, newest])
   // Play looks across every season, like the apps, not just the one picked in the dropdown.
   const allKey = seasonsRes == null ? null : flat ? epsKey : `episodes-all:${id}`
   const { data: allRes, loading: allLoading } = useAsync(allKey, () => api.items({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' }), [allKey])
 
-  const { data: related } = useAsync(`related:${id}`, () => api.related(id).catch(() => ({ related: [] })), [id])
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
 
   useEffect(() => {
@@ -60,8 +72,7 @@ export function Series() {
 
   const next = nextToPlay(allRes?.items ?? episodes)
   const label = playLabel(next, epsLoading || allLoading || seasonsRes == null)
-  const seasonCount = series.seasonCount ?? seasons.length
-  const relatedItems = (related?.related ?? []).map((r) => r.item).filter((x): x is Item => !!x)
+  const seasonCount = series.seasonCount ?? seasons.filter((s) => !s.ids && !s.movie).length
 
   return (
     <div className="page page--phone">
@@ -116,13 +127,6 @@ export function Series() {
             </div>
           )}
           <ExtrasRow id={id} />
-          {relatedItems.length > 0 && (
-            <Row title="Movies & OVAs">
-              {relatedItems.map((it) => (
-                <TitleCard key={it.id} item={it} />
-              ))}
-            </Row>
-          )}
         </>
       ) : (
         <div style={{ marginTop: 28 }}>
@@ -140,8 +144,8 @@ export function Series() {
   )
 }
 
-function seasonName(s: Item, i: number): string {
-  return s.title || `Season ${s.indexAired ?? i + 1}`
+function seasonName(s: SeasonEntry): string {
+  return s.title
 }
 
 /**
@@ -149,7 +153,7 @@ function seasonName(s: Item, i: number): string {
  * it drops a dark panel of rows, each the season name (cut with an ellipsis) and its
  * episode count at the right, the current one in white. Counts load once it opens.
  */
-function SeasonSelect({ seasons, index, onSelect }: { seasons: Item[]; index: number; onSelect: (i: number) => void }) {
+function SeasonSelect({ seasons, index, onSelect }: { seasons: SeasonEntry[]; index: number; onSelect: (i: number) => void }) {
   const [open, setOpen] = useState(false)
   const [counts, setCounts] = useState<Record<string, number>>({})
   const ref = useRef<HTMLDivElement>(null)
@@ -170,10 +174,11 @@ function SeasonSelect({ seasons, index, onSelect }: { seasons: Item[]; index: nu
     if (!open) return
     let live = true
     for (const s of seasons) {
-      if (counts[s.id] != null) continue
+      // The server's count when it gave one; a film says "Film" instead.
+      if (counts[s.key] != null || s.count != null || s.label || !s.seasonId) continue
       api
-        .items({ type: 'episode', parent: s.id, limit: 1 })
-        .then((r) => live && r.total != null && setCounts((c) => ({ ...c, [s.id]: r.total! })))
+        .items({ type: 'episode', parent: s.seasonId, limit: 1 })
+        .then((r) => live && r.total != null && setCounts((c) => ({ ...c, [s.key]: r.total! })))
         .catch(() => undefined)
     }
     return () => {
@@ -186,15 +191,15 @@ function SeasonSelect({ seasons, index, onSelect }: { seasons: Item[]; index: nu
     <div ref={ref} className="seasonsel">
       <button className="seasonsel__btn" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open} aria-label="Seasons">
         <IconExpand size={18} />
-        <span>{current ? seasonName(current, index) : ''}</span>
+        <span>{current ? seasonName(current) : ''}</span>
       </button>
       {open && (
         <div className="seasonsel__menu" role="listbox">
           {seasons.map((s, i) => {
-            const n = counts[s.id]
+            const n = s.count ?? counts[s.key]
             return (
               <button
-                key={s.id}
+                key={s.key}
                 role="option"
                 aria-selected={i === index}
                 className={'seasonsel__row' + (i === index ? ' seasonsel__row--on' : '')}
@@ -203,8 +208,8 @@ function SeasonSelect({ seasons, index, onSelect }: { seasons: Item[]; index: nu
                   setOpen(false)
                 }}
               >
-                <span className="seasonsel__name">{seasonName(s, i)}</span>
-                {n != null && <span className="seasonsel__count">{n === 1 ? '1 Episode' : `${n} Episodes`}</span>}
+                <span className="seasonsel__name">{seasonName(s)}</span>
+                {s.label ? <span className="seasonsel__count">{s.label}</span> : n != null && <span className="seasonsel__count">{n === 1 ? '1 Episode' : `${n} Episodes`}</span>}
               </button>
             )
           })}

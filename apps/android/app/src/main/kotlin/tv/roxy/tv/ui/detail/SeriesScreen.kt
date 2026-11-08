@@ -10,6 +10,7 @@ import timber.log.Timber
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RelatedEntry
 import tv.roxy.tv.api.RoxyApi
+import tv.roxy.tv.api.Section
 
 data class SeriesUiState(
     val loading: Boolean = true,
@@ -19,10 +20,15 @@ data class SeriesUiState(
     val selectedSeason: Int = 0,
     val episodes: List<Item> = emptyList(),
     val episodesLoading: Boolean = false,
-    /** Movies / OVAs / side stories of this franchise (Crunchyroll-style, seasons and movies together). */
+    /** Movies / OVAs / side stories of this franchise the provider links (More like this). */
     val related: List<RelatedEntry> = emptyList(),
-    /** The "Movies & OVAs" tab is selected instead of a season. */
-    val showRelated: Boolean = false,
+    /**
+     * Episodes per entry of [seasons] that is not a season of its own (a group of
+     * specials, a film), by its id: the season list shows them as counts.
+     */
+    val sectionCounts: Map<String, Int> = emptyMap(),
+    /** What the season list says under such an entry instead of a count ("Film · 2014"). */
+    val sectionLabels: Map<String, String> = emptyMap(),
     /** The show's trailers, featurettes and other extras. */
     val extras: List<Item> = emptyList(),
     /** The "Extras" entry is selected instead of a season. */
@@ -47,6 +53,57 @@ fun upNextOf(episodes: List<Item>): Item? {
     return ordered.firstOrNull { it.userData?.played != true } ?: ordered.firstOrNull()
 }
 
+/** Where an entry of the season list that is not a season gets its rows. */
+sealed interface SectionSource {
+    /** Some of the Specials season's episodes, in this order. */
+    data class Specials(val seasonId: String, val episodeIds: List<String>) : SectionSource
+    /** A film of the franchise: its one row. */
+    data class Movie(val item: Item) : SectionSource
+}
+
+/**
+ * The season list from the server's sections, in release order (Crunchyroll's): each
+ * season as itself; a group of specials and a film each as an entry of their own, with an
+ * id of its own ("section:N") and where its rows come from. Null when the sections cannot
+ * be used (a season the server names is not among [seasons]): the plain list then.
+ */
+data class SectionList(
+    val seasons: List<Item>,
+    val sources: Map<String, SectionSource>,
+    val counts: Map<String, Int>,
+    val labels: Map<String, String>,
+)
+
+fun sectionEntries(sections: List<Section>, seasons: List<Item>): SectionList? {
+    if (sections.isEmpty()) return null
+    val byId = seasons.associateBy { it.id }
+    val list = mutableListOf<Item>()
+    val sources = mutableMapOf<String, SectionSource>()
+    val counts = mutableMapOf<String, Int>()
+    val labels = mutableMapOf<String, String>()
+    sections.forEachIndexed { i, sec ->
+        when (sec.kind) {
+            "season" -> list += byId[sec.seasonId] ?: return null
+            "specials" -> {
+                val seasonId = sec.seasonId ?: return null
+                val id = "section:$i"
+                list += Item(id = id, type = "season", title = sec.title)
+                sources[id] = SectionSource.Specials(seasonId, sec.episodeIds)
+                counts[id] = sec.episodes
+            }
+            "movie" -> {
+                val film = sec.item ?: return@forEachIndexed
+                val id = "section:$i"
+                list += Item(id = id, type = "season", title = sec.title.ifEmpty { film.title })
+                sources[id] = SectionSource.Movie(film)
+                counts[id] = 1
+                labels[id] = listOfNotNull("Film", (sec.year ?: film.year)?.toString()).joinToString(" · ")
+            }
+        }
+    }
+    return SectionList(list, sources, counts, labels)
+}
+
 class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, initial: Item? = null) : ViewModel() {
     // Seeded from the list that opened the page, so the header paints at once and only the
     // episode rows wait on the network.
@@ -58,14 +115,20 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
             runCatching {
                 val series = api.item(seriesId)
                 // Specials (season 0) go last, like Jellyfin; regular seasons in order.
-                val seasons = api.items(type = "season", parent = seriesId, sort = "index").items
+                val plain = api.items(type = "season", parent = seriesId, sort = "index").items
                     .sortedBy { val n = it.indexAired ?: Int.MAX_VALUE; if (n == 0) Int.MAX_VALUE - 1 else n }
-                series to seasons
-            }.onSuccess { (series, seasons) ->
+                // In release order with the specials between the seasons and the franchise's
+                // films as entries of their own; the plain list from an older server.
+                val ordered = runCatching { sectionEntries(api.sections(seriesId), plain) }
+                    .onFailure { Timber.w(it, "sections") }.getOrNull()
+                Triple(series, plain, ordered)
+            }.onSuccess { (series, plain, ordered) ->
+                val seasons = ordered?.seasons ?: plain
+                sources = ordered?.sources ?: emptyMap()
                 val keep = _state.value.selectedSeason.coerceIn(0, (seasons.size - 1).coerceAtLeast(0))
                 // A reload (after marking watched, say) keeps the episodes and related rows on
                 // screen until the fresh ones land, so the list doesn't empty and jump to the top.
-                _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep)
+                _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep, sectionCounts = ordered?.counts ?: emptyMap(), sectionLabels = ordered?.labels ?: emptyMap())
                 if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
                 else if (seasons.isEmpty()) loadEpisodes(seriesId, recursive = true) // flat series without season folders
                 loadUpNext(seasons)
@@ -80,6 +143,9 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
             }
         }
     }
+
+    /** Entries of the season list that are not seasons: where their rows come from. */
+    private var sources: Map<String, SectionSource> = emptyMap()
 
     private var firstLoad = true
     private var relatedLoaded = false
@@ -119,35 +185,43 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     fun selectSeason(index: Int) {
         val s = _state.value
         if (index !in s.seasons.indices) return
-        if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showRelated && !s.showExtras) return
+        if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showExtras) return
         userPicked = true
         // A different season empties the list until its episodes land, so the old season's
         // episodes are never shown (or played) under the new season's name.
         val other = index != s.selectedSeason
-        _state.value = s.copy(selectedSeason = index, showRelated = false, showExtras = false, episodes = if (other) emptyList() else s.episodes)
+        _state.value = s.copy(selectedSeason = index, showExtras = false, episodes = if (other) emptyList() else s.episodes)
         if (other || s.episodes.isEmpty()) loadEpisodes(s.seasons[index].id)
     }
 
     private var userPicked = false
     private var episodesJob: Job? = null
 
-    fun selectRelated() {
-        _state.value = _state.value.copy(showRelated = true, showExtras = false)
-    }
-
     fun selectExtras() {
-        _state.value = _state.value.copy(showExtras = true, showRelated = false)
+        _state.value = _state.value.copy(showExtras = true)
     }
 
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {
         _state.value = _state.value.copy(episodesLoading = true)
         // Only the latest request counts: two quick season picks cannot land out of order.
         episodesJob?.cancel()
+        val source = sources[parentId]
         episodesJob = viewModelScope.launch {
-            runCatching { api.items(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index").items }
+            runCatching {
+                when (source) {
+                    // A film of the franchise: its one row (with its file, to play and download).
+                    is SectionSource.Movie -> listOf(api.item(source.item.id))
+                    // Some of the Specials season, in the order the section lists them.
+                    is SectionSource.Specials -> {
+                        val all = api.items(type = "episode", parent = source.seasonId, includeSources = true, sort = "index").items.associateBy { it.id }
+                        source.episodeIds.mapNotNull { all[it] }
+                    }
+                    null -> api.items(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index").items
+                        .sortedWith(compareBy({ it.seasonAired ?: 0 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
+                }
+            }
                 .onSuccess { eps ->
-                    val sorted = eps.sortedWith(compareBy({ it.seasonAired ?: 0 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
-                    _state.value = _state.value.copy(episodes = sorted, episodesLoading = false)
+                    _state.value = _state.value.copy(episodes = eps, episodesLoading = false)
                 }
                 .onFailure { t ->
                     if (t is kotlinx.coroutines.CancellationException) throw t

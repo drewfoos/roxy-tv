@@ -214,6 +214,24 @@ func (s *Store) Children(ctx context.Context, parentID string, t model.ItemType)
 	return items, err
 }
 
+// EpisodesOf is every episode under a series (its seasons'), placeholders included, in
+// pages so a long show is read whole: ListItems answers 100 at a time unless asked for
+// more, and callers that took its default saw only the first 100 (SpongeBob's 716).
+func (s *Store) EpisodesOf(ctx context.Context, seriesID string) ([]model.Item, error) {
+	const page = 2000
+	var out []model.Item
+	for offset := 0; ; offset += page {
+		items, _, err := s.ListItems(ctx, ItemQuery{ParentID: seriesID, Recursive: true, Types: []model.ItemType{model.TypeEpisode}, SortBy: "index", Limit: page, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+		if len(items) < page {
+			return out, nil
+		}
+	}
+}
+
 // CountUnrefreshedEpisodes reports how many real episodes under a series have never
 // received provider metadata although a provider could fill them (they carry an episode
 // number), counting only those created after since when it is set: the metadata service
