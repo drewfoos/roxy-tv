@@ -47,8 +47,9 @@ var reOVA = regexp.MustCompile(`(?i)\bOVA\b|\bOAD\b`)
 // buildSections orders a series' seasons, specials and films by release date: each
 // season in its number's order, and after it whatever came out before the next season
 // started (before the first season, what came out before it). Specials of one kind in
-// the same gap form one entry ("OVAs", "Specials"); each film is an entry of its own. Specials with no
-// date, and the ones not in the library, go in a last "Specials" entry, as before.
+// the same gap form one entry ("OVAs", "Specials"); each film is an entry of its own.
+// Specials with no date go in a last "Specials" entry, and the ones not in the library in
+// "Missing specials" after it.
 func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn) []section {
 	sort.SliceStable(seasons, func(i, j int) bool { return seasons[i].Index < seasons[j].Index })
 	// slot: -1 before the first season, i after seasons[i].
@@ -89,21 +90,29 @@ func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn) [
 	emit := func(g int) {
 		ps := gaps[g]
 		sort.SliceStable(ps, func(i, j int) bool { return ps[i].date < ps[j].date })
-		var run []specialIn
+		// Between two films (or a film and a season), specials group by kind: one entry for
+		// the OVAs and one for the other specials, in the order each kind first came out,
+		// so BorN's shorts and its OVA read "Specials, OVA", not "Specials, OVA, Specials".
+		var ova, other []specialIn
 		flush := func() {
-			if len(run) > 0 {
-				out = append(out, specialsSection(run))
-				run = nil
+			runs := [][]specialIn{ova, other}
+			if len(ova) > 0 && len(other) > 0 && other[0].Date < ova[0].Date {
+				runs = [][]specialIn{other, ova}
 			}
+			for _, run := range runs {
+				if len(run) > 0 {
+					out = append(out, specialsSection(run))
+				}
+			}
+			ova, other = nil, nil
 		}
 		for _, p := range ps {
 			if p.special != nil {
-				// A run is one kind: OVAs and other specials in the same gap are two entries,
-				// each named for what it holds.
-				if len(run) > 0 && reOVA.MatchString(run[0].Title) != reOVA.MatchString(p.special.Title) {
-					flush()
+				if reOVA.MatchString(p.special.Title) {
+					ova = append(ova, *p.special)
+				} else {
+					other = append(other, *p.special)
 				}
-				run = append(run, *p.special)
 				continue
 			}
 			flush()
@@ -121,8 +130,18 @@ func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn) [
 		out = append(out, section{Kind: "season", Title: title, SeasonID: s.ID, Episodes: s.Count, Year: yearOf(s.Start)})
 		emit(i)
 	}
-	if len(trailing) > 0 {
-		sec := specialsSection(trailing)
+	// Specials with no date, then the ones the library does not have (named so: they
+	// are listed to be found, not played).
+	var undated, missing []specialIn
+	for _, sp := range trailing {
+		if sp.Virtual {
+			missing = append(missing, sp)
+		} else {
+			undated = append(undated, sp)
+		}
+	}
+	if len(undated) > 0 {
+		sec := specialsSection(undated)
 		sec.Title, sec.Year = "Specials", 0
 		for _, o := range out {
 			if o.Kind == "specials" { // after other specials, two "Specials" in a row read as one twice
@@ -130,6 +149,11 @@ func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn) [
 				break
 			}
 		}
+		out = append(out, sec)
+	}
+	if len(missing) > 0 {
+		sec := specialsSection(missing)
+		sec.Title, sec.Year = "Missing specials", 0
 		out = append(out, sec)
 	}
 	for _, m := range undatedMovies {

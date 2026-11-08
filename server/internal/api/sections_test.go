@@ -29,7 +29,8 @@ func describe(secs []section) string {
 }
 
 // High School DxD's shape: four seasons (2012, 2013, 2015, 2018), OVAs that came out
-// between them, specials not in the library, and one with no date.
+// between them, shorts that came out around an OVA (one entry per kind, not alternating),
+// specials not in the library, and one with no date.
 func TestSectionsInReleaseOrder(t *testing.T) {
 	seasons := []seasonIn{
 		{ID: "s3", Title: "Season 3", Index: 3, Start: "2015-04-04", Count: 12},
@@ -42,12 +43,14 @@ func TestSectionsInReleaseOrder(t *testing.T) {
 		{ID: "ova2", Title: "Highschool DxD OVA 2", Date: "2012-07-25"},
 		{ID: "new", Title: "New OVA", Date: "2015-03-10"},
 		{ID: "born", Title: "BorN OVA", Date: "2015-09-16"},
+		{ID: "short1", Title: "Rias and Akeno, Girl Fight!?", Date: "2015-07-24"},
+		{ID: "short2", Title: "Steamy Grayfia", Date: "2015-12-25"},
 		{ID: "hero0", Title: "Hero Episode 0", Date: "2018-03-21"},
 		{ID: "udon", Title: "Let's Make Udon", Date: "2012-07-25", Virtual: true},
 		{ID: "nodate", Title: "Mystery Special"},
 	}
 	got := describe(buildSections(seasons, specials, nil))
-	want := "season:Season 1 | specials:OVAs[ova1 ova2] | season:Season 2 | specials:OVA[new] | season:Season 3 | specials:OVA[born] | specials:Special[hero0] | season:Season 4 | specials:More specials[udon nodate]"
+	want := "season:Season 1 | specials:OVAs[ova1 ova2] | season:Season 2 | specials:OVA[new] | season:Season 3 | specials:Specials[short1 short2 hero0] | specials:OVA[born] | season:Season 4 | specials:More specials[nodate] | specials:Missing specials[udon]"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
