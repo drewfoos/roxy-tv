@@ -342,7 +342,8 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 // A placeholder that becomes real (its file arrived) is the exception: what it showed
 // was the provider's guess for that slot, which need not be what the file is (an OVA
 // filed as a season's last episode), so it starts over from the file, without the
-// provider still, as a newly added episode; the next metadata pass fills it again.
+// provider still (its air date too), as a newly added episode; the next metadata pass
+// fills it again.
 func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 	now := Now()
 	existing, err := s.GetItemByGUID(ctx, it.GUID)
@@ -353,7 +354,7 @@ func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 		it.ID = existing.ID
 		it.DateCreated = existing.DateCreated
 		if existing.IsVirtual && !it.IsVirtual {
-			if _, err := s.db.ExecContext(ctx, `UPDATE items SET metadata_refreshed_at = NULL, overview = NULL, date_created = ? WHERE id = ?`, now, it.ID); err != nil {
+			if _, err := s.db.ExecContext(ctx, `UPDATE items SET metadata_refreshed_at = NULL, overview = NULL, premiere_date = NULL, date_created = ? WHERE id = ?`, now, it.ID); err != nil {
 				return err
 			}
 			if _, err := s.db.ExecContext(ctx, `DELETE FROM item_images WHERE item_id = ? AND type = 'thumb' AND locked = 0`, it.ID); err != nil {
