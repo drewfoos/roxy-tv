@@ -97,3 +97,54 @@ func TestEpisodesOfReadsEveryEpisode(t *testing.T) {
 		t.Fatalf("%d episodes read, want %d (%v)", len(eps), seasons*perSeason, err)
 	}
 }
+
+// Pages of a list whose items tie on the sort (episodes with no numbers, a scan's batch
+// created together): every item once, none repeated or skipped at a page boundary.
+func TestListItemsPagesWithTies(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	lib := &model.Library{Name: "A", Kind: model.KindSeries, Root: "/a"}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	show, season := "show", "season"
+	for _, it := range []*model.Item{
+		{ID: show, GUID: "g-show", LibraryID: lib.ID, Type: model.TypeSeries, Title: "Show"},
+		{ID: season, GUID: "g-season", LibraryID: lib.ID, Type: model.TypeSeason, ParentID: &show},
+	} {
+		if err := s.UpsertItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Inserted in an order unlike their ids, all tied on season/index.
+	for i := 249; i >= 0; i-- {
+		id := fmt.Sprintf("e%03d", (i*97)%250)
+		if err := s.UpsertItem(ctx, &model.Item{ID: id, GUID: "g-" + id, LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: &season, Title: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sortBy := range []string{"index", "title", ""} {
+		seen := map[string]int{}
+		for off := 0; off < 250; off += 37 {
+			page, _, err := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, ParentID: season, SortBy: sortBy, Limit: 37, Offset: off})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, it := range page {
+				seen[it.ID]++
+			}
+		}
+		if len(seen) != 250 {
+			t.Errorf("sort %q: %d distinct items over the pages, want 250", sortBy, len(seen))
+		}
+		for id, n := range seen {
+			if n != 1 {
+				t.Errorf("sort %q: %s came %d times", sortBy, id, n)
+			}
+		}
+	}
+}

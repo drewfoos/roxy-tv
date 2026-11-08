@@ -308,7 +308,10 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 	if q.Offset < 0 {
 		q.Offset = 0
 	}
-	query := fmt.Sprintf(`SELECT %s FROM items%s ORDER BY %s%s LIMIT %d OFFSET %d`, itemCols, sqlWhere, order, dir, limit, q.Offset)
+	// id last: items equal on the sort (two files of one episode number, unnumbered ones,
+	// a scan's batch created in the same millisecond) otherwise came back in any order,
+	// and a page boundary between them repeated one item and skipped another.
+	query := fmt.Sprintf(`SELECT %s FROM items%s ORDER BY %s%s, id%s LIMIT %d OFFSET %d`, itemCols, sqlWhere, order, dir, dir, limit, q.Offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err

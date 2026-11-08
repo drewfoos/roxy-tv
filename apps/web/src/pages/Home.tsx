@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api/client'
-import { isEpisode, isMovie, isSeries, nextToPlay } from '../api/items'
+import { isEpisode, isMovie, isSeries } from '../api/items'
 import type { HomeRow, Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
@@ -37,8 +37,7 @@ async function resolveHeroes(rows: HomeRow[]): Promise<HeroPick[]> {
         // where the title page's Play would, the show's next episode.
         let play = item
         if (!continuing) {
-          const all = await api.allItems({ type: 'episode', parent: item.seriesId, recursive: true, sort: 'index' }).catch(() => null)
-          play = (all && nextToPlay(all.items)) ?? item
+          play = (await api.next(item.seriesId).catch(() => null)) ?? item
         }
         return { title, play }
       } catch {

@@ -244,6 +244,9 @@ class RoxyApi(private val prefs: Prefs) {
      */
     suspend fun sections(id: String): List<Section> = get<SectionsResponse>("/v1/items/$id/sections").sections
 
+    /** The episode a show's Play means for this profile (a film: itself), worked out by the server. */
+    suspend fun next(id: String): Item? = get<NextResponse>("/v1/items/$id/next").item
+
     /** A film's or show's trailers, featurettes and other extras (each plays like any item). */
     suspend fun extras(id: String): List<Item> = get<ItemsResponse>("/v1/items/$id/extras").items
 
@@ -726,16 +729,31 @@ data class ItemsResponse(val items: List<Item> = emptyList(), val total: Int = 0
 /** The largest page /v1/items sends. */
 const val ITEMS_PAGE = 2000
 
-/** Pages of [page] from [fetch] (given the offset) until a short page or [ItemsResponse.total]. */
+/**
+ * Pages of [page] from [fetch] (given the offset) until a short page or [ItemsResponse.total].
+ * Offsets move when the list changes underneath (a scan adds or removes an episode between
+ * two pages): one shifts across the boundary and comes twice, or is skipped. A change shows
+ * as a different total: the read starts over (three tries), and an item seen twice is kept
+ * once.
+ */
 suspend fun collectPages(page: Int, fetch: suspend (offset: Int) -> ItemsResponse): ItemsResponse {
-    val out = mutableListOf<Item>()
-    var offset = 0
-    while (true) {
-        val r = fetch(offset)
-        out += r.items
-        if (r.items.size < page || out.size >= r.total) return ItemsResponse(out, maxOf(r.total, out.size))
-        offset += page
+    var out = mutableListOf<Item>()
+    for (attempt in 0 until 3) {
+        out = mutableListOf()
+        var total = -1
+        var moved = false
+        var offset = 0
+        while (true) {
+            val r = fetch(offset)
+            if (total < 0) total = r.total else if (r.total != total) { moved = true; break }
+            out += r.items
+            if (r.items.size < page || out.size >= r.total) break
+            offset += page
+        }
+        if (!moved) break
     }
+    val unique = out.distinctBy { it.id }
+    return ItemsResponse(unique, unique.size)
 }
 
 @Serializable
@@ -778,6 +796,9 @@ data class RelatedResponse(val related: List<RelatedEntry> = emptyList(), val pa
 
 @Serializable
 data class SectionsResponse(val sections: List<Section> = emptyList())
+
+@Serializable
+data class NextResponse(val item: Item? = null)
 
 /** One entry of a series' season list (see [RoxyApi.sections]). */
 @Serializable

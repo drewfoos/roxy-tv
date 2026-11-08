@@ -98,6 +98,35 @@ export interface ItemsQuery {
   favorites?: boolean
 }
 
+/**
+ * Pages of /v1/items until the total. Offsets move when the list changes underneath (a scan
+ * adds or removes an episode between two pages): one shifts across the boundary and comes
+ * twice, or is skipped. A change shows as a different total: the read starts over (three
+ * tries), and an item seen twice is kept once.
+ */
+export async function collectPages(fetch: (limit: number, offset: number) => Promise<ItemsResponse>, page = 2000): Promise<ItemsResponse> {
+  let items: Item[] = []
+  for (let attempt = 0; attempt < 3; attempt++) {
+    items = []
+    let total: number | undefined
+    let moved = false
+    for (let offset = 0; ; offset += page) {
+      const r = await fetch(page, offset)
+      if (total == null) total = r.total
+      else if (r.total != null && r.total !== total) {
+        moved = true
+        break
+      }
+      items.push(...r.items)
+      if (r.items.length < page || (total != null && items.length >= total)) break
+    }
+    if (!moved) break
+  }
+  const seen = new Set<string>()
+  items = items.filter((it) => !seen.has(it.id) && (seen.add(it.id), true))
+  return { items, total: items.length }
+}
+
 export const api = {
   // ---- server and auth ----
   systemInfo: () => get<SystemInfo>('/v1/system/info', false),
@@ -201,15 +230,9 @@ export const api = {
    * and "next episode" was picked from the first page only. For whole lists (a show's or
    * a season's episodes), not for rows that want the first few.
    */
-  allItems: async (query: Omit<ItemsQuery, 'limit' | 'offset'>): Promise<ItemsResponse> => {
-    const page = 2000
-    const items: Item[] = []
-    for (let offset = 0; ; offset += page) {
-      const r = await api.items({ ...query, limit: page, offset })
-      items.push(...r.items)
-      if (r.items.length < page || (r.total != null && items.length >= r.total)) return { items, total: r.total ?? items.length }
-    }
-  },
+  allItems: async (query: Omit<ItemsQuery, 'limit' | 'offset'>): Promise<ItemsResponse> => collectPages((limit, offset) => api.items({ ...query, limit, offset })),
+  /** The episode a show's Play means for this profile (a film: itself), worked out by the server. */
+  next: (id: string) => get<{ item: Item | null }>(`/v1/items/${id}/next`).then((r) => r.item),
   item: (id: string) => get<Item>(`/v1/items/${id}`),
   source: (id: string) => get<MediaSource>(`/v1/sources/${id}`),
   related: (id: string) => get<RelatedResponse>(`/v1/items/${id}/related`),

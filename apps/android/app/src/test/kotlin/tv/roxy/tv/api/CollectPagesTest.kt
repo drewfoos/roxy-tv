@@ -33,4 +33,27 @@ class CollectPagesTest {
         assertEquals(2000, collectPages(ITEMS_PAGE, server(2000, calls)).items.size)
         assertEquals(listOf(0), calls) // the total says it is all there
     }
+
+    // The list changes right after the first page (a scan adds or removes an episode):
+    // offsets shift, so one would be skipped or come twice. Pages of 3 over 7.
+    private fun changing(before: List<Item>, after: List<Item>): suspend (Int) -> ItemsResponse {
+        var list = before
+        var calls = 0
+        return { offset ->
+            val r = ItemsResponse(list.drop(offset).take(3), list.size)
+            if (++calls == 1) list = after
+            r
+        }
+    }
+    private fun eps(vararg n: Int) = n.map { Item(id = "e$it", type = "episode", title = "E$it") }
+
+    @Test fun removedBeforeTheBoundaryIsNotASkip() = runBlocking {
+        val r = collectPages(3, changing(eps(1, 2, 3, 4, 5, 6, 7), eps(1, 3, 4, 5, 6, 7)))
+        assertEquals(listOf("e1", "e3", "e4", "e5", "e6", "e7"), r.items.map { it.id })
+    }
+
+    @Test fun addedBeforeTheBoundaryIsNotADuplicate() = runBlocking {
+        val r = collectPages(3, changing(eps(1, 2, 3, 4, 5, 6, 7), eps(0, 1, 2, 3, 4, 5, 6, 7)))
+        assertEquals(listOf("e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7"), r.items.map { it.id })
+    }
 }

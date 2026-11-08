@@ -53,22 +53,6 @@ fun rowNumbersFor(source: SectionSource?, rows: List<Item>): Map<String, Int?> =
     null -> emptyMap()
 }
 
-/**
- * The episode the title page's Play button means, across every season: one in progress
- * (the latest in order, rewatches included), else the first unwatched one after the last
- * watched, else the first unwatched, else the first (watch again). Specials only count
- * when the show has nothing else.
- */
-fun upNextOf(episodes: List<Item>): Item? {
-    val playable = episodes.filter { it.isPlayable }
-    val regular = playable.filter { (it.seasonAired ?: 1) != 0 }.ifEmpty { playable }
-    val ordered = regular.sortedWith(compareBy({ it.seasonAired ?: 1 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
-    ordered.lastOrNull { (it.userData?.positionMs ?: 0) > 0 }?.let { return it }
-    val lastWatched = ordered.indexOfLast { it.userData?.played == true }
-    ordered.drop(lastWatched + 1).firstOrNull { it.userData?.played != true }?.let { return it }
-    return ordered.firstOrNull { it.userData?.played != true } ?: ordered.firstOrNull()
-}
-
 /** Where an entry of the season list that is not a season gets its rows. */
 sealed interface SectionSource {
     /** Some of the Specials season's episodes, in this order. */
@@ -167,16 +151,15 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     private var relatedLoaded = false
 
     /**
-     * Every episode of the show, for [SeriesUiState.upNext]. On the first load the page then
+     * The show's next episode (the server's /next), for [SeriesUiState.upNext]. On the first load the page then
      * opens on that episode's season (Crunchyroll), so Play and the list agree.
      */
     private fun loadUpNext(seasons: List<Item>) {
         val opening = firstLoad
         firstLoad = false
         viewModelScope.launch {
-            val all = runCatching { api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
-                .onFailure { Timber.w(it, "episodes for up next") }.getOrNull()
-            val next = all?.let { upNextOf(it) }
+            // The server works it out: the page used to load every episode of the show for it.
+            val next = runCatching { api.next(seriesId) }.onFailure { Timber.w(it, "up next") }.getOrNull()
             _state.value = _state.value.copy(upNext = next)
             // Not if a season was picked meanwhile (the all-episodes fetch is slow on long shows).
             if (opening && seasons.isNotEmpty() && !userPicked) {

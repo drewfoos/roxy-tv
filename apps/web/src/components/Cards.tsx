@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, nextToPlay, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
+import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
 import { IconBookmark, IconBookmarkOutline, IconCalendar, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
@@ -23,8 +23,7 @@ export function itemPath(it: Item): string {
 export async function playPath(id: string, type: string): Promise<string> {
   if (type === 'series') {
     try {
-      const eps = await api.allItems({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' })
-      const next = nextToPlay(eps.items ?? [])
+      const next = await api.next(id) // the server works it out: no need for every episode here
       if (next) return `/watch/${next.id}`
     } catch {
       /* the show's page instead */
@@ -49,6 +48,9 @@ export function PlayButton({ id, type, className, children, label = 'Play' }: { 
         setBusy(true)
         try {
           nav(await playPath(id, type))
+        } catch {
+          // playPath falls back by itself; anything else still lands on the title's page.
+          nav(type === 'movie' ? `/movie/${id}` : `/series/${id}`)
         } finally {
           setBusy(false)
         }

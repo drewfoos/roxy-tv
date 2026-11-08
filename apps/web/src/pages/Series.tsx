@@ -56,8 +56,8 @@ export function Series() {
   }, [epsRes, season, flat])
   const shown = useMemo(() => (newest ? episodes.slice().reverse() : episodes), [episodes, newest])
   // Play looks across every season, like the apps, not just the one picked in the dropdown.
-  const allKey = seasonsRes == null ? null : flat ? epsKey : `episodes-all:${id}`
-  const { data: allRes, loading: allLoading } = useAsync(allKey, () => api.allItems({ type: 'episode', parent: id, recursive: true, includeSources: true, sort: 'index' }), [allKey])
+  // What Play plays, worked out by the server (it used to need every episode of the show).
+  const { data: nextRes, loading: nextLoading } = useAsync(seasonsRes == null ? null : `next:${id}`, () => api.next(id), [id, seasonsRes == null])
 
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
 
@@ -70,8 +70,8 @@ export function Series() {
   if (loading && !series) return <Spinner />
   if (!series) return <div className="empty error">{error ?? 'Not found'}</div>
 
-  const next = nextToPlay(allRes?.items ?? episodes)
-  const label = playLabel(next, epsLoading || allLoading || seasonsRes == null)
+  const next = nextRes !== undefined ? nextRes : nextToPlay(episodes)
+  const label = playLabel(next, epsLoading || nextLoading || seasonsRes == null)
   const seasonCount = series.seasonCount ?? seasons.filter((s) => !s.ids && !s.movie).length
 
   return (

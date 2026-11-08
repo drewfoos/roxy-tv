@@ -16,7 +16,6 @@ import tv.roxy.tv.api.ApiException
 import tv.roxy.tv.api.HomeRow
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
-import tv.roxy.tv.ui.detail.upNextOf
 
 /** One slide of the phone's hero carousel: the series/movie to show, and what Play starts. */
 data class HeroPick(val title: Item, val play: Item)
@@ -112,9 +111,8 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
                     // A newly added episode is just what arrived last (a season's E12): Play
                     // starts where the title page's Play would, the show's next episode.
                     val play = if (picked.isEpisode && !continuing) {
-                        runCatching { api.allItems(type = "episode", parent = title.id, recursive = true, sort = "index").items }
-                            .onFailure { Timber.w(it, "episodes for hero up next") }.getOrNull()
-                            ?.let { upNextOf(it) } ?: picked
+                        runCatching { api.next(title.id) }
+                            .onFailure { Timber.w(it, "hero up next") }.getOrNull() ?: picked
                     } else picked
                     HeroPick(title, play)
                 }
