@@ -16,12 +16,21 @@ const serve = (all: Item[]) =>
 
 describe('allItems', () => {
   afterEach(() => vi.restoreAllMocks())
-  it('reads every page (4500 items: three requests of 2000)', async () => {
+  it('reads a library-wide list page by page (4500 items: three requests of 2000)', async () => {
     const spy = serve(many(4500))
-    const r = await api.allItems({ type: 'episode', parent: 's', recursive: true })
+    const r = await api.allItems({ type: 'series,movie', recursive: true })
     expect(r.items).toHaveLength(4500)
     expect(r.items.at(-1)?.id).toBe('e4500')
     expect(spy).toHaveBeenCalledTimes(3)
+  })
+  it("reads a show's episodes in one request (one consistent read)", async () => {
+    const spy = vi.spyOn(api, 'items').mockImplementation(async (q: ItemsQuery) => {
+      const all = many(4500)
+      return { items: all.slice(q.offset ?? 0, (q.offset ?? 0) + Math.min(q.limit ?? 100, 20000)), total: 4500 }
+    })
+    const r = await api.allItems({ type: 'episode', parent: 's', recursive: true })
+    expect(r.items).toHaveLength(4500)
+    expect(spy).toHaveBeenCalledTimes(1)
   })
   it('stops after one request when everything fits', async () => {
     const spy = serve(many(2))
@@ -53,6 +62,20 @@ describe('collectPages while the list changes', () => {
     const before = many(7)
     const after = [ep(0), ...before]
     expect(ids(await collectPages(changing(before, after), 3))).toBe('e0 e1 e2 e3 e4 e5 e6 e7')
+  })
+  it('one removed and another added (the same total): the version moves, read again, none skipped', async () => {
+    let list = many(7)
+    let version = 1
+    let calls = 0
+    const r = await collectPages(async (limit, offset) => {
+      const page = { items: list.slice(offset, offset + limit), total: list.length, version }
+      if (++calls === 1) {
+        list = [...list.filter((i) => i.id !== 'e2'), ep(8)] // still 7
+        version++
+      }
+      return page
+    }, 3)
+    expect(ids(r)).toBe('e1 e3 e4 e5 e6 e7 e8')
   })
   it('a list that never settles: still no item twice', async () => {
     let n = 7

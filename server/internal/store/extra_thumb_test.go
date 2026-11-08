@@ -148,3 +148,64 @@ func TestListItemsPagesWithTies(t *testing.T) {
 		}
 	}
 }
+
+// The items change counter moves on every insert, update and delete, so a list read in
+// pages sees a change that keeps its total (one removed, another added); and a parent's
+// items come whole in one request (5000 here, past the 2000 of a library-wide page).
+func TestItemsVersionAndWholeParentLists(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	lib := &model.Library{Name: "A", Kind: model.KindSeries, Root: "/a"}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	show, season := "show", "season"
+	for _, it := range []*model.Item{
+		{ID: show, GUID: "g-show", LibraryID: lib.ID, Type: model.TypeSeries, Title: "Show"},
+		{ID: season, GUID: "g-season", LibraryID: lib.ID, Type: model.TypeSeason, ParentID: &show},
+	} {
+		if err := s.UpsertItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 5000; i++ {
+		n := i + 1
+		id := fmt.Sprintf("e%04d", n)
+		if err := s.UpsertItem(ctx, &model.Item{ID: id, GUID: "g-" + id, LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: &season, IndexAired: &n, Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	whole, total, err := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, ParentID: show, Recursive: true, SortBy: "index", Limit: MaxItemsUnderParent})
+	if err != nil || len(whole) != 5000 || total != 5000 {
+		t.Fatalf("a show's episodes in one request: %d of %d, %v", len(whole), total, err)
+	}
+	wide, _, _ := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, Limit: 1_000_000})
+	if len(wide) != MaxItemsPage {
+		t.Fatalf("a library-wide page: %d, want the cap %d", len(wide), MaxItemsPage)
+	}
+	v0, _ := s.ItemsVersion(ctx)
+	// Replace one episode with another: the total stays 5000.
+	if err := s.DeleteItem(ctx, "e0007"); err != nil {
+		t.Fatal(err)
+	}
+	n := 7
+	if err := s.UpsertItem(ctx, &model.Item{ID: "x0007", GUID: "g-x0007", LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: &season, IndexAired: &n, Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	_, total, _ = s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, ParentID: show, Recursive: true, Limit: 1})
+	v1, _ := s.ItemsVersion(ctx)
+	if total != 5000 || v1 == v0 {
+		t.Fatalf("after a replacement: total %d, version %d -> %d; want 5000 and a new version", total, v0, v1)
+	}
+	// A change to an item's place in a list (its title, its number) moves it too.
+	if _, err := s.db.ExecContext(ctx, `UPDATE items SET title = 'renamed' WHERE id = 'e0001'`); err != nil {
+		t.Fatal(err)
+	}
+	if v2, _ := s.ItemsVersion(ctx); v2 == v1 {
+		t.Fatal("version unchanged after an update")
+	}
+}

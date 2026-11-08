@@ -144,6 +144,8 @@ export interface Item {
 export interface ItemsResponse {
   items: Item[]
   total?: number
+  /** The server's items change counter when this page was read (moves on any change). */
+  version?: number
 }
 
 export interface HomeRow {

@@ -56,4 +56,17 @@ class CollectPagesTest {
         val r = collectPages(3, changing(eps(1, 2, 3, 4, 5, 6, 7), eps(0, 1, 2, 3, 4, 5, 6, 7)))
         assertEquals(listOf("e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7"), r.items.map { it.id })
     }
+
+    // One removed and another added between the pages: the total stays 7, the version moves.
+    @Test fun replacementWithTheSameTotalIsReadAgain() = runBlocking {
+        var list = eps(1, 2, 3, 4, 5, 6, 7)
+        var version = 1L
+        var calls = 0
+        val r = collectPages(3) { offset ->
+            val page = ItemsResponse(list.drop(offset).take(3), list.size, version)
+            if (++calls == 1) { list = list.filter { it.id != "e2" } + eps(8); version++ }
+            page
+        }
+        assertEquals(listOf("e1", "e3", "e4", "e5", "e6", "e7", "e8"), r.items.map { it.id })
+    }
 }

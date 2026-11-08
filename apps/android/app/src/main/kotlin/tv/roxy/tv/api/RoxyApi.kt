@@ -160,8 +160,11 @@ class RoxyApi(private val prefs: Prefs) {
      * episode was picked from the first page only). For whole lists: a show's or a
      * season's episodes.
      */
-    suspend fun allItems(type: String, parent: String? = null, recursive: Boolean = false, sort: String? = null, includeSources: Boolean = false): ItemsResponse =
-        collectPages(ITEMS_PAGE) { offset -> items(type = type, parent = parent, recursive = recursive, sort = sort, limit = ITEMS_PAGE, includeSources = includeSources, offset = offset) }
+    suspend fun allItems(type: String, parent: String? = null, recursive: Boolean = false, sort: String? = null, includeSources: Boolean = false): ItemsResponse {
+        // Under a parent (a show's or season's episodes) one request: one consistent query.
+        val page = if (parent != null) ITEMS_UNDER_PARENT else ITEMS_PAGE
+        return collectPages(page) { offset -> items(type = type, parent = parent, recursive = recursive, sort = sort, limit = page, includeSources = includeSources, offset = offset) }
+    }
 
     suspend fun item(id: String): Item = get("/v1/items/$id")
 
@@ -724,28 +727,39 @@ data class Character(val id: Int, val name: String, val image: String, val serie
 data class CharactersResponse(val characters: List<Character> = emptyList())
 
 @Serializable
-data class ItemsResponse(val items: List<Item> = emptyList(), val total: Int = 0)
+data class ItemsResponse(
+    val items: List<Item> = emptyList(),
+    val total: Int = 0,
+    /** The server's items change counter when the page was read (-1: an older server). */
+    val version: Long = -1,
+)
 
-/** The largest page /v1/items sends. */
+/** The largest page /v1/items sends for a library-wide list. */
 const val ITEMS_PAGE = 2000
+
+/** The largest it sends for the items under one parent (a show's episodes: read whole, one consistent query). */
+const val ITEMS_UNDER_PARENT = 20000
 
 /**
  * Pages of [page] from [fetch] (given the offset) until a short page or [ItemsResponse.total].
  * Offsets move when the list changes underneath (a scan adds or removes an episode between
  * two pages): one shifts across the boundary and comes twice, or is skipped. A change shows
- * as a different total: the read starts over (three tries), and an item seen twice is kept
- * once.
+ * as a different version (the server's items change counter): the read starts over (three
+ * tries), and an item seen twice is kept once.
  */
 suspend fun collectPages(page: Int, fetch: suspend (offset: Int) -> ItemsResponse): ItemsResponse {
     var out = mutableListOf<Item>()
     for (attempt in 0 until 3) {
         out = mutableListOf()
-        var total = -1
+        var first = Long.MIN_VALUE
         var moved = false
         var offset = 0
         while (true) {
             val r = fetch(offset)
-            if (total < 0) total = r.total else if (r.total != total) { moved = true; break }
+            // The version moves on any change, a removal plus an addition too (the total
+            // alone stays the same then); an older server sends none: its total.
+            val mark = if (r.version >= 0) r.version else r.total.toLong()
+            if (offset == 0) first = mark else if (mark != first) { moved = true; break }
             out += r.items
             if (r.items.size < page || out.size >= r.total) break
             offset += page

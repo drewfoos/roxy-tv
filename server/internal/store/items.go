@@ -223,6 +223,21 @@ func ImageURLAt(itemID, imageType, fetchedAt string) string {
 }
 
 // ItemQuery is the filter for ListItems. Zero values mean "no filter".
+// The most items one /v1/items request returns: a library-wide list, and the items
+// under one parent (a show's episodes, read whole).
+const (
+	MaxItemsPage        = 2000
+	MaxItemsUnderParent = 20000
+)
+
+// ItemsVersion counts every change to items (migration 0042): a list read in pages
+// compares it between pages to know it was read from one state.
+func (s *Store) ItemsVersion(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT n FROM items_version WHERE id = 1`).Scan(&n)
+	return n, err
+}
+
 type ItemQuery struct {
 	LibraryID int64
 	Types     []model.ItemType
@@ -298,12 +313,19 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 	if q.Desc {
 		dir = " DESC"
 	}
-	// Bounded so one request can't make the server load and send the whole database.
+	// Bounded so one request can't make the server load and send the whole database. The
+	// episodes of one show or season are bounded by the show, and are read whole in one
+	// query (one consistent view: pages could skip an episode a scan moved between them):
+	// up to MaxItemsUnderParent then.
 	limit := q.Limit
+	maxLimit := MaxItemsPage
+	if q.ParentID != "" {
+		maxLimit = MaxItemsUnderParent
+	}
 	if limit <= 0 {
 		limit = 100
-	} else if limit > 2000 {
-		limit = 2000
+	} else if limit > maxLimit {
+		limit = maxLimit
 	}
 	if q.Offset < 0 {
 		q.Offset = 0

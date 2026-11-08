@@ -77,6 +77,13 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 			q.Desc = true
 		}
 	}
+	// Read before the list: a change made while this page is read moves it by the next
+	// page, and the client reads again (never the other way round).
+	version, err := s.store.ItemsVersion(r.Context())
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
 	items, total, err := s.store.ListItems(r.Context(), q)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -95,7 +102,9 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	fillAvailability(items)
 	s.attachUserData(r.Context(), items)
 	s.fillAudioLanguages(r.Context(), items)
-	writeJSON(w, 200, map[string]any{"items": items, "total": total})
+	// version: items' change counter (store.ItemsVersion); a client reading pages starts
+	// over when it differs between them.
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "version": version})
 }
 
 // attachSources fills Sources for every item of a page in one batched lookup. A failed

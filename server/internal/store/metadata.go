@@ -218,7 +218,7 @@ func (s *Store) Children(ctx context.Context, parentID string, t model.ItemType)
 // pages so a long show is read whole: ListItems answers 100 at a time unless asked for
 // more, and callers that took its default saw only the first 100 (SpongeBob's 716).
 func (s *Store) EpisodesOf(ctx context.Context, seriesID string) ([]model.Item, error) {
-	const page = 2000
+	const page = MaxItemsUnderParent // one query: one consistent view (pages only past that)
 	var out []model.Item
 	for offset := 0; ; offset += page {
 		items, _, err := s.ListItems(ctx, ItemQuery{ParentID: seriesID, Recursive: true, Types: []model.ItemType{model.TypeEpisode}, SortBy: "index", Limit: page, Offset: offset})
