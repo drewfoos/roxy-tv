@@ -77,6 +77,7 @@ type Service struct {
 	// numbering (UseEpisodeAirDates); nil without it. airDatesTried: series id -> last ask.
 	airDates      func(ctx context.Context, tvdbID int) (map[[2]int]string, error)
 	airDatesTried map[string]time.Time
+	sonarrSeen    map[string]map[[2]int]string // series id -> Sonarr's last air dates (sonarrDates)
 }
 
 // UseEpisodeAirDates gives the service a source of episode air dates in TheTVDB's
@@ -90,6 +91,51 @@ func (s *Service) UseEpisodeAirDates(f func(ctx context.Context, tvdbID int) (ma
 // airDatesRetry is how long a series whose undated episodes Sonarr could not date waits
 // before it is asked again.
 const airDatesRetry = 24 * time.Hour
+
+// sonarrDates is Sonarr's air date per (season, episode) for a series it has, nil when
+// there is no Sonarr or it does not know the series.
+func (s *Service) sonarrDates(ctx context.Context, it *model.Item) map[[2]int]string {
+	s.mu.Lock()
+	source := s.airDates
+	s.mu.Unlock()
+	tvdb, err := strconv.Atoi(it.ProviderIDs["tvdb"])
+	if source == nil || err != nil || tvdb <= 0 {
+		return nil
+	}
+	dates, err := source(ctx, tvdb)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		// Sonarr unreachable (its VPN reconnecting): the last answer, so a refresh then
+		// does not undo a season's offset.
+		return s.sonarrSeen[it.ID]
+	}
+	if s.sonarrSeen == nil {
+		s.sonarrSeen = map[string]map[[2]int]string{}
+	}
+	s.sonarrSeen[it.ID] = dates
+	return dates
+}
+
+// realEpisodeNumbers is, per regular season, the episode numbers of its real files.
+func (s *Service) realEpisodeNumbers(ctx context.Context, seasons []model.Item) map[int][]int {
+	out := map[int][]int{}
+	for _, se := range seasons {
+		if se.IndexAired == nil || *se.IndexAired < 1 {
+			continue
+		}
+		eps, err := s.store.Children(ctx, se.ID, model.TypeEpisode)
+		if err != nil {
+			continue
+		}
+		for _, e := range eps {
+			if !e.IsVirtual && e.IndexAired != nil {
+				out[*se.IndexAired] = append(out[*se.IndexAired], *e.IndexAired)
+			}
+		}
+	}
+	return out
+}
 
 // fillAirDates gives a series' real episodes that have no air date the one Sonarr has for
 // the same season and episode number. Specials are the ones without: Sonarr names their
@@ -691,6 +737,19 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			layouts[r] = layoutFor(r, lengths)
 			if layouts[r].split {
 				slog.Debug("metadata: seasons split differently from the provider", "series", series.Title, "provider", r.Provider)
+			}
+		}
+	}
+	// Seasons whose episode numbers run differently from the provider's, by Sonarr's air
+	// dates (see dateShifts).
+	if dates := s.sonarrDates(ctx, series); len(dates) > 0 {
+		ens := s.realEpisodeNumbers(ctx, seasons)
+		for r, lay := range layouts {
+			if lay.split {
+				continue
+			}
+			if lay.shift = dateShifts(r, fetch, ens, dates); len(lay.shift) > 0 {
+				slog.Info("metadata: episode numbers offset from the provider's, by air date", "series", series.Title, "provider", r.Provider, "shift", lay.shift)
 			}
 		}
 	}
@@ -1347,6 +1406,9 @@ func (s *Service) createPlaceholders(ctx context.Context, series *model.Item, se
 				continue
 			}
 			count := seasonCount(si)
+			if d := lay.shift[si.Number]; d > 0 && count > d {
+				count -= d // the provider's first d are not this season's (by air date)
+			}
 			if _, ok := bySeason[si.Number]; !ok && count == 0 {
 				continue // announced season with no episodes yet: nothing to show
 			}
