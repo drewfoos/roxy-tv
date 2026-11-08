@@ -182,6 +182,7 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
                 episodes = state.episodes, loading = state.episodesLoading, api = app.api, onPlay = ::play, first = first,
                 onPlayFromStart = { ep -> scope.launch { playItem(context, ep, fromStart = true).onFailure { Timber.w(it, "play failed") } } },
                 // A group of specials numbers by place, a film's row not at all (rowNumbersFor).
+                sectionCounts = state.sectionCounts, sectionLabels = state.sectionLabels,
                 code = { ep -> if (!ep.isEpisode) "" else if (state.rowNumbers.containsKey(ep.id)) state.rowNumbers[ep.id]?.let { "E$it" } ?: "" else episodeShort(ep) },
             )
             "Details" -> DetailsTab(series, app.api, first)
@@ -392,7 +393,7 @@ private fun TitlePage(
  * from one small request per season, made once the tab opens.
  */
 @Composable
-private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester, onPlayFromStart: (Item) -> Unit = {}, code: (Item) -> String = { if (it.isEpisode) episodeShort(it) else "" }) {
+private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester, onPlayFromStart: (Item) -> Unit = {}, code: (Item) -> String = { if (it.isEpisode) episodeShort(it) else "" }, sectionCounts: Map<String, Int> = emptyMap(), sectionLabels: Map<String, String> = emptyMap()) {
     val firstEpisode = remember { FocusRequester() }
     var menuFor by remember { mutableStateOf<Item?>(null) }
     menuFor?.let { ep ->
@@ -405,6 +406,9 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
     var counts by remember(seasonIds) { mutableStateOf<Map<String, Int>>(emptyMap()) }
     LaunchedEffect(seasonIds) {
         for (s in seasons) {
+            // An entry of the season list that is not a season (a group of specials, a film):
+            // its count came with the list; asking for its "season's" episodes said 0.
+            if (s.id in sectionCounts) continue
             val n = runCatching { api.items(type = "episode", parent = s.id, limit = 1).total }.getOrNull() ?: continue
             counts = counts + (s.id to n)
         }
@@ -416,8 +420,8 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             }
             seasons.forEachIndexed { i, s ->
                 val name = s.title.ifEmpty { "Season ${s.indexAired ?: i + 1}" }
-                val n = if (i == selected && !loading) episodes.size else counts[s.id]
-                val count = when (n) { null -> null; 1 -> "1 episode"; else -> "$n episodes" }
+                val n = if (i == selected && !loading) episodes.size else counts[s.id] ?: sectionCounts[s.id]
+                val count = sectionLabels[s.id] ?: when (n) { null -> null; 1 -> "1 episode"; else -> "$n episodes" }
                 TvListRow(
                     label = name, trailing = count, selected = i == selected, height = 44.dp, fontSize = 19.sp, startPadding = 16.dp,
                     onClick = { onSelectSeason(i) },
@@ -445,7 +449,9 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
 @Composable
 private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null, code: String = if (ep.isEpisode) episodeShort(ep) else "") {
     val placeholder = !ep.isPlayable
-    val imageType = if (ep.isEpisode) "thumb" else "backdrop"
+    // An episode's still; an extra's frame (its "thumb", made on request) before any
+    // backdrop; a film's backdrop. Extras asked for a backdrop only and showed none.
+    val imageType = if (ep.isEpisode || ep.images["thumb"] != null) "thumb" else "backdrop"
     val name = if (code.isEmpty()) ep.title else "$code - ${ep.title}"
     val audio = audioBadge(ep) ?: ep.availability?.takeIf { placeholder }?.replaceFirstChar { it.uppercase() }
     TvCard(onClick = onClick, onLongClick = onLongClick, modifier = modifier.alpha(if (placeholder) 0.5f else 1f)) {
