@@ -60,3 +60,17 @@ export function entryRows(entry: SeasonEntry, episodes: Item[]): Item[] {
   const byId = new Map(episodes.map((e) => [e.id, e]))
   return entry.ids.map((id) => byId.get(id)).filter((e): e is Item => !!e)
 }
+
+/**
+ * The number a row shows: in a group of specials its place in the group (1, 2, 3: the
+ * TheTVDB numbers files carry, KonoSuba's 3 to 7, mean nothing on screen), none on a
+ * film's row, the episode's own number in a season.
+ */
+export function rowNumber(entry: SeasonEntry | undefined, rows: Item[], ep: Item): number | null {
+  if (entry?.movie) return null
+  if (entry?.ids) {
+    const i = rows.findIndex((r) => r.id === ep.id)
+    return i >= 0 ? i + 1 : null
+  }
+  return ep.indexAired ?? ep.indexAbsolute ?? null
+}

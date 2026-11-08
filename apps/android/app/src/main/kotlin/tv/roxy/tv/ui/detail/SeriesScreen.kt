@@ -35,7 +35,23 @@ data class SeriesUiState(
     val showExtras: Boolean = false,
     /** What Play plays, across all seasons (null until the episode list is in). */
     val upNext: Item? = null,
+    /** Rows that do not show their own episode number (see [rowNumbersFor]): id -> number shown, null for none. */
+    val rowNumbers: Map<String, Int?> = emptyMap(),
 )
+
+/** The number a row shows: [SeriesUiState.rowNumbers] when it says, else the episode's own. */
+fun SeriesUiState.rowNumber(ep: Item): Int? = if (rowNumbers.containsKey(ep.id)) rowNumbers[ep.id] else ep.indexAired ?: ep.indexAbsolute
+
+/**
+ * Rows numbered other than by their own episode number: a group of specials by place (1,
+ * 2, 3: the TheTVDB numbers files carry, KonoSuba's 3 to 7, mean nothing on screen), a
+ * film's row not at all. A season's rows keep their own numbers (empty map).
+ */
+fun rowNumbersFor(source: SectionSource?, rows: List<Item>): Map<String, Int?> = when (source) {
+    is SectionSource.Specials -> rows.mapIndexed { i, ep -> ep.id to (i + 1) }.toMap()
+    is SectionSource.Movie -> rows.associate { it.id to null }
+    null -> emptyMap()
+}
 
 /**
  * The episode the title page's Play button means, across every season: one in progress
@@ -221,7 +237,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 }
             }
                 .onSuccess { eps ->
-                    _state.value = _state.value.copy(episodes = eps, episodesLoading = false)
+                    _state.value = _state.value.copy(episodes = eps, episodesLoading = false, rowNumbers = rowNumbersFor(source, eps))
                 }
                 .onFailure { t ->
                     if (t is kotlinx.coroutines.CancellationException) throw t

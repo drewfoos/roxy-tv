@@ -12,7 +12,7 @@ import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
 import { ExtrasRow } from '../components/Extras'
-import { entryRows, plainEntries, sectionEntries, type SeasonEntry } from '../api/sections'
+import { entryRows, plainEntries, rowNumber, sectionEntries, type SeasonEntry } from '../api/sections'
 
 /**
  * A series, laid out like Crunchyroll's: the banner with the info over its left side,
@@ -112,7 +112,7 @@ export function Series() {
           ) : (
             <div className="grid grid--episodes">
               {shown.map((ep) => (
-                <EpisodeCard key={ep.id} ep={ep} seriesTitle={series.title} />
+                <EpisodeCard key={ep.id} ep={ep} seriesTitle={series.title} number={flat ? undefined : rowNumber(season, episodes, ep)} />
               ))}
             </div>
           )}
@@ -225,13 +225,14 @@ function SeasonSelect({ seasons, index, onSelect }: { seasons: SeasonEntry[]; in
  * series name in tiny capitals, "E1 – Title", then "Dub | Sub" with the menu. Marking
  * it watched from the menu redraws the card at once.
  */
-export function EpisodeCard({ ep: given, seriesTitle }: { ep: Item; seriesTitle?: string }) {
+export function EpisodeCard({ ep: given, seriesTitle, number }: { ep: Item; seriesTitle?: string; number?: number | null }) {
   const [played, setPlayed] = useWatchedState(given)
   const ep = useMemo(() => withPlayed(given, played), [given, played])
   const playable = isPlayable(ep)
   const left = timeLeftLabel(ep)
   const watched = isWatched(ep)
-  const n = ep.indexAired ?? ep.indexAbsolute
+  // The caller's number when it has one (a group of specials numbers by place; a film, none).
+  const n = number !== undefined ? number : (ep.indexAired ?? ep.indexAbsolute)
   const art = (
     <div className="ep__art">
       <Art url={api.imageUrl(ep, 'thumb', px(420))} title={episodeCode(ep) || ep.title} />

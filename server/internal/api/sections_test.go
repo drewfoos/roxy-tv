@@ -28,37 +28,42 @@ func describe(secs []section) string {
 	return strings.Join(parts, " | ")
 }
 
-// High School DxD's shape: four seasons (2012, 2013, 2015, 2018), OVAs that came out
-// between them, shorts that came out around an OVA (one entry per kind, not alternating),
-// specials not in the library, and one with no date.
+// High School DxD's shape: four seasons; OVAs between them (by name, or by length: an
+// episode-long special not called an OVA is one too, but its own entry); three-minute BD
+// shorts, an undated special and missing ones all in "Specials" at the bottom, the ones
+// the library has first, by date.
 func TestSectionsInReleaseOrder(t *testing.T) {
+	const min = 60 * 1000
 	seasons := []seasonIn{
 		{ID: "s3", Title: "Season 3", Index: 3, Start: "2015-04-04", Count: 12},
 		{ID: "s1", Title: "Season 1", Index: 1, Start: "2012-01-06", Count: 12},
 		{ID: "s2", Title: "Season 2", Index: 2, Start: "2013-07-07", Count: 12},
-		{ID: "s4", Title: "Season 4", Index: 4, Start: "2018-04-10", Count: 13},
+		{ID: "s4", Title: "Season 4", Index: 4, Start: "2018-04-17", Count: 12},
 	}
 	specials := []specialIn{
-		{ID: "ova1", Title: "Highschool DxD OVA 1", Date: "2012-04-11"},
-		{ID: "ova2", Title: "Highschool DxD OVA 2", Date: "2012-07-25"},
-		{ID: "new", Title: "New OVA", Date: "2015-03-10"},
-		{ID: "born", Title: "BorN OVA", Date: "2015-09-16"},
-		{ID: "short1", Title: "Rias and Akeno, Girl Fight!?", Date: "2015-07-24"},
-		{ID: "short2", Title: "Steamy Grayfia", Date: "2015-12-25"},
-		{ID: "hero0", Title: "Hero Episode 0", Date: "2018-03-21"},
-		{ID: "udon", Title: "Let's Make Udon", Date: "2012-07-25", Virtual: true},
-		{ID: "nodate", Title: "Mystery Special"},
+		{ID: "ova1", Title: "Highschool DxD OVA 1", Date: "2012-09-20", RuntimeMs: 24 * min},
+		{ID: "ova2", Title: "Highschool DxD OVA 2", Date: "2013-05-21", RuntimeMs: 24 * min},
+		{ID: "new", Title: "New OVA", Date: "2015-03-10", RuntimeMs: 3 * min}, // named an OVA: placed whatever its length
+		{ID: "short2", Title: "Steamy Grayfia", Date: "2015-12-25", RuntimeMs: 4 * min},
+		{ID: "short1", Title: "Rias and Akeno, Girl Fight!", Date: "2015-07-24", RuntimeMs: 3 * min},
+		{ID: "born", Title: "BorN OVA", Date: "2015-12-09", RuntimeMs: 24 * min},
+		{ID: "hero0", Title: "Hero Episode 0", Date: "2018-04-10", RuntimeMs: 24 * min},
+		{ID: "nodate", Title: "Mystery Special", RuntimeMs: 24 * min},
+		{ID: "harem", Title: "Before Harem Special", Date: "2011-12-19", Virtual: true},
+		{ID: "unknown", Title: "Making Of", Date: "2012-02-01"}, // no length known: an extra
 	}
 	got := describe(buildSections(seasons, specials, nil))
-	want := "season:Season 1 | specials:OVAs[ova1 ova2] | season:Season 2 | specials:OVA[new] | season:Season 3 | specials:Specials[short1 short2 hero0] | specials:OVA[born] | season:Season 4 | specials:More specials[nodate] | specials:Missing specials[udon]"
+	want := "season:Season 1 | specials:OVAs[ova1 ova2] | season:Season 2 | specials:New OVA[new] | season:Season 3 | specials:BorN OVA[born] | specials:Hero Episode 0[hero0] | season:Season 4 | specials:Specials[unknown short1 short2 nodate harem]"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
 }
 
-// Before the first season (a prologue OVA); films each an entry of their own, splitting a
-// run of specials; a film with no date at the end; no specials at all is just the seasons.
+// KonoSuba: its OVAs are not named so, only their length says what they are; the film
+// filed among the specials is an entry of its own (seriesSections), a film of the
+// franchise splits a gap's OVAs; a film with no date goes last; no specials, just seasons.
 func TestSectionsFilmsAndEdges(t *testing.T) {
+	const min = 60 * 1000
 	year := 2020
 	film := func(id, title, date string) movieIn {
 		it := model.Item{ID: id, Title: title, Type: model.TypeMovie}
@@ -67,19 +72,22 @@ func TestSectionsFilmsAndEdges(t *testing.T) {
 		}
 		return movieIn{Item: it, Date: date}
 	}
-	seasons := []seasonIn{{ID: "s1", Index: 1, Start: "2020-04-01", Count: 12}, {ID: "s2", Index: 2, Start: "2023-01-01", Count: 12}}
+	seasons := []seasonIn{{ID: "s1", Index: 1, Start: "2016-01-14", Count: 10}, {ID: "s2", Index: 2, Start: "2017-01-12", Count: 10}, {ID: "s3", Index: 3, Start: "2024-04-10", Count: 11}}
 	specials := []specialIn{
-		{ID: "pro", Title: "Prologue", Date: "2019-12-01"},
-		{ID: "sp1", Title: "Recap", Date: "2021-01-01"},
-		{ID: "sp2", Title: "Beach Episode", Date: "2022-06-01"},
+		{ID: "pro", Title: "Prologue", Date: "2015-12-01", RuntimeMs: 25 * min},
+		{ID: "choker", Title: "God's Blessing on This Wonderful Choker!", Date: "2016-06-24", RuntimeMs: 24 * min},
+		{ID: "art", Title: "God's Blessing on These Wonderful Works of Art!", Date: "2017-07-24", RuntimeMs: 24 * min},
+		{ID: "red", Title: "Red Stream Explosion!", Date: "2025-04-25", RuntimeMs: 24 * min},
+		{ID: "imp", Title: "Watch Out for Impostors!", Date: "2025-04-25", RuntimeMs: 24 * min},
+		{ID: "late", Title: "Another One", Date: "2020-01-01", RuntimeMs: 24 * min},
 	}
-	movies := []movieIn{film("m1", "The Movie", "2021-08-01"), film("m2", "Undated Film", "")}
+	movies := []movieIn{film("m1", "Legend of Crimson", "2019-08-30"), film("m2", "Undated Film", "")}
 	got := describe(buildSections(seasons, specials, movies))
-	want := "specials:Special[pro] | season:Season 1 | specials:Special[sp1] | movie:The Movie | specials:Special[sp2] | season:Season 2 | movie:Undated Film"
+	want := "specials:Prologue[pro] | season:Season 1 | specials:God's Blessing on This Wonderful Choker![choker] | season:Season 2 | specials:God's Blessing on These Wonderful Works of Art![art] | movie:Legend of Crimson | specials:Another One[late] | season:Season 3 | specials:OVAs[red imp] | movie:Undated Film"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
-	if got := describe(buildSections(seasons, nil, nil)); got != "season:Season 1 | season:Season 2" {
+	if got := describe(buildSections(seasons, nil, nil)); got != "season:Season 1 | season:Season 2 | season:Season 3" {
 		t.Fatalf("seasons only: %s", got)
 	}
 }
@@ -133,6 +141,10 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 	ep("e2", "sea2", "Two", "2013-07-07", 1)
 	ep("ova", "sea0", "Show OVA", "2012-09-01", 1)
 	ep("odd", "sea0", "Odd Special", "", 2)
+	// A film filed as a special (KonoSuba's Legend of Crimson, S00E05): an entry of its own.
+	ep("crimson", "sea0", "Movie: Legend of Crimson", "2019-08-30", 5)
+	long := int64(90 * 60 * 1000)
+	up(&model.Item{ID: "crimson", GUID: "g-crimson", LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: ptr("sea0"), IndexAired: idx(5), Title: "Movie: Legend of Crimson", RuntimeMs: &long})
 	up(&model.Item{ID: "film", GUID: "g-film", LibraryID: movies.ID, Type: model.TypeMovie, Title: "Show: The Movie", ProviderIDs: map[string]string{"anilist": "555"}})
 	file("film")
 	if err := st.SetAirDateIfUnset(ctx, "film", "2014-06-01"); err != nil {
@@ -159,7 +171,7 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := describe(out.Sections)
-	want := "season:Season 1 | specials:OVA[ova] | season:Season 2 | movie:Show: The Movie | specials:More specials[odd]"
+	want := "season:Season 1 | specials:Show OVA[ova] | season:Season 2 | movie:Show: The Movie | movie:Movie: Legend of Crimson | specials:Specials[odd]"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
@@ -167,8 +179,10 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 		if sec.Kind == "specials" && sec.SeasonID != "sea0" {
 			t.Errorf("%s: season %q, want the Specials season", sec.Title, sec.SeasonID)
 		}
-		if sec.Kind == "movie" && (sec.Item == nil || sec.Item.ID != "film" || !sec.Item.HasMedia) {
+		if sec.Kind == "movie" && (sec.Item == nil || sec.Item.ID != "film" && sec.Item.ID != "crimson" || !sec.Item.HasMedia) {
 			t.Errorf("the film's entry: %+v", sec.Item)
 		}
 	}
 }
+
+func ptr(s string) *string { return &s }

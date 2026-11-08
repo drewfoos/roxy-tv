@@ -100,6 +100,7 @@ import tv.roxy.tv.ui.components.RoxyImage
 import tv.roxy.tv.ui.components.ImageMemo
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.detail.SeriesViewModel
+import tv.roxy.tv.ui.detail.rowNumber
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
@@ -308,6 +309,7 @@ fun PhoneSeries(
                             onClick = { if (ep.isPlayable) onOpenEpisode(ep) },
                             onDownload = { download(listOf(ep)) },
                             onMarkWatched = { on -> scope.launch { app.markWatched(ep.id, on) } },
+                            number = state.rowNumber(ep),
                         )
                     }
                 }
@@ -650,7 +652,7 @@ private fun EpisodeRowSkeleton() {
 
 /** Netflix's episode row: thumb with a play badge, "N. Title", runtime and a watched tick, the download control, then the synopsis. */
 @Composable
-internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit, onMarkWatched: (Boolean) -> Unit) {
+internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDownload: () -> Unit, onMarkWatched: (Boolean) -> Unit, number: Int? = ep.indexAired ?: ep.indexAbsolute) {
     val thumbWidth = 150.dp
     val placeholder = !ep.isPlayable
     val watched = ep.isWatched
@@ -684,7 +686,7 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
             // The name and the audio/download line as one block, centred on the thumbnail
             // (Crunchyroll's), rather than the name at the top and the line at the bottom.
             Column(modifier = Modifier.weight(1f).heightIn(min = thumbWidth * 9f / 16f), verticalArrangement = Arrangement.Center) {
-                val n = (ep.indexAired ?: ep.indexAbsolute)?.let { "$it. " } ?: ""
+                val n = number?.let { "$it. " } ?: ""
                 Text(n + ep.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val sub = listOfNotNull(
                     badge,

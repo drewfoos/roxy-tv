@@ -181,6 +181,8 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
                 seasons = state.seasons, selected = state.selectedSeason, onSelectSeason = vm::selectSeason,
                 episodes = state.episodes, loading = state.episodesLoading, api = app.api, onPlay = ::play, first = first,
                 onPlayFromStart = { ep -> scope.launch { playItem(context, ep, fromStart = true).onFailure { Timber.w(it, "play failed") } } },
+                // A group of specials numbers by place, a film's row not at all (rowNumbersFor).
+                code = { ep -> if (!ep.isEpisode) "" else if (state.rowNumbers.containsKey(ep.id)) state.rowNumbers[ep.id]?.let { "E$it" } ?: "" else episodeShort(ep) },
             )
             "Details" -> DetailsTab(series, app.api, first)
             "Extras" -> ExtrasTab(state.extras, app.api, first)
@@ -390,7 +392,7 @@ private fun TitlePage(
  * from one small request per season, made once the tab opens.
  */
 @Composable
-private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester, onPlayFromStart: (Item) -> Unit = {}) {
+private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester, onPlayFromStart: (Item) -> Unit = {}, code: (Item) -> String = { if (it.isEpisode) episodeShort(it) else "" }) {
     val firstEpisode = remember { FocusRequester() }
     var menuFor by remember { mutableStateOf<Item?>(null) }
     menuFor?.let { ep ->
@@ -432,7 +434,7 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             // for a new season). It used to aim at episode 1 only, a dead end once scrolled.
             LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp).focusRestorer(firstEpisode), contentPadding = PaddingValues(bottom = 24.dp)) {
                 itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
-                    EpisodeRow(ep, api, index = i, onClick = { if (ep.isPlayable) onPlay(ep) }, onLongClick = { if (ep.isPlayable) menuFor = ep }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
+                    EpisodeRow(ep, api, index = i, code = code(ep), onClick = { if (ep.isPlayable) onPlay(ep) }, onLongClick = { if (ep.isPlayable) menuFor = ep }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
                 }
             }
         }
@@ -441,10 +443,9 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
 
 /** One episode (or the movie itself): still with minutes and progress, "E1 - Title", the audio, two lines of synopsis. */
 @Composable
-private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+private fun EpisodeRow(ep: Item, api: RoxyApi, index: Int, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null, code: String = if (ep.isEpisode) episodeShort(ep) else "") {
     val placeholder = !ep.isPlayable
     val imageType = if (ep.isEpisode) "thumb" else "backdrop"
-    val code = if (ep.isEpisode) episodeShort(ep) else ""
     val name = if (code.isEmpty()) ep.title else "$code - ${ep.title}"
     val audio = audioBadge(ep) ?: ep.availability?.takeIf { placeholder }?.replaceFirstChar { it.uppercase() }
     TvCard(onClick = onClick, onLongClick = onLongClick, modifier = modifier.alpha(if (placeholder) 0.5f else 1f)) {

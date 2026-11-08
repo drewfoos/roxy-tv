@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entryRows, plainEntries, sectionEntries } from './sections'
+import { entryRows, rowNumber, plainEntries, sectionEntries } from './sections'
 import type { Item, Section } from './types'
 
 const season = (id: string, n: number) => ({ id, type: 'season', title: n === 0 ? 'Specials' : `Season ${n}`, indexAired: n }) as Item
@@ -35,5 +35,18 @@ describe('entryRows', () => {
     const eps = ['odd', 'ova2', 'ova1'].map((id) => ({ id, type: 'episode', title: id }) as Item)
     expect(entryRows({ key: 'x', title: 'OVAs', seasonId: 's0', ids: ['ova1', 'ova2'] }, eps).map((e) => e.id)).toEqual(['ova1', 'ova2'])
     expect(entryRows({ key: 's1', title: 'Season 1', seasonId: 's1' }, eps)).toHaveLength(3)
+  })
+})
+
+describe('rowNumber', () => {
+  const ep = (id: string, n: number) => ({ id, type: 'episode', title: id, indexAired: n }) as Item
+  it('numbers a group of specials by place, not by the file numbers (KonoSuba 3..7)', () => {
+    const rows = [ep('choker', 3), ep('art', 4)]
+    const entry = { key: 'x', title: 'Specials', seasonId: 's0', ids: ['choker', 'art'] }
+    expect(rows.map((r) => rowNumber(entry, rows, r))).toEqual([1, 2])
+  })
+  it('keeps a season episode its own number and gives a film none', () => {
+    expect(rowNumber({ key: 's1', title: 'Season 1', seasonId: 's1' }, [], ep('e5', 5))).toBe(5)
+    expect(rowNumber({ key: 'f', title: 'Legend of Crimson', movie: film }, [], ep('crimson', 5))).toBeNull()
   })
 })
