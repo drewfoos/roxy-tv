@@ -151,7 +151,7 @@ func TestListItemsPagesWithTies(t *testing.T) {
 
 // The items change counter moves on every insert, update and delete, so a list read in
 // pages sees a change that keeps its total (one removed, another added); and a parent's
-// items come whole in one request (5000 here, past the 2000 of a library-wide page).
+// items come whole in one request (5000 here).
 func TestItemsVersionAndWholeParentLists(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
@@ -179,13 +179,12 @@ func TestItemsVersionAndWholeParentLists(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	whole, total, err := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, ParentID: show, Recursive: true, SortBy: "index", Limit: MaxItemsUnderParent})
+	whole, total, err := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, ParentID: show, Recursive: true, SortBy: "index", Limit: MaxItems})
 	if err != nil || len(whole) != 5000 || total != 5000 {
 		t.Fatalf("a show's episodes in one request: %d of %d, %v", len(whole), total, err)
 	}
-	wide, _, _ := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, Limit: 1_000_000})
-	if len(wide) != MaxItemsPage {
-		t.Fatalf("a library-wide page: %d, want the cap %d", len(wide), MaxItemsPage)
+	if capped, _, _ := s.ListItems(ctx, ItemQuery{Types: []model.ItemType{model.TypeEpisode}, ParentID: show, Recursive: true, Limit: 3}); len(capped) != 3 {
+		t.Fatalf("a page of 3: %d", len(capped))
 	}
 	v0, _ := s.ItemsVersion(ctx)
 	// Replace one episode with another: the total stays 5000.

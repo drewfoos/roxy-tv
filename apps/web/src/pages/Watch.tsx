@@ -40,7 +40,7 @@ export function Watch() {
   const item = loaded?.item ?? null
   const seriesId = item?.seriesId ?? null
   const { data: series } = useAsync(seriesId ? `item:${seriesId}` : null, () => api.item(seriesId!), [seriesId])
-  const { data: sibsRes } = useAsync(seriesId ? `episodes-all:${seriesId}` : null, () => api.allItems({ type: 'episode', parent: seriesId!, recursive: true, includeSources: true, sort: 'index' }), [seriesId])
+  const { data: sibsRes } = useAsync(seriesId ? `episodes-all:${seriesId}` : null, () => api.allItems({ type: 'episode', parent: seriesId!, recursive: true, sort: 'index' }) /* Next / Previous only: no files needed */, [seriesId])
   const siblings = useMemo(() => sortEpisodes(sibsRes?.items ?? []), [sibsRes])
   const [more, setMore] = useState(false)
   useEffect(() => setMore(false), [id])

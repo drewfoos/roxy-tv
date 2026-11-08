@@ -223,11 +223,13 @@ func ImageURLAt(itemID, imageType, fetchedAt string) string {
 }
 
 // ItemQuery is the filter for ListItems. Zero values mean "no filter".
-// The most items one /v1/items request returns: a library-wide list, and the items
-// under one parent (a show's episodes, read whole).
+// The most items one /v1/items request returns: whole lists come in one query (one
+// consistent view) up to this. With their media sources (include=sources: files and
+// tracks, about four times the JSON) the API caps lower (MaxItemsWithSources): 20000 of
+// those were 36 MB and 600 MB of allocations, too much for a TV to take in at once.
 const (
-	MaxItemsPage        = 2000
-	MaxItemsUnderParent = 20000
+	MaxItems            = 20000
+	MaxItemsWithSources = 5000
 )
 
 // ItemsVersion counts every change to items (migration 0042): a list read in pages
@@ -313,19 +315,14 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 	if q.Desc {
 		dir = " DESC"
 	}
-	// Bounded so one request can't make the server load and send the whole database. The
-	// episodes of one show or season are bounded by the show, and are read whole in one
-	// query (one consistent view: pages could skip an episode a scan moved between them):
-	// up to MaxItemsUnderParent then.
+	// Bounded so one request can't make the server load and send the whole database; up to
+	// MaxItems a list is read whole in one query (one consistent view: pages could skip an
+	// item a scan moved between them).
 	limit := q.Limit
-	maxLimit := MaxItemsPage
-	if q.ParentID != "" {
-		maxLimit = MaxItemsUnderParent
-	}
 	if limit <= 0 {
 		limit = 100
-	} else if limit > maxLimit {
-		limit = maxLimit
+	} else if limit > MaxItems {
+		limit = MaxItems
 	}
 	if q.Offset < 0 {
 		q.Offset = 0

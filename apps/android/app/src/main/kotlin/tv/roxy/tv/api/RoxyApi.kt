@@ -161,9 +161,8 @@ class RoxyApi(private val prefs: Prefs) {
      * season's episodes.
      */
     suspend fun allItems(type: String, parent: String? = null, recursive: Boolean = false, sort: String? = null, includeSources: Boolean = false): ItemsResponse {
-        // Under a parent (a show's or season's episodes) one request: one consistent query.
-        val page = if (parent != null) ITEMS_UNDER_PARENT else ITEMS_PAGE
-        return collectPages(page) { offset -> items(type = type, parent = parent, recursive = recursive, sort = sort, limit = page, includeSources = includeSources, offset = offset) }
+        // One request up to the server's cap: one consistent query; pages only past it.
+        return collectPages(ITEMS_PAGE) { offset -> items(type = type, parent = parent, recursive = recursive, sort = sort, limit = ITEMS_PAGE, includeSources = includeSources, offset = offset) }
     }
 
     suspend fun item(id: String): Item = get("/v1/items/$id")
@@ -734,11 +733,8 @@ data class ItemsResponse(
     val version: Long = -1,
 )
 
-/** The largest page /v1/items sends for a library-wide list. */
-const val ITEMS_PAGE = 2000
-
-/** The largest it sends for the items under one parent (a show's episodes: read whole, one consistent query). */
-const val ITEMS_UNDER_PARENT = 20000
+/** What a whole-list read asks for: the most /v1/items sends in one request (5000 with sources), one consistent query. */
+const val ITEMS_PAGE = 20000
 
 /**
  * Pages of [page] from [fetch] (given the offset) until a short page or [ItemsResponse.total].
@@ -761,8 +757,10 @@ suspend fun collectPages(page: Int, fetch: suspend (offset: Int) -> ItemsRespons
             val mark = if (r.version >= 0) r.version else r.total.toLong()
             if (offset == 0) first = mark else if (mark != first) { moved = true; break }
             out += r.items
-            if (r.items.size < page || out.size >= r.total) break
-            offset += page
+            // Advance by what came, not by what was asked: the server may send fewer (its own
+            // cap, lower with sources), and a short page is not the end then; the total is.
+            offset += r.items.size
+            if (r.items.isEmpty() || out.size >= r.total) break
         }
         if (!moved) break
     }

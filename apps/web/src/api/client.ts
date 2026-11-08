@@ -103,29 +103,29 @@ export interface ItemsQuery {
  * adds or removes an episode between two pages): one shifts across the boundary and comes
  * twice, or is skipped, and a removal plus an addition leaves the total as it was. Each page
  * carries the server's items change counter (version): when it differs from the first
- * page's, the read starts over (three tries); an item seen twice is kept once. A show's
- * episodes come in one request anyway (see allItems), one consistent read.
+ * page's, the read starts over (three tries); an item seen twice is kept once. Lists up to
+ * the server's cap (20000, 5000 with sources) come in one request: one consistent read.
  */
-export async function collectPages(fetch: (limit: number, offset: number) => Promise<ItemsResponse>, page = 2000): Promise<ItemsResponse> {
+export async function collectPages(fetch: (limit: number, offset: number) => Promise<ItemsResponse>, page = 20000): Promise<ItemsResponse> {
   let items: Item[] = []
   // The version when the server sends it, else (an older server) the total.
   const mark = (r: ItemsResponse) => r.version ?? r.total
   for (let attempt = 0; attempt < 3; attempt++) {
     items = []
-    let total: number | undefined
     let first: number | undefined
     let moved = false
-    for (let offset = 0; ; offset += page) {
+    // Advance by what came, not by what was asked: the server may send fewer than asked
+    // (its own cap, lower with sources), and a short page is not the end then; the total is.
+    for (let offset = 0; ; ) {
       const r = await fetch(page, offset)
-      if (offset === 0) {
-        total = r.total
-        first = mark(r)
-      } else if (mark(r) !== first) {
+      if (offset === 0) first = mark(r)
+      else if (mark(r) !== first) {
         moved = true
         break
       }
       items.push(...r.items)
-      if (r.items.length < page || (total != null && items.length >= total)) break
+      offset += r.items.length
+      if (r.items.length === 0 || (r.total != null ? items.length >= r.total : r.items.length < page)) break
     }
     if (!moved) break
   }
@@ -238,9 +238,9 @@ export const api = {
    * a season's episodes), not for rows that want the first few.
    */
   allItems: async (query: Omit<ItemsQuery, 'limit' | 'offset'>): Promise<ItemsResponse> =>
-    // Under a parent (a show's or a season's episodes) the server sends up to 20000 in one
-    // request: one query, one consistent view. Library-wide lists page by 2000.
-    collectPages((limit, offset) => api.items({ ...query, limit, offset }), query.parent ? 20000 : 2000),
+    // The server sends up to 20000 in one request (5000 with sources): one query, one
+    // consistent view; pages only past that.
+    collectPages((limit, offset) => api.items({ ...query, limit, offset })),
   /** The episode a show's Play means for this profile (a film: itself), worked out by the server. */
   next: (id: string) => get<{ item: Item | null }>(`/v1/items/${id}/next`).then((r) => r.item),
   item: (id: string) => get<Item>(`/v1/items/${id}`),

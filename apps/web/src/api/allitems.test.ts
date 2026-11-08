@@ -77,6 +77,29 @@ describe('collectPages while the list changes', () => {
     }, 3)
     expect(ids(r)).toBe('e1 e3 e4 e5 e6 e7 e8')
   })
+  it('the server sends fewer than asked (its cap with sources): a short page is not the end, the total is', async () => {
+    const all = many(12000)
+    const calls: number[] = []
+    const r = await collectPages(async (limit, offset) => {
+      calls.push(offset)
+      return { items: all.slice(offset, offset + Math.min(limit, 5000)), total: all.length, version: 1 }
+    })
+    expect(r.items).toHaveLength(12000)
+    expect(calls).toEqual([0, 5000, 10000])
+  })
+  it('a scan changing unrelated items on every request: three tries, never a duplicate (measured)', async () => {
+    // The worst case of a busy scan: the counter moves between every two requests. Lists up
+    // to the server's cap are one request and never see it; this is a list past the cap.
+    const all = many(7)
+    let version = 0
+    let requests = 0
+    const r = await collectPages(async (_limit, offset) => {
+      requests++
+      return { items: all.slice(offset, offset + 3), total: all.length, version: version++ }
+    }, 3)
+    expect(requests).toBe(6) // each try stops at its second page: 3 tries x 2 requests
+    expect(new Set(r.items.map((i) => i.id)).size).toBe(r.items.length)
+  })
   it('a list that never settles: still no item twice', async () => {
     let n = 7
     const r = await collectPages(async (limit, offset) => {

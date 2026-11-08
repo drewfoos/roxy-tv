@@ -134,7 +134,9 @@ suspend fun nextEpisode(context: Context, itemId: String): PlayRequest? {
     val current = app.downloads.entry(itemId)?.item ?: runCatching { app.api.item(itemId) }.getOrNull() ?: return null
     if (!current.isEpisode) return null
     val seriesId = current.seriesId ?: return null
-    val online = runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, includeSources = true, sort = "index").items }.getOrNull()
+    // Order and playability only: playRequest fetches the one episode it plays, files and
+    // all (with every episode's files a long show's list was megabytes for the TV to parse).
+    val online = runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }.getOrNull()
     val episodes = online ?: app.downloads.index.value.entries.values.filter { it.titleId == seriesId && it.isDone }.map { it.item }
     fun seasonKey(e: Item) = (e.seasonAired ?: 0).let { if (it == 0) Int.MAX_VALUE else it }
     val ordered = episodes.sortedWith(compareBy({ seasonKey(it) }, { it.indexAired ?: it.indexAbsolute ?: 0 }))

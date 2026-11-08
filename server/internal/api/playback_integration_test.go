@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -206,6 +207,26 @@ func TestPlaybackOverHTTP(t *testing.T) {
 	rec = do(http.MethodHead, streamPath, nil)
 	if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Length") != strconv.Itoa(size) {
 		t.Errorf("HEAD: %d, body %d, length %q", rec.Code, rec.Body.Len(), rec.Header().Get("Content-Length"))
+	}
+
+	// Compression: JSON is gzipped for a client that accepts it; media never is. A player
+	// that sends Accept-Encoding: gzip still gets the file's own bytes, and its ranges.
+	gz := map[string]string{"Accept-Encoding": "gzip"}
+	if rec := do(http.MethodGet, streamPath, gz); rec.Code != 200 || rec.Header().Get("Content-Encoding") != "" || !bytes.Equal(rec.Body.Bytes(), whole) {
+		t.Errorf("stream asked with gzip: %d, encoding %q, %d bytes", rec.Code, rec.Header().Get("Content-Encoding"), rec.Body.Len())
+	}
+	if rec := do(http.MethodGet, streamPath, map[string]string{"Accept-Encoding": "gzip", "Range": "bytes=100-199"}); rec.Code != 206 || rec.Header().Get("Content-Encoding") != "" || !bytes.Equal(rec.Body.Bytes(), whole[100:200]) {
+		t.Errorf("range asked with gzip: %d, encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	if rec := do(http.MethodGet, "/v1/items?type=movie&recursive=1", gz); rec.Code != 200 || rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("JSON asked with gzip: %d, encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	} else if zr, err := gzip.NewReader(rec.Body); err != nil {
+		t.Errorf("JSON gzip: %v", err)
+	} else {
+		var list struct{ Items []model.Item }
+		if err := json.NewDecoder(zr).Decode(&list); err != nil || len(list.Items) == 0 {
+			t.Errorf("gzipped JSON: %v, %d items", err, len(list.Items))
+		}
 	}
 
 	// Subtitles: the sidecar's text, and the embedded track's (extracted by ffmpeg).

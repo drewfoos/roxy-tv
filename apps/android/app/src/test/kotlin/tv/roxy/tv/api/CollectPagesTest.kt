@@ -5,47 +5,51 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CollectPagesTest {
-    // A fake /v1/items like the server's: at most 2000 a request (100 without a limit).
-    private fun server(n: Int, calls: MutableList<Int>): suspend (Int) -> ItemsResponse = { offset ->
+    private fun eps(vararg n: Int) = n.map { Item(id = "e$it", type = "episode", title = "E$it") }
+    private fun many(n: Int) = (1..n).map { Item(id = "e$it", type = "episode", title = "E$it") }
+
+    // A fake /v1/items: sends at most [cap] whatever is asked (the server's own cap).
+    private fun server(all: List<Item>, cap: Int, calls: MutableList<Int>): suspend (Int) -> ItemsResponse = { offset ->
         calls += offset
-        val items = (offset until minOf(n, offset + ITEMS_PAGE)).map { Item(id = "e${it + 1}", type = "episode", title = "E${it + 1}") }
-        ItemsResponse(items, n)
+        ItemsResponse(all.drop(offset).take(cap), all.size, 1)
     }
 
-    // A long show's episodes (SpongeBob: 716; a bigger library: thousands) all come back,
-    // not the first page: the next episode was picked from the first 100 only.
+    // A long list comes back whole, not its first page.
     @Test fun readsEveryPage() = runBlocking {
         val calls = mutableListOf<Int>()
-        val r = collectPages(ITEMS_PAGE, server(4500, calls))
+        val r = collectPages(ITEMS_PAGE, server(many(4500), 2000, calls))
         assertEquals(4500, r.items.size)
         assertEquals("e4500", r.items.last().id)
         assertEquals(listOf(0, 2000, 4000), calls)
     }
 
+    // Up to the server's cap: one request, one consistent read.
     @Test fun oneRequestWhenItFits() = runBlocking {
         val calls = mutableListOf<Int>()
-        assertEquals(716, collectPages(ITEMS_PAGE, server(716, calls)).items.size)
+        assertEquals(1235, collectPages(ITEMS_PAGE, server(many(1235), 20000, calls)).items.size)
         assertEquals(listOf(0), calls)
     }
 
-    @Test fun exactlyAPage() = runBlocking {
+    // The server sends fewer than asked (5000 with sources): a short page is not the end;
+    // the total is. Stopping at the first short page lost everything after it.
+    @Test fun shortPageIsNotTheEnd() = runBlocking {
         val calls = mutableListOf<Int>()
-        assertEquals(2000, collectPages(ITEMS_PAGE, server(2000, calls)).items.size)
-        assertEquals(listOf(0), calls) // the total says it is all there
+        assertEquals(12000, collectPages(ITEMS_PAGE, server(many(12000), 5000, calls)).items.size)
+        assertEquals(listOf(0, 5000, 10000), calls)
     }
 
     // The list changes right after the first page (a scan adds or removes an episode):
     // offsets shift, so one would be skipped or come twice. Pages of 3 over 7.
     private fun changing(before: List<Item>, after: List<Item>): suspend (Int) -> ItemsResponse {
         var list = before
+        var version = 1L
         var calls = 0
         return { offset ->
-            val r = ItemsResponse(list.drop(offset).take(3), list.size)
-            if (++calls == 1) list = after
+            val r = ItemsResponse(list.drop(offset).take(3), list.size, version)
+            if (++calls == 1) { list = after; version++ }
             r
         }
     }
-    private fun eps(vararg n: Int) = n.map { Item(id = "e$it", type = "episode", title = "E$it") }
 
     @Test fun removedBeforeTheBoundaryIsNotASkip() = runBlocking {
         val r = collectPages(3, changing(eps(1, 2, 3, 4, 5, 6, 7), eps(1, 3, 4, 5, 6, 7)))
@@ -59,14 +63,18 @@ class CollectPagesTest {
 
     // One removed and another added between the pages: the total stays 7, the version moves.
     @Test fun replacementWithTheSameTotalIsReadAgain() = runBlocking {
-        var list = eps(1, 2, 3, 4, 5, 6, 7)
-        var version = 1L
-        var calls = 0
-        val r = collectPages(3) { offset ->
-            val page = ItemsResponse(list.drop(offset).take(3), list.size, version)
-            if (++calls == 1) { list = list.filter { it.id != "e2" } + eps(8); version++ }
-            page
-        }
+        val r = collectPages(3, changing(eps(1, 2, 3, 4, 5, 6, 7), eps(1, 3, 4, 5, 6, 7, 8)))
         assertEquals(listOf("e1", "e3", "e4", "e5", "e6", "e7", "e8"), r.items.map { it.id })
+    }
+
+    // A busy scan moving the counter between every two requests (worst case, past the cap):
+    // three tries of two requests each, never a duplicate.
+    @Test fun constantChurnIsBounded() = runBlocking {
+        var requests = 0
+        var version = 0L
+        val all = many(7)
+        val r = collectPages(3) { offset -> requests++; ItemsResponse(all.drop(offset).take(3), all.size, version++) }
+        assertEquals(6, requests)
+        assertEquals(r.items.size, r.items.distinctBy { it.id }.size)
     }
 }

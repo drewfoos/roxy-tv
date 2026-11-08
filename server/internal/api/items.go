@@ -70,6 +70,9 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		q.FavoriteOf = p.ScopeID
 	}
 	q.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if r.URL.Query().Get("include") == "sources" && q.Limit > store.MaxItemsWithSources {
+		q.Limit = store.MaxItemsWithSources // with files and tracks a page is ~4x the JSON
+	}
 	q.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
 	if q.SortBy == "" || q.SortBy == "date_created" {
 		q.SortBy = "date_created"

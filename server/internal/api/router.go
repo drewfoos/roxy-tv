@@ -79,6 +79,11 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 
 	// Native API: what Roxy's own clients speak (docs/api/native.md).
 	r.Route("/v1", func(r chi.Router) {
+		// JSON is gzipped for clients that accept it (all of Roxy's do; OkHttp and browsers ask
+		// by themselves): a long show's episode list is megabytes of repetitive JSON. Only
+		// application/json: media, images and streams pass through untouched (the wrapper
+		// unwraps, so the streams' write deadlines still apply).
+		r.Use(middleware.Compress(5, "application/json"))
 		r.Get("/system/info", s.systemInfo)
 		// The sign-in page's poster wall: posters by position only (showcase.go).
 		r.Get("/showcase", s.showcaseCount)
