@@ -52,7 +52,7 @@ func TestSectionsInReleaseOrder(t *testing.T) {
 		{ID: "harem", Title: "Before Harem Special", Date: "2011-12-19", Virtual: true},
 		{ID: "unknown", Title: "Making Of", Date: "2012-02-01"}, // no length known: an extra
 	}
-	got := describe(buildSections(seasons, specials, nil))
+	got := describe(buildSections(seasons, specials, nil, 0))
 	want := "season:Season 1 | specials:OVAs[ova1 ova2] | season:Season 2 | specials:New OVA[new] | season:Season 3 | specials:BorN OVA[born] | specials:Hero Episode 0[hero0] | season:Season 4 | specials:Specials[unknown short1 short2 nodate harem]"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
@@ -82,12 +82,12 @@ func TestSectionsFilmsAndEdges(t *testing.T) {
 		{ID: "late", Title: "Another One", Date: "2020-01-01", RuntimeMs: 24 * min},
 	}
 	movies := []movieIn{film("m1", "Legend of Crimson", "2019-08-30"), film("m2", "Undated Film", "")}
-	got := describe(buildSections(seasons, specials, movies))
+	got := describe(buildSections(seasons, specials, movies, 24*min))
 	want := "specials:Prologue[pro] | season:Season 1 | specials:God's Blessing on This Wonderful Choker![choker] | season:Season 2 | specials:God's Blessing on These Wonderful Works of Art![art] | movie:Legend of Crimson | specials:Another One[late] | season:Season 3 | specials:OVAs[red imp] | movie:Undated Film"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
-	if got := describe(buildSections(seasons, nil, nil)); got != "season:Season 1 | season:Season 2 | season:Season 3" {
+	if got := describe(buildSections(seasons, nil, nil, 0)); got != "season:Season 1 | season:Season 2 | season:Season 3" {
 		t.Fatalf("seasons only: %s", got)
 	}
 }
@@ -139,6 +139,9 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 	}
 	ep("e1", "sea1", "One", "2012-01-06", 1)
 	ep("e2", "sea2", "Two", "2013-07-07", 1)
+	ep24 := int64(24 * 60 * 1000) // the show's episodes: what a film-length special is measured against
+	up(&model.Item{ID: "e1", GUID: "g-e1", LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: ptr("sea1"), IndexAired: idx(1), Title: "One", RuntimeMs: &ep24})
+	up(&model.Item{ID: "e2", GUID: "g-e2", LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: ptr("sea2"), IndexAired: idx(1), Title: "Two", RuntimeMs: &ep24})
 	ep("ova", "sea0", "Show OVA", "2012-09-01", 1)
 	ep("odd", "sea0", "Odd Special", "", 2)
 	// A film filed as a special (KonoSuba's Legend of Crimson, S00E05): an entry of its own.
@@ -187,7 +190,8 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 
 func ptr(s string) *string { return &s }
 
-// Where a special goes by its name and length, at the edges: 15 minutes is an episode,
+// Where a special goes by its name and length, at the edges, for a show whose episode
+// length is unknown (the 15-minute fallback): 15 minutes is an episode,
 // a second less is not; an unknown length counts as short unless the name says OVA; a
 // long recap is not story; nothing undated or missing is placed between seasons.
 func TestSpecialPlacementByLength(t *testing.T) {
@@ -212,7 +216,7 @@ func TestSpecialPlacementByLength(t *testing.T) {
 		{specialIn{ID: "missing", Title: "Beach Day", Date: "2021-01-01", RuntimeMs: 24 * min, Virtual: true}, false},
 	}
 	for _, c := range cases {
-		out := buildSections(append([]seasonIn(nil), seasons...), []specialIn{c.sp}, nil)
+		out := buildSections(append([]seasonIn(nil), seasons...), []specialIn{c.sp}, nil, 0)
 		between := len(out) == 3 && out[1].Kind == "specials" && out[2].Kind == "season"
 		bottom := len(out) == 3 && out[2].Kind == "specials" && out[2].Title == "Specials"
 		if between != c.between || (!c.between && !bottom) {
@@ -292,5 +296,67 @@ func TestFilmLengthSpecials(t *testing.T) {
 	want := "season:Season 1 | movie:Legend of Crimson | specials:Long Special[under60] | season:Season 2 | specials:Specials[unknown missing] | movie:Undated Film"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
+	}
+}
+
+// Lengths are judged against the show's own episodes. A film needs an hour and 2.5 times
+// an episode: a 90-minute special of a 43-minute drama, or of a show whose episodes are
+// 88 minutes (Sherlock), is an episode; an unknown episode length never makes a film.
+// Episode-length is half an episode, between 5 and 15 minutes: an 11-minute special of
+// an 11-minute cartoon is an episode, a 3-minute short of a 24-minute anime is not.
+func TestLengthsAgainstTheShow(t *testing.T) {
+	const min, sec = int64(60 * 1000), int64(1000)
+	for _, c := range []struct {
+		name             string
+		runtime, typical int64
+		film             bool
+	}{
+		{"KonoSuba's film", 90 * min, 24 * min, true},
+		{"JJK 0", 105 * min, 24 * min, true},
+		{"Christmas special of a drama", 90 * min, 43 * min, false},
+		{"Sherlock special", 90 * min, 88 * min, false},
+		{"exactly 2.5 times", 60 * min, 24 * min, true},
+		{"a second short of 2.5 times", 60*min - sec, 24 * min, false},
+		{"2.5 times but under an hour", 55 * min, 22 * min, false},
+		{"episode length unknown", 120 * min, 0, false},
+	} {
+		if got := isFilm(c.runtime, c.typical); got != c.film {
+			t.Errorf("%s: film %v, want %v", c.name, got, c.film)
+		}
+	}
+	for _, c := range []struct {
+		name             string
+		runtime, typical int64
+		episode          bool
+	}{
+		{"cartoon special, 11-minute show", 11 * min, 11 * min, true},
+		{"cartoon short, 11-minute show", 5*min - sec, 11 * min, false},
+		{"anime OVA", 23 * min, 24 * min, true},
+		{"DxD short", 3 * min, 24 * min, false},
+		{"anime half-length special", 12 * min, 24 * min, true},
+		{"drama 14-minute special", 14 * min, 43 * min, false}, // capped at 15
+		{"drama 15-minute special", 15 * min, 43 * min, true},
+		{"unknown show length, 15 minutes", 15 * min, 0, true},
+		{"unknown show length, 10 minutes", 10 * min, 0, false}, // the fallback is 15, not the 5 floor
+		{"unknown special length", 0, 24 * min, false},
+	} {
+		sp := specialIn{ID: "x", Title: "Something", RuntimeMs: c.runtime}
+		if got := sp.isEpisode(episodeLength(c.typical)); got != c.episode {
+			t.Errorf("%s: episode %v, want %v (threshold %d min)", c.name, got, c.episode, episodeLength(c.typical)/min)
+		}
+	}
+	idx := func(id string) *string { return &id }
+	rt := func(m int64) *int64 { return &m }
+	eps := []model.Item{
+		{ParentID: idx("s1"), RuntimeMs: rt(24 * min)}, {ParentID: idx("s1"), RuntimeMs: rt(23 * min)}, {ParentID: idx("s1"), RuntimeMs: rt(48 * min)},
+		{ParentID: idx("s0"), RuntimeMs: rt(90 * min)},                   // a special: not counted
+		{ParentID: idx("s1"), RuntimeMs: rt(200 * min), IsVirtual: true}, // a placeholder: not counted
+		{ParentID: idx("s1")}, // no length: not counted
+	}
+	if got := typicalRuntime(eps, map[string]bool{"s1": true}); got != 24*min {
+		t.Errorf("typical %d min, want the median of 23, 24, 48 = 24", got/min)
+	}
+	if got := typicalRuntime(nil, nil); got != 0 {
+		t.Errorf("typical with no episodes: %d, want 0", got)
 	}
 }

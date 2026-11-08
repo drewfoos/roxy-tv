@@ -43,14 +43,48 @@ type movieIn struct {
 	Date string
 }
 
-// filmLength: a special this long is a film, and gets an entry of its own like the
-// franchise's films do, not a place in a group of specials.
-const filmLength = 60 * 60 * 1000
+// What a special is by its length, measured against the show's typical episode (the
+// median of its regular episodes' lengths): TV shows run from 11 minutes (SpongeBob's
+// segments) to 90 (Sherlock), and their specials over an hour (a Christmas special) are
+// episodes, not films.
+const (
+	filmMin       = 60 * 60 * 1000 // a film is at least an hour...
+	filmTimes     = 2.5            // ...and 2.5 times the show's episode (KonoSuba 90/24, JJK 0 105/24)
+	episodeMax    = 15 * 60 * 1000 // episode-length: half the show's episode, at most 15 min...
+	episodeMin    = 5 * 60 * 1000  // ...and at least 5 (DxD's 3-minute shorts are extras)
+	episodeNoNorm = 15 * 60 * 1000 // with no regular episode to measure against
+)
 
-// episodeLength: a special this long (or named an OVA) is an episode of the story, and
-// goes between the seasons it came out between; shorter ones (DxD's three-minute BD
-// shorts, promos) are extras, listed with the rest at the bottom.
-const episodeLength = 15 * 60 * 1000
+// isFilm: a special that is a film of its own (an entry like the franchise's films). Never
+// when the show's episode length is unknown: a long special of a show is far more often
+// an episode than a film.
+func isFilm(runtime, typical int64) bool {
+	return typical > 0 && runtime >= filmMin && float64(runtime) >= filmTimes*float64(typical)
+}
+
+// episodeLength is how long a special must be to count as an episode of the story.
+func episodeLength(typical int64) int64 {
+	if typical <= 0 {
+		return episodeNoNorm
+	}
+	return min(max(typical/2, episodeMin), episodeMax)
+}
+
+// typicalRuntime is the median length of a series' regular episodes with a file, 0 when
+// none has one.
+func typicalRuntime(eps []model.Item, regular map[string]bool) int64 {
+	var rs []int64
+	for _, e := range eps {
+		if !e.IsVirtual && e.ParentID != nil && regular[*e.ParentID] && e.RuntimeMs != nil && *e.RuntimeMs > 0 {
+			rs = append(rs, *e.RuntimeMs)
+		}
+	}
+	if len(rs) == 0 {
+		return 0
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i] < rs[j] })
+	return rs[len(rs)/2]
+}
 
 var reOVA = regexp.MustCompile(`(?i)\bOVA\b|\bOAD\b`)
 
@@ -59,11 +93,11 @@ var reNotStory = regexp.MustCompile(`(?i)\b(recaps?|digest|compilation|summary|p
 
 // isEpisode: named an OVA, or episode-length and not a recap. An unknown length (0) is
 // not episode-length: such a special goes to the bottom unless named an OVA.
-func (sp specialIn) isEpisode() bool {
+func (sp specialIn) isEpisode(minLength int64) bool {
 	if reOVA.MatchString(sp.Title) {
 		return true
 	}
-	return sp.RuntimeMs >= episodeLength && !reNotStory.MatchString(sp.Title)
+	return sp.RuntimeMs > 0 && sp.RuntimeMs >= minLength && !reNotStory.MatchString(sp.Title)
 }
 
 // buildSections orders a series' season list (Crunchyroll's): each season in its
@@ -73,7 +107,8 @@ func (sp specialIn) isEpisode() bool {
 // OVA ("Hero Episode 0"); each film is an entry of its own. Every other special (short,
 // undated, or not in the library) is in one "Specials" entry at the bottom: the ones the
 // library has first, by date, then the missing ones.
-func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn) []section {
+// typical: the show's episode length (typicalRuntime), 0 unknown.
+func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn, typical int64) []section {
 	sort.SliceStable(seasons, func(i, j int) bool { return seasons[i].Index < seasons[j].Index })
 	// slot: -1 before the first season, i after seasons[i].
 	slot := func(date string) int {
@@ -98,7 +133,7 @@ func buildSections(seasons []seasonIn, specials []specialIn, movies []movieIn) [
 		switch {
 		case sp.Virtual:
 			missing = append(missing, sp)
-		case len(sp.Date) < 10 || !sp.isEpisode():
+		case len(sp.Date) < 10 || !sp.isEpisode(episodeLength(typical)):
 			bottom = append(bottom, sp)
 		default:
 			gaps[slot(sp.Date)] = append(gaps[slot(sp.Date)], placed{date: sp.Date[:10], special: &specials[i]})
@@ -216,6 +251,13 @@ func (s *Server) seriesSections(w http.ResponseWriter, r *http.Request) {
 			byParent[*e.ParentID] = append(byParent[*e.ParentID], e)
 		}
 	}
+	regular := map[string]bool{}
+	for _, se := range seasons {
+		if se.IndexAired == nil || *se.IndexAired != 0 {
+			regular[se.ID] = true
+		}
+	}
+	typical := typicalRuntime(eps, regular)
 	var ins []seasonIn
 	var specials []specialIn
 	var films []model.Item // specials that are films (KonoSuba's Legend of Crimson, filed as S00E05)
@@ -225,7 +267,7 @@ func (s *Server) seriesSections(w http.ResponseWriter, r *http.Request) {
 		if se.IndexAired != nil && *se.IndexAired == 0 {
 			specialsID = se.ID
 			for _, e := range children {
-				if !e.IsVirtual && e.RuntimeMs != nil && *e.RuntimeMs >= filmLength {
+				if !e.IsVirtual && e.RuntimeMs != nil && isFilm(*e.RuntimeMs, typical) {
 					films = append(films, e)
 					continue
 				}
@@ -261,7 +303,7 @@ func (s *Server) seriesSections(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.SliceStable(movies, func(i, j int) bool { return movies[i].Date < movies[j].Date })
 	}
-	out := buildSections(ins, specials, movies)
+	out := buildSections(ins, specials, movies, typical)
 	for i := range out {
 		if out[i].Kind == "specials" {
 			out[i].SeasonID = specialsID
