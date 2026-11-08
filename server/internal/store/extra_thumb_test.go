@@ -204,7 +204,27 @@ func TestItemsVersionAndWholeParentLists(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE items SET title = 'renamed' WHERE id = 'e0001'`); err != nil {
 		t.Fatal(err)
 	}
-	if v2, _ := s.ItemsVersion(ctx); v2 == v1 {
+	v2, _ := s.ItemsVersion(ctx)
+	if v2 == v1 {
 		t.Fatal("version unchanged after an update")
+	}
+	// What items carry from other tables does not move it (it is the list's version, not
+	// the whole response's): watch progress, a new media source.
+	if err := s.CreateUser(ctx, &model.User{ID: "u", Name: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := s.DefaultProfileID(ctx, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, _ = s.ItemsVersion(ctx) // a user is not an item; read it again after making one
+	if err := s.MarkPlayed(ctx, scope, "g-e0002", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSource(ctx, &model.MediaSource{ID: "s-e0003", ItemID: "e0003", Parts: []model.MediaPart{{ID: "p-e0003", Path: "/a/e3.mkv"}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if v3, _ := s.ItemsVersion(ctx); v3 != v2 {
+		t.Fatalf("version moved on user data / a source: %d -> %d (it covers items rows only)", v2, v3)
 	}
 }

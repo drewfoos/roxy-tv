@@ -232,8 +232,9 @@ const (
 	MaxItemsWithSources = 5000
 )
 
-// ItemsVersion counts every change to items (migration 0042): a list read in pages
-// compares it between pages to know it was read from one state.
+// ItemsVersion counts every change to items rows (migration 0042): a list read in pages
+// compares it between pages to know its membership and order were read from one state.
+// Changes to what items carry from other tables (media sources, user data) do not move it.
 func (s *Store) ItemsVersion(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx, `SELECT n FROM items_version WHERE id = 1`).Scan(&n)

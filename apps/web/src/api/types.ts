@@ -144,8 +144,18 @@ export interface Item {
 export interface ItemsResponse {
   items: Item[]
   total?: number
-  /** The server's items change counter when this page was read (moves on any change). */
+  /**
+   * The server's items change counter when this page was read: it moves when items are
+   * added, removed or changed (membership and order), not when their files, user data or
+   * availability change, so it is no snapshot of everything a page carries.
+   */
   version?: number
+  /**
+   * Set by collectPages: false when the list could not be read whole (the server sent an
+   * empty page short of its total, or it kept changing through every try). total is then
+   * the server's, items fewer.
+   */
+  complete?: boolean
 }
 
 export interface HomeRow {

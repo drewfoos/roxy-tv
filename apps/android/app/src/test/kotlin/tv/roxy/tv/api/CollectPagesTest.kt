@@ -76,5 +76,22 @@ class CollectPagesTest {
         val r = collectPages(3) { offset -> requests++; ItemsResponse(all.drop(offset).take(3), all.size, version++) }
         assertEquals(6, requests)
         assertEquals(r.items.size, r.items.distinctBy { it.id }.size)
+        assertEquals(false, r.complete) // never read from one state: said, not hidden
+    }
+
+    // The server claims 10 and sends an empty page after 4: no loop, and the list says it
+    // is incomplete (with the server's total) instead of passing for whole.
+    @Test fun emptyPageShortOfTheTotalIsReported() = runBlocking {
+        var requests = 0
+        val all = many(10)
+        val r = collectPages(ITEMS_PAGE) { offset -> requests++; ItemsResponse(if (offset < 4) all.subList(offset, 4) else emptyList(), 10, 1) }
+        assertEquals(4, r.items.size)
+        assertEquals(false, r.complete)
+        assertEquals(10, r.total)
+        assertEquals(2, requests)
+    }
+
+    @Test fun wholeReadIsComplete() = runBlocking {
+        assertEquals(true, collectPages(ITEMS_PAGE, server(many(5), 2000, mutableListOf())).complete)
     }
 }

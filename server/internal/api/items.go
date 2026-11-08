@@ -106,7 +106,9 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	s.attachUserData(r.Context(), items)
 	s.fillAudioLanguages(r.Context(), items)
 	// version: items' change counter (store.ItemsVersion); a client reading pages starts
-	// over when it differs between them.
+	// over when it differs between them. It covers the list itself (which items, in which
+	// order: items rows), not what each item carries besides (sources, availability, the
+	// caller's user data, audio languages): no snapshot of the whole response.
 	writeJSON(w, 200, map[string]any{"items": items, "total": total, "version": version})
 }
 

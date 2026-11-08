@@ -108,30 +108,42 @@ export interface ItemsQuery {
  */
 export async function collectPages(fetch: (limit: number, offset: number) => Promise<ItemsResponse>, page = 20000): Promise<ItemsResponse> {
   let items: Item[] = []
+  let total: number | undefined
+  let complete = false
   // The version when the server sends it, else (an older server) the total.
   const mark = (r: ItemsResponse) => r.version ?? r.total
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 3 && !complete; attempt++) {
     items = []
     let first: number | undefined
     let moved = false
+    let stalled = false
     // Advance by what came, not by what was asked: the server may send fewer than asked
     // (its own cap, lower with sources), and a short page is not the end then; the total is.
     for (let offset = 0; ; ) {
       const r = await fetch(page, offset)
-      if (offset === 0) first = mark(r)
-      else if (mark(r) !== first) {
+      if (offset === 0) {
+        first = mark(r)
+        total = r.total
+      } else if (mark(r) !== first) {
         moved = true
         break
       }
       items.push(...r.items)
       offset += r.items.length
-      if (r.items.length === 0 || (r.total != null ? items.length >= r.total : r.items.length < page)) break
+      if (r.total != null ? items.length >= r.total : r.items.length < page) break
+      if (r.items.length === 0) {
+        // Short of the total and nothing more comes: no progress, not the end.
+        stalled = true
+        break
+      }
     }
-    if (!moved) break
+    complete = !moved && !stalled
+    if (stalled) break // reading again would stall the same way
   }
   const seen = new Set<string>()
   items = items.filter((it) => !seen.has(it.id) && (seen.add(it.id), true))
-  return { items, total: items.length }
+  if (!complete) console.warn(`items: read ${items.length} of ${total ?? '?'}; the list is incomplete`)
+  return { items, total: complete ? items.length : (total ?? items.length), complete }
 }
 
 export const api = {

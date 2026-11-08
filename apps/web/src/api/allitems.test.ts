@@ -88,6 +88,7 @@ describe('collectPages while the list changes', () => {
     expect(calls).toEqual([0, 5000, 10000])
   })
   it('a scan changing unrelated items on every request: three tries, never a duplicate (measured)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     // The worst case of a busy scan: the counter moves between every two requests. Lists up
     // to the server's cap are one request and never see it; this is a list past the cap.
     const all = many(7)
@@ -99,8 +100,28 @@ describe('collectPages while the list changes', () => {
     }, 3)
     expect(requests).toBe(6) // each try stops at its second page: 3 tries x 2 requests
     expect(new Set(r.items.map((i) => i.id)).size).toBe(r.items.length)
+    expect(r.complete).toBe(false) // never read from one state: said, not hidden
+  })
+  it('an empty page short of the total: says the list is incomplete (no loop, no silent partial list)', async () => {
+    const all = many(10)
+    let requests = 0
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const r = await collectPages(async (_limit, offset) => {
+      requests++
+      return { items: offset < 4 ? all.slice(offset, 4) : [], total: 10, version: 1 } // claims 10, stops at 4
+    })
+    expect(r.items).toHaveLength(4)
+    expect(r.complete).toBe(false)
+    expect(r.total).toBe(10)
+    expect(requests).toBe(2)
+    expect(warn).toHaveBeenCalled()
+  })
+  it('a whole read says so', async () => {
+    const r = await collectPages(async (_limit, offset) => ({ items: many(5).slice(offset), total: 5, version: 1 }))
+    expect(r.complete).toBe(true)
   })
   it('a list that never settles: still no item twice', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     let n = 7
     const r = await collectPages(async (limit, offset) => {
       const list = many(n++)

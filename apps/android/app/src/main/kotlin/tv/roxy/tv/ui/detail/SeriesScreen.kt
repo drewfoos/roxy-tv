@@ -206,6 +206,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
         episodesJob?.cancel()
         val source = sources[parentId]
         episodesJob = viewModelScope.launch {
+            val started = android.os.SystemClock.elapsedRealtime()
             runCatching {
                 when (source) {
                     // A film of the franchise: its one row (with its file, to play and download).
@@ -220,6 +221,8 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 }
             }
                 .onSuccess { eps ->
+                    // Read by ops' tv-measure.sh (load time of a long list on the device).
+                    Timber.i("episodes: %d loaded in %d ms", eps.size, android.os.SystemClock.elapsedRealtime() - started)
                     _state.value = _state.value.copy(episodes = eps, episodesLoading = false, rowNumbers = rowNumbersFor(source, eps))
                 }
                 .onFailure { t ->

@@ -729,8 +729,17 @@ data class CharactersResponse(val characters: List<Character> = emptyList())
 data class ItemsResponse(
     val items: List<Item> = emptyList(),
     val total: Int = 0,
-    /** The server's items change counter when the page was read (-1: an older server). */
+    /**
+     * The server's items change counter when the page was read (-1: an older server). It
+     * moves when items are added, removed or changed (membership and order), not when their
+     * files, user data or availability do: no snapshot of everything a page carries.
+     */
     val version: Long = -1,
+    /**
+     * From collectPages: false when the list could not be read whole (an empty page short
+     * of the server's total, or it changed through every try); [total] is then the server's.
+     */
+    val complete: Boolean = true,
 )
 
 /** What a whole-list read asks for: the most /v1/items sends in one request (5000 with sources), one consistent query. */
@@ -745,27 +754,33 @@ const val ITEMS_PAGE = 20000
  */
 suspend fun collectPages(page: Int, fetch: suspend (offset: Int) -> ItemsResponse): ItemsResponse {
     var out = mutableListOf<Item>()
+    var total = 0
+    var complete = false
     for (attempt in 0 until 3) {
         out = mutableListOf()
         var first = Long.MIN_VALUE
         var moved = false
+        var stalled = false
         var offset = 0
         while (true) {
             val r = fetch(offset)
             // The version moves on any change, a removal plus an addition too (the total
             // alone stays the same then); an older server sends none: its total.
             val mark = if (r.version >= 0) r.version else r.total.toLong()
-            if (offset == 0) first = mark else if (mark != first) { moved = true; break }
+            if (offset == 0) { first = mark; total = r.total } else if (mark != first) { moved = true; break }
             out += r.items
             // Advance by what came, not by what was asked: the server may send fewer (its own
             // cap, lower with sources), and a short page is not the end then; the total is.
             offset += r.items.size
-            if (r.items.isEmpty() || out.size >= r.total) break
+            if (out.size >= r.total) break
+            if (r.items.isEmpty()) { stalled = true; break } // short of the total, nothing more: no progress
         }
-        if (!moved) break
+        complete = !moved && !stalled
+        if (complete || stalled) break // a stall would stall again
     }
     val unique = out.distinctBy { it.id }
-    return ItemsResponse(unique, unique.size)
+    if (!complete) timber.log.Timber.w("items: read %d of %d; the list is incomplete", unique.size, total)
+    return ItemsResponse(unique, if (complete) unique.size else maxOf(total, unique.size), complete = complete)
 }
 
 @Serializable

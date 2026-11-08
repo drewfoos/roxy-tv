@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, px } from '../api/client'
 import { audioBadge, episodeCode, isPlayable, nextToPlay, playLabel, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
-import type { Item } from '../api/types'
+import type { Item, ItemsResponse } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { Art, CardMenu, ProgressBar, SaveButton, isWatched, useWatchedState, withPlayed } from '../components/Cards'
 import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
@@ -105,6 +105,11 @@ export function Series() {
               <IconExpand size={18} style={{ transform: newest ? 'rotate(180deg)' : undefined }} /> {newest ? 'Newest' : 'Oldest'}
             </button>
           </div>
+          {(epsRes as ItemsResponse | undefined)?.complete === false && (
+            <div className="notice" style={{ margin: '0 var(--gutter) 16px' }}>
+              Some episodes could not be loaded ({epsRes!.items.length} of {(epsRes as ItemsResponse).total}). Reload the page to try again.
+            </div>
+          )}
           {epsLoading && !epsRes ? (
             <GridSkeleton thumbs count={10} />
           ) : episodes.length === 0 ? (
