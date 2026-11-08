@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e": "node e2e/stream-cut.mjs"
+    "e2e": "node e2e/stream-cut.mjs",
+    "e2e:rows": "node e2e/rows.mjs"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.3.0",

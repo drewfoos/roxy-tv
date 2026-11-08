@@ -383,6 +383,12 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
     let samples: { t: number; left: number }[] = []
     const move = (e: PointerEvent) => {
       if (!pressed) return
+      // Released outside the window (no pointerup reached us): the first move back in has
+      // no button held. End the drag there instead of following a mouse nobody holds.
+      if ((e.buttons & 1) === 0) {
+        up(null) // when it was let go is unknown: no coasting, just the nearest card
+        return
+      }
       const dx = e.clientX - startX
       if (!dragging && Math.abs(dx) < 6) return
       if (!dragging) {
@@ -402,26 +408,37 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
       const max = el.scrollWidth - el.clientWidth
       return Array.from(el.children).map((c) => Math.min(max, Math.max(0, (c as HTMLElement).getBoundingClientRect().left - base)))
     }
-    const glide = () => {
+    const glide = (coast: boolean) => {
       const now = performance.now()
       const recent = samples.filter((p) => now - p.t < 100)
-      const v = recent.length > 1 ? (recent[recent.length - 1].left - recent[0].left) / Math.max(1, recent[recent.length - 1].t - recent[0].t) : 0
-      // Carry on as if the row coasted for ~250 ms, then stop at the nearest card.
-      const aim = el.scrollLeft + v * 250
+      const v = coast && recent.length > 1 ? (recent[recent.length - 1].left - recent[0].left) / Math.max(1, recent[recent.length - 1].t - recent[0].t) : 0
+      // Carry on as if the row coasted for ~250 ms (at most a screen's width: a hard flick
+      // flung it the whole row), then stop at the nearest card.
+      const aim = el.scrollLeft + Math.max(-el.clientWidth, Math.min(el.clientWidth, v * 250))
       const all = stops()
       const target = all.length ? all.reduce((a, b) => (Math.abs(b - aim) < Math.abs(a - aim) ? b : a)) : el.scrollLeft
       el.scrollTo({ left: target, behavior: 'smooth' })
       const done = () => {
         window.clearTimeout(settle)
         el.removeEventListener('scrollend', done)
-        el.classList.remove('row__track--free')
+        if (gliding === done) gliding = null
+        // A new press during the glide owns snapping now: turning it back on here made the
+        // row jump to a card under the next drag.
+        if (!pressed) el.classList.remove('row__track--free')
       }
+      gliding = done
       el.addEventListener('scrollend', done, { once: true })
       settle = window.setTimeout(done, 700) // browsers without scrollend, or no scroll needed
     }
-    const up = () => {
+    // The glide in flight, so a new press can call it off.
+    let gliding: (() => void) | null = null
+    // ev: the release itself (pointerup), or null when the drag ends without one (released
+    // outside the window, pointer or window lost): then the row only settles on a card.
+    const up = (ev: Event | null) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('blur', up)
       if (!pressed) return
       pressed = false
       if (!dragging) return
@@ -434,18 +451,29 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
       window.setTimeout(() => el.removeEventListener('click', swallow, { capture: true }), 0)
       el.classList.remove('row__track--dragging')
       dragging = false
-      glide()
+      glide(ev?.type === 'pointerup')
     }
     const down = (e: PointerEvent) => {
       if (e.pointerType !== 'mouse' || e.button !== 0) return
       // The three-dot button and its menu keep their own clicks.
       if ((e.target as HTMLElement).closest('.card__menu, .menu')) return
+      // A press stops a glide still running (where it is now is where the drag starts).
+      if (gliding) {
+        const g = gliding
+        gliding = null
+        el.removeEventListener('scrollend', g)
+        window.clearTimeout(settle)
+        el.scrollTo({ left: el.scrollLeft })
+      }
       pressed = true
       startX = e.clientX
       startLeft = el.scrollLeft
       samples = [{ t: performance.now(), left: el.scrollLeft }]
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
+      // Lost the pointer (a system gesture, an alert) or the window: the drag ends there.
+      window.addEventListener('pointercancel', up)
+      window.addEventListener('blur', up)
     }
     // Links and images would start the browser's own drag-and-drop instead.
     const noNativeDrag = (e: DragEvent) => e.preventDefault()
@@ -457,8 +485,68 @@ function useDragScroll(track: { current: HTMLDivElement | null }) {
       el.removeEventListener('dragstart', noNativeDrag)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('blur', up)
     }
   }, [track])
+}
+
+/**
+ * Where an arrow takes a row: a page of whole cards. Next starts at the first card that
+ * was not fully shown; previous ends with the card just before the first one shown, so no
+ * card is skipped or shown twice (scrolling by 80 % of the width skipped one going back and
+ * repeated one going on, depending on the width). Measured from `from` (where an earlier
+ * click is still heading), so quick clicks each move a page.
+ */
+export function pageTarget(cards: { left: number; right: number }[], from: number, view: number, padL: number, padR: number, max: number, dir: 1 | -1): number {
+  const clamp = (v: number) => Math.min(max, Math.max(0, v))
+  if (!cards.length) return from
+  const lo = from + padL - 1
+  const hi = from + view - padR + 1
+  const full = cards.map((c, i) => (c.left >= lo && c.right <= hi ? i : -1)).filter((i) => i >= 0)
+  if (dir === 1) {
+    const next = full.length ? full[full.length - 1] + 1 : cards.findIndex((c) => c.left > lo)
+    if (next < 0 || next >= cards.length) return max
+    return clamp(cards[next].left - padL)
+  }
+  const prev = (full.length ? full[0] : cards.findIndex((c) => c.right > lo)) - 1
+  if (prev < 0) return 0
+  // The smallest card start that still shows `prev` whole at the right edge.
+  const need = cards[prev].right - view + padR
+  const k = cards.findIndex((c) => c.left - padL >= need - 1)
+  return clamp(k < 0 || k > prev ? cards[prev].left - padL : cards[k].left - padL)
+}
+
+/**
+ * The scroll position (a card start) that shows card i whole, moving as little as
+ * possible: unchanged when it already is, its start when it is cut off on the left, the
+ * smallest card start that still shows it at the right edge when cut off on the right.
+ */
+export function showWhole(cards: { left: number; right: number }[], i: number, from: number, view: number, padL: number, padR: number, max: number): number {
+  const clamp = (v: number) => Math.min(max, Math.max(0, v))
+  const c = cards[i]
+  if (!c) return from
+  if (c.left >= from + padL - 1 && c.right <= from + view - padR + 1) return from
+  if (c.left < from + padL) return clamp(c.left - padL)
+  const need = c.right - view + padR
+  const k = cards.findIndex((x) => x.left - padL >= need - 1)
+  return clamp(k < 0 || k > i ? c.left - padL : cards[k].left - padL)
+}
+
+/** A row's cards as scroll positions, its paddings and its scroll range (for pageTarget / showWhole). */
+function rowGeometry(el: HTMLElement) {
+  const cs = getComputedStyle(el)
+  const base = el.getBoundingClientRect().left - el.scrollLeft
+  return {
+    cards: Array.from(el.children).map((c) => {
+      const r = (c as HTMLElement).getBoundingClientRect()
+      return { left: r.left - base, right: r.right - base }
+    }),
+    padL: parseFloat(cs.scrollPaddingLeft) || 0,
+    padR: parseFloat(cs.scrollPaddingRight) || 0,
+    view: el.clientWidth,
+    max: el.scrollWidth - el.clientWidth,
+  }
 }
 
 /** A titled horizontal row with hover arrows; the track snaps card to card; drag it with the mouse. */
@@ -485,11 +573,37 @@ export function Row({ title, children, thumbs = false, more }: { title: string; 
       ro.disconnect()
     }
   }, [children])
+  // Where the last arrow click is taking the row (quick clicks page on from there).
+  const aim = useRef<{ left: number; at: number } | null>(null)
   const scrollBy = (dir: 1 | -1) => {
     const el = track.current
-    if (el) el.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: 'smooth' })
+    if (!el) return
+    const g = rowGeometry(el)
+    const a = aim.current
+    const moving = a && performance.now() - a.at < 900 && Math.abs(el.scrollLeft - a.left) > 2
+    const from = moving ? a.left : el.scrollLeft
+    const left = pageTarget(g.cards, from, g.view, g.padL, g.padR, g.max, dir)
+    aim.current = { left, at: performance.now() }
+    el.scrollTo({ left, behavior: 'smooth' })
   }
   useDragScroll(track)
+  // Tabbing to a card off screen: the browser brought the link only partly into view and
+  // snapping could leave the card cut off. Show the whole card.
+  useEffect(() => {
+    const el = track.current
+    if (!el) return
+    const focus = (e: FocusEvent) => {
+      const card = Array.from(el.children).findIndex((c) => c.contains(e.target as Node))
+      if (card < 0) return
+      requestAnimationFrame(() => {
+        const g = rowGeometry(el)
+        const left = showWhole(g.cards, card, el.scrollLeft, g.view, g.padL, g.padR, g.max)
+        if (Math.abs(left - el.scrollLeft) > 1) el.scrollTo({ left, behavior: 'smooth' })
+      })
+    }
+    el.addEventListener('focusin', focus)
+    return () => el.removeEventListener('focusin', focus)
+  }, [])
   return (
     <section className="row">
       <div className="row__head">

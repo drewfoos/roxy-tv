@@ -177,6 +177,8 @@ img { display: block; }
 .row__track--free { scroll-snap-type: none; }
 .row__track--dragging { cursor: grabbing; user-select: none; }
 .row__track--dragging * { cursor: grabbing !important; }
+/* No hover panel on the cards a drag passes over (it shows again once the row is let go). */
+.row__track--dragging .card__hover { display: none; }
 .row__track > * { scroll-snap-align: start; }
 .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 2.35 * var(--card-gap)) / 3.35); }
 @media (min-width: 1600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 3.35 * var(--card-gap)) / 4.35); } }
