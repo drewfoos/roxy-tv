@@ -23,7 +23,7 @@ func (s *Server) trickplayManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m := s.trick.Manifest(id); m != nil {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "private, max-age=3600")
 		writeJSON(w, 200, m)
 		return
 	}
@@ -50,7 +50,10 @@ func (s *Server) trickplaySheet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// private: it needs a sign-in, so no shared cache may keep it. An hour, not a year
+	// and immutable: a file replaced at the same path (a re-download) gets new sheets
+	// under the same URL, which browsers would otherwise never fetch.
+	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeFile(w, r, p)
 }
 

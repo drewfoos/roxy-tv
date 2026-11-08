@@ -95,7 +95,7 @@ func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, img *store.I
 		}
 	}
 	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Cache-Control", "private, max-age=86400") // signed-in only: no shared cache
 	http.ServeContent(w, r, "", fi.ModTime(), f)
 }
 

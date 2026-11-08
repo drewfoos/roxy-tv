@@ -12,14 +12,16 @@ import (
 // without writing. Without `season`, every season still missing segments is queued in
 // the background (202).
 func (s *Server) detectSegments(w http.ResponseWriter, r *http.Request) {
-	if s.segs == nil {
-		writeError(w, 503, "segment detection not running")
-		return
-	}
+	// Who may ask first, then whether it can be done: a non-admin used to learn the
+	// service's state (503) before being refused.
 	if p := userFrom(w, r); p == nil {
 		return
 	} else if !p.IsAdmin {
 		writeError(w, 403, "admin only")
+		return
+	}
+	if s.segs == nil {
+		writeError(w, 503, "segment detection not running")
 		return
 	}
 	season := r.URL.Query().Get("season")

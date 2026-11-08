@@ -161,7 +161,7 @@ func setAttachmentHeaders(h http.Header, a model.Attachment) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Disposition", contentDisposition("attachment", safeAttachmentName(a.Filename)))
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	h.Set("Cache-Control", "private, max-age=3600") // see trickplaySheet
 }
 
 var fontMimes = map[string]bool{
