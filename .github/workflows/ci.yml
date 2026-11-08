@@ -144,11 +144,12 @@ jobs:
           BASE: http://127.0.0.1:18097
           ROXY_USER: roxy
           ROXY_PASS: e2e-password-123
-          CUT_CMD: pkill -f -- "-c:v copy"
+          CUT_CMD: pgrep -af ffmpeg | cut -c1-200; pkill -f -- "-c:v copy"
       - if: failure()
         run: |
-          grep -E "FAIL|cut:|reopened|Error" "$RUNNER_TEMP/e2e.log" | head -20 | sed 's/^/::error::/'
+          grep -vE "^\s+at " "$RUNNER_TEMP/e2e.log" | tail -15 | sed 's/^/::error::/'
           grep -E "remux|level=ERROR" "$RUNNER_TEMP/server.log" | tail -10 | sed 's/^/::error::server: /'
+          tc -s qdisc show dev lo | head -5 | sed 's/^/::error::tc: /'
 
   android:
     name: Android (Gradle)
