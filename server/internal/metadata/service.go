@@ -697,7 +697,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 		slog.Warn("metadata: listing seasons", "series", series.Title, "err", err)
 		return 0
 	}
-	fileTitles := s.episodeFiles(ctx, series)
+	fileTitles, withFile := s.episodeFiles(ctx, series)
 	cache := map[string]*Season{} // "<provider>:<season>" -> fetched season (nil = unknown)
 	fetch := func(r *Result, n int) *Season {
 		if r == nil {
@@ -839,6 +839,14 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 				return layouts[r].toProvider(r, sn, en)
 			}
 			fileTitle := fileTitles[ep.ID]
+			// A special whose file is still being read in (the scanner makes the episode
+			// before it has probed the file, and the previous file's ingest started this
+			// pass) has no name to check the provider's special against yet: by number
+			// alone it would take whatever special TMDB numbers so, and be marked done.
+			// Its own ingest asks again once the file is in.
+			if sn == 0 && fileTitle == "" && !ep.IsVirtual && withFile != nil && !withFile[ep.ID] {
+				continue
+			}
 			var hit *EpisodeResult
 			if fileTitle != "" {
 				for _, r := range byPref {
@@ -1083,13 +1091,14 @@ func absoluteRestarts(eps []model.Item) bool {
 // episodeFiles reads the media file names under a series: the episode title each one
 // carries, by item id ("" when none), and the last episode of every multi-episode file
 // (stored for files scanned before the store kept it).
-func (s *Service) episodeFiles(ctx context.Context, series *model.Item) map[string]string {
+func (s *Service) episodeFiles(ctx context.Context, series *model.Item) (map[string]string, map[string]bool) {
 	paths, err := s.store.PathsUnder(ctx, series.ID)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	titles := map[string]string{}
+	titles, withFile := map[string]string{}, map[string]bool{}
 	for _, p := range paths {
+		withFile[p.ItemID] = true
 		name := filepath.Base(p.Path)
 		if t := library.FileEpisodeTitle(name); t != "" && titles[p.ItemID] == "" {
 			titles[p.ItemID] = t
@@ -1098,7 +1107,7 @@ func (s *Service) episodeFiles(ctx context.Context, series *model.Item) map[stri
 			_ = s.store.SetIndexEnd(ctx, p.ItemID, pn.EpisodeEnd)
 		}
 	}
-	return titles
+	return titles, withFile
 }
 
 // compactTitle folds a title for comparing a file name's copy with a provider's: case,

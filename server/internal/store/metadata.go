@@ -234,7 +234,8 @@ func (s *Store) EpisodesOf(ctx context.Context, seriesID string) ([]model.Item, 
 
 // CountUnrefreshedEpisodes reports how many real episodes under a series have never
 // received provider metadata although a provider could fill them (they carry an episode
-// number), counting only those created after since when it is set: the metadata service
+// number), counting only those created (or whose file was probed) after since when it is
+// set: the metadata service
 // uses it to decide whether a recently refreshed series has new episodes to fill in,
 // without re-trying the ones the last attempt already could not fill.
 func (s *Store) CountUnrefreshedEpisodes(ctx context.Context, seriesID string, since *time.Time) (int, error) {
@@ -243,8 +244,11 @@ func (s *Store) CountUnrefreshedEpisodes(ctx context.Context, seriesID string, s
 		AND COALESCE(e.index_aired, e.index_absolute) IS NOT NULL`
 	args := []any{seriesID}
 	if since != nil {
-		q += ` AND e.date_created > ?`
-		args = append(args, since.UTC().Format(TimeFormat))
+		// New since then: the episode, or its file (an episode made before the last
+		// attempt whose file was still being read in then: that attempt left it alone).
+		q += ` AND (e.date_created > ? OR EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = e.id AND ms.probed_at > ?))`
+		at := since.UTC().Format(TimeFormat)
+		args = append(args, at, at)
 	}
 	var n int
 	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
