@@ -336,11 +336,13 @@ private fun TitlePage(
                     Spacer(Modifier.height(14.dp))
                     Text(title.overview.orEmpty(), color = TvCopy, fontSize = 16.sp, lineHeight = 20.sp, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, style = TvShadowed, modifier = Modifier.widthIn(max = 440.dp))
                     Spacer(Modifier.height(47.dp))
+                    // Down goes back to the tab showing (Extras after a trip up from Extras), not
+                    // always the first one.
                     actions.forEach { a ->
                         TvListRow(
                             label = a.label, icon = a.icon, trailing = a.trailing, selected = true, height = TvDims.ListRowHeight,
                             onClick = a.onClick, onFocused = { folded = false },
-                            modifier = Modifier.width(ActionWidth).focusKey(memory, a.key).focusProperties { down = memory.requester("tab/0") }.alpha(if (a.enabled) 1f else 0.5f),
+                            modifier = Modifier.width(ActionWidth).focusKey(memory, a.key).focusProperties { down = memory.requester("tab/$tab") }.alpha(if (a.enabled) 1f else 0.5f),
                         )
                         Spacer(Modifier.height(2.dp))
                     }
