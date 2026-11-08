@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cast
@@ -700,7 +701,10 @@ internal fun PhoneEpisodeRow(ep: Item, api: RoxyApi, onClick: () -> Unit, onDown
                 if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 3.dp))
                 if (!placeholder) {
                     Spacer(Modifier.weight(1f))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    // Crunchyroll's line: the audio ("Dub | Sub") at the left, the download and
+                    // the menu at the right, all on one centre line.
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(rowAudioLabel(ep) ?: "", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         DownloadButton(ep, onDownload = onDownload, size = 24.dp)
                         EpisodeMenu(ep, api, onMarkWatched = onMarkWatched)
                     }
@@ -735,7 +739,7 @@ internal fun EpisodeMenu(ep: Item, api: RoxyApi, onMarkWatched: (Boolean) -> Uni
     var open by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf(false) }
     Box(modifier) {
-        Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = RoxyColors.muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { open = true }.padding(6.dp))
+        Icon(Icons.Filled.MoreHoriz, contentDescription = "More", tint = RoxyColors.onBackground.copy(alpha = 0.85f), modifier = Modifier.size(36.dp).clip(CircleShape).clickable { open = true }.padding(6.dp))
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
             val watched = ep.isWatched // a rewatch under way is in progress, not watched
             DropdownMenuItem(

@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.outlined.ArrowCircleDown
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
@@ -78,6 +77,11 @@ import tv.roxy.tv.ui.components.RoxyImage
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.SolidColor
 
 /*
  * Downloads, Netflix-style: a download control on every episode row, "Download Season N"
@@ -127,6 +131,20 @@ fun rememberDownloadStarter(): (items: List<Item>, title: Item, seasonName: Stri
 }
 
 /**
+ * Crunchyroll's download glyph: a thin arrow down onto a line (Material's are a filled
+ * arrow, or an arrow in a circle).
+ */
+val DownloadArrow: ImageVector by lazy {
+    ImageVector.Builder(name = "DownloadArrow", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+        path(stroke = SolidColor(Color.White), strokeLineWidth = 1.8f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
+            moveTo(12f, 3.5f); lineTo(12f, 15.5f) // the shaft
+            moveTo(6.5f, 10f); lineTo(12f, 15.5f); lineTo(17.5f, 10f) // the head
+            moveTo(5f, 20f); lineTo(19f, 20f) // the line it lands on
+        }
+    }.build()
+}
+
+/**
  * The per-item download control (episode rows, movie page, Downloads page): an arrow to
  * start, a ring while it runs (tap for Pause / Delete), a pin when done (tap for Delete),
  * a warning when it failed (tap for Retry / Delete).
@@ -141,7 +159,7 @@ fun DownloadButton(item: Item, onDownload: () -> Unit, modifier: Modifier = Modi
 
     Box(modifier = modifier.size(size + 12.dp).clickable(enabled = item.isPlayable || entry != null) { if (entry == null) onDownload() else open = true }, contentAlignment = Alignment.Center) {
         when (entry?.state) {
-            null -> Icon(Icons.Outlined.ArrowCircleDown, contentDescription = "Download", tint = if (item.isPlayable) RoxyColors.onBackground else RoxyColors.muted, modifier = Modifier.size(size))
+            null -> Icon(DownloadArrow, contentDescription = "Download", tint = if (item.isPlayable) RoxyColors.onBackground.copy(alpha = 0.85f) else RoxyColors.muted, modifier = Modifier.size(size))
             DownloadState.Done -> Icon(Icons.Filled.OfflinePin, contentDescription = "Downloaded", tint = RoxyColors.accent, modifier = Modifier.size(size))
             DownloadState.Failed -> Icon(Icons.Outlined.ErrorOutline, contentDescription = "Download failed", tint = RoxyColors.error, modifier = Modifier.size(size))
             DownloadState.Queued, DownloadState.Downloading, DownloadState.Paused, DownloadState.WaitingForWifi -> {

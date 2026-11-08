@@ -327,6 +327,19 @@ fun audioBadge(play: Item?): String? {
     }
 }
 
+/**
+ * The audio line on an episode (or film) row, as Crunchyroll's: "Dub | Sub", "Sub" or "Dub"
+ * for anime. Anything else only when it has more than one language ("English, French"):
+ * "English" on every row of an English show says nothing. None on extras (trailers and
+ * the like) or when the audio is unknown.
+ */
+fun rowAudioLabel(item: Item): String? {
+    if (item.type == "extra") return null
+    val label = audioBadge(item) ?: return null
+    val anime = item.isAnime || item.genres.any { it.equals("Anime", true) }
+    return if (anime || label.contains(", ")) label else null
+}
+
 /** "eng" → "English", via the platform's ISO 639 tables; unknown codes are shown upper-cased. */
 fun languageName(code: String): String {
     val name = runCatching { java.util.Locale(code).getDisplayLanguage(java.util.Locale.ENGLISH) }.getOrNull()
