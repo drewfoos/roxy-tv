@@ -5,6 +5,7 @@ import { lang3, prefs } from '../api/prefs'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
+import { chooseStream, reopenAt, StreamClock, type Mode } from './stream'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -19,14 +20,10 @@ export interface PlayerProps {
   onEnded?: () => void
 }
 
-/** Codecs every browser decodes; a file whose chosen track is anything else is remuxed. */
-const BROWSER_AUDIO = new Set(['aac', 'opus', 'flac', 'vorbis', 'mp3'])
 const REPORT_EVERY_MS = 10_000
 const HIDE_AFTER_MS = 3000
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
-/** Direct play, or a server stream (remux or transcode) whose clock starts at `offset`. */
-type Mode = { kind: 'direct' } | { kind: 'server'; audio: number | null; offset: number }
 
 /**
  * The audio and subtitle tracks an item starts with: the choice saved on this title, else
@@ -110,8 +107,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // stream that runs out makes Chrome move the playhead to the header's duration (with
   // buffered stretched to match), so only the readings before that jump say where the
   // stream got to.
-  const playedTo = useRef(0)
-  const lastEl = useRef(0)
+  const clock = useRef(new StreamClock())
   const lastReport = useRef(0)
   // The last position read from a live <video>. On exit React clears videoRef before the
   // effects' cleanups run, so the final report (and the pause the removal fires) would
@@ -227,7 +223,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const first = audioTracks[0]
       const chosen = audioTracks.find((t) => t.index === audio) ?? first
       const q = qualityRef.current
-      const direct = q === 'original' && (!chosen || (chosen.index === first?.index && BROWSER_AUDIO.has(chosen.codec.toLowerCase())))
+      const kind = chooseStream(q, audioTracks, audio)
+      const direct = kind === 'direct'
       const wasPlaying = !v.paused && !v.ended
       if (q !== 'original') {
         modeRef.current = { kind: 'server', audio: chosen?.index ?? null, offset: startSec }
@@ -367,12 +364,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     if (!v || !source) return
     const onTime = () => {
       const m = modeRef.current
-      const step = v.currentTime - lastEl.current
-      lastEl.current = v.currentTime
       // A jump nobody asked for (no seek): a server stream that ran out. Neither shown nor
       // reported (it would mark the episode watched); 'ended' follows and reopens it.
-      if (m.kind === 'server' && !v.seeking && Math.abs(step) > 1 + 2 * v.playbackRate) return
-      playedTo.current = v.currentTime
+      if (!clock.current.tick(v, m.kind === 'server')) return
       const t = absTime()
       setCurrent(t)
       const off = m.kind === 'server' ? m.offset : 0
@@ -395,7 +389,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       setPlaying(false)
       // A server stream that ran out pauses at the header's duration before 'ended': not
       // where the viewer is (reported, it marked the episode watched).
-      if (modeRef.current.kind === 'server' && Math.abs(v.currentTime - playedTo.current) > 1 + 2 * v.playbackRate) return
+      if (!clock.current.pauseIsReal(v, modeRef.current.kind === 'server')) return
       report(true)
     }
     const onWaiting = () => setWaiting(true)
@@ -410,11 +404,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     // the next one with autoplay) or stop with "Try again".
     const reconnect = () => {
       const m = modeRef.current
-      if (m.kind !== 'server') return false
-      // Where the stream really got to: how far it played (see playedTo); the playhead
-      // and buffered both say "the end" once Chrome has jumped there.
-      const at = m.offset + playedTo.current
-      if (duration <= 0 || at >= duration - 10 || reconnects.current >= 3) return false
+      // Where the stream really got to (StreamClock): the playhead and buffered both say
+      // "the end" once Chrome has jumped there.
+      const at = reopenAt(m, clock.current.playedTo, duration, reconnects.current)
+      if (at === null || m.kind !== 'server') return false
       reconnects.current++
       reload(at, m.audio, true)
       return true
@@ -442,10 +435,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       if (autoplayRef.current) onEnded?.()
     }
     // A seek, or a new stream (its clock starts again at 0), is where playing goes on from.
-    const onSeeked = () => {
-      playedTo.current = v.currentTime
-      lastEl.current = v.currentTime
-    }
+    const onSeeked = () => clock.current.reset(v)
     v.addEventListener('seeked', onSeeked)
     v.addEventListener('loadstart', onSeeked)
     v.addEventListener('timeupdate', onTime)
