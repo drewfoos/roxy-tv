@@ -1368,7 +1368,9 @@ func newID() string { return uuid.NewString() }
 func (s *Service) UseFFmpeg(ff *ffmpeg.FFmpeg) { s.ff = ff }
 
 // fillStills grabs a frame for every episode of a series (or the film itself when it has
-// neither a thumb nor a backdrop) that still has no thumb. Cheap when nothing is missing.
+// neither a thumb nor a backdrop), and every extra of either (trailers, openings, shorts:
+// no provider has a picture of those, and their rows had none), that still has no thumb.
+// Cheap when nothing is missing.
 func (s *Service) fillStills(ctx context.Context, it *model.Item) {
 	if s.ff == nil {
 		return
@@ -1388,12 +1390,14 @@ func (s *Service) fillStills(ctx context.Context, it *model.Item) {
 			targets = append(targets, eps...)
 		}
 	case model.TypeMovie:
-		if b, err := s.store.GetItemImage(ctx, it.ID, "backdrop"); err != nil || b != nil {
-			return
+		if b, err := s.store.GetItemImage(ctx, it.ID, "backdrop"); err == nil && b == nil {
+			targets = []model.Item{*it}
 		}
-		targets = []model.Item{*it}
 	default:
 		return
+	}
+	if extras, err := s.store.Children(ctx, it.ID, model.TypeExtra); err == nil {
+		targets = append(targets, extras...)
 	}
 	made := 0
 	for i := range targets {

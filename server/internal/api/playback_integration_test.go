@@ -106,7 +106,13 @@ func TestPlaybackOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	lb := library.New(st, ff, cfg)
-	for _, p := range []string{video, short} {
+	// A trailer: an extra of the film, with no picture of its own.
+	trailer := filepath.Join(dir, "Film (2020)-trailer.mkv")
+	if out, err := exec.Command(ff.FFmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=8:size=320x240:rate=10",
+		"-c:v", "libx264", "-preset", "ultrafast", "-f", "matroska", trailer).CombinedOutput(); err != nil {
+		t.Fatalf("making the trailer: %v %s", err, out)
+	}
+	for _, p := range []string{video, short, trailer} {
 		if err := lb.AddFile(ctx, *lib, p); err != nil { // the real prober
 			t.Fatal(err)
 		}
@@ -291,6 +297,21 @@ func TestPlaybackOverHTTP(t *testing.T) {
 		if rec.Code != 202 || time.Now().After(deadline) {
 			t.Fatalf("trickplay of a clip too short for any: %d %s", rec.Code, rec.Body.String())
 		}
+	}
+
+	// The trailer's row has a thumbnail: offered by the item, made from a frame on request.
+	extra, err := st.ItemForPath(ctx, trailer)
+	if err != nil || extra == nil || extra.Type != model.TypeExtra {
+		t.Fatalf("the trailer's item: %+v %v", extra, err)
+	}
+	listed := do(http.MethodGet, "/v1/items/"+extra.ID, nil)
+	var asListed struct{ Images map[string]string }
+	if err := json.Unmarshal(listed.Body.Bytes(), &asListed); err != nil || asListed.Images["thumb"] == "" {
+		t.Fatalf("the trailer offers no thumb: %s", listed.Body.String())
+	}
+	thumb := do(http.MethodGet, "/v1/items/"+extra.ID+"/images/thumb", nil)
+	if thumb.Code != 200 || !bytes.HasPrefix(thumb.Body.Bytes(), []byte{0xff, 0xd8}) {
+		t.Errorf("the trailer's thumb: %d, %d bytes", thumb.Code, thumb.Body.Len())
 	}
 
 	// A player's way in: a media token, with no sign-in; the stream and a range still work.

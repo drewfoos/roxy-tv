@@ -1,4 +1,4 @@
-// Package stills makes a thumbnail for an episode or film that has no still of its own:
+// Package stills makes a thumbnail for an episode, film or extra that has no still of its own:
 // hand-made shows (One Pace, fan edits) ship .nfo files but rarely a picture per episode,
 // and a title no provider knows has nothing at all. One frame a fifth of the way into the
 // file, 640 px wide, is cached and recorded like any other image; a provider still found
@@ -73,7 +73,7 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 		return nil, nil
 	}
 	it, err := st.GetItem(ctx, id)
-	if err != nil || it == nil || (it.Type != model.TypeEpisode && it.Type != model.TypeMovie) {
+	if err != nil || it == nil || (it.Type != model.TypeEpisode && it.Type != model.TypeMovie && it.Type != model.TypeExtra) {
 		return nil, err
 	}
 	srcs, err := st.SourcesForItem(ctx, id)

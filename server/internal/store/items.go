@@ -192,6 +192,18 @@ func (s *Store) fillItemExtras(ctx context.Context, items []model.Item) error {
 		}
 		rows.Close()
 	}
+	// An extra with a file and no picture (no provider has one of a trailer, an opening, a
+	// short) offers a thumb anyway: asked for, it is made from a frame of the file
+	// (api.getItemImage, stills.Grab). Clients only ask for the images an item lists, so
+	// extras' rows used to have none.
+	for i := range items {
+		if items[i].Type == model.TypeExtra && items[i].HasMedia && items[i].Images["thumb"] == "" {
+			if items[i].Images == nil {
+				items[i].Images = map[string]string{}
+			}
+			items[i].Images["thumb"] = ImageURL(items[i].ID, "thumb")
+		}
+	}
 	return nil
 }
 

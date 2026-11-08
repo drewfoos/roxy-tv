@@ -37,4 +37,13 @@ class RowAudioLabelTest {
         assertNull(rowAudioLabel(Item(id = "e", type = "episode", isAnime = true)))
         assertNull(rowAudioLabel(episode("und")))
     }
+
+    // A Movies & OVAs entry's format, as the dialog says it.
+    @Test fun relatedFormats() {
+        assertEquals("OVA", relatedFormatLabel("ova"))
+        assertEquals("Special", relatedFormatLabel("SPECIAL"))
+        assertEquals("Film", relatedFormatLabel("MOVIE"))
+        assertEquals("Short", relatedFormatLabel("TV_SHORT"))
+        assertEquals("Music", relatedFormatLabel("MUSIC"))
+    }
 }

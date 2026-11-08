@@ -148,6 +148,16 @@ fun PhoneSeries(
     // Episodes per season (TVDB numbering) for the Seasons page's counts.
     var seasonEpisodes by remember(series.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
+    // A Movies & OVAs entry that is not a title of its own in the library, tapped.
+    var relatedInfo by remember { mutableStateOf<RelatedEntry?>(null) }
+    relatedInfo?.let { rel ->
+        val specials = state.seasons.indexOfFirst { it.indexAired == 0 }
+        RelatedInfoDialog(rel, specialsAvailable = specials >= 0, onGoToSpecials = {
+            relatedInfo = null
+            selectedExtra = null
+            vm.selectSeason(specials)
+        }, onDismiss = { relatedInfo = null })
+    }
     // Fetched once per show (not again when the library's seasons arrive); which of its
     // seasons the library lacks is worked out from what is on hand.
     var providerSeasons by remember(series.id) { mutableStateOf<List<DiscoverSeason>>(emptyList()) }
@@ -280,7 +290,9 @@ fun PhoneSeries(
                     item(key = "related-top") { Spacer(Modifier.height(10.dp)) }
                     items(state.related.chunked(2)) { row ->
                         RelatedGridRow(row, app.api, onOpen = { rel ->
-                            val item = rel.item ?: return@RelatedGridRow
+                            // Not a title of its own in the library: say what it is (and where an
+                            // OVA or special usually is) instead of doing nothing.
+                            val item = rel.item ?: run { relatedInfo = rel; return@RelatedGridRow }
                             if (item.isMovie) onOpenMovie(item) else onOpenSeries(item)
                         })
                     }
@@ -866,4 +878,59 @@ internal fun RelatedGridRow(row: List<RelatedEntry>, api: RoxyApi, onOpen: (Rela
         }
         repeat(2 - row.size) { Spacer(Modifier.weight(1f)) }
     }
+}
+
+/**
+ * What a Movies & OVAs entry the library does not hold as its own title is: its poster,
+ * format, year and episodes. An OVA or special often is in the library all the same, as
+ * episodes of this show's Specials (AniList lists them as titles of their own, the
+ * library files them as S00 episodes): the dialog offers to go there. Tapping one used to
+ * do nothing.
+ */
+@Composable
+private fun RelatedInfoDialog(rel: RelatedEntry, specialsAvailable: Boolean, onGoToSpecials: () -> Unit, onDismiss: () -> Unit) {
+    val format = rel.format?.uppercase()
+    val special = format in setOf("OVA", "ONA", "SPECIAL", "TV_SHORT")
+    val facts = listOfNotNull(
+        format?.let { relatedFormatLabel(it) },
+        rel.year?.toString(),
+        rel.episodes?.takeIf { it > 0 }?.let { "$it ${if (it == 1) "episode" else "episodes"}" },
+    ).joinToString("  ·  ")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
+        title = { Text(rel.title, fontSize = 17.sp) },
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(modifier = Modifier.width(84.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(RoxyColors.surface)) {
+                    RoxyImage(rel.posterUrl, rel.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 11)
+                }
+                Column {
+                    if (facts.isNotEmpty()) Text(facts, fontSize = 13.sp, color = RoxyColors.muted)
+                    Text(
+                        when {
+                            special && specialsAvailable -> "Not a title of its own in your library. OVAs and specials are usually filed as this show's Specials."
+                            else -> "Not in your library."
+                        },
+                        fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (special && specialsAvailable) TextButton(onClick = onGoToSpecials) { Text("Go to Specials", color = RoxyColors.accent) }
+            else TextButton(onClick = onDismiss) { Text("OK", color = RoxyColors.accent) }
+        },
+        dismissButton = { if (special && specialsAvailable) TextButton(onClick = onDismiss) { Text("Close", color = RoxyColors.muted) } },
+    )
+}
+
+/** AniList's format, as a word: OVA, Special, Film, Short. */
+internal fun relatedFormatLabel(format: String): String = when (format.uppercase()) {
+    "MOVIE" -> "Film"
+    "SPECIAL" -> "Special"
+    "TV_SHORT" -> "Short"
+    "TV" -> "TV series"
+    "OVA", "ONA" -> format.uppercase()
+    else -> format.lowercase().replaceFirstChar { it.uppercase() }
 }
