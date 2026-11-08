@@ -186,3 +186,111 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// Where a special goes by its name and length, at the edges: 15 minutes is an episode,
+// a second less is not; an unknown length counts as short unless the name says OVA; a
+// long recap is not story; nothing undated or missing is placed between seasons.
+func TestSpecialPlacementByLength(t *testing.T) {
+	const min, sec = 60 * 1000, 1000
+	seasons := []seasonIn{{ID: "s1", Index: 1, Start: "2020-01-01", Count: 12}, {ID: "s2", Index: 2, Start: "2022-01-01", Count: 12}}
+	sp := func(id, title string, runtime int64) specialIn {
+		return specialIn{ID: id, Title: title, Date: "2021-01-01", RuntimeMs: runtime}
+	}
+	cases := []struct {
+		sp      specialIn
+		between bool
+	}{
+		{sp("at15", "Beach Day", 15*min), true},
+		{sp("under15", "Beach Day", 15*min-sec), false},
+		{sp("unknown", "Beach Day", 0), false},
+		{sp("unknownOVA", "Show OVA", 0), true},
+		{sp("shortOVA", "OVA: Short", 3*min), true},
+		{sp("recap", "Recap Special", 24*min), false},
+		{sp("digest", "Season 1 Digest", 46*min), false},
+		{sp("recapOVA", "OVA Recap", 24*min), true}, // named an OVA: the name wins
+		{specialIn{ID: "undated", Title: "Beach Day", RuntimeMs: 24 * min}, false},
+		{specialIn{ID: "missing", Title: "Beach Day", Date: "2021-01-01", RuntimeMs: 24 * min, Virtual: true}, false},
+	}
+	for _, c := range cases {
+		out := buildSections(append([]seasonIn(nil), seasons...), []specialIn{c.sp}, nil)
+		between := len(out) == 3 && out[1].Kind == "specials" && out[2].Kind == "season"
+		bottom := len(out) == 3 && out[2].Kind == "specials" && out[2].Title == "Specials"
+		if between != c.between || (!c.between && !bottom) {
+			t.Errorf("%s: %s; want between=%v", c.sp.ID, describe(out), c.between)
+		}
+	}
+}
+
+// A special an hour or longer is a film's entry of its own; a second less is an OVA in
+// its gap; an unknown length never makes one; an undated film goes after the seasons; a
+// missing one (no file) is listed with the specials at the bottom, never as a film.
+func TestFilmLengthSpecials(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	lib := &model.Library{Name: "Anime", Kind: model.KindSeries, Root: "/a"}
+	if err := st.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	up := func(it *model.Item) {
+		t.Helper()
+		if err := st.UpsertItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx := func(n int) *int { return &n }
+	series := "series"
+	up(&model.Item{ID: series, GUID: "g-series", LibraryID: lib.ID, Type: model.TypeSeries, Title: "Show"})
+	up(&model.Item{ID: "sea0", GUID: "g-sea0", LibraryID: lib.ID, Type: model.TypeSeason, ParentID: &series, IndexAired: idx(0), Title: "Specials"})
+	up(&model.Item{ID: "sea1", GUID: "g-sea1", LibraryID: lib.ID, Type: model.TypeSeason, ParentID: &series, IndexAired: idx(1), Title: "Season 1"})
+	up(&model.Item{ID: "sea2", GUID: "g-sea2", LibraryID: lib.ID, Type: model.TypeSeason, ParentID: &series, IndexAired: idx(2), Title: "Season 2"})
+	ep := func(id, season, title, date string, n int, runtime int64, virtual bool) {
+		t.Helper()
+		it := &model.Item{ID: id, GUID: "g-" + id, LibraryID: lib.ID, Type: model.TypeEpisode, ParentID: ptr(season), IndexAired: idx(n), Title: title, IsVirtual: virtual}
+		if runtime > 0 {
+			it.RuntimeMs = &runtime
+		}
+		up(it)
+		if !virtual {
+			if err := st.ReplaceSource(ctx, &model.MediaSource{ID: "s-" + id, ItemID: id, Parts: []model.MediaPart{{ID: "p-" + id, Path: "/a/" + id + ".mkv"}}}, "{}"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if date != "" {
+			if err := st.SetAirDateIfUnset(ctx, id, date); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const min, sec = int64(60 * 1000), int64(1000)
+	ep("e1", "sea1", "One", "2016-01-14", 1, 24*min, false)
+	ep("e2", "sea2", "Two", "2017-01-12", 1, 24*min, false)
+	ep("at60", "sea0", "Legend of Crimson", "2016-06-01", 1, 60*min, false)
+	ep("under60", "sea0", "Long Special", "2016-07-01", 2, 60*min-sec, false)
+	ep("unknown", "sea0", "Mystery Film", "2016-08-01", 3, 0, false)
+	ep("undated", "sea0", "Undated Film", "", 4, 95*min, false)
+	ep("missing", "sea0", "Missing Film", "2016-09-01", 5, 95*min, true)
+
+	s := &Server{store: st}
+	req := httptest.NewRequest(http.MethodGet, "/v1/items/series/sections", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", series)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rec := httptest.NewRecorder()
+	s.seriesSections(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var out struct{ Sections []section }
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := describe(out.Sections)
+	want := "season:Season 1 | movie:Legend of Crimson | specials:Long Special[under60] | season:Season 2 | specials:Specials[unknown missing] | movie:Undated Film"
+	if got != want {
+		t.Fatalf("\n got %s\nwant %s", got, want)
+	}
+}

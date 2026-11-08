@@ -211,7 +211,8 @@ func (l *seasonLayout) posterSeason(r *Result, season, length int) (int, bool) {
 // the files' when they do not line up, by air date: files hold numbers in TheTVDB's
 // order (Sonarr's), and Sonarr's date for a file's number is compared with r's dates. A
 // season shifts by d only when r's episode n+d aired on Sonarr's date for n for most of
-// the season's dated files (at least two) and more often than unshifted, so a season the
+// the season's dated files (at least two), more often than unshifted and than any other
+// offset, so a season the
 // two agree on, or whose dates differ by a time zone, stays as it is. ens: per library
 // season, the real episode numbers.
 func dateShifts(r *Result, fetch func(*Result, int) *Season, ens map[int][]int, sonarr map[[2]int]string) map[int]int {
@@ -249,7 +250,13 @@ func dateShifts(r *Result, fetch func(*Result, int) *Season, ens map[int][]int, 
 				best = d
 			}
 		}
-		if best != 0 && score[best] >= 2 && 2*score[best] > dated && score[best] > score[0] {
+		tied := false // two offsets fitting equally well: the dates do not say which
+		for d := -2; d <= 2; d++ {
+			if d != 0 && d != best && score[d] == score[best] {
+				tied = true
+			}
+		}
+		if best != 0 && !tied && score[best] >= 2 && 2*score[best] > dated && score[best] > score[0] {
 			out[season] = best
 		}
 	}

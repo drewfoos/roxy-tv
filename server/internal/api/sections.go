@@ -54,8 +54,16 @@ const episodeLength = 15 * 60 * 1000
 
 var reOVA = regexp.MustCompile(`(?i)\bOVA\b|\bOAD\b`)
 
+// reNotStory: long specials that tell no new story (a recap is episode-length too).
+var reNotStory = regexp.MustCompile(`(?i)\b(recaps?|digest|compilation|summary|picture drama|music video|live)\b`)
+
+// isEpisode: named an OVA, or episode-length and not a recap. An unknown length (0) is
+// not episode-length: such a special goes to the bottom unless named an OVA.
 func (sp specialIn) isEpisode() bool {
-	return reOVA.MatchString(sp.Title) || sp.RuntimeMs >= episodeLength
+	if reOVA.MatchString(sp.Title) {
+		return true
+	}
+	return sp.RuntimeMs >= episodeLength && !reNotStory.MatchString(sp.Title)
 }
 
 // buildSections orders a series' season list (Crunchyroll's): each season in its

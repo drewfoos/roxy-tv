@@ -92,29 +92,32 @@ func (s *Service) UseEpisodeAirDates(f func(ctx context.Context, tvdbID int) (ma
 // before it is asked again.
 const airDatesRetry = 24 * time.Hour
 
-// sonarrDates is Sonarr's air date per (season, episode) for a series it has, nil when
-// there is no Sonarr or it does not know the series.
-func (s *Service) sonarrDates(ctx context.Context, it *model.Item) map[[2]int]string {
+// sonarrDates is Sonarr's air date per (season, episode) for a series it has; nil when
+// there is no Sonarr, the series has no TheTVDB id or Sonarr does not know it. When Sonarr
+// does not answer, its last answer for the series (this run of the server); an error
+// only when there is none.
+func (s *Service) sonarrDates(ctx context.Context, seriesID, tvdbID string) (map[[2]int]string, error) {
 	s.mu.Lock()
 	source := s.airDates
 	s.mu.Unlock()
-	tvdb, err := strconv.Atoi(it.ProviderIDs["tvdb"])
+	tvdb, err := strconv.Atoi(tvdbID)
 	if source == nil || err != nil || tvdb <= 0 {
-		return nil
+		return nil, nil
 	}
 	dates, err := source(ctx, tvdb)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
-		// Sonarr unreachable (its VPN reconnecting): the last answer, so a refresh then
-		// does not undo a season's offset.
-		return s.sonarrSeen[it.ID]
+		if seen, ok := s.sonarrSeen[seriesID]; ok {
+			return seen, nil
+		}
+		return nil, err
 	}
 	if s.sonarrSeen == nil {
 		s.sonarrSeen = map[string]map[[2]int]string{}
 	}
-	s.sonarrSeen[it.ID] = dates
-	return dates
+	s.sonarrSeen[seriesID] = dates
+	return dates, nil
 }
 
 // realEpisodeNumbers is, per regular season, the episode numbers of its real files.
@@ -414,6 +417,28 @@ func (s *Service) process(ctx context.Context, j job) error {
 		return nil
 	}
 	merged := merge(primary, secondary)
+	// Sonarr's air dates line seasons up with the provider's (dateShifts). Unreachable
+	// with no earlier answer to fall back on (a restart while it is down): the episodes
+	// would be written in the provider's numbering, which for some shows names every file
+	// after the episode before it. Keep everything as it is and try again, as when a
+	// provider does not answer. Checked before anything is written, so the retry redoes
+	// the whole refresh.
+	var sonarr map[[2]int]string
+	if it.Type == model.TypeSeries {
+		var err error
+		tvdb := it.ProviderIDs["tvdb"]
+		if tvdb == "" { // matched for the first time: the id comes with this match
+			tvdb = merged.ProviderIDs["tvdb"]
+		}
+		if sonarr, err = s.sonarrDates(ctx, it.ID, tvdb); err != nil {
+			slog.Warn("metadata: Sonarr unreachable, refresh postponed", "item", it.Title, "err", err)
+			s.mu.Lock()
+			s.failed[it.ID] = time.Now()
+			s.mu.Unlock()
+			s.retryLater(j)
+			return err
+		}
+	}
 	if !onlyNewEpisodes {
 		meta := itemMetadata(merged, it.Type)
 		if it.Type == model.TypeSeries {
@@ -457,7 +482,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 		}
 	}
 	if it.Type == model.TypeSeries {
-		n := s.applySeries(ctx, it, primary, secondary, onlyNewEpisodes)
+		n := s.applySeries(ctx, it, primary, secondary, onlyNewEpisodes, sonarr)
 		if onlyNewEpisodes && n == 0 {
 			// Nothing the providers know about yet; back off instead of retrying every scan.
 			s.mu.Lock()
@@ -691,7 +716,7 @@ func itemMetadata(r *Result, t model.ItemType) store.ItemMetadata {
 // title (Sonarr's "Show - S00E03 - Title") is matched by that title within the season
 // before its number: TVDB and TMDB number specials (and some shows' episodes)
 // differently, so the number alone can name another episode.
-func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, secondary *Result, onlyNew bool) int {
+func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, secondary *Result, onlyNew bool, sonarr map[[2]int]string) int {
 	seasons, err := s.store.Children(ctx, series.ID, model.TypeSeason)
 	if err != nil {
 		slog.Warn("metadata: listing seasons", "series", series.Title, "err", err)
@@ -742,7 +767,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	}
 	// Seasons whose episode numbers run differently from the provider's, by Sonarr's air
 	// dates (see dateShifts).
-	if dates := s.sonarrDates(ctx, series); len(dates) > 0 {
+	if dates := sonarr; len(dates) > 0 {
 		ens := s.realEpisodeNumbers(ctx, seasons)
 		for r, lay := range layouts {
 			if lay.split {
@@ -1136,7 +1161,7 @@ func sameTitle(a, b string) bool {
 	if ca == cb {
 		return true
 	}
-	if wordStems(a) == wordStems(b) {
+	if sa := wordStems(a); len(strings.Fields(sa)) >= 3 && sa == wordStems(b) {
 		return true
 	}
 	if len(ca) > len(cb) {
@@ -1149,6 +1174,9 @@ func sameTitle(a, b string) bool {
 // apostrophe: KonoSuba's special on TMDB is "God's Blessing on This Wonderful Choker!",
 // on TheTVDB (so in Sonarr's file name) "Gods Blessings On This Wonderful Choker!".
 // Words are lowercased, a lone "s" (the split of "God's") dropped, a trailing s cut.
+// sameTitle uses it only for titles of three words or more: "Partner" and "Partners"
+// can be two episodes of one season, a whole sentence differing by a plural rarely is
+// (and an exact match still outranks it in matchEpisodeTitle).
 func wordStems(t string) string {
 	var out []string
 	for _, w := range strings.FieldsFunc(compactWords(t), func(r rune) bool { return r == ' ' }) {

@@ -46,19 +46,45 @@ func TestSpecialTitlesMatchAcrossPluralAndApostrophe(t *testing.T) {
 	}
 }
 
+// The plural/apostrophe allowance does not make different titles equal: short titles
+// (one or two words, where a plural can be another episode) must match as before, other
+// words, numbers or word order still differ, and an exact title beats a folded one.
 func TestSameTitleStaysStrict(t *testing.T) {
 	for _, c := range []struct {
 		a, b string
 		want bool
 	}{
 		{"Gods Blessings On This Wonderful Choker!", "God's Blessing on This Wonderful Choker!", true},
-		{"Steamy Grayfia", "Rossweisse's True Teaching Story!", false},
 		{"The Party of Heroes", "The Party Of Heroes!", true},
+		{"Steamy Grayfia", "Rossweisse's True Teaching Story!", false},
 		{"Red Stream Explosion!", "Watch Out for Impostors!", false},
+		{"Partner", "Partners", false},                            // one word: could be two episodes
+		{"The Boy", "The Boys", false},                            // two words: same
+		{"Its Fate", "It's Fate", true},                           // equal once compacted (as before)
+		{"Part 1 of the Journey", "Part 2 of the Journey", false}, // numbers are kept
+		{"A Cat for the Witch", "A Witch for the Cat", false},     // word order is kept
+		{"Return of the Kings", "Return of the King", true},
+		{"Return of the Kings", "Return of the Queen", false},
+		{"Ms Marvel Saves the Day", "Mr Marvel Saves the Day", false},
 		{"Episode", "Episodes 2", false},
+		{"", "", false},
 	} {
 		if got := sameTitle(c.a, c.b); got != c.want {
 			t.Errorf("sameTitle(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// Where a season has both, the file's exact title wins over a folded match.
+func TestExactTitleBeatsFoldedTitle(t *testing.T) {
+	eps := []EpisodeResult{
+		{Episode: 3, Title: "The Gift of the Gods"},
+		{Episode: 4, Title: "The Gifts of the Gods"},
+	}
+	if k := matchEpisodeTitle(eps, "The Gifts of the Gods", 3); k != 1 {
+		t.Fatalf("matched %d, want the exact title (index 1)", k)
+	}
+	if k := matchEpisodeTitle(eps, "The Gift of the Gods", 4); k != 0 {
+		t.Fatalf("matched %d, want the exact title (index 0)", k)
 	}
 }
