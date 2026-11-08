@@ -105,6 +105,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const subsRef = useRef<SubtitleRenderer | null>(null)
   const tokenRef = useRef<string>('')
   const modeRef = useRef<Mode>({ kind: 'direct' })
+  const reconnects = useRef(0) // stream reopenings in a row since it last played
+  // How far the element really played (its own clock), and its last reading: a server
+  // stream that runs out makes Chrome move the playhead to the header's duration (with
+  // buffered stretched to match), so only the readings before that jump say where the
+  // stream got to.
+  const playedTo = useRef(0)
+  const lastEl = useRef(0)
   const lastReport = useRef(0)
   // The last position read from a live <video>. On exit React clears videoRef before the
   // effects' cleanups run, so the final report (and the pause the removal fires) would
@@ -207,7 +214,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
 
   /** Decide direct play or remux for the chosen audio track, and load the stream at a position. */
   const load = useCallback(
-    async (startSec: number, audio: number | null) => {
+    async (startSec: number, audio: number | null, resume = false) => {
       const my = ++loadGen.current
       const stale = () => my !== loadGen.current
       const v = videoRef.current
@@ -258,7 +265,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       setCurrent(startSec)
       setBuffered(startSec)
       v.playbackRate = rate
-      if (wasPlaying || !ready) await v.play().catch(() => undefined)
+      if (wasPlaying || resume || !ready) await v.play().catch(() => undefined)
       if (stale()) return
       started.current = true
       setReady(true)
@@ -272,10 +279,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
    * silently, leaving a stopped player with no word why.
    */
   const reload = useCallback(
-    (startSec: number, audio: number | null) => {
+    (startSec: number, audio: number | null, resume = false) => {
       const my = loadGen.current + 1 // the number this load takes
       setError(null) // a new try: an earlier failure's message no longer applies
-      load(startSec, audio).catch((e: unknown) => {
+      load(startSec, audio, resume).catch((e: unknown) => {
         if (my === loadGen.current) setError(errorText(e))
       })
     },
@@ -359,9 +366,15 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     const v = videoRef.current
     if (!v || !source) return
     const onTime = () => {
+      const m = modeRef.current
+      const step = v.currentTime - lastEl.current
+      lastEl.current = v.currentTime
+      // A jump nobody asked for (no seek): a server stream that ran out. Neither shown nor
+      // reported (it would mark the episode watched); 'ended' follows and reopens it.
+      if (m.kind === 'server' && !v.seeking && Math.abs(step) > 1 + 2 * v.playbackRate) return
+      playedTo.current = v.currentTime
       const t = absTime()
       setCurrent(t)
-      const m = modeRef.current
       const off = m.kind === 'server' ? m.offset : 0
       if (v.buffered.length) setBuffered(off + v.buffered.end(v.buffered.length - 1))
       if (!v.paused) report()
@@ -380,12 +393,35 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     const onPlay = () => setPlaying(true)
     const onPause = () => {
       setPlaying(false)
+      // A server stream that ran out pauses at the header's duration before 'ended': not
+      // where the viewer is (reported, it marked the episode watched).
+      if (modeRef.current.kind === 'server' && Math.abs(v.currentTime - playedTo.current) > 1 + 2 * v.playbackRate) return
       report(true)
     }
     const onWaiting = () => setWaiting(true)
-    const onPlaying = () => setWaiting(false)
+    const onPlaying = () => {
+      setWaiting(false)
+      reconnects.current = 0
+    }
+    // A server stream (transcode or remux) that ended or dropped well before the end of
+    // the file is a lost connection, not the end: the server ends a stream nobody read for
+    // a long time (a long pause), and restarts end them too. Reopened where it was, a few
+    // times in a row; it used to count as the end of the episode (marked watched, on to
+    // the next one with autoplay) or stop with "Try again".
+    const reconnect = () => {
+      const m = modeRef.current
+      if (m.kind !== 'server') return false
+      // Where the stream really got to: how far it played (see playedTo); the playhead
+      // and buffered both say "the end" once Chrome has jumped there.
+      const at = m.offset + playedTo.current
+      if (duration <= 0 || at >= duration - 10 || reconnects.current >= 3) return false
+      reconnects.current++
+      reload(at, m.audio, true)
+      return true
+    }
     const onError = () => {
       const code = v.error?.code
+      if (code === 2 && reconnect()) return
       if (code !== 4) {
         setError(code === 2 ? 'The connection to the server dropped while playing. Try again.' : code === 3 ? 'The video could not be decoded.' : `Playback error ${code ?? ''}`.trim())
         return
@@ -401,9 +437,17 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       })
     }
     const onEnd = () => {
+      if (reconnect()) return
       report(true)
       if (autoplayRef.current) onEnded?.()
     }
+    // A seek, or a new stream (its clock starts again at 0), is where playing goes on from.
+    const onSeeked = () => {
+      playedTo.current = v.currentTime
+      lastEl.current = v.currentTime
+    }
+    v.addEventListener('seeked', onSeeked)
+    v.addEventListener('loadstart', onSeeked)
     v.addEventListener('timeupdate', onTime)
     v.addEventListener('play', onPlay)
     v.addEventListener('pause', onPause)
@@ -412,6 +456,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     v.addEventListener('error', onError)
     v.addEventListener('ended', onEnd)
     return () => {
+      v.removeEventListener('seeked', onSeeked)
+      v.removeEventListener('loadstart', onSeeked)
       v.removeEventListener('timeupdate', onTime)
       v.removeEventListener('play', onPlay)
       v.removeEventListener('pause', onPause)
@@ -420,7 +466,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       v.removeEventListener('error', onError)
       v.removeEventListener('ended', onEnd)
     }
-  }, [source, absTime, report, onEnded, seekTo])
+  }, [source, absTime, report, onEnded, seekTo, reload, duration])
 
   // ---- volume, rate, fullscreen ----
   useEffect(() => {

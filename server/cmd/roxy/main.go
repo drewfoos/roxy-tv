@@ -196,17 +196,26 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 		})
 	}
 
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return err
+	}
+	slog.Info("roxy server listening", "addr", cfg.Listen, "data", cfg.DataDir)
+	return serveHTTP(ctx, ln, api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs))
+}
+
+// serveHTTP answers HTTP on ln until ctx ends. Requests end with the server: their contexts
+// are cancelled with ctx (on SIGTERM), which stops the ffmpeg each stream runs; Shutdown
+// alone waits for them (a stream is never idle) and gave up after 5 s, leaving them
+// running as the process exited.
+func serveHTTP(ctx context.Context, ln net.Listener, h http.Handler) error {
 	srv := &http.Server{
-		Addr:              cfg.Listen,
-		Handler:           api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs),
+		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		// A slow client cannot hold a request open forever (bodies are capped at 32 MB). No
 		// WriteTimeout: streams legitimately run for hours.
 		ReadTimeout: 2 * time.Minute,
 		IdleTimeout: 2 * time.Minute,
-		// Requests end with the server: on SIGTERM their contexts are cancelled, which stops
-		// the ffmpeg each stream runs. Shutdown alone waits for them (a stream is never idle)
-		// and gave up after 5 s, leaving them running as the process exited.
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	go func() {
@@ -215,8 +224,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
-	slog.Info("roxy server listening", "addr", cfg.Listen, "data", cfg.DataDir)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

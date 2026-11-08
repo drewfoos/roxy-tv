@@ -270,20 +270,50 @@ func (d *Detector) test(e Encoder) bool {
 	args = append(args, "-vf", videoFilter(e, 720, false, false))
 	args = append(args, videoCodec(e, 2000)...)
 	args = append(args, "-f", "null", "-")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, d.ffmpeg, args...).CombinedOutput()
-	if err != nil {
-		slog.Debug("transcode: encoder test", "encoder", e, "err", err, "out", strings.TrimSpace(string(out)))
+	out := &capped{max: 64 << 10}
+	cmd := exec.CommandContext(ctx, d.ffmpeg, args...)
+	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = out, out, 5*time.Second
+	if err := cmd.Run(); err != nil {
+		slog.Debug("transcode: encoder test", "encoder", e, "err", err, "out", strings.TrimSpace(out.String()))
 		return false
 	}
 	return true
 }
 
 func (d *Detector) hasFilter(name string) bool {
-	out, err := exec.Command(d.ffmpeg, "-hide_banner", "-filters").Output()
-	return err == nil && strings.Contains(string(out), " "+name+" ")
+	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+	defer cancel()
+	out := &capped{max: 4 << 20} // the whole list is ~100 KB
+	cmd := exec.CommandContext(ctx, d.ffmpeg, "-hide_banner", "-filters")
+	cmd.Stdout, cmd.WaitDelay = out, 5*time.Second
+	return cmd.Run() == nil && strings.Contains(out.String(), " "+name+" ")
 }
+
+// checkTimeout bounds each encoder check (a test encode, the filter list).
+var checkTimeout = 20 * time.Second
+
+// capped keeps at most max bytes of what is written to it (the first ones) and drops the
+// rest: the encoder checks read ffmpeg's output, which a broken or odd ffmpeg binary could
+// make endless, and used to hold all of it in memory (with no time limit on the filter
+// list either).
+type capped struct {
+	max int
+	buf []byte
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := c.max - len(c.buf); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		c.buf = append(c.buf, p[:room]...)
+	}
+	return len(p), nil
+}
+
+func (c *capped) String() string { return string(c.buf) }
 
 // Args is the ffmpeg command line for a request, writing Matroska to stdout.
 func (d *Detector) Args(r Request) []string {
