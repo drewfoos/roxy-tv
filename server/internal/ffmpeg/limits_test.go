@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,5 +64,28 @@ func TestErrorOutputIsBounded(t *testing.T) {
 	}
 	if len(tw.buf) != 100 {
 		t.Fatalf("tailWriter kept %d bytes, want 100", len(tw.buf))
+	}
+}
+
+// RunCombined's callers parse the whole output (silencedetect), so past MaxCombined it
+// stops ffmpeg and fails instead of keeping a part. It used to collect everything: a run
+// printing without end grew without bound. A normal report comes back whole.
+func TestRunCombinedOutputIsCapped(t *testing.T) {
+	old := MaxCombined
+	MaxCombined = 64 << 10
+	t.Cleanup(func() { MaxCombined = old })
+	endless := &FFmpeg{FFmpeg: fakeBin(t, "exec yes 'silence_start: 1.0'")}
+	start := time.Now()
+	out, err := endless.RunCombined(context.Background(), "-i", "x")
+	if !errors.Is(err, ErrOutputTooLarge) || out != nil {
+		t.Fatalf("endless output: %d bytes, err %v", len(out), err)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("ffmpeg was not stopped at the cap (took %v)", took)
+	}
+	report := &FFmpeg{FFmpeg: fakeBin(t, `echo "[silencedetect] silence_start: 1.5" >&2; echo "[silencedetect] silence_end: 2.25" >&2`)}
+	out, err = report.RunCombined(context.Background(), "-i", "x")
+	if err != nil || !strings.Contains(string(out), "silence_start: 1.5") || !strings.Contains(string(out), "silence_end: 2.25") {
+		t.Fatalf("a normal report: %q %v", out, err)
 	}
 }

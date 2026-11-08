@@ -134,20 +134,57 @@ func LocalInputs(args []string) []string {
 	return out
 }
 
+// MaxCombined is the most output RunCombined collects. Its callers parse the whole of it
+// (silencedetect's report), so it cannot keep just an end the way error output does:
+// past this, ffmpeg is stopped and the run fails rather than return a part. Real reports
+// are a few KB. A variable so tests can shorten it.
+var MaxCombined = 4 << 20
+
+// ErrOutputTooLarge: ffmpeg printed more than MaxCombined.
+var ErrOutputTooLarge = errors.New("ffmpeg printed more output than expected; stopped")
+
 // RunCombined executes ffmpeg and returns stdout and stderr together (for filters such
-// as silencedetect that report on stderr).
+// as silencedetect that report on stderr). It used to collect all of it, so a run that
+// printed without end (a damaged file reported frame by frame) grew without bound.
 func (f *FFmpeg) RunCombined(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := limited(ctx, RunLimit)
 	defer cancel()
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	cmd := exec.CommandContext(ctx, f.FFmpeg, LocalInputs(args)...)
 	cmd.WaitDelay = waitDelay
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Run(); err != nil {
-		return buf.Bytes(), fmt.Errorf("ffmpeg: %w: %s", err, tail(buf.String(), 2000))
+	out := &capWriter{max: MaxCombined, full: stop}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err := cmd.Run()
+	if out.over {
+		return nil, ErrOutputTooLarge
 	}
-	return buf.Bytes(), nil
+	if err != nil {
+		return out.buf.Bytes(), fmt.Errorf("ffmpeg: %w: %s", err, tail(out.buf.String(), 2000))
+	}
+	return out.buf.Bytes(), nil
+}
+
+// capWriter collects up to max bytes; past that it drops the rest, notes it, and calls
+// full (which stops the process).
+type capWriter struct {
+	max  int
+	buf  bytes.Buffer
+	over bool
+	full func()
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if c.over {
+		return len(p), nil
+	}
+	if c.buf.Len()+len(p) > c.max {
+		c.over = true
+		c.full()
+		return len(p), nil
+	}
+	return c.buf.Write(p)
 }
 
 // Probe executes ffprobe with args and returns stdout.

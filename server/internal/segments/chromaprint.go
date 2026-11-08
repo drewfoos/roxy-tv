@@ -54,7 +54,7 @@ var silenceEndRe = regexp.MustCompile(`silence_end: ([0-9.]+)`)
 // only accurate to about a point, onto the cut the editor made.
 func silences(ctx context.Context, ff *ffmpeg.FFmpeg, path string, startSec, lengthSec float64) ([]Silence, error) {
 	args := []string{
-		"-hide_banner", "-nostdin",
+		"-hide_banner", "-nostdin", "-nostats", // no progress lines: only the report is wanted
 		"-ss", fmt.Sprintf("%.3f", startSec), "-t", fmt.Sprintf("%.3f", lengthSec),
 		"-i", path, "-map", "0:a:0", "-vn", "-sn", "-dn",
 		"-af", "silencedetect=noise=-45dB:duration=0.25", "-f", "null", "-",
