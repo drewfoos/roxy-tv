@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chooseStream, MAX_REOPENS, reopenAt, StreamClock, type Mode } from './stream'
+import { chooseStream, MAX_REOPENS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, StreamClock, type Mode } from './stream'
 
 const aac = { index: 1, codec: 'aac' }
 const ac3 = { index: 1, codec: 'AC3' }
@@ -103,5 +103,50 @@ describe('reopenAt', () => {
   it('leaves direct play and unknown durations alone', () => {
     expect(reopenAt({ kind: 'direct' }, 30, 1440, 0)).toBeNull()
     expect(reopenAt(server, 30, 0, 0)).toBeNull()
+  })
+})
+
+describe('ReopenBudget', () => {
+  const server: Mode = { kind: 'server', audio: null, offset: 0 }
+
+  // What Player.tsx does when a server stream stops: ask where to reopen, count it.
+  const tryReopen = (b: ReopenBudget, playedTo: number) => {
+    const at = reopenAt(server, playedTo, 1440, b.used)
+    if (at !== null) b.reopened(at)
+    return at
+  }
+
+  // Found by a review: the count used to be reset by the browser's 'playing' event, which
+  // fires as soon as a reopened stream starts, so a stream dying 2 s after every
+  // reopening was reopened for ever. Brief recoveries no longer reset it.
+  it('gives up on a stream that keeps dying shortly after each reopening', () => {
+    const b = new ReopenBudget()
+    let pos = 100
+    for (let i = 0; i < MAX_REOPENS; i++) {
+      expect(tryReopen(b, pos)).toBe(pos)
+      pos += 2 // plays 2 s ('playing' fires), then dies again
+      b.progress(pos)
+    }
+    expect(tryReopen(b, pos)).toBeNull()
+  })
+
+  it('counts a stream that played on long enough as recovered', () => {
+    const b = new ReopenBudget()
+    expect(tryReopen(b, 100)).toBe(100)
+    expect(tryReopen(b, 101)).toBe(101)
+    b.progress(101 + RECOVERED_AFTER_SEC - 1)
+    expect(b.used).toBe(2) // not yet
+    b.progress(101 + RECOVERED_AFTER_SEC)
+    expect(b.used).toBe(0) // recovered: a later drop gets its full allowance
+    for (let i = 0; i < MAX_REOPENS; i++) expect(tryReopen(b, 500 + i)).not.toBeNull()
+    expect(tryReopen(b, 510)).toBeNull()
+  })
+
+  it('starts afresh for a new title', () => {
+    const b = new ReopenBudget()
+    for (let i = 0; i < MAX_REOPENS; i++) tryReopen(b, 100 + i)
+    expect(tryReopen(b, 200)).toBeNull()
+    b.reset()
+    expect(tryReopen(b, 10)).toBe(10)
   })
 })

@@ -5,7 +5,7 @@ import { lang3, prefs } from '../api/prefs'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
-import { chooseStream, reopenAt, StreamClock, type Mode } from './stream'
+import { chooseStream, ReopenBudget, reopenAt, StreamClock, type Mode } from './stream'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -102,7 +102,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const subsRef = useRef<SubtitleRenderer | null>(null)
   const tokenRef = useRef<string>('')
   const modeRef = useRef<Mode>({ kind: 'direct' })
-  const reconnects = useRef(0) // stream reopenings in a row since it last played
+  const reopens = useRef(new ReopenBudget()) // stream reopenings in a row (see ReopenBudget)
+  // The player stays mounted from one episode to the next: each title starts afresh.
+  useEffect(() => reopens.current.reset(), [source?.id])
   // How far the element really played (its own clock), and its last reading: a server
   // stream that runs out makes Chrome move the playhead to the header's duration (with
   // buffered stretched to match), so only the readings before that jump say where the
@@ -368,6 +370,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       // reported (it would mark the episode watched); 'ended' follows and reopens it.
       if (!clock.current.tick(v, m.kind === 'server')) return
       const t = absTime()
+      reopens.current.progress(t) // real playback: far enough past a reopening, it recovered
       setCurrent(t)
       const off = m.kind === 'server' ? m.offset : 0
       if (v.buffered.length) setBuffered(off + v.buffered.end(v.buffered.length - 1))
@@ -393,10 +396,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       report(true)
     }
     const onWaiting = () => setWaiting(true)
-    const onPlaying = () => {
-      setWaiting(false)
-      reconnects.current = 0
-    }
+    const onPlaying = () => setWaiting(false)
     // A server stream (transcode or remux) that ended or dropped well before the end of
     // the file is a lost connection, not the end: the server ends a stream nobody read for
     // a long time (a long pause), and restarts end them too. Reopened where it was, a few
@@ -406,9 +406,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const m = modeRef.current
       // Where the stream really got to (StreamClock): the playhead and buffered both say
       // "the end" once Chrome has jumped there.
-      const at = reopenAt(m, clock.current.playedTo, duration, reconnects.current)
+      const at = reopenAt(m, clock.current.playedTo, duration, reopens.current.used)
       if (at === null || m.kind !== 'server') return false
-      reconnects.current++
+      reopens.current.reopened(at)
       reload(at, m.audio, true)
       return true
     }

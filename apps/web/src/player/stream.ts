@@ -78,6 +78,42 @@ export class StreamClock {
 /** How many times in a row a stream is reopened before the player gives up. */
 export const MAX_REOPENS = 3
 
+/** How much a reopened stream must play, past where it was reopened, to count as recovered. */
+export const RECOVERED_AFTER_SEC = 30
+
+/**
+ * Reopenings in a row. "In a row" ends only when a reopened stream has really played on
+ * (RECOVERED_AFTER_SEC past the point it was reopened at): the browser's 'playing' event,
+ * which used to reset the count, fires as soon as a reopened stream starts, so a stream
+ * that died again two seconds after each reopening was reopened for ever.
+ */
+export class ReopenBudget {
+  private count = 0
+  private from = 0 // the absolute time the last reopening started at
+
+  /** How many reopenings in a row so far (for reopenAt). */
+  get used(): number {
+    return this.count
+  }
+
+  /** A reopening at absolute time `at`. */
+  reopened(at: number): void {
+    this.count++
+    this.from = at
+  }
+
+  /** Real playback reached absolute time `t`: far enough past the reopening, it recovered. */
+  progress(t: number): void {
+    if (this.count > 0 && t >= this.from + RECOVERED_AFTER_SEC) this.count = 0
+  }
+
+  /** A new title, a seek or a quality change: a fresh start. */
+  reset(): void {
+    this.count = 0
+    this.from = 0
+  }
+}
+
 /**
  * Where to reopen a stream that ended or dropped, or null when it is the real end (or
  * not a server stream, or reopened too often in a row): a server stream that stopped
