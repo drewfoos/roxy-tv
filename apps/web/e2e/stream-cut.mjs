@@ -5,8 +5,9 @@
 //
 // Env: BASE (the server), ROXY_USER / ROXY_PASS (an admin), CUT_CMD (a shell command that
 // kills the running remux's ffmpeg), CHROME (optional: Chrome's path). The server must
-// serve one film with audio the browser cannot play (AC3), on a network slow enough that
-// the stream is still arriving 3 s in (CI throttles loopback with tc).
+// serve one film with audio the browser cannot play (AC3). Chrome's own network
+// emulation slows the page to a home network's pace (8 Mbit/s): over loopback a remux
+// arrives whole in seconds, and cutting it then would prove nothing.
 import { execSync } from 'node:child_process'
 import { chromium } from 'playwright-core'
 
@@ -40,6 +41,9 @@ if (!item) fail('no film in the library')
 const browser = await chromium.launch({ channel: process.env.CHROME ? undefined : 'chrome', executablePath: process.env.CHROME, args: ['--autoplay-policy=no-user-gesture-required'] })
 try {
   const page = await browser.newPage()
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Network.enable')
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 10, downloadThroughput: 1_000_000, uploadThroughput: 1_000_000 })
   const remux = []
   page.on('request', (r) => {
     if (r.url().includes('/remux')) remux.push(Number(new URL(r.url()).searchParams.get('start')))
@@ -59,7 +63,7 @@ try {
   execSync(process.env.CUT_CMD ?? fail('CUT_CMD is not set'), { stdio: 'inherit' })
   const cut = await state()
   console.log(`cut: at ${cut.t.toFixed(1)} s, ${cut.buffered.toFixed(1)} s buffered of ${item.runtimeMs / 1000 || '?'} s`)
-  if (item.runtimeMs && cut.buffered > item.runtimeMs / 1000 - 30) fail('the whole film arrived before the cut: throttle the network')
+  if (item.runtimeMs && cut.buffered > item.runtimeMs / 1000 - 30) fail('the whole film arrived before the cut (the network was not slowed)')
   // Play out what was buffered quickly; a reopened stream plays at the player's rate.
   await page.evaluate(() => { document.querySelector('video').playbackRate = 4 })
   let reopened = false

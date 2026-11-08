@@ -105,8 +105,8 @@ jobs:
     # The web player in real Google Chrome (the runner has it; Playwright's own Chromium
     # has no H.264/AAC) against a server built from this commit: a remux stream cut
     # part-way must be reopened where it got to, not count as the end of the film. See
-    # apps/web/e2e/stream-cut.mjs. Loopback is throttled so the stream is still arriving
-    # when it is cut (over plain loopback a remux arrives whole in seconds).
+    # apps/web/e2e/stream-cut.mjs, which slows Chrome's network so the stream is still
+    # arriving when it is cut (over plain loopback a remux arrives whole in seconds).
     name: Web player in Chrome
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +135,6 @@ jobs:
           ROXY_LISTEN=127.0.0.1:18097 ROXY_DISCOVERY_PORT=18096 ROXY_DATA_DIR="$RUNNER_TEMP/data" ROXY_MEDIA_ROOTS="$RUNNER_TEMP/media" \
             ROXY_HWACCEL=none ROXY_ADMIN_USER=roxy ROXY_ADMIN_PASSWORD=e2e-password-123 nohup "$RUNNER_TEMP/roxy" > "$RUNNER_TEMP/server.log" 2>&1 &
           for i in $(seq 60); do curl -sf http://127.0.0.1:18097/healthz >/dev/null && exit 0; sleep 1; done; cat "$RUNNER_TEMP/server.log"; exit 1
-      - run: sudo tc qdisc add dev lo root tbf rate 8mbit burst 128kb latency 500ms
       - run: |
           set -o pipefail
           npm run e2e 2>&1 | tee "$RUNNER_TEMP/e2e.log"
@@ -144,12 +143,11 @@ jobs:
           BASE: http://127.0.0.1:18097
           ROXY_USER: roxy
           ROXY_PASS: e2e-password-123
-          CUT_CMD: pgrep -af ffmpeg | cut -c1-200; pkill -f -- "-c:v copy"
+          CUT_CMD: pkill -x ffmpeg
       - if: failure()
         run: |
           grep -vE "^\s+at " "$RUNNER_TEMP/e2e.log" | tail -15 | sed 's/^/::error::/'
           grep -E "remux|level=ERROR" "$RUNNER_TEMP/server.log" | tail -10 | sed 's/^/::error::server: /'
-          tc -s qdisc show dev lo | head -5 | sed 's/^/::error::tc: /'
 
   android:
     name: Android (Gradle)
