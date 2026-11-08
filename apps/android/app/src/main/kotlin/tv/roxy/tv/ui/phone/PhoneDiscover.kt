@@ -635,11 +635,15 @@ fun PhoneDiscoverDetail(
                     }
                 }
             }
+            // On solid black like everything under the logo: the banner stays pinned behind the
+            // page while it fades, and showed through the synopsis on a film's page.
             if (d.isMovie) item(key = "details") {
-                val m = movieDetails
-                if (m != null) DetailsSections(m, onOpenPerson = onOpenPerson, showTagline = false) // the tagline is under the title already
-                else Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    BoneLine(width = 120.dp, height = 16.dp); repeat(4) { BoneLine(width = 300.dp, height = 12.dp) }
+                Column(modifier = Modifier.fillMaxWidth().background(RoxyColors.background)) {
+                    val m = movieDetails
+                    if (m != null) DetailsSections(m, onOpenPerson = onOpenPerson, showTagline = false) // the tagline is under the title already
+                    else Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        BoneLine(width = 120.dp, height = 16.dp); repeat(4) { BoneLine(width = 300.dp, height = 12.dp) }
+                    }
                 }
             }
         }
