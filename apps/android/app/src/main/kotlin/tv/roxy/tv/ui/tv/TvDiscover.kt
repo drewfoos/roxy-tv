@@ -131,6 +131,13 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
     fun belowSearch(): String? = rowTarget(focusedRow.value.coerceAtLeast(0))
         ?: rowTarget(listState.firstVisibleItemIndex) ?: rowTarget(listState.firstVisibleItemIndex + 1)
     val searching = state.results != null || state.query.isNotBlank()
+    // Back with a search showing clears it: the rows ("Your requests" first) come back, the
+    // search box focused. Only clearing the text by hand used to get them back. A second
+    // Back goes on as before (the rail).
+    androidx.activity.compose.BackHandler(enabled = searching) {
+        vm.search("")
+        runCatching { memory.requester("discover/search").requestFocus() }
+    }
     // Back from the rail: the card that had focus if it is still there, else the first card
     // showing in its row (or the row showing), the search box only when there are no rows.
     RegisterPageEntry {

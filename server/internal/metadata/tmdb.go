@@ -42,6 +42,14 @@ func NewTMDB(key string) *TMDB {
 	}
 }
 
+// NewTMDBAt is NewTMDB talking to another address (a test server).
+func NewTMDBAt(key, base string) *TMDB {
+	t := NewTMDB(key)
+	t.base = strings.TrimRight(base, "/")
+	t.lim = newLimiter(1000, time.Second)
+	return t
+}
+
 func (t *TMDB) Name() string { return "tmdb" }
 
 func (t *TMDB) apiKey() string {

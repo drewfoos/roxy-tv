@@ -250,7 +250,8 @@ func (a *AniList) mediaResult(m *anilistMedia) *Result {
 		case "CHARACTER", "OTHER", "ADAPTATION", "SOURCE", "CONTAINS", "COMPILATION":
 			continue // crossovers and source material are not part of this story
 		}
-		rel := Relation{Type: relationKind(e.RelationType, e.Node.Format), Provider: "anilist", ProviderID: strconv.Itoa(e.Node.ID), Title: e.title(), Format: e.Node.Format, Year: e.Node.StartDate.Year, Poster: e.Node.CoverImage.ExtraLarge}
+		rel := Relation{Type: relationKind(e.RelationType, e.Node.Format), Provider: "anilist", ProviderID: strconv.Itoa(e.Node.ID), Title: e.title(), Format: e.Node.Format, Year: e.Node.StartDate.Year, Poster: e.Node.CoverImage.ExtraLarge,
+			Story: e.Node.Format == "MOVIE" && (e.RelationType == "SEQUEL" || e.RelationType == "PREQUEL")}
 		if e.Node.Episodes != nil {
 			rel.Episodes = *e.Node.Episodes
 		}
@@ -372,11 +373,58 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 		}
 		return 0
 	}
+	// Films on the way: AniList often links two seasons only through films (Bunny Girl
+	// Senpai: Season 1 -> Dreaming Girl -> Sister Venturing Out -> Knapsack Kid -> Season
+	// 2). step goes to the next season by a direct edge, else through up to maxFilmHops
+	// films; the films it passes are part of the story (storyFilms).
+	const maxFilmHops = 4
+	storyFilms := map[int]*anilistMedia{}
+	filmEdge := func(m *anilistMedia, relType string) int {
+		for _, e := range m.Relations.Edges {
+			if e.RelationType == relType && e.Node.Type == "ANIME" && e.Node.Format == "MOVIE" {
+				return e.Node.ID
+			}
+		}
+		return 0
+	}
+	step := func(m *anilistMedia, relType string) (int, error) {
+		if id := next(m, relType); id != 0 {
+			return id, nil
+		}
+		cur := m
+		passed := map[int]bool{} // this hop's films: a film linking back is not a loop forever
+		for i := 0; i < maxFilmHops; i++ {
+			fid := filmEdge(cur, relType)
+			if fid == 0 || passed[fid] {
+				return 0, nil
+			}
+			passed[fid] = true
+			f := storyFilms[fid] // passed the other way already: no second query
+			if f == nil {
+				var err error
+				if f, err = fetch(fid); err != nil {
+					return 0, err
+				}
+				if f == nil {
+					return 0, nil
+				}
+				storyFilms[fid] = f
+			}
+			if id := next(f, relType); id != 0 {
+				return id, nil
+			}
+			cur = f
+		}
+		return 0, nil
+	}
 	// Back to the root.
 	root := start
 	seen := map[int]bool{start.ID: true}
 	for hops := 0; hops < maxHops; hops++ {
-		id := next(root, "PREQUEL")
+		id, err := step(root, "PREQUEL")
+		if err != nil {
+			return nil, err
+		}
 		if id == 0 || seen[id] {
 			break
 		}
@@ -398,7 +446,10 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 	cur := root
 	seen = map[int]bool{root.ID: true}
 	for hops := 0; hops < maxHops; hops++ {
-		id := next(cur, "SEQUEL")
+		id, err := step(cur, "SEQUEL")
+		if err != nil {
+			return nil, err
+		}
 		if id == 0 || seen[id] {
 			break
 		}
@@ -421,10 +472,29 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 	related := map[string]Relation{}
 	for _, m := range chain {
 		for _, rel := range a.mediaResult(m).Related {
-			if _, ok := related[rel.ProviderID]; !ok && !seen[atoi(rel.ProviderID)] {
+			if old, ok := related[rel.ProviderID]; ok {
+				// Linked from two seasons (a side story of one, the sequel of the next):
+				// part of the story if either says so.
+				old.Story = old.Story || rel.Story
+				related[rel.ProviderID] = old
+			} else if !seen[atoi(rel.ProviderID)] {
 				related[rel.ProviderID] = rel
 			}
 		}
+	}
+	// The films passed between seasons are story films, linked to a season or not.
+	for id, f := range storyFilms {
+		if seen[id] {
+			continue
+		}
+		key := strconv.Itoa(id)
+		rel, ok := related[key]
+		if !ok {
+			fr := a.mediaResult(f)
+			rel = Relation{Type: "movie", Provider: "anilist", ProviderID: key, Title: fr.Title, Format: f.Format, Year: f.StartDate.Year, Poster: f.CoverImage.ExtraLarge}
+		}
+		rel.Story = true
+		related[key] = rel
 	}
 	base.Related = base.Related[:0]
 	for _, rel := range related {

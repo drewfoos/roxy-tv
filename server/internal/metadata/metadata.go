@@ -73,6 +73,9 @@ type Relation struct {
 	Year       int
 	Poster     string
 	Episodes   int
+	// Story: part of the main story: a film linked as a prequel or sequel of a season,
+	// or one on the way from one season to the next (followChain).
+	Story bool
 }
 
 // Season is a season's episode list plus its own artwork.

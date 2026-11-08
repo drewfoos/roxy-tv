@@ -472,7 +472,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 		} else {
 			rels := make([]store.ItemRelation, 0, len(merged.Related))
 			for _, r := range merged.Related {
-				rels = append(rels, store.ItemRelation{Provider: r.Provider, ProviderID: r.ProviderID, Relation: r.Type, Title: r.Title, Format: r.Format, Year: r.Year, PosterURL: r.Poster, Episodes: r.Episodes})
+				rels = append(rels, store.ItemRelation{Provider: r.Provider, ProviderID: r.ProviderID, Relation: r.Type, Title: r.Title, Format: r.Format, Year: r.Year, PosterURL: r.Poster, Episodes: r.Episodes, Story: r.Story})
 			}
 			if err := s.store.ReplaceRelations(ctx, it.ID, rels); err != nil {
 				slog.Warn("metadata: saving relations", "item", it.Title, "err", err)

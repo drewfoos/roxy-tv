@@ -18,6 +18,8 @@ type ItemRelation struct {
 	Year       int
 	PosterURL  string
 	Episodes   int
+	// Story: part of the main story (a prequel/sequel film; see migration 0041).
+	Story bool
 }
 
 // ReplaceRelations rewrites an item's relation list.
@@ -31,8 +33,8 @@ func (s *Store) ReplaceRelations(ctx context.Context, itemID string, rels []Item
 		return err
 	}
 	for _, r := range rels {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO item_relations (item_id, provider, provider_id, relation, title, format, year, poster_url, episodes) VALUES (?,?,?,?,?,?,?,?,?)`,
-			itemID, r.Provider, r.ProviderID, r.Relation, r.Title, nullStr(r.Format), nullInt(r.Year), nullStr(r.PosterURL), nullInt(r.Episodes)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO item_relations (item_id, provider, provider_id, relation, title, format, year, poster_url, episodes, story) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			itemID, r.Provider, r.ProviderID, r.Relation, r.Title, nullStr(r.Format), nullInt(r.Year), nullStr(r.PosterURL), nullInt(r.Episodes), boolInt(r.Story)); err != nil {
 			return err
 		}
 	}
@@ -46,7 +48,7 @@ func (s *Store) ReplaceRelations(ctx context.Context, itemID string, rels []Item
 
 // RelationsFor lists an item's relations.
 func (s *Store) RelationsFor(ctx context.Context, itemID string) ([]ItemRelation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT provider, provider_id, relation, title, format, year, poster_url, episodes FROM item_relations WHERE item_id = ? ORDER BY year, title`, itemID)
+	rows, err := s.db.QueryContext(ctx, `SELECT provider, provider_id, relation, title, format, year, poster_url, episodes, story FROM item_relations WHERE item_id = ? ORDER BY year, title`, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,9 +58,11 @@ func (s *Store) RelationsFor(ctx context.Context, itemID string) ([]ItemRelation
 		var r ItemRelation
 		var format, poster sql.NullString
 		var year, eps sql.NullInt64
-		if err := rows.Scan(&r.Provider, &r.ProviderID, &r.Relation, &r.Title, &format, &year, &poster, &eps); err != nil {
+		var story int
+		if err := rows.Scan(&r.Provider, &r.ProviderID, &r.Relation, &r.Title, &format, &year, &poster, &eps, &story); err != nil {
 			return nil, err
 		}
+		r.Story = story != 0
 		r.Format, r.PosterURL, r.Year, r.Episodes = format.String, poster.String, int(year.Int64), int(eps.Int64)
 		out = append(out, r)
 	}

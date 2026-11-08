@@ -113,7 +113,9 @@ type Service struct {
 	tmdb   *metadata.TMDB
 	sonarr *arr.Client
 	radarr *arr.Client
-	arrCfg ArrSettings
+	// storyFilmTried: AniList relation -> when its TMDB film was last looked for (storyfilms.go).
+	storyFilmTried map[string]time.Time
+	arrCfg         ArrSettings
 	// prowlarr finds season packs Sonarr cannot parse (nil when not configured).
 	prowlarr *arr.Prowlarr
 	packs    packState
@@ -299,7 +301,8 @@ func (s *Service) RetryPending(ctx context.Context) {
 	}
 }
 
-// Start runs the pending-request retry every 10 minutes and the download tracker.
+// Start runs the pending-request retry and the story-film requests (storyfilms.go)
+// every 10 minutes, and the download tracker.
 func (s *Service) Start(ctx context.Context) {
 	s.startTracker(ctx)
 	s.startPackSweep(ctx)
@@ -312,6 +315,7 @@ func (s *Service) Start(ctx context.Context) {
 				return
 			case <-t.C:
 				s.RetryPending(ctx)
+				s.RequestStoryFilms(ctx)
 			}
 		}
 	}()
