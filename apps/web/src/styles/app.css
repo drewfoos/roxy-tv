@@ -209,6 +209,7 @@ img { display: block; }
 .card__hover-btn:hover { color: var(--accent-light); }
 /* Episode stills: "E2 — Title", the date, a shorter synopsis; Continue on the left, the menu on the right. */
 .card__hover--thumb .card__hover-body { overflow: hidden; gap: 4px; }
+.card__hover-genres { font-size: 13px; line-height: 18px; color: #9a9a9a; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .card__hover-ep { font-size: 14px; line-height: 20px; font-weight: 600; color: #fff; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .card__hover--thumb .card__hover-body p { -webkit-line-clamp: 4; }
 .card__hover-actions--split { justify-content: space-between; }
@@ -644,8 +645,10 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .acc-nav__link--on { color: var(--accent); }
 .acc-nav__link--on:hover { color: var(--accent-light); background: none; }
 .acc-panel { flex: 1; min-width: 0; background: #272727; }
-.acc-form { width: min(420px, 100%); margin: 0 auto; padding: 40px 20px 60px; display: flex; flex-direction: column; gap: 22px; }
-.acc-form--wide { width: min(640px, 100%); }
+/* The form uses the panel: a 420 px column in the middle of a panel twice that wide left
+   most of it empty on a tablet or a laptop. */
+.acc-form { width: min(560px, 100%); margin: 0 auto; padding: 40px 32px 60px; display: flex; flex-direction: column; gap: 22px; }
+.acc-form--wide { width: min(720px, 100%); }
 .acc-form--centre { align-items: center; text-align: center; }
 .panel-head { text-align: center; }
 .panel-head h1 { font-size: 28px; font-weight: 700; margin: 0 0 8px; }
@@ -768,17 +771,17 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 }
 /* No arrows where there is a finger: the bars and a swipe move the carousel. */
 @media (max-width: 1023px) { .hero__arrow, .row__arrow { display: none; } }
-/* Account settings under 1024: the link column becomes a scrolling strip above the panel. */
+/* Account settings on a tablet (601-1023): the link column stays beside the panel, only
+   narrower. It used to turn into one scrolling strip of links above the panel, cut off at
+   the edge with nothing saying it scrolled, the group names mixed in with the links. */
 @media (max-width: 1023px) {
   .acc { padding-top: 28px; }
-  .acc__body { flex-direction: column; gap: 16px; }
-  .acc-nav { width: 100%; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
-  .acc-nav::-webkit-scrollbar { display: none; }
-  .acc-nav__group { display: flex; align-items: center; gap: 2px; margin: 0; }
-  .acc-nav h2 { font-size: 13px; color: #8c8c8c; padding: 0 6px 0 10px; white-space: nowrap; }
-  .acc-nav__link { padding: 8px 10px; font-size: 14px; white-space: nowrap; border-radius: 17px; }
-  .acc-nav__link--on { background: rgba(62, 166, 255, 0.14); }
-  .acc-panel { width: 100%; }
+  .acc__body { gap: 20px; }
+  .acc-nav { width: 180px; }
+  .acc-nav__group { margin-bottom: 12px; }
+  .acc-nav h2 { font-size: 17px; padding: 6px 10px 6px; }
+  .acc-nav__link { padding: 10px; font-size: 15px; border-radius: 8px; }
+  .acc-nav__link--on { background: rgba(62, 166, 255, 0.12); }
 }
 @media (max-width: 600px) {
   .acc { padding-top: 20px; }

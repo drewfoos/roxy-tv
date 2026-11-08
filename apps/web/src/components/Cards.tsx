@@ -198,7 +198,7 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
 }
 
 /** The mouse-only hover panel's on / off, with the title cards' short delay. */
-function useHoverPanel() {
+export function useHoverPanel() {
   const [on, setOn] = useState(false)
   const timer = useRef<number | null>(null)
   useEffect(() => () => {

@@ -1,7 +1,7 @@
 import { Link } from 'react-router'
 import type { DiscoverItem, DownloadGroup, DownloadStatus, EpisodeDownload } from '../api/types'
-import { Art } from './Cards'
-import { IconCheck, IconClose, IconDownload, IconHistory } from './Icons'
+import { Art, useHoverPanel } from './Cards'
+import { IconAdd, IconCheck, IconClose, IconDownload, IconHistory, IconPlay } from './Icons'
 
 /*
  * Discover's shared pieces, from the phone app (PhoneDiscover.kt, PhoneDownloadStatus.kt):
@@ -207,22 +207,61 @@ function Corner({ item }: { item: DiscoverItem }) {
   )
 }
 
-/** Poster with its corner state, the name, then year and type. Always a link. */
+/**
+ * Poster with its corner state, the name, then year and type. With a mouse, resting on it
+ * slides the same dark panel over it as the library's cards: name, rating, year and kind,
+ * genres, the synopsis, and Play (in the library) / Request / the request's state. All of it
+ * comes with the list (TMDB's list entries carry synopsis and rating): no request per hover.
+ */
 export function DiscoverCard({ item }: { item: DiscoverItem }) {
   const dl = item.download
+  const kind = item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : 'Series'
   const sub = [item.year, item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : null].filter(Boolean).join('  ·  ')
+  const hover = useHoverPanel()
+  const libPath = item.libraryItemId ? (item.type === 'movie' ? `/movie/${item.libraryItemId}` : `/series/${item.libraryItemId}`) : null
+  const rating = item.rating ? (item.rating / 2).toFixed(1) : null
+  const rs = item.requestStatus
+  const asked = rs && rs !== 'failed' && rs !== 'declined'
   return (
-    <Link to={discoverPath(item)} className="card dcard" title={item.title}>
-      <div className="card__art">
+    <div className="card dcard" onMouseEnter={hover.enter} onMouseLeave={hover.leave}>
+      <Link to={discoverPath(item)} className="card__art" title={item.title}>
         <Art url={item.poster ?? null} title={item.title} />
         <Corner item={item} />
         {dl && isMoving(dl) && <DownloadBar progress={dl.progress} state={dl.state} className="dcard__bar" />}
-      </div>
-      <div className="card__name">{item.title}</div>
+      </Link>
+      <Link to={discoverPath(item)} className="card__name" title={item.title}>
+        {item.title}
+      </Link>
       <div className="card__sub">
         <span>{sub}</span>
       </div>
-    </Link>
+      {hover.on && (
+        <div className="card__hover">
+          {item.poster && <img className="card__hover-art" src={item.poster} alt="" />}
+          <Link to={discoverPath(item)} className="card__hover-body">
+            <h3>{item.title}</h3>
+            <div className="card__hover-meta">
+              {rating && <span>★ {rating}</span>}
+              {item.year && <span>{item.year}</span>}
+              <span>{kind}</span>
+            </div>
+            {!!item.genres?.length && <div className="card__hover-genres">{item.genres.slice(0, 3).join(', ')}</div>}
+            {item.overview && <p>{item.overview}</p>}
+          </Link>
+          <div className="card__hover-actions">
+            {libPath ? (
+              <Link to={libPath} className="card__hover-cta">
+                <IconPlay size={22} /> Play
+              </Link>
+            ) : (
+              <Link to={discoverPath(item)} className="card__hover-cta">
+                {asked ? <IconCheck size={20} /> : <IconAdd size={20} />} {asked ? 'Requested' : 'Request'}
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
