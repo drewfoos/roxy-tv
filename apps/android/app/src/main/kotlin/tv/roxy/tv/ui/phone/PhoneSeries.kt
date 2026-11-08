@@ -303,6 +303,14 @@ fun PhoneSeries(
                         val seasonNumber = state.seasons.getOrNull(state.selectedSeason)?.indexAired
                         if (tmdbId != null && seasonNumber != null) item(key = "season-request") { RequestSeasonRow(tmdbId, seasonNumber, seasonLabel) }
                     }
+                    // Part of the list did not load (episodeRows): said, with a retry, rather
+                    // than the rows passing for the whole season.
+                    if (state.episodesIncomplete && !state.episodesLoading) item(key = "eps-incomplete") {
+                        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 8.dp).background(RoxyColors.surfaceHigh, RoundedCornerShape(6.dp)).padding(12.dp)) {
+                            Text("Some episodes could not be loaded (${state.episodes.size} of ${state.episodesExpected}).", fontSize = 14.sp, color = RoxyColors.onBackground)
+                            Text("Try again", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.padding(top = 6.dp).clickable { vm.retryEpisodes() }.padding(vertical = 4.dp))
+                        }
+                    }
                     items(state.episodes, key = { it.id }) { ep ->
                         PhoneEpisodeRow(
                             ep, app.api,

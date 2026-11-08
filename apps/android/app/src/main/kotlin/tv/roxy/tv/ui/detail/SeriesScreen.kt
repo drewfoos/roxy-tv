@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.api.ItemsResponse
 import tv.roxy.tv.api.RelatedEntry
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.api.Section
@@ -20,6 +21,13 @@ data class SeriesUiState(
     val selectedSeason: Int = 0,
     val episodes: List<Item> = emptyList(),
     val episodesLoading: Boolean = false,
+    /**
+     * The shown entry's list could not be read whole (episodeRows): the screens say "Some
+     * episodes could not be loaded (N of M)" with a retry, instead of a partial list passing
+     * for the season. [episodesExpected] is M.
+     */
+    val episodesIncomplete: Boolean = false,
+    val episodesExpected: Int = 0,
     /** Movies / OVAs / side stories of this franchise the provider links (More like this). */
     val related: List<RelatedEntry> = emptyList(),
     /**
@@ -51,6 +59,28 @@ fun rowNumbersFor(source: SectionSource?, rows: List<Item>): Map<String, Int?> =
     is SectionSource.Specials -> rows.mapIndexed { i, ep -> ep.id to (i + 1) }.toMap()
     is SectionSource.Movie -> rows.associate { it.id to null }
     null -> emptyMap()
+}
+
+/** An entry's rows, how many it should have, and whether they are all there. */
+data class EpisodeRows(val items: List<Item>, val expected: Int, val complete: Boolean)
+
+/**
+ * The rows of an entry from the episodes read for it: a season's (or a flat show's) in
+ * order, as complete as the read was; a group of specials, the ones the section names, in
+ * its order, complete only when the read was and every named one came (an id missing from
+ * the read would otherwise just not be there, the group shorter with nothing said).
+ */
+fun episodeRows(source: SectionSource?, read: ItemsResponse): EpisodeRows = when (source) {
+    is SectionSource.Specials -> {
+        val byId = read.items.associateBy { it.id }
+        val rows = source.episodeIds.mapNotNull { byId[it] }
+        EpisodeRows(rows, source.episodeIds.size, read.complete && rows.size == source.episodeIds.size)
+    }
+    is SectionSource.Movie -> EpisodeRows(read.items, 1, read.complete && read.items.isNotEmpty())
+    null -> EpisodeRows(
+        read.items.sortedWith(compareBy({ it.seasonAired ?: 0 }, { it.indexAired ?: it.indexAbsolute ?: 0 })),
+        maxOf(read.total, read.items.size), read.complete,
+    )
 }
 
 /** Where an entry of the season list that is not a season gets its rows. */
@@ -200,30 +230,36 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
         _state.value = _state.value.copy(showExtras = true)
     }
 
+    /** The incomplete-list message's Retry: the whole page again (sections too, which name the specials). */
+    fun retryEpisodes() = load()
+
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {
-        _state.value = _state.value.copy(episodesLoading = true)
+        _state.value = _state.value.copy(episodesLoading = true, episodesIncomplete = false)
         // Only the latest request counts: two quick season picks cannot land out of order.
         episodesJob?.cancel()
         val source = sources[parentId]
         episodesJob = viewModelScope.launch {
             val started = android.os.SystemClock.elapsedRealtime()
             runCatching {
-                when (source) {
+                // The read as it came (complete or not): episodeRows makes the rows of it.
+                val read = when (source) {
                     // A film of the franchise: its one row (with its file, to play and download).
-                    is SectionSource.Movie -> listOf(api.item(source.item.id))
-                    // Some of the Specials season, in the order the section lists them.
-                    is SectionSource.Specials -> {
-                        val all = api.allItems(type = "episode", parent = source.seasonId, includeSources = true, sort = "index").items.associateBy { it.id }
-                        source.episodeIds.mapNotNull { all[it] }
-                    }
-                    null -> api.allItems(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index").items
-                        .sortedWith(compareBy({ it.seasonAired ?: 0 }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
+                    is SectionSource.Movie -> api.item(source.item.id).let { ItemsResponse(listOf(it), 1) }
+                    // Some of the Specials season: episodeRows picks the section's, in its order.
+                    is SectionSource.Specials -> api.allItems(type = "episode", parent = source.seasonId, includeSources = true, sort = "index")
+                    null -> api.allItems(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index")
                 }
+                episodeRows(source, read)
             }
-                .onSuccess { eps ->
+                .onSuccess { rows ->
+                    val eps = rows.items
                     // Read by ops' tv-measure.sh (load time of a long list on the device).
                     Timber.i("episodes: %d loaded in %d ms", eps.size, android.os.SystemClock.elapsedRealtime() - started)
-                    _state.value = _state.value.copy(episodes = eps, episodesLoading = false, rowNumbers = rowNumbersFor(source, eps))
+                    if (!rows.complete) Timber.w("episodes: %d of %d loaded; the list is incomplete", eps.size, rows.expected)
+                    _state.value = _state.value.copy(
+                        episodes = eps, episodesLoading = false, rowNumbers = rowNumbersFor(source, eps),
+                        episodesIncomplete = !rows.complete, episodesExpected = rows.expected,
+                    )
                 }
                 .onFailure { t ->
                     if (t is kotlinx.coroutines.CancellationException) throw t

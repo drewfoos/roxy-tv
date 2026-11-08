@@ -74,3 +74,14 @@ export function rowNumber(entry: SeasonEntry | undefined, rows: Item[], ep: Item
   }
   return ep.indexAired ?? ep.indexAbsolute ?? null
 }
+
+/**
+ * Whether an entry's rows are all there: the read was whole, and a group of specials got
+ * every episode it names (one missing from the read would otherwise just not be there).
+ * expected is what the screen says "of": the group's size, or the read's total.
+ */
+export function entryCompleteness(entry: SeasonEntry | undefined, rows: Item[], read: { complete?: boolean; total?: number } | undefined): { complete: boolean; expected: number } {
+  const readWhole = read?.complete !== false
+  if (entry?.ids) return { complete: readWhole && rows.length >= entry.ids.length, expected: entry.ids.length }
+  return { complete: readWhole, expected: Math.max(read?.total ?? rows.length, rows.length) }
+}

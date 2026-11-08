@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entryRows, rowNumber, plainEntries, sectionEntries } from './sections'
+import { entryCompleteness, entryRows, rowNumber, plainEntries, sectionEntries } from './sections'
 import type { Item, Section } from './types'
 
 const season = (id: string, n: number) => ({ id, type: 'season', title: n === 0 ? 'Specials' : `Season ${n}`, indexAired: n }) as Item
@@ -48,5 +48,24 @@ describe('rowNumber', () => {
   it('keeps a season episode its own number and gives a film none', () => {
     expect(rowNumber({ key: 's1', title: 'Season 1', seasonId: 's1' }, [], ep('e5', 5))).toBe(5)
     expect(rowNumber({ key: 'f', title: 'Legend of Crimson', movie: film }, [], ep('crimson', 5))).toBeNull()
+  })
+})
+
+describe('entryCompleteness', () => {
+  const e = (id: string) => ({ id, type: 'episode', title: id }) as Item
+  it('a group of specials missing one it names is incomplete, of its own size', () => {
+    const entry = { key: 'x', title: 'Specials', seasonId: 's0', ids: ['a', 'b', 'c'] }
+    const rows = entryRows(entry, [e('a'), e('c'), e('z')])
+    expect(entryCompleteness(entry, rows, { complete: true, total: 3 })).toEqual({ complete: false, expected: 3 })
+  })
+  it('every named special, from a whole read: complete', () => {
+    const entry = { key: 'x', title: 'OVAs', seasonId: 's0', ids: ['a'] }
+    expect(entryCompleteness(entry, entryRows(entry, [e('a')]), { complete: true }).complete).toBe(true)
+  })
+  it('a season from a read cut short: incomplete, of the server total', () => {
+    expect(entryCompleteness({ key: 's1', title: 'Season 1', seasonId: 's1' }, [e('a'), e('b')], { complete: false, total: 5 })).toEqual({ complete: false, expected: 5 })
+  })
+  it('a whole season: complete', () => {
+    expect(entryCompleteness({ key: 's1', title: 'Season 1', seasonId: 's1' }, [e('a')], { complete: true, total: 1 }).complete).toBe(true)
   })
 })

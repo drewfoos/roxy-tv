@@ -12,7 +12,7 @@ import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
 import { ExtrasRow } from '../components/Extras'
-import { entryRows, plainEntries, rowNumber, sectionEntries, type SeasonEntry } from '../api/sections'
+import { entryCompleteness, entryRows, plainEntries, rowNumber, sectionEntries, type SeasonEntry } from '../api/sections'
 
 /**
  * A series, laid out like Crunchyroll's: the banner with the info over its left side,
@@ -55,6 +55,9 @@ export function Series() {
     return season?.ids && !flat ? entryRows(season, items) : sortEpisodes(items)
   }, [epsRes, season, flat])
   const shown = useMemo(() => (newest ? episodes.slice().reverse() : episodes), [episodes, newest])
+  // Part of the list did not load (the read was cut short, or a group of specials is missing
+  // one it names): the page says so instead of a partial list passing for the whole.
+  const completeness = entryCompleteness(season?.movie || flat ? undefined : season, episodes, epsRes as ItemsResponse | undefined)
   // Play looks across every season, like the apps, not just the one picked in the dropdown.
   // What Play plays, worked out by the server (it used to need every episode of the show).
   const { data: nextRes, loading: nextLoading } = useAsync(seasonsRes == null ? null : `next:${id}`, () => api.next(id), [id, seasonsRes == null])
@@ -105,9 +108,9 @@ export function Series() {
               <IconExpand size={18} style={{ transform: newest ? 'rotate(180deg)' : undefined }} /> {newest ? 'Newest' : 'Oldest'}
             </button>
           </div>
-          {(epsRes as ItemsResponse | undefined)?.complete === false && (
+          {!epsLoading && epsRes && !completeness.complete && (
             <div className="notice" style={{ margin: '0 var(--gutter) 16px' }}>
-              Some episodes could not be loaded ({epsRes!.items.length} of {(epsRes as ItemsResponse).total}). Reload the page to try again.
+              Some episodes could not be loaded ({episodes.length} of {completeness.expected}). Reload the page to try again.
             </div>
           )}
           {epsLoading && !epsRes ? (

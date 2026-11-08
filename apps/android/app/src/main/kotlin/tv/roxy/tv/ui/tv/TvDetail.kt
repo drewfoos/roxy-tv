@@ -183,6 +183,7 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
                 onPlayFromStart = { ep -> scope.launch { playItem(context, ep, fromStart = true).onFailure { Timber.w(it, "play failed") } } },
                 // A group of specials numbers by place, a film's row not at all (rowNumbersFor).
                 sectionCounts = state.sectionCounts, sectionLabels = state.sectionLabels,
+                incompleteOf = state.episodesExpected.takeIf { state.episodesIncomplete }, onRetry = vm::retryEpisodes,
                 code = { ep -> if (!ep.isEpisode) "" else if (state.rowNumbers.containsKey(ep.id)) state.rowNumbers[ep.id]?.let { "E$it" } ?: "" else episodeShort(ep) },
             )
             "Details" -> DetailsTab(series, app.api, first)
@@ -395,7 +396,7 @@ private fun TitlePage(
  * from one small request per season, made once the tab opens.
  */
 @Composable
-private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester, onPlayFromStart: (Item) -> Unit = {}, code: (Item) -> String = { if (it.isEpisode) episodeShort(it) else "" }, sectionCounts: Map<String, Int> = emptyMap(), sectionLabels: Map<String, String> = emptyMap()) {
+private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int) -> Unit, episodes: List<Item>, loading: Boolean, api: RoxyApi, onPlay: (Item) -> Unit, first: FocusRequester, onPlayFromStart: (Item) -> Unit = {}, code: (Item) -> String = { if (it.isEpisode) episodeShort(it) else "" }, sectionCounts: Map<String, Int> = emptyMap(), sectionLabels: Map<String, String> = emptyMap(), incompleteOf: Int? = null, onRetry: () -> Unit = {}) {
     val firstEpisode = remember { FocusRequester() }
     var menuFor by remember { mutableStateOf<Item?>(null) }
     menuFor?.let { ep ->
@@ -433,14 +434,24 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             }
             if (episodes.any { it.isPlayable }) Text("Hold OK on an episode for options", color = TvSubtle, fontSize = 14.sp, modifier = Modifier.padding(start = 16.dp, top = 14.dp))
         }
-        if (episodes.isEmpty()) {
-            Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
-        } else {
-            // Right from the seasons comes back to the episode last focused (the first one
-            // for a new season). It used to aim at episode 1 only, a dead end once scrolled.
-            LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp).focusRestorer(firstEpisode), contentPadding = PaddingValues(bottom = 24.dp)) {
-                itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
-                    EpisodeRow(ep, api, index = i, code = code(ep), onClick = { if (ep.isPlayable) onPlay(ep) }, onLongClick = { if (ep.isPlayable) menuFor = ep }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
+        Column {
+            // Part of the list did not load (episodeRows): said, with a retry, rather than the rows
+            // passing for the whole season.
+            if (incompleteOf != null && !loading) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(bottom = 12.dp)) {
+                    Text("Some episodes could not be loaded (${episodes.size} of $incompleteOf).", color = RoxyColors.onBackground, fontSize = 17.sp)
+                    TvButton("Try again", onClick = onRetry, modifier = if (episodes.isEmpty()) Modifier.focusRequester(firstEpisode) else Modifier)
+                }
+            }
+            if (episodes.isEmpty()) {
+                if (incompleteOf == null) Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+            } else {
+                // Right from the seasons comes back to the episode last focused (the first one
+                // for a new season). It used to aim at episode 1 only, a dead end once scrolled.
+                LazyColumn(modifier = Modifier.fillMaxHeight().width(TvDims.FocusBorder * 2 + EpisodeThumbWidth + 12.dp + 326.dp).focusRestorer(firstEpisode), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
+                        EpisodeRow(ep, api, index = i, code = code(ep), onClick = { if (ep.isPlayable) onPlay(ep) }, onLongClick = { if (ep.isPlayable) menuFor = ep }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
+                    }
                 }
             }
         }
