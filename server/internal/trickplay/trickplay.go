@@ -110,6 +110,15 @@ func (s *Service) Start(ctx context.Context) {
 	}()
 }
 
+// Failed reports whether generating a source's thumbnails failed within the last hour
+// (Enqueue will not try again before then).
+func (s *Service) Failed(sourceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.failed[sourceID]
+	return ok && time.Since(t) < time.Hour
+}
+
 // Enqueue schedules generation for a source unless it already has a manifest, is
 // queued, or failed within the last hour.
 func (s *Service) Enqueue(sourceID string) {

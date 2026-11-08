@@ -132,13 +132,6 @@ func (s *Store) ListDevices(ctx context.Context, userID string) ([]model.Device,
 	return out, rows.Err()
 }
 
-// DeviceExists: the device is still signed in.
-func (s *Store) DeviceExists(ctx context.Context, id string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ?`, id).Scan(&n)
-	return n > 0, err
-}
-
 // DeleteUserDevice signs one of the user's devices out; false when it isn't theirs.
 func (s *Store) DeleteUserDevice(ctx context.Context, userID, id string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE id = ? AND user_id = ?`, id, userID)

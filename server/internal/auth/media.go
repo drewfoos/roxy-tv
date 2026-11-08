@@ -59,6 +59,13 @@ func (s *Service) NewMediaToken(ctx context.Context, sourceID, userID, deviceID 
 		// One with no device could not be ended by signing out: never issued.
 		return "", time.Time{}, errors.New("a media token needs a source, a user and a signed-in device")
 	}
+	// The device must be signed in for that user: a token naming someone else's device
+	// would be ended by their sign-out, not the user's own.
+	if ok, err := s.store.DeviceSignedIn(ctx, userID, deviceID); err != nil {
+		return "", time.Time{}, err
+	} else if !ok {
+		return "", time.Time{}, errors.New("a media token needs a device signed in for its user")
+	}
 	key, err := s.mediaSecret(ctx)
 	if err != nil {
 		return "", time.Time{}, err
@@ -104,9 +111,9 @@ func (s *Service) verifyMediaToken(ctx context.Context, tok string) (sourceID, u
 	if err != nil || time.Now().Unix() > exp {
 		return "", "", errBadMediaToken
 	}
-	// The device that asked must still be signed in (logout, Device Management's sign
-	// out and a password change all end its streams too).
-	if ok, err := s.store.DeviceExists(ctx, parts[2]); err != nil || !ok {
+	// The device that asked must still be signed in, and for the token's user (logout,
+	// Device Management's sign out and a password change all end its streams too).
+	if ok, err := s.store.DeviceSignedIn(ctx, parts[1], parts[2]); err != nil || !ok {
 		return "", "", errBadMediaToken
 	}
 	return parts[0], parts[1], nil

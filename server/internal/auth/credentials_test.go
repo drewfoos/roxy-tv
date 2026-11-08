@@ -85,6 +85,25 @@ func TestMediaTokenLifetime(t *testing.T) {
 	if _, _, err := s.NewMediaToken(ctx, "src1", u.ID, ""); err == nil {
 		t.Error("a media token was issued with no device")
 	}
+	// The device must be the user's own: a token signed for alice naming another user's
+	// device is refused, and NewMediaToken will not issue one.
+	bob := &model.User{ID: "u2", Name: "bob", Role: model.RoleBasic}
+	if err := st.CreateUser(ctx, bob); err != nil {
+		t.Fatal(err)
+	}
+	bobDev, _, err := s.IssueToken(ctx, bob, ClientInfo{Client: "test", DeviceID: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+"."+bobDev.ID+"."+future)); err == nil {
+		t.Error("a media token naming another user's device was accepted")
+	}
+	if _, _, err := s.NewMediaToken(ctx, "src1", u.ID, bobDev.ID); err == nil {
+		t.Error("a media token was issued for another user's device")
+	}
+	if _, _, err := s.NewMediaToken(ctx, "src1", u.ID, "no-such-device"); err == nil {
+		t.Error("a media token was issued for a device that does not exist")
+	}
 	// The device signs out: its tokens end.
 	if err := st.DeleteDevice(ctx, d.ID); err != nil {
 		t.Fatal(err)

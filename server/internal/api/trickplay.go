@@ -11,7 +11,10 @@ import (
 // GET /v1/sources/{id}/trickplay
 //
 // 200 with the manifest when the sheets exist; 202 {"status":"generating"} after
-// queueing them (the client retries later); 404 for an unknown source.
+// queueing them (the client retries later); 404 for an unknown source, or one whose
+// thumbnails could not be made (a clip shorter than one interval, a file ffmpeg cannot
+// decode): that used to say "generating" for the hour before the next try, so clients
+// kept waiting for nothing.
 func (s *Server) trickplayManifest(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if !safeID(id) {
@@ -30,6 +33,10 @@ func (s *Server) trickplayManifest(w http.ResponseWriter, r *http.Request) {
 	src, err := s.store.GetSource(r.Context(), id)
 	if err != nil || src == nil {
 		writeError(w, 404, "source not found")
+		return
+	}
+	if s.trick.Failed(id) {
+		writeError(w, 404, "no seek previews for this file")
 		return
 	}
 	s.trick.Enqueue(id)
