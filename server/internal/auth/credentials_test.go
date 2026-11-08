@@ -73,6 +73,18 @@ func TestMediaTokenLifetime(t *testing.T) {
 	if _, _, err := s.verifyMediaToken(ctx, old); err == nil {
 		t.Error("an expired media token was accepted")
 	}
+	// The old format, without a device (correctly signed, not expired), is refused: it
+	// could not be ended by signing out. So is one naming no device.
+	future := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	if _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+"."+future)); err == nil {
+		t.Error("an old-format media token (no device) was accepted")
+	}
+	if _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+".."+future)); err == nil {
+		t.Error("a media token naming no device was accepted")
+	}
+	if _, _, err := s.NewMediaToken(ctx, "src1", u.ID, ""); err == nil {
+		t.Error("a media token was issued with no device")
+	}
 	// The device signs out: its tokens end.
 	if err := st.DeleteDevice(ctx, d.ID); err != nil {
 		t.Fatal(err)

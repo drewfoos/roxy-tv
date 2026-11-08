@@ -20,7 +20,7 @@ import (
 // source's stream, transcode, subtitles, fonts and previews for a day, and nothing else:
 // no account API, no admin actions, no other files.
 //
-// Format: base64url(sourceID "." userID "." expiryUnix) "." hex(HMAC-SHA256). The key is
+// Format: base64url(sourceID "." userID "." deviceID "." expiryUnix) "." hex(HMAC-SHA256). The key is
 // random per server, kept in the settings table; replacing it voids every media token.
 
 const MediaTokenTTL = 24 * time.Hour
@@ -55,6 +55,10 @@ func (s *Service) mediaSecret(ctx context.Context) ([]byte, error) {
 // NewMediaToken signs a token for userID to play sourceID until now + MediaTokenTTL. It
 // names the device that asked (deviceID), so signing that device out voids it at once.
 func (s *Service) NewMediaToken(ctx context.Context, sourceID, userID, deviceID string) (string, time.Time, error) {
+	if sourceID == "" || userID == "" || deviceID == "" {
+		// One with no device could not be ended by signing out: never issued.
+		return "", time.Time{}, errors.New("a media token needs a source, a user and a signed-in device")
+	}
 	key, err := s.mediaSecret(ctx)
 	if err != nil {
 		return "", time.Time{}, err
@@ -89,26 +93,21 @@ func (s *Service) verifyMediaToken(ctx context.Context, tok string) (sourceID, u
 	if !hmac.Equal(sig, mac.Sum(nil)) {
 		return "", "", errBadMediaToken
 	}
+	// source.user.device.expiry. Tokens from before they named their device (three
+	// fields) are refused: they could not be ended by signing the device out, and the
+	// last of them expired a day after 2026-11-03.
 	parts := strings.Split(string(raw), ".")
-	device := ""
-	switch len(parts) {
-	case 3: // issued before tokens named their device; they expire within a day
-	case 4:
-		device = parts[2]
-		parts = []string{parts[0], parts[1], parts[3]}
-	default:
+	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return "", "", errBadMediaToken
 	}
-	exp, err := strconv.ParseInt(parts[2], 10, 64)
+	exp, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
 		return "", "", errBadMediaToken
 	}
 	// The device that asked must still be signed in (logout, Device Management's sign
 	// out and a password change all end its streams too).
-	if device != "" {
-		if ok, err := s.store.DeviceExists(ctx, device); err != nil || !ok {
-			return "", "", errBadMediaToken
-		}
+	if ok, err := s.store.DeviceExists(ctx, parts[2]); err != nil || !ok {
+		return "", "", errBadMediaToken
 	}
 	return parts[0], parts[1], nil
 }
