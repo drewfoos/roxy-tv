@@ -1136,10 +1136,47 @@ func sameTitle(a, b string) bool {
 	if ca == cb {
 		return true
 	}
+	if wordStems(a) == wordStems(b) {
+		return true
+	}
 	if len(ca) > len(cb) {
 		ca, cb = cb, ca
 	}
 	return len(ca) >= 15 && strings.HasPrefix(cb, ca)
+}
+
+// wordStems folds a title's words to compare copies that differ by a plural or an
+// apostrophe: KonoSuba's special on TMDB is "God's Blessing on This Wonderful Choker!",
+// on TheTVDB (so in Sonarr's file name) "Gods Blessings On This Wonderful Choker!".
+// Words are lowercased, a lone "s" (the split of "God's") dropped, a trailing s cut.
+func wordStems(t string) string {
+	var out []string
+	for _, w := range strings.FieldsFunc(compactWords(t), func(r rune) bool { return r == ' ' }) {
+		if w == "s" {
+			continue
+		}
+		if len(w) > 3 {
+			w = strings.TrimSuffix(w, "s")
+		}
+		out = append(out, w)
+	}
+	return strings.Join(out, " ")
+}
+
+// compactWords is compactTitle keeping a space between words.
+func compactWords(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if f, ok := accentFold[r]; ok {
+			r = f
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(' ')
+		}
+	}
+	return b.String()
 }
 
 // titleCandidates is a file's title and, for a multi-episode file ("Help Wanted + Reef
