@@ -288,9 +288,10 @@ fun PlayerControls(
 
         // The TV (Crunchyroll's TV app): the title box at the top-left (focusable: OK opens the
         // show's page), settings and next episode at the top-right, nothing else up there.
-        if (tv) TvTopBar(state, onDetails = { onInteraction(); actions.openDetails() }, onSettings = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onNext = { actions.next() }, onFocus = onInteraction, modifier = Modifier.align(Alignment.TopStart))
+        // While its settings panel is open the TV shows the panel alone (Crunchyroll's).
+        if (tv && sheet == Sheet.None) TvTopBar(state, onDetails = { onInteraction(); actions.openDetails() }, onSettings = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onNext = { actions.next() }, onFocus = onInteraction, modifier = Modifier.align(Alignment.TopStart))
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        else Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        else if (!tv) Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
             // No arrow in the page's fullscreen: the system back gesture drops to the mini player.
             if (state.fullscreen != true) {
                 IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact, large = tv)
@@ -348,12 +349,14 @@ fun PlayerControls(
         // The TV: elapsed time, the bar, the time left, and nothing else (Crunchyroll's TV
         // app). Everything else (subtitles, audio, speed, quality, auto-skip) is under the
         // gear. Focus starts on the bar: Left/Right scrub, OK plays and pauses.
-        else {
-            if (state.paused && sheet == Sheet.None) Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.align(Alignment.Center).size(88.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = TvBarSide, end = TvBarSide, bottom = 40.dp)) {
-                Text(fmtTime(state.positionSec), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        else if (sheet == Sheet.None) {
+            if (state.paused) Box(modifier = Modifier.align(Alignment.Center).size(40.dp).clip(CircleShape).background(Bar), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = TvTimesSide, end = TvTimesSide, bottom = TvBarBottom)) {
+                Text(fmtTime(state.positionSec), color = Color.White, fontSize = 17.sp)
                 SeekBar(state, trickplay, modifier = Modifier.weight(1f).padding(horizontal = 20.dp), onSeek = { actions.seekTo(it); onInteraction() }, actions = actions, onFocus = onInteraction, focusRequester = seekFocus)
-                Text(fmtTime((state.durationSec - state.positionSec).coerceAtLeast(0.0)), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text(fmtTime((state.durationSec - state.positionSec).coerceAtLeast(0.0)), color = Color.White, fontSize = 17.sp)
             }
         }
 
@@ -361,8 +364,8 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.TopEnd).padding(end = TvBarSide, top = 110.dp)) {
-                CompositionLocalProvider(LocalCompactMenu provides compact) { when (sheet) {
+            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f)) {
+                CompositionLocalProvider(LocalCompactMenu provides compact, LocalTvPanel provides tv) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
                         rows = listOf(
@@ -433,7 +436,7 @@ private fun TvTopBar(state: PlayerUiState, onDetails: () -> Unit, onSettings: ()
         ) {
             if (series.isNotEmpty()) Text(series, color = Color.White, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" - "), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("Go to Details", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+            if (focused) Text("Go to Details", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
         }
         Spacer(Modifier.weight(1f))
         IconButton(Icons.Filled.Settings, "Settings", onClick = onSettings, onFocus = onFocus, large = true)
@@ -449,6 +452,8 @@ private fun splitSubtitle(sub: String): Pair<String, String?> {
 
 /** True inside the page's 16:9 box: the popups shrink to fit it. */
 private val LocalCompactMenu = compositionLocalOf { false }
+/** The TV: menus are a full-height panel down the right side (Crunchyroll's TV app). */
+private val LocalTvPanel = compositionLocalOf { false }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
@@ -613,7 +618,10 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
 
 /** The TV player's side inset, and where Skip sits: above the bar whether it shows or not. */
 private val TvBarSide = 40.dp
-private val TvSkipBottom = 150.dp
+private val TvSkipBottom = 180.dp // over the bar, which sits higher now
+/** The TV's bar (Crunchyroll's TV app): its middle about 23% up the screen, the times 66 dp in. */
+private val TvBarBottom = 108.dp
+private val TvTimesSide = 66.dp
 
 /** Big round centre button. */
 @Composable
@@ -647,6 +655,7 @@ private data class MenuRow(val key: String, val label: String, val value: String
  */
 @Composable
 private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> Unit, onInteraction: () -> Unit, onBack: (() -> Unit)? = null, footer: String? = null) {
+    if (LocalTvPanel.current) { TvMenuPanel(title ?: "Settings", rows, onPick, onInteraction, footer); return }
     val first = remember { FocusRequester() }
     LaunchedEffect(title, rows.size) { runCatching { first.requestFocus() } }
     val focusKey = rows.firstOrNull { it.checked }?.key ?: rows.firstOrNull()?.key
@@ -668,6 +677,53 @@ private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> U
             MenuRowView(row, isBack = false, focusRequester = if (row.key == focusKey) first else null, onClick = { onPick(row.key) }, onInteraction = onInteraction)
         }
         if (footer != null && !compact) Text(footer, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 320.dp))
+    }
+}
+
+/**
+ * The TV's menu: a full-height panel down the right third, its title at the top, then rows
+ * with the setting at the left and its value at the right (or a tick on the choice), the
+ * focused row filled with the accent colour, dark text on it. Back goes up a level
+ * (PlayerActivity).
+ */
+@Composable
+private fun TvMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) -> Unit, onInteraction: () -> Unit, footer: String?) {
+    val first = remember { FocusRequester() }
+    LaunchedEffect(title, rows.size) { runCatching { first.requestFocus() } }
+    val focusKey = rows.firstOrNull { it.checked && !it.submenu }?.key ?: rows.firstOrNull()?.key
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .background(Color(0xFF17181C))
+            .pointerInput(Unit) { detectTapGestures { } }
+            .padding(start = 32.dp, end = 32.dp, top = 36.dp, bottom = 24.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, bottom = 32.dp))
+        rows.forEach { row ->
+            var focused by remember { mutableStateOf(false) }
+            val ink = if (focused) Color(0xFF0B0B0D) else Color.White
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .then(if (row.key == focusKey) Modifier.focusRequester(first) else Modifier)
+                    .onFocusChanged { focused = it.isFocused; if (it.isFocused) onInteraction() }
+                    .focusable()
+                    .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onPick(row.key); true } else false }
+                    .background(if (focused) Bar else Color.Transparent)
+                    .tapClick { onPick(row.key) }
+                    .padding(horizontal = 16.dp),
+            ) {
+                Text(row.label, color = ink, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                when {
+                    row.value != null -> Text(row.value, color = if (focused) ink else Muted, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 16.dp).widthIn(max = 160.dp))
+                    row.checked -> Icon(Icons.Filled.Check, contentDescription = "Selected", tint = ink, modifier = Modifier.padding(start = 12.dp).size(20.dp))
+                }
+            }
+        }
+        if (footer != null) Text(footer, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 16.dp))
     }
 }
 

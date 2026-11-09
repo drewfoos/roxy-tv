@@ -239,7 +239,8 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_CAPTIONS -> { session.openSheet(Sheet.Subtitles); return true }
             KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK, KeyEvent.KEYCODE_A -> { session.openSheet(Sheet.Audio); return true }
             KeyEvent.KEYCODE_BACK -> {
-                if (session.sheet != Sheet.None) { session.openSheet(Sheet.None); return true }
+                // Up a level: a list (Audio, Subtitles...) back to Settings, Settings closed.
+                if (session.sheet != Sheet.None) { session.openSheet(if (session.sheet == Sheet.Settings) Sheet.None else Sheet.Settings); return true }
                 if (session.controlsVisible) { session.hideControls(); return true }
                 return super.onKeyDown(keyCode, event)
             }
