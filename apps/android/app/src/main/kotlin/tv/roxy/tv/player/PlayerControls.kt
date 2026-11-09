@@ -66,6 +66,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -368,8 +370,18 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = if (cr) Modifier.fillMaxSize().padding(top = if (compact) PhoneTitleGapCompact else PhoneTitleGap) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f)) {
-                CompositionLocalProvider(LocalCompactMenu provides compact, LocalTvPanel provides tv, LocalPhonePanel provides cr, LocalCloseSheet provides { onSheet(Sheet.None) }) { when (sheet) {
+            // The phone's Back closes the settings, from a list too (the arrow on the page goes
+            // up a level). Sideways the page is in the player's window: caught here, before
+            // the episode page's "Back leaves full screen".
+            if (cr && !compact) androidx.activity.compose.BackHandler { onSheet(Sheet.None) }
+            // The small player of a phone held upright: the page covers the whole screen at full
+            // size (Crunchyroll's), not squeezed into the video. Sideways: under the title bar.
+            SheetHost(
+                page = compact,
+                modifier = if (cr) Modifier.fillMaxSize().padding(top = PhoneTitleGap) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f),
+                onBack = { onSheet(Sheet.None) },
+            ) {
+                CompositionLocalProvider(LocalCompactMenu provides false, LocalTvPanel provides tv, LocalPhonePanel provides cr, LocalCloseSheet provides { onSheet(Sheet.None) }) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
                         // Audio, Subtitles, Quality, Playback speed, the switches last (Autoplay at the bottom).
@@ -462,9 +474,20 @@ private val LocalCompactMenu = compositionLocalOf { false }
 /** The TV: menus are a full-height panel down the right side (Crunchyroll's TV app). */
 private val LocalTvPanel = compositionLocalOf { false }
 /** The phone: menus are a page over the player (Crunchyroll's phone app). */
+/**
+ * Where the settings go: a window of their own over the whole screen ([page]: the upright
+ * phone's small player; system Back closes them), or
+ * a box in the player.
+ */
+@Composable
+private fun SheetHost(page: Boolean, modifier: Modifier, onBack: () -> Unit, content: @Composable () -> Unit) {
+    if (page) androidx.compose.ui.window.Dialog(onDismissRequest = onBack, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) { content() }
+    } else Box(modifier) { content() }
+}
+
 /** The phone's settings page starts this far down: the player's top bar (series, episode title) stays in view above it. */
 internal val PhoneTitleGap = 64.dp
-internal val PhoneTitleGapCompact = 44.dp
 private val LocalPhonePanel = compositionLocalOf { false }
 /** Closes the menu (the phone page's back arrow at its top level). */
 private val LocalCloseSheet = compositionLocalOf<() -> Unit> { {} }
@@ -704,6 +727,8 @@ private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> U
 @Composable
 private fun PhoneMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) -> Unit, onInteraction: () -> Unit, onBack: () -> Unit, footer: String?) {
     val compact = LocalCompactMenu.current
+    // Upright there is room: Crunchyroll's taller rows. Sideways they shrink to fit under the title bar.
+    val tall = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp >= 600
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -723,7 +748,7 @@ private fun PhoneMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) 
         rows.forEach { row ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().height(if (compact) 40.dp else 46.dp).tapClick { onInteraction(); onPick(row.key) },
+                modifier = Modifier.fillMaxWidth().height(if (compact) 40.dp else if (tall) 56.dp else 46.dp).tapClick { onInteraction(); onPick(row.key) },
             ) {
                 Text(row.label, color = Color.White, fontSize = if (compact) 14.sp else 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 when {

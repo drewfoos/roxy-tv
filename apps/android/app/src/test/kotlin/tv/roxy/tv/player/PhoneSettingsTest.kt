@@ -1,7 +1,12 @@
 package tv.roxy.tv.player
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -83,6 +88,63 @@ class PhoneSettingsTest {
         title.assertIsDisplayed()
         val page = compose.onNodeWithText("Playback Settings").getUnclippedBoundsInRoot().top
         assertTrue("the page starts below the title", title.getUnclippedBoundsInRoot().bottom <= page)
+    }
+
+    // Upright phone, small player (a 16:9 box at the top of the episode page): the page is a
+    // window over the whole screen at full size, not squeezed into the video. System Back
+    // closes them.
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun uprightSmallPlayerGetsTheWholeScreen() {
+        var sheet by mutableStateOf(Sheet.Settings)
+        val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, fullscreen = false)
+        compose.setContent {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                PlayerControls(state = state, visible = true, sheet = sheet, onSheet = { sheet = it }, onInteraction = {}, actions = actions)
+            }
+        }
+        compose.onAllNodes(isRoot()).assertCountEquals(2) // the player and the page's own window
+        val autoplay = compose.onNodeWithText("Autoplay")
+        autoplay.assertIsDisplayed()
+        // 412 dp wide: the video box is 232 dp tall. Full-size rows run well past it.
+        assertTrue("rows at full size, below the video: ${autoplay.getUnclippedBoundsInRoot().top}", autoplay.getUnclippedBoundsInRoot().top > 232.dp)
+        compose.onNodeWithText("Playback Settings").assertIsDisplayed()
+
+        // The phone's Back closes the settings outright, from a list too (Drew's call).
+        compose.onNodeWithText("Quality").performClick()
+        assertEquals(Sheet.Quality, sheet)
+        compose.waitForIdle()
+        systemBack()
+        compose.waitForIdle()
+        assertEquals("Back from a list: closed", Sheet.None, sheet)
+    }
+
+    /** System Back, as the page's window gets it. */
+    @Suppress("DEPRECATION")
+    private fun systemBack() = compose.runOnUiThread { org.robolectric.shadows.ShadowDialog.getLatestDialog().onBackPressed() }
+
+    // Sideways: the phone's Back closes the settings (from a list too), and only once they
+    // are closed does it reach the episode page (which leaves full screen).
+    @Test fun sidewaysPhoneBackClosesTheSettingsFirst() {
+        var sheet by mutableStateOf(Sheet.Settings)
+        var leftFullscreen = 0
+        var dispatcher: androidx.activity.OnBackPressedDispatcher? = null
+        val state = PlayerUiState(title = "T", subtitle = "S  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, fullscreen = true)
+        compose.setContent {
+            dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current!!.onBackPressedDispatcher
+            androidx.activity.compose.BackHandler { leftFullscreen++ } // the episode page's
+            Box(Modifier.fillMaxSize()) {
+                PlayerControls(state = state, visible = true, sheet = sheet, onSheet = { sheet = it }, onInteraction = {}, actions = actions)
+            }
+        }
+        compose.onNodeWithText("Subtitles").performClick()
+        assertEquals(Sheet.Subtitles, sheet)
+        compose.runOnUiThread { dispatcher!!.onBackPressed() }
+        compose.waitForIdle()
+        assertEquals("closed from a list", Sheet.None, sheet)
+        assertEquals("full screen kept", 0, leftFullscreen)
+        compose.runOnUiThread { dispatcher!!.onBackPressed() }
+        compose.waitForIdle()
+        assertEquals("then Back leaves full screen", 1, leftFullscreen)
     }
 
     @Test fun backClosesThePage() {

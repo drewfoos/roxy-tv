@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -123,6 +125,25 @@ class Shots {
         }
         compose.waitForIdle()
         shot(name)
+    }
+
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneUprightSettings() {
+        val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, hasNext = true, fullscreen = false)
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color(0xFF101014))) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color(0xFF6A5A4A))) {
+                    PlayerControls(state = state, visible = true, sheet = Sheet.Settings, onSheet = {}, onInteraction = {}, actions = noActions)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val dir = File("build/shots").apply { mkdirs() }
+        // The page is a window of its own (a dialog): draw that window's view.
+        val v = org.robolectric.shadows.ShadowDialog.getLatestDialog().window!!.decorView
+        val bmp = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
+        v.draw(android.graphics.Canvas(bmp))
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, File(dir, "phone-upright-settings.png").outputStream())
     }
 
     @Test @Config(qualifiers = "w915dp-h412dp-land-xxhdpi")
