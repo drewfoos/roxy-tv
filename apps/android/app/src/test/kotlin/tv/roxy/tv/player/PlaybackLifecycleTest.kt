@@ -137,13 +137,32 @@ class PlaybackLifecycleTest {
         assertNull(l.waitingAt)
     }
 
-    // A download that will not open: the player stays, idle, its own item.
+    // A download that will not open: the player stays, idle; Next works (not switching).
     @Test fun localFileFailing() {
         val l = playing()
         l.startNext(); l.fileRequested()
         l.localFileFailed()
         assertFalse(l.switching)
-        assertFalse(l.changingItem)
+        assertEquals(Phase.Failed, l.phase)
+    }
+
+    // Found in an audit: a downloaded next episode that failed to open counted as opened,
+    // so the next Next marked it watched. Only an item that really loaded is finished by
+    // moving on: not one that failed, not one still opening, not a first file that never loaded.
+    @Test fun aFailedDownloadIsNotFinishedByMovingOn() {
+        val l = playing()
+        assertTrue("the one that played", l.finishedByMovingOn)
+        l.startNext(); l.fileRequested()
+        assertFalse("still opening", l.finishedByMovingOn)
+        l.localFileFailed()
+        assertFalse("failed to open", l.finishedByMovingOn)
+        l.startNext(); l.fileRequested() // Next again
+        assertTrue(l.fileLoaded())
+        assertTrue("this one played", l.finishedByMovingOn)
+        val first = PlaybackLifecycle()
+        assertFalse("a first file that never loaded", first.finishedByMovingOn)
+        first.localFileFailed()
+        assertFalse(first.finishedByMovingOn)
     }
 
     @Test fun nextLookup() {

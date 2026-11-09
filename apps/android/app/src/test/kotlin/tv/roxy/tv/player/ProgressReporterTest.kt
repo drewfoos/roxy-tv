@@ -168,5 +168,31 @@ class ProgressReporterTest {
         kotlinx.coroutines.withTimeout(20_000) { while (log.size < expected.size) kotlinx.coroutines.delay(10) }
         assertEquals(expected, log.toList())
     }
+
+    // Found in an audit: runCatching caught the cancellation of a report in flight like a
+    // network failure, so it was queued offline and the reporter rested a minute. Cancelled
+    // is not failed: nothing queued, no rest.
+    @Test fun cancelledInFlightIsNotAFailure() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val log = mutableListOf<String>()
+        val f = object : ProgressReporter.Sink {
+            override suspend fun progress(r: ProgressReporter.Report) { gate.await(); log += "sent" }
+            override suspend fun markPlayed(itemId: String) { gate.await(); log += "played" }
+            override fun isDownload(itemId: String) = false
+            override fun hasPending(itemId: String) = false
+            override suspend fun syncPending() {}
+            override fun queue(r: ProgressReporter.Report, sent: Boolean) { log += "queue sent=$sent" }
+            override fun queuePlayed(itemId: String, sent: Boolean) { log += "queue played sent=$sent" }
+            override fun userDataChanged() {}
+            override fun answered(t: Throwable) = false
+        }
+        val job = kotlinx.coroutines.Job()
+        val q = ProgressReporter.SendQueue(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler) + job))
+        val r = ProgressReporter(f, q, monoNow = { mono }, wallNow = { wall })
+        r.report("stop", "e1", 100.0, null, null, null, null)
+        job.cancel() // the sending stops mid-request
+        assertEquals("nothing queued as if the server had failed", emptyList<String>(), log)
+        assertTrue("no minute's rest", !r.resting())
+    }
 }
 

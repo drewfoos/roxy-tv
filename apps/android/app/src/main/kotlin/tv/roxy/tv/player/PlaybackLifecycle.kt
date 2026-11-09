@@ -39,6 +39,8 @@ class PlaybackLifecycle {
         data class WaitingForServer(val at: Double) : Phase
         /** This file played to its end ([waitingForNext]: waiting for the next-episode lookup). */
         data class Ended(val waitingForNext: Boolean) : Phase
+        /** A downloaded file would not open: nothing plays, nothing to reconnect to. */
+        data object Failed : Phase
     }
 
     /** What is known of the episode after this one. */
@@ -80,6 +82,19 @@ class PlaybackLifecycle {
     /** Positions read from mpv are not this item's (see [itemOpened]). */
     val changingItem: Boolean get() = !itemOpened
 
+    /**
+     * Moving on from this item finishes it (reported at its end, marked watched): only an
+     * item that really opened. One that never did (a failed switch, a download that would
+     * not open) is left as it was.
+     */
+    val finishedByMovingOn: Boolean get() = itemLoaded
+
+    /**
+     * The current item's file really loaded (not just "its positions are its own", which the
+     * first item is from the start). Set only by [fileLoaded].
+     */
+    @Volatile private var itemLoaded: Boolean = false
+
     val reconnecting: Boolean
         get() = phase is Phase.Reconnecting || (phase as? Phase.Opening)?.why == Why.Reconnect
 
@@ -98,6 +113,7 @@ class PlaybackLifecycle {
     fun startNext() {
         phase = Phase.Opening(Why.Next, fileRequested = false)
         itemOpened = false
+        itemLoaded = false
         itemFileRequested = false
         nextLookup = NextLookup.Pending
     }
@@ -117,13 +133,17 @@ class PlaybackLifecycle {
         if (!itemOpened && !itemFileRequested) return false
         phase = Phase.Playing
         itemOpened = true
+        itemLoaded = true
         return true
     }
 
-    /** A download would not open: there is nothing to reconnect to. The player stays, idle. */
+    /**
+     * A download would not open: there is nothing to reconnect to. The player stays, idle,
+     * and the item is NOT opened (it used to count as opened, so Next marked a downloaded
+     * episode that never played as watched).
+     */
     fun localFileFailed() {
-        phase = Phase.Playing
-        itemOpened = true
+        phase = Phase.Failed
         itemFileRequested = true
     }
 

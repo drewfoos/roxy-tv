@@ -92,6 +92,9 @@ class ProgressReporter(
     private var lastReportedMs = -1L
     @Volatile private var serverDownUntil = 0L
 
+    /** Resting after the server was found away (tests). */
+    internal fun resting(): Boolean = wallNow() < serverDownUntil
+
     /** A new item: nothing carried over from the last. */
     fun newItem() {
         lastPosSec = null; lastPosAt = monoNow(); lastAudio = null; lastSub = null
@@ -129,6 +132,9 @@ class ProgressReporter(
         // make the server drop it as older.
         if (!skip && sink.hasPending(r.itemId)) sink.syncPending()
         val ok = !skip && runCatching { sink.progress(r) }
+            // Cancelled (the sending stopped mid-request) is not the server failing: no
+            // queueing, no minute's rest. runCatching catches it like any other exception.
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", r.reason, r.itemId, r.positionMs, r.audioIndex, r.subtitleIndex) }
             .onFailure {
                 Timber.w("progress %s item=%s pos=%dms failed: %s", r.reason, r.itemId, r.positionMs, it.message)
@@ -149,7 +155,8 @@ class ProgressReporter(
     /** [itemId] is finished (moving on to the next episode): after any report made before it. */
     fun markWatched(itemId: String) {
         queue.enqueue {
-            val ok = wallNow() >= serverDownUntil && runCatching { sink.markPlayed(itemId) }.isSuccess
+            val ok = wallNow() >= serverDownUntil && runCatching { sink.markPlayed(itemId) }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.isSuccess
             if (ok) sink.userDataChanged()
             if (sink.isDownload(itemId) || !ok || sink.hasPending(itemId)) sink.queuePlayed(itemId, sent = ok)
         }

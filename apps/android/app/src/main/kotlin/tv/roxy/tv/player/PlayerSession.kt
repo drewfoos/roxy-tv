@@ -708,7 +708,7 @@ class PlayerSession(
         // Moving on counts as finishing this one (Netflix): report the last position and mark it
         // watched. Not one that never opened (a switch that failed and gave up): skipping past
         // it marked an unwatched episode watched.
-        if (!changingItem) {
+        if (life.finishedByMovingOn) {
             if (!endReported) reportProgress("end")
             itemId?.let { finished -> markWatched(finished) }
         }
