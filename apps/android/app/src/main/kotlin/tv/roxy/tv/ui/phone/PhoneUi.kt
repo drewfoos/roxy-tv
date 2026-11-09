@@ -187,10 +187,11 @@ fun ThumbTile(item: Item, api: RoxyApi, width: Dp = ThumbW, onClick: () -> Unit)
 }
 
 /**
- * Continue Watching on the phone: one card nearly fills the width (the next peeks in at
- * the right, so swiping is obvious): the episode's own still (a movie's scene backdrop),
- * a progress bar along its bottom edge, and under it the show's name, then the episode
- * and what is left of it.
+ * Continue Watching on the phone (Crunchyroll's): one card nearly fills the width (the next
+ * peeks in at the right, so swiping is obvious), everything on the picture: the episode's
+ * own still (a movie's scene backdrop) darkened along the bottom, a play button at the
+ * bottom-left beside the show's name and the episode, what is left at the bottom-right, the
+ * menu at the top-right and the progress bar along the bottom edge.
  */
 @Composable
 fun ContinueRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> Unit, modifier: Modifier = Modifier) {
@@ -209,27 +210,31 @@ fun ContinueRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) 
 @Composable
 private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
     val isMovie = item.isMovie
-    Column(modifier = Modifier.width(width)) {
-        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
-            val px = widthPx(width) * 2
-            val url = if (isMovie) api.imageUrl(item, "backdrop", px) ?: api.imageUrl(item, "poster", px) else api.imageUrl(item, "thumb", px)
-            RoxyImage(url, item.seriesTitle ?: item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
-            PlayBadge(size = 52.dp, modifier = Modifier.align(Alignment.Center))
-            audioBadge(item)?.let { BadgePill(it, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) }
-            DownloadCorner(item, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
-            // What is left, as a corner tag on the picture, where a long episode title cannot push it off.
-            item.userData?.positionMs?.takeIf { it > 0 }?.let { pos -> item.runtimeMs?.takeIf { it > pos }?.let { "${((it - pos) / 60000L + 1).coerceAtLeast(1)}m left" } }
-                ?.let { BadgePill(it, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 12.dp)) }
-            ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
+    Box(modifier = Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
+        val px = widthPx(width) * 2
+        val url = if (isMovie) api.imageUrl(item, "backdrop", px) ?: api.imageUrl(item, "poster", px) else api.imageUrl(item, "thumb", px)
+        RoxyImage(url, item.seriesTitle ?: item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
+        // Dark along the bottom (the text's ground) and a little at the top (the menu's).
+        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x59000000), 0.25f to Color.Transparent, 0.5f to Color.Transparent, 1f to Color(0xD9000000))))
+        Row(modifier = Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            audioBadge(item)?.let { BadgePill(it) }
+            DownloadCorner(item)
         }
-        Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 8.dp)) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(if (isMovie) item.title else item.seriesTitle ?: item.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val what = if (isMovie) listOfNotNull(item.year?.toString(), "Movie") else listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }
-                Text(what.joinToString("  ·  "), fontSize = 13.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+        CardMenu(item, api, onPlay = onClick, tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 6.dp))
+        Row(modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 12.dp, end = 10.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(46.dp).clip(CircleShape).background(Color(0xCC1A1A1A)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(30.dp))
             }
-            CardMenu(item, api, onPlay = onClick, modifier = Modifier.padding(start = 4.dp))
+            Column(modifier = Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
+                Text(if (isMovie) item.title else item.seriesTitle ?: item.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val what = if (isMovie) listOfNotNull(item.year?.toString(), "Movie") else listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }
+                Text(what.joinToString("  ·  "), fontSize = 13.sp, color = Color(0xFFD0D0D0), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            // What is left, as a tag at the right, where a long title cannot push it off.
+            item.userData?.positionMs?.takeIf { it > 0 }?.let { pos -> item.runtimeMs?.takeIf { it > pos }?.let { "${((it - pos) / 60000L + 1).coerceAtLeast(1)}m left" } }
+                ?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xCC000000)).padding(horizontal = 6.dp, vertical = 3.dp)) }
         }
+        ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
@@ -407,7 +412,7 @@ fun BadgePill(text: String, modifier: Modifier = Modifier) {
  * Share (TMDB / AniList page when known, else the title).
  */
 @Composable
-fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = Modifier) {
+fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = Modifier, tint: Color = RoxyColors.muted) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
@@ -459,7 +464,7 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
     }
     Box(modifier = modifier) {
         Icon(
-            Icons.Filled.MoreVert, contentDescription = "More", tint = RoxyColors.muted,
+            Icons.Filled.MoreVert, contentDescription = "More", tint = tint,
             modifier = Modifier.size(22.dp).clickable { open = true },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {

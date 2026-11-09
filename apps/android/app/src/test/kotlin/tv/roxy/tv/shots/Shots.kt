@@ -1,0 +1,102 @@
+package tv.roxy.tv.shots
+
+import android.graphics.Bitmap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assume.assumeTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.api.Item
+import tv.roxy.tv.api.UserData
+import tv.roxy.tv.player.PlayerActions
+import tv.roxy.tv.player.PlayerControls
+import tv.roxy.tv.player.PlayerUiState
+import tv.roxy.tv.player.Sheet
+import tv.roxy.tv.ui.phone.ContinueRow
+import java.io.File
+
+/**
+ * Screens drawn without a device, to look at a layout change: ROXY_SHOTS=1 ./gradlew
+ * testDebugUnitTest --tests '*Shots*' writes PNGs to app/build/shots. Skipped otherwise.
+ * Images do not load here (no server): cards show their placeholders.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35])
+class Shots {
+    @get:Rule val compose = createComposeRule()
+
+    @Before fun only() = assumeTrue("set ROXY_SHOTS=1 to draw screens", System.getenv("ROXY_SHOTS") == "1")
+
+    private fun shot(name: String) {
+        val dir = File(System.getProperty("user.dir"), "build/shots").apply { mkdirs() }
+        val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
+        File(dir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    private val app get() = ApplicationProvider.getApplicationContext<RoxyApp>()
+
+    @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")
+    fun phoneContinueWatching() {
+        val items = listOf(
+            Item(id = "e2", type = "episode", title = "An Explosion for This Chunchunmaru!", seriesTitle = "KonoSuba – God's Blessing on This Wonderful World!", indexAired = 2, seasonAired = 1, runtimeMs = 1_440_000, userData = UserData(positionMs = 60_000)),
+            Item(id = "m1", type = "movie", title = "Rascal Does Not Dream of a Dreaming Girl", year = 2019, runtimeMs = 5_400_000, userData = UserData(positionMs = 2_000_000)),
+        )
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color.Black).padding(top = 40.dp)) {
+                ContinueRow("Continue Watching", items, app.api, onClick = {})
+            }
+        }
+        shot("phone-continue-watching")
+    }
+
+    private val noActions = object : PlayerActions {
+        override fun togglePause() {}
+        override fun seekTo(seconds: Double) {}
+        override fun seekBy(seconds: Int) {}
+        override fun selectSubtitle(id: Int) {}
+        override fun selectAudio(id: Int) {}
+        override fun setSpeed(speed: Double) {}
+        override fun toggleMute() {}
+        override fun toggleCaptions() {}
+        override fun toggleAutoSkip() {}
+        override fun toggleFill() {}
+        override fun enterPip() {}
+        override fun toggleFullscreen() {}
+        override fun next() {}
+        override fun back() {}
+    }
+
+    private fun tvPlayer(name: String, sheet: Sheet) {
+        val state = PlayerUiState(title = "The End of the World", subtitle = "Sword Art Online  S01E14", positionSec = 1160.0, durationSec = 1421.0, bufferedSec = 1250.0, paused = true, hasNext = true, fullscreen = null)
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color(0xFF6A5A4A))) {
+                PlayerControls(state = state, visible = true, sheet = sheet, onSheet = {}, onInteraction = {}, actions = noActions)
+            }
+        }
+        compose.waitForIdle()
+        shot(name)
+    }
+
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvPlayerControls() = tvPlayer("tv-player", Sheet.None)
+
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvPlayerSettings() = tvPlayer("tv-player-settings", Sheet.Settings)
+}

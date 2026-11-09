@@ -139,7 +139,8 @@ private fun ArtFallback(title: String, textSize: Int) {
         val hat = minOf(maxWidth * 0.3f, maxHeight * 0.28f, 64.dp)
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 10.dp)) {
             if (hat >= 18.dp) WitchHat(size = hat, modifier = Modifier.alpha(0.3f).padding(bottom = 8.dp))
-            Text(
+            // A card that prints the name over its picture itself passes 0: no second copy.
+            if (textSize > 0) Text(
                 // File-style names (test-hevc10-ass, One.Pace.Arc) wrap at their separators, not mid-word.
                 remember(title) { title.replace(Regex("""([-_.])(?=\S)"""), "\$1​") },
                 color = Color.White.copy(alpha = 0.92f),

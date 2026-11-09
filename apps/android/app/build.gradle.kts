@@ -23,6 +23,7 @@ java {
 }
 
 android {
+    testOptions { unitTests.isIncludeAndroidResources = true }
     namespace = "tv.roxy.tv"
     compileSdk = 37 // current AndroidX (okhttp-android 5.5, etc.) requires API 37+ to compile
 
@@ -30,8 +31,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 104
-        versionName = "0.5.83"
+        versionCode = 105
+        versionName = "0.5.84"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -131,4 +132,9 @@ dependencies {
     // JVM unit tests (src/test): ./gradlew testDebugUnitTest
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    // Screens drawn on the JVM (no device): ROXY_SHOTS=1 ./gradlew testDebugUnitTest --tests '*Shots*'
+    // writes PNGs to app/build/shots. Skipped otherwise (CI included).
+    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("androidx.compose.ui:ui-test-junit4:1.12.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.12.1")
 }

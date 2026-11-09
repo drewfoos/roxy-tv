@@ -12,6 +12,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.data.Languages
@@ -169,6 +170,7 @@ class PlayerActivity : ComponentActivity() {
         val host = object : PlayerSession.Host {
             override fun back() = finish()
             override fun ended() = finish()
+            override fun openDetails(itemId: String?) = this@PlayerActivity.openDetails(itemId)
             override val pipSupported: Boolean get() = this@PlayerActivity.pipSupported
             override val inPip: Boolean get() = isInPictureInPictureMode
             override fun enterPip() = this@PlayerActivity.enterPip()
@@ -269,5 +271,28 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         if (::session.isInitialized) session.destroy()
         super.onDestroy()
+    }
+
+    /**
+     * "Go to Details": the page of the show this episode is from (or the film itself), in the
+     * app under the player. Coming from that page, closing the player shows it; otherwise the
+     * app opens it (roxytv://open/<id>, see MainActivity.pendingOpen).
+     */
+    private fun openDetails(itemId: String?) {
+        val app = RoxyApp.get(this)
+        if (itemId == null) { finish(); return }
+        lifecycleScope.launch {
+            val item: tv.roxy.tv.api.Item? = app.items[itemId] ?: kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { app.api.item(itemId) }.getOrNull() }
+            if (item != null) {
+                val target = if (item.isEpisode) item.seriesId else item.id
+                if (target != null) {
+                    val title = if (item.isEpisode) item.seriesTitle.orEmpty() else item.title
+                    val uri = tv.roxy.tv.tv.WatchNext.detailsUri(target, movie = !item.isEpisode, title = title)
+                    startActivity(Intent(Intent.ACTION_VIEW, uri, this@PlayerActivity, tv.roxy.tv.MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                }
+            }
+            finish()
+        }
     }
 }

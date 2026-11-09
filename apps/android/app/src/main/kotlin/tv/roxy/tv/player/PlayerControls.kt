@@ -207,6 +207,8 @@ interface PlayerActions {
     fun next()
     fun back()
     fun cast() {}
+    /** The title box's "Go to Details" (TV): the show's (or the film's) page. */
+    fun openDetails() {}
 }
 
 enum class Sheet { None, Settings, Subtitles, Audio, Quality, Speed }
@@ -284,8 +286,11 @@ fun PlayerControls(
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else if (tv) 190.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 100.dp else if (tv) 260.dp else 200.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(0f to Color.Transparent, 1f to Color(0xE6000000))))
 
+        // The TV (Crunchyroll's TV app): the title box at the top-left (focusable: OK opens the
+        // show's page), settings and next episode at the top-right, nothing else up there.
+        if (tv) TvTopBar(state, onDetails = { onInteraction(); actions.openDetails() }, onSettings = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onNext = { actions.next() }, onFocus = onInteraction, modifier = Modifier.align(Alignment.TopStart))
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        else Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
             // No arrow in the page's fullscreen: the system back gesture drops to the mini player.
             if (state.fullscreen != true) {
                 IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact, large = tv)
@@ -317,17 +322,6 @@ fun PlayerControls(
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
                 if (state.fullscreen == true) IconButton(Icons.Filled.CloseFullscreen, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
                 else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
-            } else {
-                Spacer(Modifier.width(16.dp))
-                if (tv && state.hasNext) {
-                    NextEpisodeButton(onClick = { actions.next() }, onFocus = onInteraction)
-                    Spacer(Modifier.width(24.dp))
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(clockNow(), color = Color.White, fontSize = if (tv) 22.sp else 16.sp, fontWeight = FontWeight.SemiBold)
-                    val remaining = (state.durationSec - state.positionSec) / state.speed.coerceAtLeast(0.25)
-                    if (state.durationSec > 0) Text("Ends at ${endsAt(remaining)}", color = Muted, fontSize = if (tv) 16.sp else 13.sp)
-                }
             }
         }
 
@@ -351,22 +345,15 @@ fun PlayerControls(
             }
             SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth(), onSeek = { actions.seekTo(it); onInteraction() }, actions = actions, onFocus = onInteraction, color = RoxyColors.accent, flush = true)
         }
-        // The TV (this host serves only TVs now): Crunchyroll's web player's bar. The blue
-        // seek bar, then -10 / play / +10, volume and "elapsed / total" at the left; next
-        // episode, subtitles, the speed and settings at the right. Focus starts on the bar.
-        else Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = TvBarSide - 10.dp, vertical = 16.dp)) {
-            SeekBar(state, trickplay, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp), onSeek = { actions.seekTo(it); onInteraction() }, actions = actions, onFocus = onInteraction, focusRequester = seekFocus)
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(Icons.Filled.Replay10, "Back 10 seconds", onClick = { actions.seekBy(-10); onInteraction() }, onFocus = onInteraction, large = true)
-                IconButton(if (state.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (state.paused) "Play" else "Pause", onClick = { actions.togglePause(); onInteraction() }, onFocus = onInteraction, focusRequester = playFocus, large = true)
-                IconButton(Icons.Filled.Forward10, "Forward 10 seconds", onClick = { actions.seekBy(10); onInteraction() }, onFocus = onInteraction, large = true)
-                IconButton(if (state.muted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp, if (state.muted) "Unmute" else "Mute", onClick = { actions.toggleMute(); onInteraction() }, onFocus = onInteraction, large = true)
-                Spacer(Modifier.width(12.dp))
-                Text(fmtTime(state.positionSec) + " / " + fmtTime(state.durationSec), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.weight(1f))
-                IconButton(if (state.currentSid > 0) Icons.Filled.ClosedCaption else Icons.Filled.ClosedCaptionOff, "Subtitles", underline = state.currentSid > 0, onClick = { onSheet(if (sheet == Sheet.Subtitles) Sheet.None else Sheet.Subtitles) }, onFocus = onInteraction, large = true)
-                SpeedButton(state.speed, onClick = { onSheet(if (sheet == Sheet.Speed) Sheet.None else Sheet.Speed) }, onFocus = onInteraction, large = true)
-                IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, large = true)
+        // The TV: elapsed time, the bar, the time left, and nothing else (Crunchyroll's TV
+        // app). Everything else (subtitles, audio, speed, quality, auto-skip) is under the
+        // gear. Focus starts on the bar: Left/Right scrub, OK plays and pauses.
+        else {
+            if (state.paused && sheet == Sheet.None) Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.align(Alignment.Center).size(88.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = TvBarSide, end = TvBarSide, bottom = 40.dp)) {
+                Text(fmtTime(state.positionSec), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                SeekBar(state, trickplay, modifier = Modifier.weight(1f).padding(horizontal = 20.dp), onSeek = { actions.seekTo(it); onInteraction() }, actions = actions, onFocus = onInteraction, focusRequester = seekFocus)
+                Text(fmtTime((state.durationSec - state.positionSec).coerceAtLeast(0.0)), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
@@ -374,7 +361,7 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.BottomEnd).padding(end = TvBarSide, bottom = 96.dp)) {
+            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.TopEnd).padding(end = TvBarSide, top = 110.dp)) {
                 CompositionLocalProvider(LocalCompactMenu provides compact) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
@@ -421,6 +408,36 @@ fun PlayerControls(
                 } }
             }
         }
+    }
+}
+
+/**
+ * The TV's top bar: the title box (the series, "E14 - Title", "Go to Details"; outlined in
+ * the accent colour when focused, OK opens the show's page) and, at the right, settings
+ * and the next episode.
+ */
+@Composable
+private fun TvTopBar(state: PlayerUiState, onDetails: () -> Unit, onSettings: () -> Unit, onNext: () -> Unit, onFocus: () -> Unit, modifier: Modifier) {
+    Row(modifier = modifier.fillMaxWidth().padding(start = TvBarSide - 16.dp, end = TvBarSide, top = 24.dp), verticalAlignment = Alignment.Top) {
+        var focused by remember { mutableStateOf(false) }
+        val (series, code) = splitSubtitle(state.subtitle)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+                .focusable()
+                .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onDetails(); true } else false }
+                .border(BorderStroke(2.dp, if (focused) Bar else Color.Transparent), RoundedCornerShape(4.dp))
+                .tapClick(onDetails)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            if (series.isNotEmpty()) Text(series, color = Color.White, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" - "), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("Go to Details", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+        Spacer(Modifier.weight(1f))
+        IconButton(Icons.Filled.Settings, "Settings", onClick = onSettings, onFocus = onFocus, large = true)
+        if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = onNext, onFocus = onFocus, large = true)
     }
 }
 
@@ -594,51 +611,9 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
     }
 }
 
-/** "1x" / "1.5x": the playback speed as a pill, like the web player's. */
-@Composable
-private fun SpeedButton(speed: Double, onClick: () -> Unit, onFocus: () -> Unit, large: Boolean = false) {
-    var focused by remember { mutableStateOf(false) }
-    val label = if (speed == 1.0) "1x" else speed.toString().trimEnd('0').trimEnd('.') + "x"
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .height(if (large) 60.dp else 44.dp)
-            .widthIn(min = if (large) 60.dp else 44.dp)
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
-            .focusable()
-            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
-            .clip(RoundedCornerShape(22.dp))
-            .background(if (focused) Color(0x33FFFFFF) else Color.Transparent)
-            .tapClick(onClick)
-            .padding(horizontal = 8.dp),
-    ) {
-        Text(label, color = Color.White, fontSize = if (large) 20.sp else 15.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
 /** The TV player's side inset, and where Skip sits: above the bar whether it shows or not. */
 private val TvBarSide = 40.dp
 private val TvSkipBottom = 150.dp
-
-/** The TV's "Next episode" pill in the top bar, left of the clock. */
-@Composable
-private fun NextEpisodeButton(onClick: () -> Unit, onFocus: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
-            .focusable()
-            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
-            .clip(RoundedCornerShape(24.dp))
-            .background(if (focused) Color.White else Color(0x33FFFFFF))
-            .tapClick(onClick)
-            .padding(start = 18.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
-    ) {
-        Text("Next episode", color = if (focused) Color.Black else Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-        Icon(Icons.Filled.SkipNext, contentDescription = null, tint = if (focused) Color.Black else Color.White, modifier = Modifier.padding(start = 6.dp).size(26.dp))
-    }
-}
 
 /** Big round centre button. */
 @Composable

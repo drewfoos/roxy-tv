@@ -93,6 +93,8 @@ class PlayerSession(
          * the full-screen player closes, as streaming apps do. A page host keeps its player.
          */
         fun ended() {}
+        /** "Go to Details": leave the player for the page of [itemId]'s show (or film). */
+        fun openDetails(itemId: String?) { back() }
     }
 
     /** What the end of a file leads to (see [endAction]). */
@@ -506,6 +508,7 @@ class PlayerSession(
             override fun next() { playNext() }
             override fun back() { host.back() }
             override fun cast() { host.cast() }
+            override fun openDetails() { reportProgress("stop"); host.openDetails(itemId) }
         }
         scheduleHide()
 

@@ -146,9 +146,13 @@ class MainActivity : ComponentActivity() {
      */
     var pendingLinkCode by mutableStateOf<String?>(null)
 
+    /** A title's page the player asked for ("Go to Details", roxytv://open/<id>). */
+    var pendingOpen by mutableStateOf<WatchNext.OpenDetails?>(null)
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         WatchNext.itemIdFrom(intent.data)?.let { pendingPlayId = it }
+        WatchNext.detailsFrom(intent.data)?.let { pendingOpen = it }
         linkCodeFrom(intent.data)?.let { pendingLinkCode = it }
     }
 
@@ -184,6 +188,7 @@ class MainActivity : ComponentActivity() {
         Thread({ runCatching { Timber.i("Device report:\n%s", DeviceReport.full(ctx)) } }, "device-report").start()
         val tv = isTelevision(this)
         WatchNext.itemIdFrom(intent?.data)?.let { pendingPlayId = it }
+        WatchNext.detailsFrom(intent?.data)?.let { pendingOpen = it }
         linkCodeFrom(intent?.data)?.let { pendingLinkCode = it }
         // The TV UI is a landscape, D-pad layout; the phone browses in portrait like Netflix
         // (the player is landscape on both, set in the manifest).
@@ -324,6 +329,17 @@ private fun TvRoot(onUnauthorized: () -> Unit) {
     val openSeries = { it: Item -> nav.navigate(Route.Series(it.id, it.title)) }
     val openMovie = { it: Item -> nav.navigate(Route.Movie(it.id, it.title)) }
     val openDiscover = { type: String, tmdbId: Int -> nav.navigate(Route.DiscoverDetail(type, tmdbId)) }
+    // The player's "Go to Details": the page under the player is usually that title's
+    // already (it was played from there), and then closing the player was enough.
+    val activity = LocalContext.current as? MainActivity
+    val open = activity?.pendingOpen
+    LaunchedEffect(open) {
+        if (activity == null || open == null) return@LaunchedEffect
+        activity.pendingOpen = null
+        val here = nav.currentBackStackEntry
+        val showing = here?.arguments?.getString("id") == open.id && (here.destination.route?.let { r -> r.contains(if (open.movie) "Movie" else "Series") } == true)
+        if (!showing) nav.navigate(if (open.movie) Route.Movie(open.id, open.title) else Route.Series(open.id, open.title))
+    }
     TvShell(current = page, onSelect = ::go, onSwitchProfile = { scope.launch { app.prefs.clearProfile() } }) {
         // No page transitions on the TV: navigation-compose's default is a 700 ms crossfade,
         // two full pages blended for ~40 frames on every page change (measured: p90 40 ms).

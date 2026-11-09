@@ -42,6 +42,18 @@ object WatchNext {
     /** What the launcher fires: `roxytv://play/<itemId>`, handled by MainActivity, which resumes the item. */
     fun resumeUri(itemId: String): Uri = Uri.parse("$SCHEME://play/$itemId")
 
+    /** A title's page, opened in the app: `roxytv://open/<id>?movie=0|1&title=` (the player's "Go to Details"). */
+    fun detailsUri(id: String, movie: Boolean, title: String): Uri =
+        Uri.parse("$SCHEME://open/$id").buildUpon().appendQueryParameter("movie", if (movie) "1" else "0").appendQueryParameter("title", title).build()
+
+    data class OpenDetails(val id: String, val movie: Boolean, val title: String)
+
+    fun detailsFrom(uri: Uri?): OpenDetails? {
+        val u = uri?.takeIf { it.scheme == SCHEME && it.host == "open" } ?: return null
+        val id = u.pathSegments?.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        return OpenDetails(id, u.getQueryParameter("movie") == "1", u.getQueryParameter("title").orEmpty())
+    }
+
     fun itemIdFrom(uri: Uri?): String? =
         uri?.takeIf { it.scheme == SCHEME && it.host == "play" }?.pathSegments?.firstOrNull()?.takeIf { it.isNotBlank() }
 
