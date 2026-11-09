@@ -5,7 +5,7 @@ import { lang3, prefs } from '../api/prefs'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
-import { chooseStream, ReopenBudget, reopenAt, StreamClock, type Mode } from './stream'
+import { chooseStream, MOVED_SEC, ReopenBudget, StreamClock, streamEnded, type Mode } from './stream'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -115,6 +115,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // effects' cleanups run, so the final report (and the pause the removal fires) would
   // read 0 and wipe the saved position; they use this instead.
   const lastAbs = useRef(0)
+  // When the position last moved, or the tracks were changed (performance.now): a report's
+  // age. A tab left paused that reports on leaving is then older than a finish elsewhere.
+  const lastMoved = useRef({ pos: -1, at: 0, tracks: '' })
   const hideTimer = useRef<number | null>(null)
   // Each load() takes a number; one that wakes from an await to find a newer number stops
   // there. A seek, a track or quality change, or the next episode can start a load while an
@@ -176,18 +179,25 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   }, [])
 
   const report = useCallback(
-    (force = false) => {
+    (force = false, atSec?: number) => {
       const now = Date.now()
       if (!started.current) return
       if (!force && now - lastReport.current < REPORT_EVERY_MS) return
       // Never report 0 (the apps don't either): a position of 0 is "nothing watched", and
       // the server would store it over the real one.
-      const positionMs = Math.round(absTime() * 1000)
+      const pos = atSec ?? absTime()
+      const positionMs = Math.round(pos * 1000)
       if (positionMs <= 0) return
       lastReport.current = now
       // Subtitles off is saved as SUBTITLES_OFF; leaving it out (as this used to) kept the
       // last track saved, so they came back on next time.
-      api.progress(item.id, positionMs, audioIndex ?? undefined, subsOn ? (subIndex ?? undefined) : SUBTITLES_OFF).catch(() => undefined)
+      const sub = subsOn ? (subIndex ?? undefined) : SUBTITLES_OFF
+      const mono = performance.now()
+      const lm = lastMoved.current
+      const tracks = `${audioIndex}/${sub}`
+      if (Math.abs(pos - lm.pos) > MOVED_SEC || tracks !== lm.tracks) lastMoved.current = { pos, at: mono, tracks }
+      const ageMs = Math.max(0, Math.round(mono - lastMoved.current.at))
+      api.progress(item.id, positionMs, audioIndex ?? undefined, sub, ageMs).catch(() => undefined)
     },
     [item.id, absTime, audioIndex, subIndex, subsOn],
   )
@@ -293,6 +303,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const v = videoRef.current
       if (!v) return
       t = Math.max(0, Math.min(duration || Infinity, t))
+      // Where the viewer is now, even before the stream gets there: leaving right after a
+      // seek out of the buffer (the element still empty) saved the position before it.
+      lastAbs.current = t
       const m = modeRef.current
       if (m.kind === 'direct') {
         v.currentTime = t
@@ -324,6 +337,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setTrick(null)
     tokenRef.current = ''
     lastAbs.current = 0 // a new item: never carry the last one's position over
+    lastMoved.current = { pos: -1, at: 0, tracks: '' }
     started.current = false
     // The first report waits a full interval after the start, like every later one.
     lastReport.current = Date.now()
@@ -402,19 +416,28 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     // a long time (a long pause), and restarts end them too. Reopened where it was, a few
     // times in a row; it used to count as the end of the episode (marked watched, on to
     // the next one with autoplay) or stop with "Try again".
-    const reconnect = () => {
+    // 'end' (the real end), 'reopened', or 'lost': cut too often in a row. Lost is said and
+    // saved where the stream got to, never taken for the end (that marked the episode
+    // watched at the header's duration and moved on to the next one).
+    const reconnect = (): 'end' | 'reopened' | 'lost' => {
       const m = modeRef.current
       // Where the stream really got to (StreamClock): the playhead and buffered both say
       // "the end" once Chrome has jumped there.
-      const at = reopenAt(m, clock.current.playedTo, duration, reopens.current.used)
-      if (at === null || m.kind !== 'server') return false
-      reopens.current.reopened(at)
-      reload(at, m.audio, true)
-      return true
+      const e = streamEnded(m, clock.current.playedTo, duration, reopens.current.used)
+      if (e.kind === 'end' || m.kind !== 'server') return 'end'
+      if (e.kind === 'lost') {
+        lastAbs.current = e.at
+        report(true, e.at)
+        setError('The connection to the server keeps dropping. Try again.')
+        return 'lost'
+      }
+      reopens.current.reopened(e.at)
+      reload(e.at, m.audio, true)
+      return 'reopened'
     }
     const onError = () => {
       const code = v.error?.code
-      if (code === 2 && reconnect()) return
+      if (code === 2 && reconnect() !== 'end') return
       if (code !== 4) {
         setError(code === 2 ? 'The connection to the server dropped while playing. Try again.' : code === 3 ? 'The video could not be decoded.' : `Playback error ${code ?? ''}`.trim())
         return
@@ -430,7 +453,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       })
     }
     const onEnd = () => {
-      if (reconnect()) return
+      if (reconnect() !== 'end') return
       report(true)
       if (autoplayRef.current) onEnded?.()
     }

@@ -82,6 +82,37 @@ try {
   if (after.paused || after.ended) fail('not playing after reopening')
   if (played) fail('the film was marked watched')
   console.log('OK: the cut stream was reopened and plays on')
+
+  // Cut every reopened stream too, in a row, until the player stops reopening (it gives up
+  // after a few in a row). Found by an audit: the cut after that counted as the end, so the
+  // film was marked watched at the stream header's duration and autoplay moved on. It must
+  // say the connection keeps dropping, save where it got to, and stay on the film.
+  const url = page.url()
+  for (let cuts = 2; cuts <= 8; cuts++) {
+    const before = remux.length
+    await page.waitForTimeout(2000)
+    execSync(process.env.CUT_CMD, { stdio: 'inherit' })
+    await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.playbackRate = 4 })
+    let next = false
+    for (let i = 0; i < 120 && !next; i++) {
+      await page.waitForTimeout(500)
+      const s = await state()
+      if (s?.ended && remux.length === before && (await page.locator('text=keeps dropping').count()) > 0) break
+      next = remux.length > before
+    }
+    if (next) continue
+    const shown = await page.locator('text=keeps dropping').count()
+    const watched = (await api('/v1/items/' + item.id, {}, tok)).userData
+    console.log(`after ${cuts} cuts in a row: ${remux.length} streams, error shown=${shown > 0}, marked watched=${watched?.played}, position ${watched?.positionMs} ms`)
+    if (!shown) fail('the player stopped reopening without saying the connection keeps dropping')
+    if (watched?.played) fail('a stream cut too often in a row counted as the end: the film was marked watched')
+    if (page.url() !== url) fail('the player moved on (autoplay) after a cut stream')
+    if (!(watched?.positionMs > 0) || watched.positionMs > (item.runtimeMs ?? Infinity) * 0.5) fail(`the saved position is not where the stream got to: ${watched?.positionMs} ms`)
+    console.log('OK: cut too often in a row, the player says so and keeps the film unwatched')
+    process.exitCode = 0
+    break
+  }
+  if (remux.length > 8) fail('the player kept reopening without limit')
 } finally {
   await browser.close()
 }

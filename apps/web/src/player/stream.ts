@@ -120,7 +120,25 @@ export class ReopenBudget {
  * more than 10 s before the end of the file is a lost connection.
  */
 export function reopenAt(mode: Mode, playedTo: number, duration: number, reopens: number): number | null {
-  if (mode.kind !== 'server' || duration <= 0 || reopens >= MAX_REOPENS) return null
-  const at = mode.offset + playedTo
-  return at < duration - 10 ? at : null
+  const e = streamEnded(mode, playedTo, duration, reopens)
+  return e.kind === 'reopen' ? e.at : null
 }
+
+/**
+ * What a stream that stopped means: the real end (within 10 s of the end, or not a server
+ * stream); a lost connection to reopen at `at`; or one lost too often in a row ('lost'),
+ * which is still NOT the end. Telling the last two apart only by "no reopening" made a
+ * fourth cut in a row count as the end: the episode was marked watched at the header's
+ * duration and autoplay moved on.
+ */
+export type StreamEnd = { kind: 'end' } | { kind: 'reopen'; at: number } | { kind: 'lost'; at: number }
+
+export function streamEnded(mode: Mode, playedTo: number, duration: number, reopens: number): StreamEnd {
+  if (mode.kind !== 'server' || duration <= 0) return { kind: 'end' }
+  const at = mode.offset + playedTo
+  if (at >= duration - 10) return { kind: 'end' }
+  return reopens >= MAX_REOPENS ? { kind: 'lost', at } : { kind: 'reopen', at }
+}
+
+/** A report's position counts as moved (fresh) past this; a paused frame's clock jitters less. */
+export const MOVED_SEC = 0.5

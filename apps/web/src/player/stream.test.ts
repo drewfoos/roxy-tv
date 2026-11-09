@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chooseStream, MAX_REOPENS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, StreamClock, type Mode } from './stream'
+import { chooseStream, MAX_REOPENS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, StreamClock, streamEnded, type Mode } from './stream'
 
 const aac = { index: 1, codec: 'aac' }
 const ac3 = { index: 1, codec: 'AC3' }
@@ -103,6 +103,21 @@ describe('reopenAt', () => {
   it('leaves direct play and unknown durations alone', () => {
     expect(reopenAt({ kind: 'direct' }, 30, 1440, 0)).toBeNull()
     expect(reopenAt(server, 30, 0, 0)).toBeNull()
+  })
+})
+
+// Found by an audit: out of reopenings, a cut stream was taken for the end (marked
+// watched at the header's duration, autoplay moved on). It is 'lost' now, never 'end'.
+describe('streamEnded', () => {
+  const server: Mode = { kind: 'server', audio: 2, offset: 120 }
+  it('reopens, then says lost (not the end) when cut too often in a row', () => {
+    expect(streamEnded(server, 30, 1440, 0)).toEqual({ kind: 'reopen', at: 150 })
+    expect(streamEnded(server, 30, 1440, MAX_REOPENS)).toEqual({ kind: 'lost', at: 150 })
+  })
+  it('takes the real end for the end, out of reopenings or not', () => {
+    expect(streamEnded(server, 1312, 1440, 0)).toEqual({ kind: 'end' })
+    expect(streamEnded(server, 1312, 1440, MAX_REOPENS)).toEqual({ kind: 'end' })
+    expect(streamEnded({ kind: 'direct' }, 30, 1440, 0)).toEqual({ kind: 'end' })
   })
 })
 
