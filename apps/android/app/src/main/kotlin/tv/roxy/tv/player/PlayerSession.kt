@@ -88,9 +88,31 @@ class PlayerSession(
         /** Page hosts: null when the player owns the screen; else whether it is fullscreen now. */
         val fullscreen: Boolean? get() = null
         fun toggleFullscreen() {}
+        /**
+         * The file played to its end and nothing follows it (a film, the last episode):
+         * the full-screen player closes, as streaming apps do. A page host keeps its player.
+         */
+        fun ended() {}
     }
 
+    /** What the end of a file leads to (see [endAction]). */
+    enum class EndAction { PlayNext, Close, WaitForNext, Stay }
+
     companion object {
+        /**
+         * At the end of a file: the next episode plays when autoplay is on; with nothing to
+         * play (a film, the last episode, offline with the next not downloaded) the player
+         * closes. With autoplay off and a next episode the player stays, its card offering
+         * it. The next episode is looked up when the file starts; at an end reached before
+         * the answer it waits for it.
+         */
+        fun endAction(autoplay: Boolean, nextKnown: Boolean, hasNext: Boolean): EndAction = when {
+            !nextKnown -> EndAction.WaitForNext
+            hasNext && autoplay -> EndAction.PlayNext
+            hasNext -> EndAction.Stay
+            else -> EndAction.Close
+        }
+
         /**
          * Watch-state calls go to the server one at a time, in the order they were made.
          * Moving on to the next episode sends "E1 is at 6:18" and "E1 is watched" together;
@@ -214,6 +236,10 @@ class PlayerSession(
     private var skipWindowSec = 20
     private var nextCardEnabled = false
     private var next: PlayRequest? = null
+    /** The lookup of [next] for the current item has answered (it may be none). */
+    private var nextKnown = false
+    /** The file reached its end before the lookup answered: act on the answer. */
+    private var endPending = false
     var nextCard by mutableStateOf<NextCard?>(null); private set
     private var nextCardDismissed = false
     private var countdownJob: Job? = null
@@ -611,10 +637,16 @@ class PlayerSession(
             player.play(url, start)
         }
         // What comes after this one (null for movies and the last episode).
-        val id = itemId ?: return
+        nextKnown = false
+        endPending = false
+        val id = itemId ?: run { nextKnown = true; return }
         scope.launch {
             val n = nextEpisode(context, id)
-            if (itemId == id) { next = n; Timber.i("next episode: %s", n?.item?.displayLabel ?: "none"); refreshUi() }
+            if (itemId == id) {
+                next = n; nextKnown = true
+                Timber.i("next episode: %s", n?.item?.displayLabel ?: "none"); refreshUi()
+                if (endPending) { endPending = false; if (atEnd()) atFileEnd() }
+            }
         }
     }
 
@@ -690,8 +722,19 @@ class PlayerSession(
         }
         Timber.i("reached the end")
         if (!endReported) { endReported = true; reportProgress("end") }
-        // Ran out while the card was up (or with no outro marker): go on now.
-        if (autoplay && next != null) playNext()
+        atFileEnd()
+    }
+
+    /** The file is over: go on to the next episode, close, or wait (see [endAction]). */
+    private fun atFileEnd() {
+        if (destroyed || switching) return
+        when (endAction(autoplay, nextKnown, next != null)) {
+            // Ran out while the card was up (or with no outro marker): go on now.
+            EndAction.PlayNext -> playNext()
+            EndAction.Close -> { Timber.i("nothing follows: closing the player"); host.ended() }
+            EndAction.WaitForNext -> endPending = true
+            EndAction.Stay -> {}
+        }
     }
 
     /**

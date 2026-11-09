@@ -168,6 +168,7 @@ class PlayerActivity : ComponentActivity() {
         )
         val host = object : PlayerSession.Host {
             override fun back() = finish()
+            override fun ended() = finish()
             override val pipSupported: Boolean get() = this@PlayerActivity.pipSupported
             override val inPip: Boolean get() = isInPictureInPictureMode
             override fun enterPip() = this@PlayerActivity.enterPip()
