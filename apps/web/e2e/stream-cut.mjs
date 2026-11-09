@@ -46,7 +46,11 @@ try {
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 10, downloadThroughput: 1_000_000, uploadThroughput: 1_000_000 })
   const remux = []
   page.on('request', (r) => {
-    if (r.url().includes('/remux')) remux.push(Number(new URL(r.url()).searchParams.get('start')))
+    // One entry per stream: Chrome sometimes asks for the same stream twice, which counted
+    // as a reopening, and the next cut found no new stream running.
+    if (!r.url().includes('/remux')) return
+    const start = Number(new URL(r.url()).searchParams.get('start'))
+    if (remux.length === 0 || remux[remux.length - 1] !== start) remux.push(start)
   })
   await page.goto(base + '/')
   await page.evaluate((s) => localStorage.setItem('roxy.session', JSON.stringify(s)), {
