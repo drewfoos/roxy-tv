@@ -115,6 +115,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // effects' cleanups run, so the final report (and the pause the removal fires) would
   // read 0 and wipe the saved position; they use this instead.
   const lastAbs = useRef(0)
+  const seekReport = useRef<number | null>(null)
+  useEffect(() => () => { if (seekReport.current) window.clearTimeout(seekReport.current) }, [])
   // When the position last moved, or the tracks were changed (performance.now): a report's
   // age. A tab left paused that reports on leaving is then older than a finish elsewhere.
   const lastMoved = useRef({ pos: -1, at: 0, tracks: '' })
@@ -197,9 +199,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const tracks = `${audioIndex}/${sub}`
       if (Math.abs(pos - lm.pos) > MOVED_SEC || tracks !== lm.tracks) lastMoved.current = { pos, at: mono, tracks }
       const ageMs = Math.max(0, Math.round(mono - lastMoved.current.at))
-      api.progress(item.id, positionMs, audioIndex ?? undefined, sub, ageMs).catch(() => undefined)
+      api.progress(item.id, positionMs, audioIndex ?? undefined, sub, ageMs, sourceId || undefined).catch(() => undefined)
     },
-    [item.id, absTime, audioIndex, subIndex, subsOn],
+    [item.id, absTime, audioIndex, subIndex, subsOn, sourceId],
   )
   // The start effect's cleanup sends the final report when the item changes or the player
   // closes. It runs from the closure made at mount, whose report still holds the tracks the
@@ -306,6 +308,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       // Where the viewer is now, even before the stream gets there: leaving right after a
       // seek out of the buffer (the element still empty) saved the position before it.
       lastAbs.current = t
+      // Saved once the seeking settles (one report after a run of skips), not at the next
+      // 10 s tick: a crash or a killed tab right after a skip resumed from before it.
+      if (seekReport.current) window.clearTimeout(seekReport.current)
+      seekReport.current = window.setTimeout(() => reportRef.current(true), 1500)
       const m = modeRef.current
       if (m.kind === 'direct') {
         v.currentTime = t
@@ -338,6 +344,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     tokenRef.current = ''
     lastAbs.current = 0 // a new item: never carry the last one's position over
     lastMoved.current = { pos: -1, at: 0, tracks: '' }
+    if (seekReport.current) window.clearTimeout(seekReport.current) // a seek in the last item is not this one's
     started.current = false
     // The first report waits a full interval after the start, like every later one.
     lastReport.current = Date.now()

@@ -741,6 +741,7 @@ class PlayerSession(
         flashOsd(null)
         newFileRequested = false
         lastPosSec = null; lastPosAt = android.os.SystemClock.elapsedRealtime(); lastAudio = null; lastSub = null
+        seekReportJob?.cancel()
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
         switching = true
         changingItem = true
@@ -1085,15 +1086,29 @@ class PlayerSession(
 
     // ---- seeking and quality ----
 
+    private var seekReportJob: Job? = null
+
+    /**
+     * Report the new position once the seeking settles (Jellyfin's clients do this too): a
+     * skip ahead was only saved at the next 10 s tick, so leaving (or the app being killed)
+     * right after it resumed from before the skip. One report after the last of a run of
+     * presses, not one per press.
+     */
+    private fun reportAfterSeek() {
+        seekReportJob?.cancel()
+        seekReportJob = scope.launch { delay(1_500); if (!destroyed && !switching) reportProgress("seek") }
+    }
+
     /** Every seek goes through here: a transcode restarts when the target is not buffered. */
     private fun seek(target: Double) {
         var t = target.coerceAtLeast(0.0)
         sourceDurationSec?.let { d -> t = t.coerceAtMost((d - 1.0).coerceAtLeast(0.0)) }
         if (transcoding && !buffered(t)) restartTranscode(t) else player.seekTo(t)
+        reportAfterSeek()
     }
 
     private fun seekRelative(seconds: Int) {
-        if (!transcoding) { player.seekRelative(seconds); return }
+        if (!transcoding) { player.seekRelative(seconds); reportAfterSeek(); return }
         val from = reloadTarget ?: player.timePosSeconds() ?: return
         seek(from + seconds)
     }
@@ -1246,6 +1261,8 @@ class PlayerSession(
         // How long ago this position was reached (or the tracks picked): a player left paused
         // that reports on closing is older than an episode finished on another device since.
         val ageMs = android.os.SystemClock.elapsedRealtime() - lastPosAt
+        // The version playing: its own length decides "watched" on the server.
+        val playingSource = sourceId
         app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
         // A pause or stop is when the launcher's Watch Next row should show this title at this position.
         if (reason == "pause" || reason == "stop") {
@@ -1260,7 +1277,7 @@ class PlayerSession(
                 // A "watched" mark from offline goes before this report, or this newer
                 // report would make the server drop it as older.
                 if (!skip && app.downloads.hasPendingProgress(id)) app.downloads.syncProgress(app.api)
-                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex, ageMs = ageMs) }
+                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex, ageMs = ageMs, sourceId = playingSource) }
                     .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
                     .onFailure {
                         Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
@@ -1270,7 +1287,7 @@ class PlayerSession(
                 // Downloaded items keep their position locally too (Downloads page offline); a
                 // failed report is queued and replayed when the server is back. A success
                 // clears this item's queued one, so an older position never replays over it.
-                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex, ageMs = ageMs)
+                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex, ageMs = ageMs, sourceId = playingSource)
                 // The server answers again: send what was saved while it was away.
                 if (ok) app.downloads.syncProgress(app.api)
                 // Watched state may have changed (finished, or a rewatch made it "in
@@ -1321,7 +1338,7 @@ class PlayerSession(
             app.remote.reportState(null, "", 0, false)
             app.server.playerActive.value = false
         }
-        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel(); endWaitJob?.cancel()
+        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel(); endWaitJob?.cancel(); seekReportJob?.cancel()
         runCatching { displayManager?.unregisterDisplayListener(displayListener) }
         glue.release()
         player.listener = null
