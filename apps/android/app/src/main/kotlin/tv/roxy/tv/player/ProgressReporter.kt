@@ -1,9 +1,8 @@
 package tv.roxy.tv.player
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 /**
@@ -13,12 +12,12 @@ import timber.log.Timber
  * queue first, queued when it fails). It lived inside PlayerSession; here it is one tested
  * path (ProgressReporterTest), with the server and queue behind [Sink].
  *
- * Calls come from the main thread; the sending runs on [scope] (the app's, so a final
- * report outlives the player).
+ * The sending runs on [queue] (on the app's scope, so a final report outlives the player),
+ * in the order the methods were called, whatever thread or dispatcher.
  */
 class ProgressReporter(
     private val sink: Sink,
-    private val scope: CoroutineScope,
+    private val queue: SendQueue,
     /** Monotonic milliseconds (SystemClock.elapsedRealtime): ages. */
     private val monoNow: () -> Long,
     /** Wall-clock milliseconds: the minute's rest while the server is away. */
@@ -46,15 +45,42 @@ class ProgressReporter(
         val sourceId: String?, val durationMs: Long?,
     )
 
+    constructor(sink: Sink, scope: CoroutineScope, monoNow: () -> Long, wallNow: () -> Long = System::currentTimeMillis) :
+        this(sink, SendQueue(scope), monoNow, wallNow)
+
+    /**
+     * Watch-state calls go to the server one at a time, in the order they were made. Moving
+     * on to the next episode sends "E1 is at 6:18" and "E1 is watched" together; if the
+     * watched mark landed first, the late position turned E1 into a watched episode that is
+     * also part-way through. Each call puts its work on this queue at once (the order is
+     * fixed there, by the caller); one consumer sends it. A lock alone kept them one at a
+     * time but left their order to the dispatcher. One queue for every player (the phone
+     * page replaces one player with the next): [app].
+     */
+    class SendQueue(scope: CoroutineScope) {
+        private val ops = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+
+        init {
+            scope.launch {
+                for (op in ops) {
+                    try { op() } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Timber.w(e, "progress: sending failed")
+                    }
+                }
+            }
+        }
+
+        fun enqueue(op: suspend () -> Unit) { ops.trySend(op) }
+
+        companion object {
+            @Volatile private var shared: SendQueue? = null
+            /** The process's queue, on the app's scope (it lives as long as the process). */
+            fun app(scope: CoroutineScope): SendQueue = shared ?: synchronized(this) { shared ?: SendQueue(scope).also { shared = it } }
+        }
+    }
+
     companion object {
-        /**
-         * Watch-state calls go to the server one at a time, in the order they were made.
-         * Moving on to the next episode sends "E1 is at 6:18" and "E1 is watched" together;
-         * if the watched mark landed first, the late position turned E1 into a watched
-         * episode that is also part-way through. Shared by every player (one is replaced by
-         * the next on the phone page): the lock is first come, first served.
-         */
-        private val lock = Mutex()
         const val SERVER_AWAY_REST_MS = 60_000L
     }
 
@@ -91,11 +117,11 @@ class ProgressReporter(
         // How long ago this position was reached (or the tracks picked): a player left paused
         // that reports on closing is older than an episode finished on another device since.
         val r = Report(reason, itemId, positionMs, audioIndex, subtitleIndex, monoNow() - lastPosAt, sourceId, durationMs)
-        scope.launch { send(r) }
+        queue.enqueue { send(r) }
         return r
     }
 
-    private suspend fun send(r: Report) = lock.withLock {
+    private suspend fun send(r: Report) {
         // While the server is unreachable (playing a download away from home) skip the
         // network for a minute at a time instead of timing out on every tick.
         val skip = wallNow() < serverDownUntil
@@ -122,12 +148,10 @@ class ProgressReporter(
 
     /** [itemId] is finished (moving on to the next episode): after any report made before it. */
     fun markWatched(itemId: String) {
-        scope.launch {
-            lock.withLock {
-                val ok = wallNow() >= serverDownUntil && runCatching { sink.markPlayed(itemId) }.isSuccess
-                if (ok) sink.userDataChanged()
-                if (sink.isDownload(itemId) || !ok || sink.hasPending(itemId)) sink.queuePlayed(itemId, sent = ok)
-            }
+        queue.enqueue {
+            val ok = wallNow() >= serverDownUntil && runCatching { sink.markPlayed(itemId) }.isSuccess
+            if (ok) sink.userDataChanged()
+            if (sink.isDownload(itemId) || !ok || sink.hasPending(itemId)) sink.queuePlayed(itemId, sent = ok)
         }
     }
 }

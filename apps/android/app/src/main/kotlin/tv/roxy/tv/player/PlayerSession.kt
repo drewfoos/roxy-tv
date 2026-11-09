@@ -278,7 +278,7 @@ class PlayerSession(
     private val endReported get() = life.ended
     // When the position last moved (or tracks were picked), by the monotonic clock: a report's
     // age (see reportProgress). Reset per item.
-    private val reporter = ProgressReporter(AppProgressSink(app), app.scope, monoNow = { android.os.SystemClock.elapsedRealtime() })
+    private val reporter = ProgressReporter(AppProgressSink(app), ProgressReporter.SendQueue.app(app.scope), monoNow = { android.os.SystemClock.elapsedRealtime() })
 
     private fun notePosition(pos: Double) = reporter.notePosition(pos)
 

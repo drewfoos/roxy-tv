@@ -40,7 +40,11 @@ class ProgressReporterTest {
 
     private var mono = 0L
     private var wall = 1_000_000L
-    private fun TestScope.reporter(f: Fake) = ProgressReporter(f, this, monoNow = { mono }, wallNow = { wall })
+    // The queue's consumer never ends: it runs eagerly on the test's clock, in a scope of its
+    // own (runTest would wait for it, and does not run background work to the end).
+    private fun TestScope.queue() = ProgressReporter.SendQueue(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)))
+    private fun TestScope.reporter(f: Fake, q: ProgressReporter.SendQueue = queue()) =
+        ProgressReporter(f, q, monoNow = { mono }, wallNow = { wall })
 
     @Test fun sendsInCallOrderAndSkipsUnchangedTicks() = runTest {
         val f = Fake(); val r = reporter(f)
@@ -127,11 +131,42 @@ class ProgressReporterTest {
     // successor go out in call order.
     @Test fun twoPlayersShareTheOrder() = runTest {
         val f = Fake()
-        val a = reporter(f); val b = reporter(f)
+        val q = queue() // one queue for every player, as in the app
+        val a = reporter(f, q); val b = reporter(f, q)
         a.report("stop", "e1", 100.0, null, null, null, null)
         b.report("tick", "e2", 5.0, null, null, null, null)
         a.markWatched("e1")
         advanceUntilIdle()
         assertEquals(listOf("progress stop e1 100000 age=0", "refresh", "progress tick e2 5000 age=0", "played e1", "refresh"), f.log)
     }
+
+    // Found in review: each call launched its own coroutine and only the lock kept them one
+    // at a time, so the order they reached it in was the dispatcher's (the main thread's
+    // happened to be call order). On a pool of threads, with a server that answers at
+    // varying speeds, a watched mark could overtake the report made before it. The order
+    // is now fixed when a method is called.
+    @Test fun callOrderHoldsOnAThreadPool() = kotlinx.coroutines.runBlocking {
+        val log = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val f = object : ProgressReporter.Sink {
+            override suspend fun progress(r: ProgressReporter.Report) { kotlinx.coroutines.delay((0..3L).random()); log += "p${r.positionMs / 1000}" }
+            override suspend fun markPlayed(itemId: String) { kotlinx.coroutines.delay((0..3L).random()); log += "w$itemId" }
+            override fun isDownload(itemId: String) = false
+            override fun hasPending(itemId: String) = false
+            override suspend fun syncPending() {}
+            override fun queue(r: ProgressReporter.Report, sent: Boolean) {}
+            override fun queuePlayed(itemId: String, sent: Boolean) {}
+            override fun userDataChanged() {}
+            override fun answered(t: Throwable) = false
+        }
+        val pool = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
+        val r = ProgressReporter(f, pool, monoNow = { 0L })
+        val expected = mutableListOf<String>()
+        for (i in 1..60) {
+            r.report("pause", "e$i", i.toDouble(), null, null, null, null); expected += "p$i"
+            r.markWatched("$i"); expected += "w$i"
+        }
+        kotlinx.coroutines.withTimeout(20_000) { while (log.size < expected.size) kotlinx.coroutines.delay(10) }
+        assertEquals(expected, log.toList())
+    }
 }
+
