@@ -2,7 +2,10 @@ package tv.roxy.tv.ui.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -181,6 +184,23 @@ fun sectionEntries(sections: List<Section>, seasons: List<Item>): SectionList? {
     return SectionList(list, sources, counts, labels)
 }
 
+/** The show's next episode as far as the page's opening waits for it: [answered] false = no answer in time. */
+data class NextWait(val next: Item?, val answered: Boolean)
+
+/** How long a page's opening waits for /next before showing the first season anyway. */
+const val OPENING_NEXT_WAIT_MS = 3_000L
+
+/**
+ * Waits for the next-episode answer at most [waitMs]. The page opens on that episode's
+ * season, but the episodes must not hang on it: a slow or stuck /next opens the first season.
+ */
+suspend fun awaitNext(call: Deferred<Item?>, waitMs: Long = OPENING_NEXT_WAIT_MS): NextWait =
+    withTimeoutOrNull(waitMs) { NextWait(call.await(), answered = true) } ?: NextWait(null, answered = false)
+
+/** The season the page opens on: the next episode's, else the first. */
+fun openingSeason(seasons: List<Item>, wait: NextWait): Int =
+    wait.next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
+
 class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, initial: Item? = null) : ViewModel() {
     // Seeded from the list that opened the page, so the header paints at once and only the
     // episode rows wait on the network.
@@ -239,14 +259,19 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
         firstLoad = false
         viewModelScope.launch {
             // The server works it out: the page used to load every episode of the show for it.
-            val next = runCatching { api.next(seriesId) }.onFailure { Timber.w(it, "up next") }.getOrNull()
-            _state.value = _state.value.copy(upNext = next)
+            val call = async { runCatching { api.next(seriesId) }.onFailure { Timber.w(it, "up next") }.getOrNull() }
             // Not if a season was picked meanwhile (the all-episodes fetch is slow on long shows).
-            if (opening && seasons.isNotEmpty() && !userPicked) {
-                val at = next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
-                _state.value = _state.value.copy(selectedSeason = at)
-                loadEpisodes(seasons[at].id)
+            if (opening && seasons.isNotEmpty()) {
+                val wait = awaitNext(call)
+                if (!wait.answered) Timber.w("up next: no answer in %d ms; opening the first season", OPENING_NEXT_WAIT_MS)
+                if (!userPicked) {
+                    val at = openingSeason(seasons, wait)
+                    _state.value = _state.value.copy(selectedSeason = at)
+                    loadEpisodes(seasons[at].id)
+                }
             }
+            // Play's target, whenever it comes (after the episodes when /next was slow).
+            _state.value = _state.value.copy(upNext = call.await())
         }
     }
 
