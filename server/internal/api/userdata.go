@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 // Native watch state (docs/api/native.md "Watch state"). Shares the store with the
@@ -93,6 +94,10 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		// left paused that reports (stop, close) after the episode was finished on another
 		// device is then older than the finish, and no longer marks it unwatched.
 		AgeMs *int64 `json:"ageMs"`
+		// The version (media source) playing. Its own length decides "watched" (Jellyfin
+		// does the same): the item's runtime is whichever version was scanned last, so a
+		// theatrical cut never reached 90% of the extended one's length.
+		SourceID string `json:"sourceId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ItemID == "" {
 		writeError(w, 400, "invalid request body")
@@ -117,7 +122,16 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "item not found")
 		return
 	}
-	played := it.RuntimeMs != nil && *it.RuntimeMs > 0 && float64(body.PositionMs) >= float64(*it.RuntimeMs)*playedThreshold
+	runtime := int64(0)
+	if it.RuntimeMs != nil {
+		runtime = *it.RuntimeMs
+	}
+	if body.SourceID != "" {
+		if src, err := s.store.GetSource(r.Context(), body.SourceID); err == nil && src != nil && src.ItemID == it.ID && src.DurationMs > 0 {
+			runtime = src.DurationMs
+		}
+	}
+	played, minMs := playState(body.PositionMs, runtime)
 	// A replayed offline report (At set) from before the item's latest activity (finished
 	// or watched further on another device since) would wind it back, and on a watched
 	// episode leave it watched and part-way at once. The AsOf writes drop it, checking in
@@ -128,12 +142,14 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case hasAsOf && played:
 		applied, err = s.store.FinishPlayAsOf(r.Context(), p.ScopeID, it.GUID, asOf)
-	case hasAsOf:
-		applied, err = s.store.SetProgressAsOf(r.Context(), p.ScopeID, it.GUID, asOf, body.PositionMs, body.AudioIndex, body.SubtitleIndex)
 	case played:
 		err = s.store.FinishPlay(r.Context(), p.ScopeID, it.GUID)
 	default:
-		err = s.store.SetProgress(r.Context(), p.ScopeID, it.GUID, body.PositionMs, body.AudioIndex, body.SubtitleIndex)
+		var at *time.Time
+		if hasAsOf {
+			at = &asOf
+		}
+		applied, err = s.store.SetProgressMin(r.Context(), p.ScopeID, it.GUID, at, body.PositionMs, minMs, body.AudioIndex, body.SubtitleIndex)
 	}
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -146,6 +162,26 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		slog.Info("playback finished", "user", p.User.Name, "item", it.Title, "positionMs", body.PositionMs)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// playState is what a position means for an item [runtimeMs] long, after Jellyfin's
+// rules: from 90% on (or within the last second) it is watched; before the minimum
+// resume point (store.MinResumeMs: 5%, at most 2 minutes, at least 30 s) it is a peek
+// that keeps no resume point; an item under 5 minutes keeps no resume point at all, so
+// past its minimum it is watched. Unknown length: never watched by position (Jellyfin
+// calls it watched, which with reports every 10 s would mark everything at once).
+func playState(positionMs, runtimeMs int64) (played bool, minMs int64) {
+	minMs = store.MinResumeMs(runtimeMs)
+	if runtimeMs <= 0 {
+		return false, minMs
+	}
+	if float64(positionMs) >= float64(runtimeMs)*playedThreshold || positionMs >= runtimeMs-1000 {
+		return true, minMs
+	}
+	if runtimeMs < store.ShortItemMs && positionMs >= minMs {
+		return true, minMs
+	}
+	return false, minMs
 }
 
 // reportTime is when a report's position (or mark) happened, by the server's clock: now

@@ -55,9 +55,36 @@ const RewatchMinMs = 30_000
 // On a watched item it follows [RewatchMinMs]: a watched item is never also part-way,
 // which used to show "Watched" in the episode list and "Resume" on Home at once.
 func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int) error {
-	_, err := s.setProgress(ctx, userID, guid, positionMs, audio, sub, "")
+	_, err := s.setProgress(ctx, userID, guid, positionMs, audio, sub, "", RewatchMinMs)
 	return err
 }
+
+// SetProgressMin is SetProgress with the item's own minimum resume point [minMs] (see
+// MinResumeMs): a position before it is a peek, kept as no resume point at all; a watched
+// item stays watched, an unwatched one keeps nothing (it does not land in Continue
+// Watching), and neither moves in history (last played is left as it was). With asOf set
+// it applies as SetProgressAsOf does.
+func (s *Store) SetProgressMin(ctx context.Context, userID, guid string, asOf *time.Time, positionMs, minMs int64, audio, sub *int) (bool, error) {
+	stamp := ""
+	if asOf != nil {
+		stamp = asOfStamp(*asOf)
+	}
+	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, stamp, minMs)
+}
+
+// MinResumeMs is the minimum resume point for an item [runtimeMs] long (Jellyfin's
+// MinResumePct 5%, capped at 2 minutes so stopping 7 minutes into a film still resumes),
+// never under [RewatchMinMs]; [RewatchMinMs] when the length is unknown.
+func MinResumeMs(runtimeMs int64) int64 {
+	if runtimeMs <= 0 {
+		return RewatchMinMs
+	}
+	return max(RewatchMinMs, min(runtimeMs*5/100, 120_000))
+}
+
+// ShortItemMs: an item shorter than this keeps no resume point (Jellyfin's
+// MinResumeDurationSeconds): past its minimum it counts as watched.
+const ShortItemMs = 300_000
 
 // SetProgressAsOf is SetProgress for a report made at [at] and sent later (a phone
 // replaying what it watched offline): it applies only if nothing newer was recorded for
@@ -65,7 +92,7 @@ func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs
 // statement, so a live report from another device cannot land between a separate check
 // and the write and then be wound back. False when it was not applied.
 func (s *Store) SetProgressAsOf(ctx context.Context, userID, guid string, at time.Time, positionMs int64, audio, sub *int) (bool, error) {
-	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, asOfStamp(at))
+	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, asOfStamp(at), RewatchMinMs)
 }
 
 // asOfStamp is the stored form of a replayed report's time, which is both what it is
@@ -98,16 +125,30 @@ func stampOr(asOf string) string {
 const unlessNewer = ` WHERE ? = '' OR ((user_item_data.last_played_at IS NULL OR user_item_data.last_played_at = '' OR user_item_data.last_played_at <= ?)
 	AND (user_item_data.marked_at IS NULL OR user_item_data.marked_at <= ?))`
 
-func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int, asOf string) (bool, error) {
+// setProgress writes a position; one under [minMs] is a peek (see SetProgressMin). The
+// callers before minimum resume points pass [RewatchMinMs], which keeps their behaviour:
+// a peek at a watched item changed nothing, and an unwatched item kept any position.
+func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int, asOf string, minMs int64) (bool, error) {
+	// Unwatched items kept every position under the old rule; only a caller with a real
+	// minimum (SetProgressMin) turns their peeks into nothing.
+	unwatchedMin := int64(0)
+	if minMs != RewatchMinMs {
+		unwatchedMin = minMs
+	}
+	newPos, newStamp := positionMs, any(stampOr(asOf))
+	if positionMs < unwatchedMin {
+		newPos, newStamp = 0, nil
+	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, last_played_at, audio_stream_index, subtitle_stream_index)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope_id, item_guid) DO UPDATE SET
-			position_ms = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.position_ms ELSE excluded.position_ms END,
-			last_played_at = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.last_played_at ELSE excluded.last_played_at END,
+			position_ms = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN user_item_data.position_ms
+				WHEN excluded.position_ms < ? THEN 0 ELSE excluded.position_ms END,
+			last_played_at = CASE WHEN excluded.position_ms < ? THEN user_item_data.last_played_at ELSE COALESCE(excluded.last_played_at, user_item_data.last_played_at) END,
 			played = CASE WHEN user_item_data.played = 1 AND excluded.position_ms < ? THEN 1 ELSE 0 END,
 			audio_stream_index = COALESCE(excluded.audio_stream_index, user_item_data.audio_stream_index),
 			subtitle_stream_index = COALESCE(excluded.subtitle_stream_index, user_item_data.subtitle_stream_index)`+unlessNewer,
-		userID, guid, positionMs, stampOr(asOf), intPtrNull(audio), intPtrNull(sub), RewatchMinMs, RewatchMinMs, RewatchMinMs, asOf, asOf, asOf)
+		userID, guid, newPos, newStamp, intPtrNull(audio), intPtrNull(sub), minMs, unwatchedMin, minMs, minMs, asOf, asOf, asOf)
 	return applied(res, err)
 }
 

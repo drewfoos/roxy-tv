@@ -80,9 +80,9 @@ func TestProgressAge(t *testing.T) {
 	if played, pos := state(); !played {
 		t.Fatalf("a stale report unmarked the finished episode (position %d)", pos)
 	}
-	// A real rewatch: a fresh position past 30 s unmarks, as before.
-	post(`{"itemId":"e1","positionMs":60000,"ageMs":0}`)
-	if played, pos := state(); played || pos != 60000 {
+	// A real rewatch: a fresh position past the minimum resume point (5% = 70 s) unmarks.
+	post(`{"itemId":"e1","positionMs":80000,"ageMs":0}`)
+	if played, pos := state(); played || pos != 80000 {
 		t.Fatalf("a rewatch should unmark: played=%v pos=%d", played, pos)
 	}
 	// Older clients (no age, no at) are applied as before.
