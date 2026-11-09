@@ -438,7 +438,7 @@ fun UrlPosterCard(title: String, url: String?, width: Dp, captionHeight: Dp, onC
  */
 @Composable
 fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null) =
-    ThumbCard(item, api, width = width, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueRowLabel(item), onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick)
+    ThumbCard(item, api, width = width, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueRowLabel(item), onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick, lineUnderTitle = true)
 
 /** Continue Watching's action line: "CONTINUE: E2" part-way, "UP NEXT: E7" for one not started. */
 fun continueRowLabel(item: Item): String {
@@ -457,6 +457,8 @@ fun ThumbCard(
     item: Item, api: RoxyApi, width: Dp, captionHeight: Dp, titleLines: Int, secondLine: String?,
     onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null,
     badge: String? = minutesLabel(item), progress: Float? = item.progressFraction, onLongClick: (() -> Unit)? = null,
+    /** [secondLine] right under the title (Continue Watching, as Crunchyroll's), not at the caption's foot. */
+    lineUnderTitle: Boolean = false,
 ) {
     val imageType = if (item.isEpisode) "thumb" else "backdrop"
     val url = api.imageUrl(item, imageType, widthPx(width)) ?: api.imageUrl(item, "backdrop", widthPx(width)) ?: api.imageUrl(item, "poster", widthPx(width))
@@ -476,7 +478,7 @@ fun ThumbCard(
             Column(modifier = Modifier.fillMaxWidth().height(captionHeight).background(RoxyColors.surface).padding(horizontal = 12.dp, vertical = 10.dp)) {
                 CaptionTitle(cardTitle(item), lines = titleLines, fontSize = 16.sp, lineHeight = 20.sp)
                 if (secondLine != null) {
-                    Spacer(Modifier.weight(1f))
+                    if (lineUnderTitle) Spacer(Modifier.height(4.dp)) else Spacer(Modifier.weight(1f))
                     Text(secondLine, color = TvSubtle, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
