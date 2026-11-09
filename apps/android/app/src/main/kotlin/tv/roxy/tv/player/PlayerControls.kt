@@ -66,6 +66,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.safeDrawing
@@ -246,6 +248,8 @@ fun PlayerControls(
     // In the page's 16:9 box everything is scaled down: smaller discs and icons, no clock,
     // tighter popups that stay inside the box.
     val compact = state.fullscreen == false
+    // Where the top bar (back arrow) ends on screen: the upright settings page starts there.
+    var barBottom by remember { mutableStateOf<Float?>(null) }
     // Keeps the card's text while it fades out (the state drops it at once).
     val lastAdvisory = remember { mutableStateOf<Advisory?>(null) }
     // Hosted on a page (the phone): Crunchyroll's layout. Back at the top-left; next,
@@ -298,7 +302,7 @@ fun PlayerControls(
         // While its settings panel is open the TV shows the panel alone (Crunchyroll's).
         if (tv && sheet == Sheet.None) TvTopBar(state, onDetails = { onInteraction(); actions.openDetails() }, onSettings = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onNext = { actions.next() }, onFocus = onInteraction, modifier = Modifier.align(Alignment.TopStart))
         // Title row, with the clock and "Ends at" top-right (local time zone).
-        else if (!tv) Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        else if (!tv) Row(modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().onGloballyPositioned { c -> c.boundsInWindow().bottom.let { if (it != barBottom) barBottom = it } }.padding(start = if (compact) 8.dp else if (cr) 16.dp else TvBarSide - 8.dp, end = if (compact) 8.dp else if (cr) 16.dp else TvBarSide, top = if (compact) 4.dp else if (cr) 10.dp else 22.dp, bottom = if (compact) 4.dp else if (cr) 10.dp else 20.dp), verticalAlignment = Alignment.CenterVertically) {
             // No arrow in the page's fullscreen: the system back gesture drops to the mini player.
             if (state.fullscreen != true) {
                 IconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = actions::back, onFocus = onInteraction, compact = compact, large = tv)
@@ -379,6 +383,7 @@ fun PlayerControls(
             // size (Crunchyroll's), not squeezed into the video. Sideways: under the title bar.
             SheetHost(
                 page = compact,
+                top = barBottom, // right under the back arrow, the gap the sideways page has
                 modifier = if (cr) Modifier.fillMaxSize().padding(top = PhoneTitleGap) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f),
                 onBack = { onSheet(Sheet.None) },
             ) {
@@ -481,27 +486,20 @@ private val LocalTvPanel = compositionLocalOf { false }
  * a box in the player.
  */
 @Composable
-private fun SheetHost(page: Boolean, modifier: Modifier, onBack: () -> Unit, content: @Composable () -> Unit) {
+private fun SheetHost(page: Boolean, top: Float?, modifier: Modifier, onBack: () -> Unit, content: @Composable () -> Unit) {
     if (page) androidx.compose.ui.window.Dialog(onDismissRequest = onBack, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         // The video and the title above the page stay as they are: not dimmed.
         val view = androidx.compose.ui.platform.LocalView.current
         LaunchedEffect(view) { (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.setDimAmount(0f) }
-        val top = LocalSettingsTop.current
         Column(Modifier.fillMaxSize()) {
             if (top != null) {
-                // Above the page: the episode page as it is; a tap there closes the settings.
+                // Above the page: the player's top bar as it is; a tap there closes the settings.
                 Box(Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { top.toDp() }).pointerInput(Unit) { detectTapGestures { onBack() } })
                 Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)) { content() }
             } else Box(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) { content() }
         }
     } else Box(modifier) { content() }
 }
-
-/**
- * Where the upright phone's settings page starts, in window pixels: under the episode's
- * title on the episode page (its video and title stay in view). Null: the whole screen.
- */
-val LocalSettingsTop = compositionLocalOf<Float?> { null }
 
 /** The phone's settings page starts this far down: the player's top bar (series, episode title) stays in view above it. */
 internal val PhoneTitleGap = 64.dp

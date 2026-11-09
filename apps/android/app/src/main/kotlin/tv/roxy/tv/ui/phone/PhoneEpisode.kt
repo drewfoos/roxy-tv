@@ -90,8 +90,6 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     val main = activity as? MainActivity
     val inPip = main?.inPip == true || main?.pipTransitioning == true
     var videoBounds by remember { mutableStateOf<android.graphics.Rect?>(null) }
-    // Where the title line ends on screen: the upright settings page starts under it.
-    var titleBottom by remember { mutableStateOf<Float?>(null) }
     val view = LocalView.current
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -258,10 +256,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
         ) {
             val s = session
             when {
-                // Under the title (or the video, the title scrolled away), a little apart.
-                s != null -> androidx.compose.runtime.CompositionLocalProvider(tv.roxy.tv.player.LocalSettingsTop provides (if (full) null else maxOf(titleBottom ?: 0f, videoBounds?.bottom?.toFloat() ?: 0f).takeIf { it > 0f }?.let { it + with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.toPx() } })) {
-                    PlayerSurface(s, modifier = Modifier.fillMaxSize())
-                }
+                s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize())
                 error != null -> Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     Text(error ?: "", color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                 }
@@ -276,8 +271,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                     val code = if (ep.isMovie) null else (ep.indexAired ?: ep.indexAbsolute)?.let { "E$it" }
                     Text(
                         listOfNotNull(code, ep.title.takeIf { it.isNotBlank() }).joinToString(" - "),
-                        fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground,
-                        modifier = Modifier.padding(top = 4.dp).onGloballyPositioned { c -> c.boundsInWindow().bottom.let { if (it != titleBottom) titleBottom = it } },
+                        fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 4.dp),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                         val rating = ep.officialRating ?: seriesRating

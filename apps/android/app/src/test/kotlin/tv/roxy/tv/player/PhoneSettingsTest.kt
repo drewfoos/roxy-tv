@@ -16,6 +16,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
@@ -91,26 +92,26 @@ class PhoneSettingsTest {
     }
 
     // Upright phone, small player (a 16:9 box at the top of the episode page): the page is a
-    // window of its own at full size under the episode's title, not squeezed into the video. System Back
+    // window of its own at full size right under the back arrow, not squeezed into the video. System Back
     // closes them.
     @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
-    fun uprightSmallPlayerPageStartsUnderTheTitle() {
+    fun uprightSmallPlayerPageStartsUnderTheBackArrow() {
         var sheet by mutableStateOf(Sheet.Settings)
         val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, fullscreen = false)
-        var top = 0f
         compose.setContent {
-            top = with(androidx.compose.ui.platform.LocalDensity.current) { 290.dp.toPx() } // the video, then the title line
-            androidx.compose.runtime.CompositionLocalProvider(LocalSettingsTop provides top) {
-                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
-                    PlayerControls(state = state, visible = true, sheet = sheet, onSheet = { sheet = it }, onInteraction = {}, actions = actions)
-                }
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                PlayerControls(state = state, visible = true, sheet = sheet, onSheet = { sheet = it }, onInteraction = {}, actions = actions)
             }
         }
         compose.onAllNodes(isRoot()).assertCountEquals(2) // the player and the page's own window
         // Full-size rows, not squeezed into the 232 dp video; and the page under the title.
         val header = compose.onNodeWithText("Playback Settings")
         header.assertIsDisplayed()
-        assertTrue("the page starts under the title: ${header.getUnclippedBoundsInRoot().top}", header.getUnclippedBoundsInRoot().top >= 290.dp)
+        // Right under the player's back arrow (the sideways page's gap): the arrow in view,
+        // the page not pushed further down. The bar's arrow is the first "Back" (the page's own is in its window).
+        val bar = compose.onAllNodesWithContentDescription("Back")[0].getUnclippedBoundsInRoot()
+        val top = header.getUnclippedBoundsInRoot().top
+        assertTrue("under the back arrow: $top vs ${bar.bottom}", top >= bar.bottom && top < bar.bottom + 40.dp)
         compose.onNodeWithText("Autoplay").assertIsDisplayed()
 
         // The phone's Back closes the settings outright, from a list too (Drew's call).
