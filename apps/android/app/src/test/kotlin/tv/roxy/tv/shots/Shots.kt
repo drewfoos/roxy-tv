@@ -29,6 +29,14 @@ import tv.roxy.tv.player.PlayerControls
 import tv.roxy.tv.player.PlayerUiState
 import tv.roxy.tv.player.Sheet
 import tv.roxy.tv.ui.phone.ContinueRow
+import tv.roxy.tv.ui.tv.ContinueCard
+import tv.roxy.tv.ui.tv.TvDims
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import java.io.File
 
 /**
@@ -64,6 +72,29 @@ class Shots {
             }
         }
         shot("phone-continue-watching")
+    }
+
+    private val continueItems = listOf(
+        Item(id = "e2", type = "episode", title = "An Explosion for This Chunchunmaru!", seriesTitle = "KonoSuba – God's Blessing on This Wonderful World!", indexAired = 2, seasonAired = 1, runtimeMs = 1_440_000, userData = UserData(positionMs = 60_000)),
+        Item(id = "e7", type = "episode", title = "Dress", seriesTitle = "My Dress-Up Darling", indexAired = 7, seasonAired = 2, runtimeMs = 1_440_000, userData = UserData(positionMs = 900_000)),
+        Item(id = "m1", type = "movie", title = "Rascal Does Not Dream of a Dreaming Girl", year = 2019, runtimeMs = 5_400_000, userData = UserData(positionMs = 2_000_000)),
+    )
+
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvContinueWatching() {
+        compose.setContent {
+            val first = remember { FocusRequester() }
+            Box(Modifier.fillMaxSize().background(Color(0xFF101014)).padding(start = 40.dp, top = 60.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                    continueItems.forEachIndexed { i, it ->
+                        ContinueCard(it, app.api, width = TvDims.ContinueCardWidth, onClick = {}, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier)
+                    }
+                }
+            }
+            LaunchedEffect(Unit) { first.requestFocus() }
+        }
+        compose.waitForIdle()
+        shot("tv-continue-watching")
     }
 
     private val noActions = object : PlayerActions {

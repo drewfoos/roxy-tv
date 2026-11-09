@@ -178,6 +178,52 @@ export function PosterTile({ item, width = 200 }: { item: Item; width?: number }
  * a mouse, resting on it slides the same dark panel as the title cards over it: the show,
  * "E2 — Title", the air date, the synopsis, then "Continue E2" and the three-dot menu.
  */
+/**
+ * Continue Watching's card (Crunchyroll's, as in the apps): everything on the picture,
+ * darkened along the bottom: a play button at the bottom-left beside the show's name and
+ * "Episode N", what is left at the right of that line, the menu at the top-right and the
+ * progress bar along the bottom edge. Square corners: the bar runs edge to edge.
+ */
+export function ContinueTile({ item, width = 420 }: { item: Item; width?: number }) {
+  const movie = isMovie(item)
+  const url = movie ? (api.imageUrl(item, 'backdrop', px(width)) ?? api.imageUrl(item, 'poster', px(width))) : api.imageUrl(item, 'thumb', px(width))
+  const [played, setPlayed] = useWatchedState(item)
+  const shown = useMemo(() => withPlayed(item, played), [item, played])
+  const left = timeLeftLabel(shown)
+  const name = movie ? item.title : (item.seriesTitle ?? item.title)
+  return (
+    <div className="card ctile">
+      <Link to={itemPath(item)} className="card__art card__art--thumb ctile__art">
+        <Art url={url} title="" />
+        <div className="ctile__shade" />
+        <div className="ctile__foot">
+          <span className="ctile__play">
+            <IconPlay size={22} />
+          </span>
+          <span className="ctile__text">
+            <span className="ctile__name">{name}</span>
+            <span className="ctile__line">
+              <span className="ctile__ep">{continueLine(item)}</span>
+              {left && <span className="ctile__left">{left}</span>}
+            </span>
+          </span>
+        </div>
+        <ProgressBar item={shown} />
+      </Link>
+      <span className="ctile__menu">
+        <CardMenu item={item} played={played} onPlayedChange={setPlayed} />
+      </span>
+    </div>
+  )
+}
+
+/** "Episode 2" and nothing else (no season, no title, specials alike); nothing for a film. */
+export function continueLine(item: Item): string {
+  if (isMovie(item)) return ''
+  const n = item.indexAired ?? item.indexAbsolute
+  return n != null ? `Episode ${n}` : ''
+}
+
 export function ThumbTile({ item, width = 320, big = false }: { item: Item; width?: number; big?: boolean }) {
   const movie = isMovie(item)
   const url = movie ? (api.imageUrl(item, 'backdrop', px(width)) ?? api.imageUrl(item, 'poster', px(width))) : api.imageUrl(item, 'thumb', px(width))

@@ -1143,3 +1143,17 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .page-error { max-width: 640px; margin: 120px auto 0; padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }
 .page-error h1 { font-size: 24px; }
 .page-error__actions { display: flex; gap: 12px; }
+
+/* ---- Continue Watching (ContinueTile, as in the apps): all on the picture, square ---- */
+.ctile .ctile__art, .ctile .card__art--thumb { border-radius: 0; }
+.ctile__shade { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.35) 0%, transparent 25%, transparent 45%, rgba(0, 0, 0, 0.85) 100%); pointer-events: none; }
+.ctile__foot { position: absolute; left: 12px; right: 10px; bottom: 14px; display: flex; align-items: center; gap: 12px; color: #fff; }
+.ctile__play { flex: none; width: 44px; height: 44px; border-radius: 50%; background: rgba(26, 26, 26, 0.8); display: grid; place-items: center; }
+.ctile__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ctile__name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctile__line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.ctile__ep { flex: 1; min-width: 0; font-size: 13px; color: #d0d0d0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctile__left { flex: none; font-size: 12px; font-weight: 600; background: rgba(0, 0, 0, 0.8); padding: 2px 6px; }
+.ctile__menu { position: absolute; top: 8px; right: 6px; color: #fff; }
+.ctile__menu button { color: #fff; }
+

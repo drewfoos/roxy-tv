@@ -431,6 +431,44 @@ fun UrlPosterCard(title: String, url: String?, width: Dp, captionHeight: Dp, onC
 }
 
 /**
+ * Continue Watching's card, as on the phone (Crunchyroll's): everything on the picture,
+ * darkened along the bottom: a play mark at the bottom-left beside the show's name and
+ * "Episode N", what is left at the right of that line, the progress bar along the bottom
+ * edge. Square, with the TV's accent frame when focused.
+ */
+@Composable
+fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null) {
+    val imageType = if (item.isEpisode) "thumb" else "backdrop"
+    val url = api.imageUrl(item, imageType, widthPx(width)) ?: api.imageUrl(item, "backdrop", widthPx(width)) ?: api.imageUrl(item, "poster", widthPx(width))
+    TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick) {
+        Box(modifier = Modifier.width(width).aspectRatio(16f / 9f)) {
+            RoxyImage(url, cardTitle(item), modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
+            Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xE0000000))))
+            Row(modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(34.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xCC1A1A1A)), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                }
+                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(if (item.isMovie) item.title else item.seriesTitle ?: item.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(tv.roxy.tv.ui.phone.continueLine(item), color = Color(0xFFD0D0D0), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 6.dp))
+                        timeLeft(item)?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.background(Color(0xCC000000)).padding(horizontal = 5.dp, vertical = 2.dp)) }
+                    }
+                }
+            }
+            item.progressFraction?.takeIf { it < 1f }?.let { ProgressBar(it, modifier = Modifier.align(Alignment.BottomCenter)) }
+        }
+    }
+}
+
+/** "23m left", from the saved position; null when nothing is started. */
+fun timeLeft(item: Item): String? {
+    val pos = item.userData?.positionMs?.takeIf { it > 0 } ?: return null
+    val len = item.runtimeMs?.takeIf { it > pos } ?: return null
+    return "${((len - pos) / 60000L + 1).coerceAtLeast(1)}m left"
+}
+
+/**
  * A 16:9 card: the episode's still (or a title's key art), the minutes badge and progress
  * bar on the picture, then a caption with the title and [secondLine] ("CONTINUE: E2",
  * "E2 - 10/27/2026"). [titleLines] is 1 on Home's Continue Watching row and 2 in grids.
@@ -512,7 +550,9 @@ fun TvRow(
                 // Hold OK: the page decides (the options menu for episodes, the Watchlist for a
                 // show or film poster).
                 val held: (() -> Unit)? = if (onLongClick != null && (item.isPlayable || item.isSeries)) remember(item) { { longClick?.invoke(item); Unit } } else null
-                if (thumbs || item.isEpisode) {
+                if (thumbs) {
+                    ContinueCard(item, api, width = TvDims.ContinueCardWidth, onClick = clicked, modifier = focusMod, onFocused = focused, onLongClick = held)
+                } else if (item.isEpisode) {
                     ThumbCard(item, api, width = TvDims.ContinueCardWidth, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueLabel(item), onClick = clicked, modifier = focusMod, onFocused = focused, onLongClick = held)
                 } else {
                     PosterCard(item, api, width = TvDims.PosterCardWidth, captionHeight = TvDims.PosterCaption, onClick = clicked, modifier = focusMod, onFocused = focused, onLongClick = held)

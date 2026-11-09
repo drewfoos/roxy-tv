@@ -7,7 +7,7 @@ import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { Hero, type HeroPick } from '../components/Hero'
-import { Row, ThumbTile, TitleCard } from '../components/Cards'
+import { ContinueTile, Row, ThumbTile, TitleCard } from '../components/Cards'
 import { RowSkeleton, Spinner } from '../components/Skeleton'
 import { WitchHat } from '../components/Icons'
 
@@ -109,7 +109,7 @@ export function Home() {
           {cont && (
             <Row title="Continue Watching" thumbs>
               {cont.items.map((it) => (
-                <ThumbTile key={it.id} item={it} width={420} big />
+                <ContinueTile key={it.id} item={it} width={420} />
               ))}
             </Row>
           )}
