@@ -4,16 +4,22 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Watch progress, from the player to the server (or the offline queue): what a report says
- * (position, how long ago it was reached, tracks, the version and its length) and how it
- * goes (one at a time in call order, a minute's rest while the server is away, the offline
- * queue first, queued when it fails). It lived inside PlayerSession; here it is one tested
- * path (ProgressReporterTest), with the server and queue behind [Sink].
+ * Watch progress, from the player to the server: what a report says (position, how long
+ * ago it was reached, tracks, the version and its length) and how it goes.
  *
- * The sending runs on [queue] (on the app's scope, so a final report outlives the player),
- * in the order the methods were called, whatever thread or dispatcher.
+ * Every report and watched mark is written to the durable queue first, at once, in the
+ * order the methods are called ([Sink.persist]); a sender then drains that queue to the
+ * server ([Sink.drain]). So:
+ * - a report made just before Android kills the app is sent on the next start (it used to
+ *   live in memory until its turn came);
+ * - a slow or stalled request holds up nothing that piles up: the queue keeps one entry
+ *   per item (the newest), a watched mark ahead of what came after it, and at most one
+ *   drain runs with one more waiting;
+ * - the order is the queue's order, fixed by the caller, whatever thread or dispatcher.
+ * A minute's rest follows a failure to reach the server (not one it answered).
  */
 class ProgressReporter(
     private val sink: Sink,
@@ -23,16 +29,14 @@ class ProgressReporter(
     /** Wall-clock milliseconds: the minute's rest while the server is away. */
     private val wallNow: () -> Long = System::currentTimeMillis,
 ) {
-    /** The server and the offline queue, as the reporter uses them (a fake in tests). */
+    /** The durable queue and the server, as the reporter uses them (a fake in tests). */
     interface Sink {
-        /** POST /v1/me/progress. Throws on failure; [ServerAnswered] when the server answered with an error. */
-        suspend fun progress(r: Report)
-        suspend fun markPlayed(itemId: String)
-        fun isDownload(itemId: String): Boolean
-        fun hasPending(itemId: String): Boolean
-        suspend fun syncPending()
-        fun queue(r: Report, sent: Boolean)
-        fun queuePlayed(itemId: String, sent: Boolean)
+        /** Queue a report (durably, now). */
+        fun persist(r: Report)
+        /** Queue a watched mark (durably, now). */
+        fun persistPlayed(itemId: String)
+        /** Send the queue, oldest first; null when it was all sent, else the failure that stopped it. */
+        suspend fun drain(): Throwable?
         /** Lists and menus on screen reload (the watched state may have changed). */
         fun userDataChanged()
         /** The server answered (with an error): it is not away. */
@@ -49,16 +53,21 @@ class ProgressReporter(
         this(sink, SendQueue(scope), monoNow, wallNow)
 
     /**
-     * Watch-state calls go to the server one at a time, in the order they were made. Moving
-     * on to the next episode sends "E1 is at 6:18" and "E1 is watched" together; if the
-     * watched mark landed first, the late position turned E1 into a watched episode that is
-     * also part-way through. Each call puts its work on this queue at once (the order is
-     * fixed there, by the caller); one consumer sends it. A lock alone kept them one at a
-     * time but left their order to the dispatcher. One queue for every player (the phone
-     * page replaces one player with the next): [app].
+     * Runs the drains, one at a time, in order. A drain asked for while one is already
+     * waiting is the same drain (it sends whatever is queued when it runs), so a stall
+     * never stacks them up. One for the process (the phone page replaces one player with
+     * the next): [app].
      */
     class SendQueue(scope: CoroutineScope) {
         private val ops = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+        private val waiting = AtomicBoolean(false)
+        /**
+         * An end, a stop or a watched mark has been queued: lists reload once a drain that
+         * started after it has sent everything. Shared (one drain sends every player's
+         * entries) and taken when a drain starts: taken when one finished, a drain already
+         * under way used it up before the mark it was for had gone.
+         */
+        internal val refresh = AtomicBoolean(false)
 
         init {
             scope.launch {
@@ -71,7 +80,11 @@ class ProgressReporter(
             }
         }
 
-        fun enqueue(op: suspend () -> Unit) { ops.trySend(op) }
+        /** Run [drain] soon, unless a drain is already waiting to run. */
+        fun drainSoon(drain: suspend () -> Unit) {
+            if (!waiting.compareAndSet(false, true)) return
+            ops.trySend { waiting.set(false); drain() }
+        }
 
         companion object {
             @Volatile private var shared: SendQueue? = null
@@ -107,8 +120,8 @@ class ProgressReporter(
     }
 
     /**
-     * Report [posSec] for [itemId]. Returns what is sent, or null when nothing is (no
-     * position, position 0, a tick with no change). The sending happens on the scope.
+     * Report [posSec] for [itemId]: queued now, sent soon. Returns the report, or null when
+     * nothing is reported (position 0, a tick with no change).
      */
     fun report(reason: String, itemId: String, posSec: Double, audioIndex: Int?, subtitleIndex: Int?, sourceId: String?, durationMs: Long?): Report? {
         val positionMs = (posSec * 1000).toLong()
@@ -120,45 +133,36 @@ class ProgressReporter(
         // How long ago this position was reached (or the tracks picked): a player left paused
         // that reports on closing is older than an episode finished on another device since.
         val r = Report(reason, itemId, positionMs, audioIndex, subtitleIndex, monoNow() - lastPosAt, sourceId, durationMs)
-        queue.enqueue { send(r) }
+        sink.persist(r)
+        if (reason == "stop" || reason == "end") queue.refresh.set(true)
+        queue.drainSoon(::drain)
         return r
     }
 
-    private suspend fun send(r: Report) {
-        // While the server is unreachable (playing a download away from home) skip the
-        // network for a minute at a time instead of timing out on every tick.
-        val skip = wallNow() < serverDownUntil
-        // A "watched" mark from offline goes before this report, or this newer report would
-        // make the server drop it as older.
-        if (!skip && sink.hasPending(r.itemId)) sink.syncPending()
-        val ok = !skip && runCatching { sink.progress(r) }
-            // Cancelled (the sending stopped mid-request) is not the server failing: no
-            // queueing, no minute's rest. runCatching catches it like any other exception.
-            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
-            .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", r.reason, r.itemId, r.positionMs, r.audioIndex, r.subtitleIndex) }
-            .onFailure {
-                Timber.w("progress %s item=%s pos=%dms failed: %s", r.reason, r.itemId, r.positionMs, it.message)
-                if (!sink.answered(it)) serverDownUntil = wallNow() + SERVER_AWAY_REST_MS
-            }
-            .isSuccess
-        // Downloaded items keep their position locally too (Downloads page offline); a failed
-        // report is queued and replayed when the server is back. A success clears this item's
-        // queued one, so an older position never replays over it.
-        if (sink.isDownload(r.itemId) || !ok || sink.hasPending(r.itemId)) sink.queue(r, sent = ok)
-        // The server answers again: send what was saved while it was away.
-        if (ok) sink.syncPending()
-        // Watched state may have changed (finished, or a rewatch made it "in progress"):
-        // every list and menu on screen reloads, like a menu action.
-        if (ok && (r.reason == "stop" || r.reason == "end")) sink.userDataChanged()
+    /** [itemId] is finished (moving on to the next episode): queued after any report made before it. */
+    fun markWatched(itemId: String) {
+        sink.persistPlayed(itemId)
+        queue.refresh.set(true)
+        queue.drainSoon(::drain)
     }
 
-    /** [itemId] is finished (moving on to the next episode): after any report made before it. */
-    fun markWatched(itemId: String) {
-        queue.enqueue {
-            val ok = wallNow() >= serverDownUntil && runCatching { sink.markPlayed(itemId) }
-                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.isSuccess
-            if (ok) sink.userDataChanged()
-            if (sink.isDownload(itemId) || !ok || sink.hasPending(itemId)) sink.queuePlayed(itemId, sent = ok)
+    private suspend fun drain() {
+        // While the server is unreachable (playing a download away from home) leave the
+        // network alone for a minute at a time instead of timing out on every tick; what is
+        // queued goes with the next report after it (or when the server is back).
+        if (resting()) return
+        // Taken before the queue is read: what set it is in what this drain sends.
+        val refresh = queue.refresh.getAndSet(false)
+        val failure = try { sink.drain() } catch (e: kotlinx.coroutines.CancellationException) { if (refresh) queue.refresh.set(true); throw e }
+        when {
+            failure == null -> if (refresh) sink.userDataChanged()
+            else -> {
+                if (refresh) queue.refresh.set(true) // not all sent: the next drain refreshes
+                if (!sink.answered(failure)) {
+                    Timber.w("progress: server away (%s); resting a minute", failure.message)
+                    serverDownUntil = wallNow() + SERVER_AWAY_REST_MS
+                }
+            }
         }
     }
 }

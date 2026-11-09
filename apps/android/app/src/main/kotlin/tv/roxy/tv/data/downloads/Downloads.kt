@@ -13,6 +13,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -90,15 +91,43 @@ data class PendingProgress(
 )
 
 /**
- * The queue after recording [next] for one item: it replaces what was queued for the item,
- * except a "watched" mark not yet sent, which stays (and goes first) when [next] is plain
- * progress. Finishing an episode offline and opening it again for a few seconds used to
- * replace the mark, and the server never learned it was finished. A report the server took
- * ([sent]) is not queued.
+ * The queue after recording [next] for one item: one entry per item and kind. A position
+ * replaces the item's queued position; a "watched" mark replaces its queued mark. So a mark
+ * not yet sent stays (and goes first) when the episode is opened again (finishing it
+ * offline and reopening it for a few seconds used to lose the mark), and a mark keeps the
+ * report queued before it (the "end" of moving on, with its subtitle choice and version,
+ * was wiped by the mark that followed). A report the server took ([sent]) is not queued.
  */
 fun pendingAfter(queue: List<PendingProgress>, profile: String?, itemId: String, sent: Boolean, next: PendingProgress): List<PendingProgress> {
-    val kept = queue.filterNot { it.itemId == itemId && it.profileId == profile && !(it.played && !next.played) }
+    val kept = queue.filterNot { it.itemId == itemId && it.profileId == profile && it.played == next.played }
     return if (sent) kept else kept + next
+}
+
+/** How long an entry the server keeps refusing (a 500, say) is retried before it is let go. */
+const val PENDING_REFUSED_KEEP_MS = 24 * 60 * 60 * 1000L
+
+/**
+ * Send [entries] in order. A failure to reach the server (no answer) stops the drain: the
+ * rest waits for the next one. An answer refusing one entry does not hold up the others
+ * (every report goes through this queue; one stuck entry stopped all watch progress): a
+ * 4xx that will never succeed is dropped, another refusal is kept and retried, for a day.
+ * Returns null when all were sent, else the failure that stopped it or the last refusal.
+ */
+suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspend (PendingProgress) -> Unit, remove: (PendingProgress) -> Unit): Throwable? {
+    var refused: Throwable? = null
+    for (p in entries) {
+        val failure = runCatching { send(p) }.exceptionOrNull()
+        if (failure is kotlinx.coroutines.CancellationException) throw failure
+        when {
+            failure == null -> remove(p)
+            failure !is tv.roxy.tv.api.ApiException -> return failure // the server away: stop here
+            failure.isUnauthorized -> return failure // signed out: nothing else will go either
+            failure.code in 400..499 -> remove(p) // will never succeed (the title was deleted meanwhile)
+            now - p.at > PENDING_REFUSED_KEEP_MS -> { remove(p); refused = failure }
+            else -> refused = failure
+        }
+    }
+    return refused
 }
 
 @Serializable
@@ -335,23 +364,32 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         return _index.value.pendingProgress.any { it.itemId == itemId && it.profileId == profile }
     }
 
-    /** Replay positions (and "watched" marks) recorded offline. Only the active profile's are sent (the header is per request). */
-    suspend fun syncProgress(api: RoxyApi) {
+    /**
+     * Send the queued positions and "watched" marks, oldest first (every report goes through
+     * here: see ProgressReporter). Only the active profile's are sent (the header is per
+     * request). Returns null when the queue was sent, or the failure that stopped it (the
+     * rest stays queued).
+     */
+    suspend fun syncProgress(api: RoxyApi): Throwable? = syncLock.withLock {
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
-        for (p in mine) {
-            // Sent as an age by this device's clock (both times are this clock's, so a clock
-            // set wrong cancels out); at stays for an older server.
-            val age = (System.currentTimeMillis() - p.at).coerceAtLeast(0)
-            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age) else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs) }
-            result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
-            // A 4xx (the title was deleted meanwhile) will never succeed: drop it rather than block the rest.
-            val rejected = (result.exceptionOrNull() as? tv.roxy.tv.api.ApiException)?.let { it.code in 400..499 && !it.isUnauthorized } == true
-            if (result.isFailure && !rejected) return
-            _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
-            Timber.i("synced offline progress item=%s pos=%dms", p.itemId, p.positionMs)
-        }
+        drainPending(mine, System.currentTimeMillis(),
+            send = { p ->
+                // Sent as an age by this device's clock (both times are this clock's, so a clock
+                // set wrong cancels out); at stays for an older server.
+                val age = (System.currentTimeMillis() - p.at).coerceAtLeast(0)
+                if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age)
+                else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs)
+            },
+            remove = { p ->
+                _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
+                Timber.i("progress sent item=%s pos=%dms played=%s", p.itemId, p.positionMs, p.played)
+            },
+        )
     }
+
+    /** One drain at a time: the reporter's, the server coming back, the app starting (two at once sent entries twice). */
+    private val syncLock = kotlinx.coroutines.sync.Mutex()
 
     // ---- service helpers ----
 
