@@ -431,34 +431,20 @@ fun UrlPosterCard(title: String, url: String?, width: Dp, captionHeight: Dp, onC
 }
 
 /**
- * Continue Watching's card, as on the phone (Crunchyroll's): everything on the picture,
- * darkened along the bottom: a play mark at the bottom-left beside the show's name and
- * "Episode N", what is left at the right of that line, the progress bar along the bottom
- * edge. Square, with the TV's accent frame when focused.
+ * Continue Watching's card on the TV (Crunchyroll's TV app, not its phone app): the
+ * episode's still with the time ("23m left", "23m" when not started) and our blue progress
+ * bar on it, then the caption: the show's name and "CONTINUE: E2" or, for the next episode
+ * not started yet, "UP NEXT: E7".
  */
 @Composable
-fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null) {
-    val imageType = if (item.isEpisode) "thumb" else "backdrop"
-    val url = api.imageUrl(item, imageType, widthPx(width)) ?: api.imageUrl(item, "backdrop", widthPx(width)) ?: api.imageUrl(item, "poster", widthPx(width))
-    TvCard(onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick) {
-        Box(modifier = Modifier.width(width).aspectRatio(16f / 9f)) {
-            RoxyImage(url, cardTitle(item), modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
-            Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xE0000000))))
-            Row(modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(34.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xCC1A1A1A)), contentAlignment = Alignment.Center) {
-                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
-                }
-                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                    Text(if (item.isMovie) item.title else item.seriesTitle ?: item.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(tv.roxy.tv.ui.phone.continueLine(item), color = Color(0xFFD0D0D0), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 6.dp))
-                        minutesLabel(item)?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.background(Color(0xCC000000)).padding(horizontal = 5.dp, vertical = 2.dp)) }
-                    }
-                }
-            }
-            item.progressFraction?.takeIf { it < 1f }?.let { ProgressBar(it, modifier = Modifier.align(Alignment.BottomCenter)) }
-        }
-    }
+fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onFocused: (() -> Unit)? = null, onLongClick: (() -> Unit)? = null) =
+    ThumbCard(item, api, width = width, captionHeight = TvDims.ContinueCaption, titleLines = 1, secondLine = continueRowLabel(item), onClick = onClick, modifier = modifier, onFocused = onFocused, onLongClick = onLongClick)
+
+/** Continue Watching's action line: "CONTINUE: E2" part-way, "UP NEXT: E7" for one not started. */
+fun continueRowLabel(item: Item): String {
+    val code = episodeShort(item)
+    val verb = if ((item.userData?.positionMs ?: 0L) > 0) "CONTINUE" else "UP NEXT"
+    return if (code.isEmpty()) verb else "$verb: $code"
 }
 
 /**
