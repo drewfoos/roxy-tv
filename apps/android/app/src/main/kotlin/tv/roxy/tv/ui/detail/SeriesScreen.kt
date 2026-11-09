@@ -238,7 +238,15 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
         // Episode reads started after this point (a season picked while the page is read
         // again) are newer than anything this read would do to the episodes.
         val gen = episodesGen
-        viewModelScope.launch {
+        // Only the latest page read counts (back from the player, a watched mark, Try
+        // again: they overlap). The older one is cancelled; one whose answer comes anyway
+        // (an HTTP call does not stop mid-way) is dropped by its number, so an older season
+        // list or sections never replace newer ones. A Try again it replaces is carried
+        // over: the newer read's failure still brings the problem back.
+        val page = ++pageGen
+        if (onFailed != null) retryFailed = onFailed to gen
+        pageJob?.cancel()
+        pageJob = viewModelScope.launch {
             runCatching {
                 val series = api.item(seriesId)
                 // Specials (season 0) go last, like Jellyfin; regular seasons in order.
@@ -247,9 +255,11 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                 // In release order with the specials between the seasons and the franchise's
                 // films as entries of their own; the plain list from an older server.
                 val ordered = runCatching { sectionEntries(api.sections(seriesId), plain) }
-                    .onFailure { Timber.w(it, "sections") }.getOrNull()
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; Timber.w(it, "sections") }.getOrNull()
                 Triple(series, plain, ordered)
             }.onSuccess { (series, plain, ordered) ->
+                if (page != pageGen) return@launch // a newer page read is on its way or done
+                retryFailed = null
                 val seasons = ordered?.seasons ?: plain
                 sources = ordered?.sources ?: emptyMap()
                 // The entry on screen, by id: the list read again may be ordered differently
@@ -270,12 +280,15 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                 // Related titles do not change while you watch: once per page, not on every return.
                 if (!relatedLoaded) loadRelated()
             }.onFailure { t ->
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                if (page != pageGen) return@launch
+                val retry = retryFailed.also { retryFailed = null }
                 Timber.e(t, "series load failed")
                 // A reload that fails (back from the player during a Wi-Fi drop) keeps the
                 // page that is showing; only a first load turns into the error.
                 // A retry's failure brings its problem back, unless a season was picked
                 // meanwhile: that season's own read decides what the list says.
-                if (_state.value.series != null) { _state.value = _state.value.copy(loading = false); if (episodesGen == gen) onFailed?.invoke() }
+                if (_state.value.series != null) { _state.value = _state.value.copy(loading = false); retry?.let { (put, at) -> if (episodesGen == at) put() } }
                 else _state.value = SeriesUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this series"))
             }
         }
@@ -294,6 +307,7 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
     private fun loadUpNext(seasons: List<Item>) {
         val opening = firstLoad
         firstLoad = false
+        val mine = ++nextGen
         viewModelScope.launch {
             // The server works it out: the page used to load every episode of the show for it.
             val call = async { runCatching { api.next(seriesId) }.onFailure { Timber.w(it, "up next") }.getOrNull() }
@@ -308,7 +322,8 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                 }
             }
             // Play's target, whenever it comes (after the episodes when /next was slow).
-            _state.value = _state.value.copy(upNext = call.await())
+            val next = call.await()
+            if (mine == nextGen) _state.value = _state.value.copy(upNext = next)
         }
     }
 
@@ -337,6 +352,13 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
 
     private var userPicked = false
     private var episodesJob: Job? = null
+    /** Counts page reads started; only the latest one's answer is used (see [load]). */
+    private var pageGen = 0
+    private var pageJob: Job? = null
+    /** A Try again whose page read has not answered yet: what its failure puts back. */
+    private var retryFailed: Pair<() -> Unit, Int>? = null
+    /** Counts /next reads started; an older answer never replaces a newer one. */
+    private var nextGen = 0
     /** Counts episode reads started; see [load]. */
     private var episodesGen = 0
 

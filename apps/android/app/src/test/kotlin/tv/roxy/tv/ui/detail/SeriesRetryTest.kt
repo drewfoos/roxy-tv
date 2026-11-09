@@ -1,6 +1,5 @@
 package tv.roxy.tv.ui.detail
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -14,41 +13,11 @@ import org.junit.Before
 import org.junit.Test
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.ItemsResponse
-import tv.roxy.tv.api.RelatedEntry
 import tv.roxy.tv.api.Section
-import java.io.IOException
 
-/**
- * The series page's Try again against a server the test answers by hand: every call waits
- * until the test responds to it, so the order in which answers land is the test's choice.
- */
+/** The series page's Try again against [FakeSeriesServer], answered by hand. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SeriesRetryTest {
-    private class Server : SeriesSource {
-        val calls = mutableListOf<String>()
-        private val waiting = mutableMapOf<String, ArrayDeque<CompletableDeferred<Result<Any?>>>>()
-
-        @Suppress("UNCHECKED_CAST")
-        private suspend fun <T> call(key: String): T {
-            calls += key
-            val d = CompletableDeferred<Result<Any?>>()
-            waiting.getOrPut(key) { ArrayDeque() }.addLast(d)
-            return d.await().getOrThrow() as T
-        }
-
-        fun pending(key: String) = waiting[key]?.size ?: 0
-        fun answer(key: String, value: Any?) = waiting.getValue(key).removeFirst().complete(Result.success(value))
-        fun fail(key: String) = waiting.getValue(key).removeFirst().complete(Result.failure(IOException("network down")))
-
-        override suspend fun item(id: String): Item = call("item")
-        override suspend fun seasons(seriesId: String): List<Item> = call("seasons")
-        override suspend fun sections(seriesId: String): List<Section> = call("sections")
-        override suspend fun next(seriesId: String): Item? = call("next")
-        override suspend fun related(seriesId: String): List<RelatedEntry> = call("related")
-        override suspend fun extras(seriesId: String): List<Item> = call("extras")
-        override suspend fun episodes(parentId: String, recursive: Boolean): ItemsResponse = call("episodes:$parentId")
-    }
-
     private val show = Item(id = "show", type = "series", title = "Show")
     private val s1 = Item(id = "s1", type = "season", title = "Season 1", indexAired = 1)
     private val s2 = Item(id = "s2", type = "season", title = "Season 2", indexAired = 2)
@@ -59,7 +28,7 @@ class SeriesRetryTest {
     @After fun reset() = Dispatchers.resetMain()
 
     /** The page open on Season 1 whose episode read failed: the error with Try again is up. */
-    private fun failedOnSeason1(server: Server): SeriesViewModel {
+    private fun failedOnSeason1(server: FakeSeriesServer): SeriesViewModel {
         val vm = SeriesViewModel(server, "show", initial = show)
         vm.load()
         server.answer("item", show)
@@ -74,7 +43,7 @@ class SeriesRetryTest {
     // Episodes fail -> Try again -> Season 2 picked before the retry answers -> the retry's
     // page read lands: Season 2 stays picked and shown, read once, with no error.
     @Test fun retryLandingAfterASeasonPickLeavesThePick() {
-        val server = Server()
+        val server = FakeSeriesServer()
         val vm = failedOnSeason1(server)
         vm.retryEpisodes()
         vm.selectSeason(1)
@@ -95,7 +64,7 @@ class SeriesRetryTest {
 
     // Same, with Season 2's episodes still on their way when the retry's page read lands.
     @Test fun retryLandingBeforeThePickedSeasonsEpisodes() {
-        val server = Server()
+        val server = FakeSeriesServer()
         val vm = failedOnSeason1(server)
         vm.retryEpisodes()
         vm.selectSeason(1)
@@ -113,7 +82,7 @@ class SeriesRetryTest {
     // The retry's page read fails after the pick: Season 1's old error must not come back
     // over Season 2 (it did: the retry restored the problem it was retrying).
     @Test fun failedRetryAfterASeasonPickDoesNotBringBackTheOldError() {
-        val server = Server()
+        val server = FakeSeriesServer()
         val vm = failedOnSeason1(server)
         vm.retryEpisodes()
         vm.selectSeason(1)
@@ -128,7 +97,7 @@ class SeriesRetryTest {
 
     // ... and while Season 2 is still loading: it keeps loading (no error, no early stop).
     @Test fun failedRetryWhileThePickLoadsKeepsLoading() {
-        val server = Server()
+        val server = FakeSeriesServer()
         val vm = failedOnSeason1(server)
         vm.retryEpisodes()
         vm.selectSeason(1)
@@ -142,7 +111,7 @@ class SeriesRetryTest {
     // The retry alone (no pick) still works: a failed page read brings the error back, a
     // good one reads the episodes again.
     @Test fun retryWithoutAPick() {
-        val server = Server()
+        val server = FakeSeriesServer()
         val vm = failedOnSeason1(server)
         vm.retryEpisodes()
         server.fail("item")
@@ -159,7 +128,7 @@ class SeriesRetryTest {
     // The page read again answers with a different list (the release-order sections work
     // this time and put an OVA before Season 2): the season on screen stays the same one.
     @Test fun reorderedListKeepsTheSeasonOnScreen() {
-        val server = Server()
+        val server = FakeSeriesServer()
         val vm = failedOnSeason1(server)
         vm.selectSeason(1)
         server.answer("episodes:s2", eps("s2", 12))
