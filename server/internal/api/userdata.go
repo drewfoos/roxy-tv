@@ -98,6 +98,11 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		// does the same): the item's runtime is whichever version was scanned last, so a
 		// theatrical cut never reached 90% of the extended one's length.
 		SourceID string `json:"sourceId"`
+		// The length of what is playing (ms), as the player knows it. Used only when
+		// sourceId no longer names one of the item's versions (an offline report sent after
+		// the item was recreated: new item, new source ids): the version of that length is
+		// then taken, never the number itself.
+		DurationMs int64 `json:"durationMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ItemID == "" {
 		writeError(w, 400, "invalid request body")
@@ -126,10 +131,8 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	if it.RuntimeMs != nil {
 		runtime = *it.RuntimeMs
 	}
-	if body.SourceID != "" {
-		if src, err := s.store.GetSource(r.Context(), body.SourceID); err == nil && src != nil && src.ItemID == it.ID && src.DurationMs > 0 {
-			runtime = src.DurationMs
-		}
+	if d, ok := s.playedLength(r.Context(), it.ID, body.SourceID, body.DurationMs); ok {
+		runtime = d
 	}
 	played, minMs := playState(body.PositionMs, runtime)
 	// A replayed offline report (At set) from before the item's latest activity (finished
@@ -162,6 +165,38 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		slog.Info("playback finished", "user", p.User.Name, "item", it.Title, "positionMs", body.PositionMs)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// playedLength is the length of the version a report was made from: the source it names,
+// when that is one of the item's; else the item's version whose length matches the one
+// the player reported (within 5%, the closest); else none (the item's runtime decides).
+func (s *Server) playedLength(ctx context.Context, itemID, sourceID string, reportedMs int64) (int64, bool) {
+	if sourceID != "" {
+		if src, err := s.store.GetSource(ctx, sourceID); err == nil && src != nil && src.ItemID == itemID && src.DurationMs > 0 {
+			return src.DurationMs, true
+		}
+	}
+	if reportedMs <= 0 {
+		return 0, false
+	}
+	srcs, err := s.store.SourcesForItem(ctx, itemID)
+	if err != nil {
+		return 0, false
+	}
+	best, bestDiff := int64(0), int64(-1)
+	for _, src := range srcs {
+		if src.DurationMs <= 0 {
+			continue
+		}
+		diff := src.DurationMs - reportedMs
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff*20 <= src.DurationMs && (bestDiff < 0 || diff < bestDiff) {
+			best, bestDiff = src.DurationMs, diff
+		}
+	}
+	return best, best > 0
 }
 
 // playState is what a position means for an item [runtimeMs] long, after Jellyfin's

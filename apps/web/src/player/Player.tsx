@@ -199,9 +199,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const tracks = `${audioIndex}/${sub}`
       if (Math.abs(pos - lm.pos) > MOVED_SEC || tracks !== lm.tracks) lastMoved.current = { pos, at: mono, tracks }
       const ageMs = Math.max(0, Math.round(mono - lastMoved.current.at))
-      api.progress(item.id, positionMs, audioIndex ?? undefined, sub, ageMs, sourceId || undefined).catch(() => undefined)
+      api.progress(item.id, positionMs, audioIndex ?? undefined, sub, ageMs, sourceId || undefined, duration > 0 ? Math.round(duration * 1000) : undefined).catch(() => undefined)
     },
-    [item.id, absTime, audioIndex, subIndex, subsOn, sourceId],
+    [item.id, absTime, audioIndex, subIndex, subsOn, sourceId, duration],
   )
   // The start effect's cleanup sends the final report when the item changes or the player
   // closes. It runs from the closure made at mount, whose report still holds the tracks the

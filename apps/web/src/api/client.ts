@@ -272,8 +272,9 @@ export const api = {
   // ageMs: how long ago (this tab's clock) the position was reached, so a report from a tab
   // left paused cannot undo an episode finished on another device since.
   // sourceId: the version playing; its own length decides "watched".
-  progress: (itemId: string, positionMs: number, audioIndex?: number, subtitleIndex?: number, ageMs?: number, sourceId?: string) =>
-    request<void>('POST', '/v1/me/progress', { itemId, positionMs, audioIndex, subtitleIndex, ageMs, sourceId }, true, true),
+  // durationMs: its length, by which the server finds the version if sourceId is gone.
+  progress: (itemId: string, positionMs: number, audioIndex?: number, subtitleIndex?: number, ageMs?: number, sourceId?: string, durationMs?: number) =>
+    request<void>('POST', '/v1/me/progress', { itemId, positionMs, audioIndex, subtitleIndex, ageMs, sourceId, durationMs }, true, true),
   setPlayed: (itemId: string, on: boolean) => (on ? post<{ userData: UserData }>(`/v1/me/played/${itemId}`) : del<{ userData: UserData }>(`/v1/me/played/${itemId}`)),
   setFavorite: (itemId: string, on: boolean) => (on ? post<{ userData: UserData }>(`/v1/me/favorite/${itemId}`) : del<{ userData: UserData }>(`/v1/me/favorite/${itemId}`)),
 

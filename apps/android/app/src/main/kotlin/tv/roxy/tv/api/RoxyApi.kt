@@ -476,8 +476,8 @@ class RoxyApi(private val prefs: Prefs) {
      * paused, a report sent from the offline queue). The server orders reports by it, so a
      * stale one cannot undo what another device did since; [at] is for older servers.
      */
-    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null, sourceId: String? = null) {
-        val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at, ageMs, sourceId)
+    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null, sourceId: String? = null, durationMs: Long? = null) {
+        val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at, ageMs, sourceId, durationMs)
         postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body))
     }
 
@@ -1467,7 +1467,7 @@ data class WebhookEvent(val id: Long = 0, val at: String = "", val source: Strin
 data class WebhookEventsResponse(val events: List<WebhookEvent> = emptyList())
 
 @Serializable
-private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null, val at: Long? = null, val ageMs: Long? = null, val sourceId: String? = null)
+private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null, val at: Long? = null, val ageMs: Long? = null, val sourceId: String? = null, val durationMs: Long? = null)
 
 /**
  * Subtitle tracks as mpv will number them (1..N in container order; embedded first,

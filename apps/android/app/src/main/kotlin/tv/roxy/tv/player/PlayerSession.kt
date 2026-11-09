@@ -1263,6 +1263,9 @@ class PlayerSession(
         val ageMs = android.os.SystemClock.elapsedRealtime() - lastPosAt
         // The version playing: its own length decides "watched" on the server.
         val playingSource = sourceId
+        // And its length: if the item is recreated before an offline copy of this report is
+        // sent (new source ids), the server finds the version by it.
+        val playingMs = knownDuration()?.let { (it * 1000).toLong() }
         app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
         // A pause or stop is when the launcher's Watch Next row should show this title at this position.
         if (reason == "pause" || reason == "stop") {
@@ -1277,7 +1280,7 @@ class PlayerSession(
                 // A "watched" mark from offline goes before this report, or this newer
                 // report would make the server drop it as older.
                 if (!skip && app.downloads.hasPendingProgress(id)) app.downloads.syncProgress(app.api)
-                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex, ageMs = ageMs, sourceId = playingSource) }
+                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex, ageMs = ageMs, sourceId = playingSource, durationMs = playingMs) }
                     .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
                     .onFailure {
                         Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
@@ -1287,7 +1290,7 @@ class PlayerSession(
                 // Downloaded items keep their position locally too (Downloads page offline); a
                 // failed report is queued and replayed when the server is back. A success
                 // clears this item's queued one, so an older position never replays over it.
-                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex, ageMs = ageMs, sourceId = playingSource)
+                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex, ageMs = ageMs, sourceId = playingSource, durationMs = playingMs)
                 // The server answers again: send what was saved while it was away.
                 if (ok) app.downloads.syncProgress(app.api)
                 // Watched state may have changed (finished, or a rewatch made it "in
