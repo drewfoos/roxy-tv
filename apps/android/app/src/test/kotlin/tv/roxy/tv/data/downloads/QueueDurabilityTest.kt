@@ -113,6 +113,31 @@ class QueueDurabilityTest {
         assertEquals(listOf("e1:0:true"), queueOf(store(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))))
     }
 
+    // The same on real threads and real time (the store's own writer thread, no virtual
+    // clock, no bounded dispatcher), the retry shortened to 200 ms: refused for about 1.1 s,
+    // the attempts are one at once and then about one per interval, not a burst; then the
+    // queue goes down on the next try and the attempts stop.
+    @Test fun sustainedFailureOnRealThreads() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val d = Downloads(context, Prefs(context, scope), scope, journalRetryMs = 200)
+        runBlocking { d.awaitQueueWritten() }
+        val blocker = File(context.filesDir, "progress-queue.json.tmp").apply { mkdirs() }
+        val start = d.journalWriteAttempts.get()
+        d.recordProgress("e1", 0, reportedToServer = false, played = true)
+        Thread.sleep(1_100)
+        val tries = d.journalWriteAttempts.get() - start
+        assertTrue("about one at once and one per 200 ms over 1.1 s (6), not a burst: $tries", tries in 4..8)
+        assertTrue(d.queueWriteFailed)
+        blocker.deleteRecursively()
+        Thread.sleep(500)
+        assertFalse("recovered on the next try", d.queueWriteFailed)
+        val settled = d.journalWriteAttempts.get()
+        Thread.sleep(600)
+        assertEquals("no more tries once it went down", settled, d.journalWriteAttempts.get())
+        scope.cancel()
+        assertEquals(listOf("e1:0:true"), queueOf(store(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))))
+    }
+
     /** A dispatcher that runs at most [max] tasks (on [inner]'s virtual clock) and drops the rest. */
     @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
     private class Bounded(private val inner: kotlinx.coroutines.CoroutineDispatcher, private val max: Int) : kotlinx.coroutines.CoroutineDispatcher(), kotlinx.coroutines.Delay {
@@ -124,4 +149,3 @@ class QueueDurabilityTest {
             (inner as kotlinx.coroutines.Delay).scheduleResumeAfterDelay(timeMillis, continuation)
     }
 }
-

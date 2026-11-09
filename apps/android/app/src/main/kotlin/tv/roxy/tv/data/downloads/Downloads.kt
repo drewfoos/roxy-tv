@@ -168,6 +168,8 @@ class Downloads(
     /** The journal's writer (tests: a dispatcher on a virtual clock). One at a time, in order. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     journalDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
+    /** How soon a failed journal write is tried again (tests: shorter, on real threads). */
+    private val journalRetryMs: Long = JOURNAL_RETRY_MS,
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
@@ -419,7 +421,7 @@ class Downloads(
     private fun retryLater() {
         if (!queueRetryWaiting.compareAndSet(false, true)) return
         journalScope.launch {
-            kotlinx.coroutines.delay(JOURNAL_RETRY_MS)
+            kotlinx.coroutines.delay(journalRetryMs)
             queueRetryWaiting.set(false)
             writeQueue()
         }
