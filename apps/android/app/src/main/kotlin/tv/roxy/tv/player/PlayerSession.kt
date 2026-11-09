@@ -12,8 +12,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import tv.roxy.tv.tv.WatchNext
 import tv.roxy.tv.RoxyApp
@@ -149,15 +147,6 @@ class PlayerSession(
          */
         fun stillAtEnd(pos: Double?, dur: Double?): Boolean = dur == null || pos == null || pos >= dur - END_MARGIN_S
 
-        /**
-         * Watch-state calls go to the server one at a time, in the order they were made.
-         * Moving on to the next episode sends "E1 is at 6:18" and "E1 is watched" together;
-         * if the watched mark landed first, the late position turned E1 into a watched
-         * episode that is also part-way through (Continue Watching showed it as watched).
-         * app.scope runs launches at once on the main thread, so each takes the lock in
-         * call order, and the lock is first come, first served.
-         */
-        private val reportLock = Mutex()
         private const val AUTO_HIDE_MS = 4000L
         /** How long the end of a file waits for the next-episode lookup before closing. */
         const val END_WAIT_MS = 8_000L
@@ -264,8 +253,6 @@ class PlayerSession(
      * the start and no segment is offered.
      */
     @Volatile private var pendingStart: Double? = null
-    private var lastReportedMs = -1L
-    @Volatile private var serverDownUntil = 0L
     @Volatile var destroyed = false; private set
 
     // Next-episode queue (Netflix): resolved in the background once an episode starts;
@@ -291,14 +278,9 @@ class PlayerSession(
     private val endReported get() = life.ended
     // When the position last moved (or tracks were picked), by the monotonic clock: a report's
     // age (see reportProgress). Reset per item.
-    private var lastPosSec: Double? = null
-    private var lastPosAt = android.os.SystemClock.elapsedRealtime()
-    private var lastAudio: Int? = null
-    private var lastSub: Int? = null
+    private val reporter = ProgressReporter(AppProgressSink(app), app.scope, monoNow = { android.os.SystemClock.elapsedRealtime() })
 
-    private fun notePosition(pos: Double) {
-        if (positionMoved(lastPosSec, pos)) { lastPosSec = pos; lastPosAt = android.os.SystemClock.elapsedRealtime() }
-    }
+    private fun notePosition(pos: Double) = reporter.notePosition(pos)
 
     private var endWaitJob: Job? = null
     var nextCard by mutableStateOf<NextCard?>(null); private set
@@ -734,7 +716,7 @@ class PlayerSession(
         // it reopened the NEW episode at the old one's position (and saved it there).
         reconnectJob?.cancel(); waitJob?.cancel()
         flashOsd(null)
-        lastPosSec = null; lastPosAt = android.os.SystemClock.elapsedRealtime(); lastAudio = null; lastSub = null
+        reporter.newItem()
         seekReportJob?.cancel()
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
         life.startNext() // ends any reconnect or wait: they belonged to the item left behind
@@ -745,7 +727,6 @@ class PlayerSession(
         local = req.local
         title = req.title
         subtitleLine = req.subtitleLine
-        lastReportedMs = -1
         savedSubsOff = req.item.userData?.subtitleIndex == -1
         skipped.clear()
         segments = emptyList()
@@ -760,13 +741,7 @@ class PlayerSession(
     private fun markWatched(id: String) {
         if (!app.prefs.session.value.isLoggedIn) return
         app.scope.launch { WatchNext.remove(app, id) }
-        app.scope.launch {
-            reportLock.withLock {
-                val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true, ageMs = 0) }.isSuccess
-                if (ok) app.items.userDataChanged()
-                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
-            }
-        }
+        reporter.markWatched(id)
     }
 
     // ---- the end, and connections that end early ----
@@ -1223,7 +1198,7 @@ class PlayerSession(
         }
     }
 
-    /** POST /v1/me/progress with the current position. Runs on the app scope so a final report survives the host. */
+    /** POST /v1/me/progress with the current position (see ProgressReporter). Its sending runs on the app scope, so a final report survives the host. */
     fun reportProgress(reason: String, atSec: Double? = null) {
         val id = itemId ?: return
         if (!app.prefs.session.value.isLoggedIn) return
@@ -1231,11 +1206,6 @@ class PlayerSession(
         // caller that names the position (a reconnect of the new file) may report.
         if (changingItem && atSec == null) return
         val pos = reportPosition(atSec, reloadTarget, pendingStart, runCatching { player.timePosSeconds() }.getOrNull()) ?: return
-        val positionMs = (pos * 1000).toLong()
-        notePosition(pos)
-        if (positionMs <= 0) return
-        if (reason == "tick" && positionMs == lastReportedMs) return
-        lastReportedMs = positionMs
         val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
         // Subtitles the viewer turned off (here or on an earlier watch) are reported as -1,
         // so the next start honours it. No track because the language policy chose none is
@@ -1247,46 +1217,14 @@ class PlayerSession(
                 else -> null
             }
         }.getOrNull()
-        if (audioIndex != lastAudio || subIndex != lastSub) { lastAudio = audioIndex; lastSub = subIndex; lastPosAt = android.os.SystemClock.elapsedRealtime() }
-        // How long ago this position was reached (or the tracks picked): a player left paused
-        // that reports on closing is older than an episode finished on another device since.
-        val ageMs = android.os.SystemClock.elapsedRealtime() - lastPosAt
-        // The version playing: its own length decides "watched" on the server.
-        val playingSource = sourceId
-        // And its length: if the item is recreated before an offline copy of this report is
-        // sent (new source ids), the server finds the version by it.
-        val playingMs = knownDuration()?.let { (it * 1000).toLong() }
-        app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
+        // The version playing and its length: the server decides "watched" by them, and finds
+        // the version by its length when an offline copy is sent after the item was recreated.
+        val r = reporter.report(reason, id, pos, audioIndex, subIndex, sourceId, knownDuration()?.let { (it * 1000).toLong() }) ?: return
+        app.remote.reportState(id, title, r.positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
         // A pause or stop is when the launcher's Watch Next row should show this title at this position.
         if (reason == "pause" || reason == "stop") {
             val durationMs = (ui.durationSec * 1000).toLong()
-            app.scope.launch { (app.items[id] ?: runCatching { app.api.item(id) }.getOrNull())?.let { WatchNext.publish(app, it, positionMs, durationMs) } }
-        }
-        app.scope.launch {
-            reportLock.withLock {
-                // While the server is unreachable (playing a download away from home) skip the
-                // network for a minute at a time instead of timing out on every tick.
-                val skip = System.currentTimeMillis() < serverDownUntil
-                // A "watched" mark from offline goes before this report, or this newer
-                // report would make the server drop it as older.
-                if (!skip && app.downloads.hasPendingProgress(id)) app.downloads.syncProgress(app.api)
-                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex, ageMs = ageMs, sourceId = playingSource, durationMs = playingMs) }
-                    .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
-                    .onFailure {
-                        Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
-                        if (it !is tv.roxy.tv.api.ApiException) serverDownUntil = System.currentTimeMillis() + 60_000
-                    }
-                    .isSuccess
-                // Downloaded items keep their position locally too (Downloads page offline); a
-                // failed report is queued and replayed when the server is back. A success
-                // clears this item's queued one, so an older position never replays over it.
-                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex, ageMs = ageMs, sourceId = playingSource, durationMs = playingMs)
-                // The server answers again: send what was saved while it was away.
-                if (ok) app.downloads.syncProgress(app.api)
-                // Watched state may have changed (finished, or a rewatch made it "in
-                // progress"): every list and menu on screen reloads, like a menu action.
-                if (ok && (reason == "stop" || reason == "end")) app.items.userDataChanged()
-            }
+            app.scope.launch { (app.items[id] ?: runCatching { app.api.item(id) }.getOrNull())?.let { WatchNext.publish(app, it, r.positionMs, durationMs) } }
         }
     }
 
