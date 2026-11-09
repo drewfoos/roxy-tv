@@ -210,7 +210,9 @@ fun ContinueRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) 
 @Composable
 private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
     val isMovie = item.isMovie
-    Box(modifier = Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
+    // Square corners: the progress bar runs along the bottom edge, and rounded corners
+    // clipped its ends.
+    Box(modifier = Modifier.width(width).aspectRatio(16f / 9f).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
         val px = widthPx(width) * 2
         val url = if (isMovie) api.imageUrl(item, "backdrop", px) ?: api.imageUrl(item, "poster", px) else api.imageUrl(item, "thumb", px)
         RoxyImage(url, item.seriesTitle ?: item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
@@ -241,13 +243,13 @@ private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Uni
 }
 
 /**
- * The second line of a Continue Watching card (Crunchyroll's): "Episode 2", no season and
- * no episode title; "Special 3" in the specials; a film's year and "Movie".
+ * The second line of a Continue Watching card: "Episode 2" and nothing else (no season, no
+ * episode title, specials alike); empty for a film, which has no episode.
  */
 fun continueLine(item: Item): String {
-    if (item.isMovie) return listOfNotNull(item.year?.toString(), "Movie").joinToString("  ·  ")
-    val n = item.indexAired ?: item.indexAbsolute ?: return item.title
-    return if (item.seasonAired == 0) "Special $n" else "Episode $n"
+    if (!item.isEpisode) return ""
+    val n = item.indexAired ?: item.indexAbsolute ?: return ""
+    return "Episode $n"
 }
 
 /** Translucent ring with a play triangle, drawn over thumbnails. */
