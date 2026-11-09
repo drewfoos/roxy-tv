@@ -88,10 +88,23 @@ try {
   // film was marked watched at the stream header's duration and autoplay moved on. It must
   // say the connection keeps dropping, save where it got to, and stay on the film.
   const url = page.url()
+  // The cut command fails when no remux is running at that moment (the reopened one not
+  // started yet, or the player already gave up): retry briefly, then judge what is shown.
+  const cutNow = async () => {
+    for (let i = 0; i < 10; i++) {
+      try {
+        execSync(process.env.CUT_CMD, { stdio: 'ignore' })
+        return true
+      } catch {
+        await page.waitForTimeout(500)
+      }
+    }
+    return false
+  }
   for (let cuts = 2; cuts <= 8; cuts++) {
     const before = remux.length
     await page.waitForTimeout(2000)
-    execSync(process.env.CUT_CMD, { stdio: 'inherit' })
+    if (!(await cutNow()) && (await page.locator('text=keeps dropping').count()) === 0) fail('no stream to cut, and the player said nothing')
     await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.playbackRate = 4 })
     let next = false
     for (let i = 0; i < 120 && !next; i++) {
