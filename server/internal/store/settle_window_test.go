@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/roxy-media/roxy/server/internal/model"
 )
@@ -119,5 +120,57 @@ func TestIntegrityFindsRedirectCycle(t *testing.T) {
 	probs, err := s.CheckIntegrity(ctx)
 	if err != nil || len(probs) != 1 || probs[0] != "2 redirects that lead to no item" {
 		t.Fatalf("a cycle: %v %v", probs, err)
+	}
+}
+
+// Found by an audit: a file deleted (its item pruned) and back under the same name gets a
+// new id with the same identity. History follows by GUID, but nothing was carried, so no
+// redirect was written: progress a phone sent for the old id (a download's offline
+// watching) got 404 and was dropped for good.
+func TestRecreatedItemRedirectsTheOldID(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+	s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
+	lib := &model.Library{Name: "M", Kind: model.KindMovies, Root: "/m"}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	s.UpsertItem(ctx, &model.Item{ID: "old", GUID: "g-film", LibraryID: lib.ID, Type: model.TypeMovie, Title: "Film"})
+	s.ReplaceSource(ctx, &model.MediaSource{ID: "s-old", ItemID: "old", Parts: []model.MediaPart{{ID: "p-old", Path: "/m/A/Film.mkv", Size: 4242, DurationMs: 6_000_000}}}, "{}")
+	if err := s.RecordDeparture(ctx, "/m/A/Film.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	s.DeleteSource(ctx, "s-old")
+	// Foreign keys are off in these tests: what the cascade removes in the server goes by hand.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM media_parts WHERE source_id = 's-old'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM items WHERE id = 'old'`); err != nil { // pruned
+		t.Fatal(err)
+	}
+	// It came back later (the file is recorded again after it left, not still leaving).
+	if _, err := s.db.ExecContext(ctx, `UPDATE departures SET departed_at = ?`, time.Now().Add(-time.Minute).UTC().Format(TimeFormat)); err != nil {
+		t.Fatal(err)
+	}
+	// Back under the same name: the same identity, a new id.
+	if err := s.UpsertItem(ctx, &model.Item{ID: "new", GUID: "g-film", LibraryID: lib.ID, Type: model.TypeMovie, Title: "Film"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSource(ctx, &model.MediaSource{ID: "s-new", ItemID: "new", Parts: []model.MediaPart{{ID: "p-new", Path: "/m/A/Film.mkv", Size: 4242, DurationMs: 6_000_000}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SettleDepartures(ctx); err != nil {
+		t.Fatal(err)
+	}
+	it, err := s.GetItemOrMoved(ctx, "old")
+	if err != nil || it == nil || it.ID != "new" {
+		t.Fatalf("the old id should lead to the item made anew: %+v %v", it, err)
+	}
+	if probs, err := s.CheckIntegrity(ctx); err != nil || len(probs) > 0 {
+		t.Fatalf("integrity: %v %v", probs, err)
 	}
 }

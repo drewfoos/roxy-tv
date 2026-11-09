@@ -87,6 +87,12 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		// When the position was reached (Unix ms), sent by a phone replaying reports it
 		// made offline. Live reports leave it out.
 		At int64 `json:"at"`
+		// How long ago the position was reached, by the sender's own clock (ms). Preferred
+		// over At: only an elapsed time crosses, so a phone whose clock is off by minutes
+		// is not believed about which came first. Sent with live reports too: a player
+		// left paused that reports (stop, close) after the episode was finished on another
+		// device is then older than the finish, and no longer marks it unwatched.
+		AgeMs *int64 `json:"ageMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ItemID == "" {
 		writeError(w, 400, "invalid request body")
@@ -118,11 +124,12 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	// the same statement as the write: a separate read first let a live report from another
 	// device land in between and then be overwritten by the older one.
 	applied := true
+	asOf, hasAsOf := reportTime(body.At, body.AgeMs, time.Now())
 	switch {
-	case body.At > 0 && played:
-		applied, err = s.store.FinishPlayAsOf(r.Context(), p.ScopeID, it.GUID, time.UnixMilli(body.At))
-	case body.At > 0:
-		applied, err = s.store.SetProgressAsOf(r.Context(), p.ScopeID, it.GUID, time.UnixMilli(body.At), body.PositionMs, body.AudioIndex, body.SubtitleIndex)
+	case hasAsOf && played:
+		applied, err = s.store.FinishPlayAsOf(r.Context(), p.ScopeID, it.GUID, asOf)
+	case hasAsOf:
+		applied, err = s.store.SetProgressAsOf(r.Context(), p.ScopeID, it.GUID, asOf, body.PositionMs, body.AudioIndex, body.SubtitleIndex)
 	case played:
 		err = s.store.FinishPlay(r.Context(), p.ScopeID, it.GUID)
 	default:
@@ -141,7 +148,20 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST|DELETE /v1/me/played/{itemId}[?at=unixMs]
+// reportTime is when a report's position (or mark) happened, by the server's clock: now
+// less ageMs when the sender gave it, else at (the sender's clock, older clients), else
+// nothing (a report of now, applied always).
+func reportTime(at int64, ageMs *int64, now time.Time) (time.Time, bool) {
+	switch {
+	case ageMs != nil && *ageMs >= 0:
+		return now.Add(-time.Duration(*ageMs) * time.Millisecond), true
+	case at > 0:
+		return time.UnixMilli(at), true
+	}
+	return time.Time{}, false
+}
+
+// POST|DELETE /v1/me/played/{itemId}[?at=unixMs|?age=ms]
 //
 // at: when a phone replays a watched mark it made offline, the time it was made. The mark
 // is then dropped if the item saw activity since (rewatched on another device), as with
@@ -158,17 +178,28 @@ func (s *Server) played(w http.ResponseWriter, r *http.Request) {
 		}
 		at = n
 	}
+	// age: how long ago the mark was made, by the sender's clock (see reportTime).
+	var age *int64
+	if v := r.URL.Query().Get("age"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, 400, "invalid age")
+			return
+		}
+		age = &n
+	}
+	asOf, hasAsOf := reportTime(at, age, time.Now())
 	s.setFlag(w, r, func(ctx context.Context, userID string, it *model.Item, on bool) error {
 		// A series or season stands for its episodes ("mark all as watched").
 		if it.Type == model.TypeSeries || it.Type == model.TypeSeason {
 			return s.store.MarkPlayedUnder(ctx, userID, it.ID, on)
 		}
-		if at > 0 {
+		if hasAsOf {
 			mark := s.store.MarkPlayedAsOf
 			if !on {
 				mark = s.store.UnmarkPlayedAsOf
 			}
-			ok, err := mark(ctx, userID, it.GUID, time.UnixMilli(at))
+			ok, err := mark(ctx, userID, it.GUID, asOf)
 			if err == nil && !ok {
 				slog.Info("played: older than the item's latest activity, ignored", "item", it.Title, "watched", on)
 			}

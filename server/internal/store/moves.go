@@ -392,7 +392,34 @@ func (s *Store) settled(ctx context.Context, d departure) bool {
 		return false
 	}
 	has, err := s.HasMediaUnder(ctx, it.ID)
-	return err == nil && has
+	if err != nil || !has {
+		return false
+	}
+	s.redirectRecreated(ctx, d)
+	return true
+}
+
+// redirectRecreated points the ids of a departure's items at the items now holding their
+// identities, where those were made anew: a file deleted (its item pruned) and back under
+// the same name keeps its history (by GUID) but gets a new id. Nothing is carried for it,
+// so no redirect was written, and a client holding the old id (a download, its offline
+// progress) got 404 for good and dropped what it had to send.
+func (s *Store) redirectRecreated(ctx context.Context, d departure) {
+	for _, e := range d.chain {
+		it, err := s.GetItemByGUID(ctx, e.GUID)
+		if err != nil || it == nil || it.ID == e.ID {
+			continue
+		}
+		if old, err := s.GetItem(ctx, e.ID); err != nil || old != nil {
+			continue // the old id is still an item of its own
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO item_redirects (old_id, new_id, created_at) VALUES (?, ?, ?)
+			ON CONFLICT(old_id) DO UPDATE SET new_id = excluded.new_id, created_at = excluded.created_at`, e.ID, it.ID, Now()); err != nil {
+			slog.Warn("moves: redirecting a recreated item", "old", e.ID, "new", it.ID, "err", err)
+			continue
+		}
+		slog.Info("moved: old id redirected to the item made anew", "type", e.Type, "title", e.Title)
+	}
 }
 
 // stillLeaving reports whether the departure's own file is still recorded as it was when
