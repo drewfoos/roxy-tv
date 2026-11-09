@@ -101,6 +101,9 @@ try {
     }
     return false
   }
+  // Set only once every assertion about the given-up state has passed: the loop running out
+  // of cuts (the player reopening every time) must fail, not pass unchecked.
+  let verifiedFailureState = false
   for (let cuts = 2; cuts <= 8; cuts++) {
     const before = remux.length
     // Soon after the stream starts: CI's film is small (about 6 MB), and a reopened remux
@@ -124,10 +127,10 @@ try {
     if (page.url() !== url) fail('the player moved on (autoplay) after a cut stream')
     if (!(watched?.positionMs > 0) || watched.positionMs > (item.runtimeMs ?? Infinity) * 0.5) fail(`the saved position is not where the stream got to: ${watched?.positionMs} ms`)
     console.log('OK: cut too often in a row, the player says so and keeps the film unwatched')
-    process.exitCode = 0
+    verifiedFailureState = true
     break
   }
-  if (remux.length > 8) fail('the player kept reopening without limit')
+  if (!verifiedFailureState) fail(`the player never gave up after ${remux.length} streams: kept reopening without limit, or the end state was never checked`)
 } finally {
   await browser.close()
 }
