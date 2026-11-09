@@ -230,8 +230,7 @@ private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Uni
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(if (isMovie) item.title else item.seriesTitle ?: item.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-                    val what = if (isMovie) listOfNotNull(item.year?.toString(), "Movie") else listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }
-                    Text(what.joinToString("  ·  "), fontSize = 14.sp, color = Color(0xFFD0D0D0), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                    Text(continueLine(item), fontSize = 14.sp, color = Color(0xFFD0D0D0), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
                     item.userData?.positionMs?.takeIf { it > 0 }?.let { pos -> item.runtimeMs?.takeIf { it > pos }?.let { "${((it - pos) / 60000L + 1).coerceAtLeast(1)}m left" } }
                         ?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xCC000000)).padding(horizontal = 6.dp, vertical = 3.dp)) }
                 }
@@ -239,6 +238,16 @@ private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Uni
         }
         ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
     }
+}
+
+/**
+ * The second line of a Continue Watching card (Crunchyroll's): "Episode 2", no season and
+ * no episode title; "Special 3" in the specials; a film's year and "Movie".
+ */
+fun continueLine(item: Item): String {
+    if (item.isMovie) return listOfNotNull(item.year?.toString(), "Movie").joinToString("  ·  ")
+    val n = item.indexAired ?: item.indexAbsolute ?: return item.title
+    return if (item.seasonAired == 0) "Special $n" else "Episode $n"
 }
 
 /** Translucent ring with a play triangle, drawn over thumbnails. */
