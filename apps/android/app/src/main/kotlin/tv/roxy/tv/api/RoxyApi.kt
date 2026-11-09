@@ -588,10 +588,11 @@ class RoxyApi(private val prefs: Prefs) {
 
     private fun request(path: String): Request.Builder = Request.Builder().url(baseUrl + path)
 
-    private inline fun <reified T> execute(req: Request): T {
-        http.newCall(req).execute().use { resp ->
-            val text = resp.body.string()
-            if (!resp.isSuccessful) {
+    private suspend inline fun <reified T> execute(req: Request): T {
+        // Cancelled with its caller (see fetch).
+        http.fetch(req).let { resp ->
+            val text = resp.text
+            if (!resp.ok) {
                 Timber.w("HTTP %d %s %s", resp.code, req.method, req.url.encodedPath)
                 throw ApiException(resp.code, serverMessage(text) ?: "HTTP ${resp.code} ${req.method} ${req.url.encodedPath}: ${text.take(200)}")
             }
