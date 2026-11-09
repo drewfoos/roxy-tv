@@ -171,6 +171,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     private val journal = ProgressJournal(File(context.filesDir, "progress-queue.json"))
     /** One writer of the journal at a time (the background writer, or a report written at once). */
     private val journalLock = Any()
+    private val queueRetryWaiting = java.util.concurrent.atomic.AtomicBoolean(false)
     /** One thread for the journal: writes in order, off the player's thread. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val journalThread = Dispatchers.IO.limitedParallelism(1)
@@ -400,9 +401,24 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         journalScope.launch {
             queueWriteWaiting.set(false)
             if (pauseBackgroundWrites) return@launch
-            if (!writeQueueNow()) { kotlinx.coroutines.delay(JOURNAL_RETRY_MS); writeQueue() }
+            writeQueueNow()
         }
     }
+
+    /**
+     * After a failed write: one more try in [JOURNAL_RETRY_MS], whoever failed. Retrying at
+     * once (as the first version of writeQueueNow did) spun in a tight loop of failing writes
+     * for as long as the disk refused them.
+     */
+    private fun retryLater() {
+        if (!queueRetryWaiting.compareAndSet(false, true)) return
+        journalScope.launch {
+            kotlinx.coroutines.delay(JOURNAL_RETRY_MS)
+            queueRetryWaiting.set(false)
+            writeQueue()
+        }
+    }
+
 
     /**
      * Write the queue as it is now, on this thread, and say whether it went down. The
@@ -412,7 +428,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     private fun writeQueueNow(): Boolean = synchronized(journalLock) {
         val ok = journal.write(_index.value.pendingProgress).isSuccess
         queueWriteFailed = !ok
-        if (!ok) writeQueue() // retried in the background
+        if (!ok) retryLater()
         ok
     }
 
