@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
+import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, minutesLabel, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
 import { IconBookmark, IconBookmarkOutline, IconCalendar, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
@@ -189,7 +189,7 @@ export function ContinueTile({ item, width = 420 }: { item: Item; width?: number
   const url = movie ? (api.imageUrl(item, 'backdrop', px(width)) ?? api.imageUrl(item, 'poster', px(width))) : api.imageUrl(item, 'thumb', px(width))
   const [played, setPlayed] = useWatchedState(item)
   const shown = useMemo(() => withPlayed(item, played), [item, played])
-  const left = timeLeftLabel(shown)
+  const left = minutesLabel(shown)
   const name = movie ? item.title : (item.seriesTitle ?? item.title)
   return (
     <div className="card ctile">

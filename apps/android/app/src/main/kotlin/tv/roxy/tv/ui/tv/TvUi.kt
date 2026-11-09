@@ -452,20 +452,13 @@ fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit, modif
                     Text(if (item.isMovie) item.title else item.seriesTitle ?: item.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(tv.roxy.tv.ui.phone.continueLine(item), color = Color(0xFFD0D0D0), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 6.dp))
-                        timeLeft(item)?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.background(Color(0xCC000000)).padding(horizontal = 5.dp, vertical = 2.dp)) }
+                        minutesLabel(item)?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.background(Color(0xCC000000)).padding(horizontal = 5.dp, vertical = 2.dp)) }
                     }
                 }
             }
             item.progressFraction?.takeIf { it < 1f }?.let { ProgressBar(it, modifier = Modifier.align(Alignment.BottomCenter)) }
         }
     }
-}
-
-/** "23m left", from the saved position; null when nothing is started. */
-fun timeLeft(item: Item): String? {
-    val pos = item.userData?.positionMs?.takeIf { it > 0 } ?: return null
-    val len = item.runtimeMs?.takeIf { it > pos } ?: return null
-    return "${((len - pos) / 60000L + 1).coerceAtLeast(1)}m left"
 }
 
 /**

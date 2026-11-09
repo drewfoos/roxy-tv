@@ -76,7 +76,7 @@ class Shots {
 
     private val continueItems = listOf(
         Item(id = "e2", type = "episode", title = "An Explosion for This Chunchunmaru!", seriesTitle = "KonoSuba – God's Blessing on This Wonderful World!", indexAired = 2, seasonAired = 1, runtimeMs = 1_440_000, userData = UserData(positionMs = 60_000)),
-        Item(id = "e7", type = "episode", title = "Dress", seriesTitle = "My Dress-Up Darling", indexAired = 7, seasonAired = 2, runtimeMs = 1_440_000, userData = UserData(positionMs = 900_000)),
+        Item(id = "e7", type = "episode", title = "Dress", seriesTitle = "My Dress-Up Darling", indexAired = 7, seasonAired = 2, runtimeMs = 1_440_000, userData = UserData(positionMs = 0)),
         Item(id = "m1", type = "movie", title = "Rascal Does Not Dream of a Dreaming Girl", year = 2019, runtimeMs = 5_400_000, userData = UserData(positionMs = 2_000_000)),
     )
 

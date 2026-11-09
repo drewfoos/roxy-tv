@@ -61,6 +61,15 @@ export function timeLeftLabel(it: Item): string | null {
   return `${Math.max(1, Math.floor((len - ud.positionMs) / 60000) + 1)}m left`
 }
 
+/** Continue Watching's tag (as in the apps): "23m left" part-way, the length ("24m") when not started. */
+export function minutesLabel(it: Item): string | null {
+  const len = it.runtimeMs ?? primarySource(it)?.durationMs ?? 0
+  if (len <= 0) return null
+  const pos = it.userData?.positionMs ?? 0
+  if (pos > 0) return `${Math.max(1, Math.round((len - pos) / 60000))}m left`
+  return `${Math.round(len / 60000)}m`
+}
+
 export function languageName(code: string): string {
   try {
     const n = new Intl.DisplayNames(['en'], { type: 'language' }).of(code.length === 3 ? iso3to2(code) : code)

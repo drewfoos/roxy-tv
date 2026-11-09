@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ageLabel, audioBadge, episodeCode, languageName, nextToPlay, pickSubtitle, playLabel, progressFraction, runtimeLabel, sortEpisodes, timeLeftLabel } from './items'
+import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSubtitle, playLabel, progressFraction, runtimeLabel, sortEpisodes, timeLeftLabel } from './items'
 import type { Item, MediaSource, MediaStream } from './types'
 
 const item = (p: Partial<Item>) => ({ id: 'x', type: 'episode', title: 'T', ...p }) as Item
@@ -91,3 +91,12 @@ describe('pickSubtitle', () => {
     expect(pickSubtitle(src([sub({ isTextFormat: false })]))).toBeNull()
   })
 })
+
+// Continue Watching's tag: the time left once started, the length before (it was blank).
+describe('minutesLabel', () => {
+  const ep = (positionMs: number, runtimeMs?: number) => ({ id: 'e', type: 'episode', title: 'E', runtimeMs, userData: { positionMs, played: false, playCount: 0, isFavorite: false } }) as unknown as Item
+  it('says the length of an episode not started', () => expect(minutesLabel(ep(0, 1_440_000))).toBe('24m'))
+  it('says what is left part-way', () => expect(minutesLabel(ep(60_000, 1_440_000))).toBe('23m left'))
+  it('says nothing without a length', () => expect(minutesLabel(ep(0))).toBeNull())
+})
+

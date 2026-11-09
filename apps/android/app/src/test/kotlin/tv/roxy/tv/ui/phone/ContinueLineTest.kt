@@ -13,3 +13,14 @@ class ContinueLineTest {
         assertEquals("", continueLine(Item(id = "m", type = "movie", title = "Film", year = 2019)))
     }
 }
+
+class ContinueMinutesTest {
+    private fun ep(pos: Long, len: Long?) = Item(id = "e", type = "episode", title = "E", runtimeMs = len, userData = tv.roxy.tv.api.UserData(positionMs = pos))
+
+    // The card's tag: the length before the episode is started (it was blank), what is left after.
+    @Test fun lengthUntilStarted() {
+        assertEquals("24m", tv.roxy.tv.ui.tv.minutesLabel(ep(0, 1_440_000)))
+        assertEquals("23m left", tv.roxy.tv.ui.tv.minutesLabel(ep(60_000, 1_440_000)))
+        assertEquals(null, tv.roxy.tv.ui.tv.minutesLabel(ep(0, null)))
+    }
+}
