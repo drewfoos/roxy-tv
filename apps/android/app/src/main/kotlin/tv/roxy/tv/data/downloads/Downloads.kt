@@ -13,6 +13,8 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -91,16 +93,20 @@ data class PendingProgress(
 )
 
 /**
- * The queue after recording [next] for one item: one entry per item and kind. A position
- * replaces the item's queued position; a "watched" mark replaces its queued mark. So a mark
- * not yet sent stays (and goes first) when the episode is opened again (finishing it
- * offline and reopening it for a few seconds used to lose the mark), and a mark keeps the
- * report queued before it (the "end" of moving on, with its subtitle choice and version,
- * was wiped by the mark that followed). A report the server took ([sent]) is not queued.
+ * The queue after recording [next] for one item: it replaces the item's latest entry when
+ * that is of the same kind (a newer position for a position, a mark for a mark), and goes
+ * after it otherwise. So runs of positions collapse to the newest, but every change of
+ * kind is kept in order: watched, rewatched part-way, watched again sends all three (the
+ * server counts two plays), where keeping one entry per kind sent the second mark only.
+ * Finishing offline and reopening keeps the mark ahead of the new position; moving on keeps
+ * the "end" report (its subtitle choice and version) ahead of the mark. It grows only as
+ * fast as someone finishes and rewatches. A report the server took ([sent]) is not queued.
  */
 fun pendingAfter(queue: List<PendingProgress>, profile: String?, itemId: String, sent: Boolean, next: PendingProgress): List<PendingProgress> {
-    val kept = queue.filterNot { it.itemId == itemId && it.profileId == profile && it.played == next.played }
-    return if (sent) kept else kept + next
+    if (sent) return queue
+    val last = queue.indexOfLast { it.itemId == itemId && it.profileId == profile }
+    val kept = if (last >= 0 && queue[last].played == next.played) queue.filterIndexed { i, _ -> i != last } else queue
+    return kept + next
 }
 
 /** How long an entry the server keeps refusing (a 500, say) is retried before it is let go. */
@@ -157,6 +163,9 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val indexFile = File(context.filesDir, "downloads.json")
+    /** The progress queue's own file, written at once (see ProgressJournal). */
+    private val journal = ProgressJournal(File(context.filesDir, "progress-queue.json"))
+    private val journalLock = Any()
 
     /** Video and image files; the external app dir is large and needs no permission, with the internal one as a fallback. */
     val root: File = (context.getExternalFilesDir("downloads") ?: File(context.filesDir, "downloads")).apply { mkdirs() }
@@ -167,7 +176,10 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     init {
         // Persist every change, coalesced; progress ticks arrive several times a second.
         @OptIn(FlowPreview::class)
-        scope.launch(Dispatchers.IO) { _index.debounce(400).collect { save(it) } }
+        // The progress queue has its own file, written at once (ProgressJournal): a change to
+        // it alone (every report) does not rewrite this one.
+        scope.launch(Dispatchers.IO) { _index.map { it.copy(pendingProgress = emptyList()) }.distinctUntilChanged().debounce(400).collect { save(it) } }
+        writeQueue() // an older install's queue (read from downloads.json) moves to its file
         watchNetwork()
         if (_index.value.entries.values.any { it.state == DownloadState.Queued }) kick()
     }
@@ -350,7 +362,11 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                 PendingProgress(profile, itemId, positionMs, System.currentTimeMillis() - ageMs.coerceAtLeast(0), played, audioIndex, subtitleIndex, sourceId, durationMs))
             idx.copy(entries = entries, pendingProgress = pending)
         }
+        writeQueue()
     }
+
+    /** Write the queue as it is now (under a lock, so the latest state is the last written). */
+    private fun writeQueue() = synchronized(journalLock) { journal.write(_index.value.pendingProgress) }
 
     /** Whether a position for [itemId] (this profile) is waiting to be sent. */
     /** The newest progress this profile recorded offline for [itemId] and has not sent yet. */
@@ -383,6 +399,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
             },
             remove = { p ->
                 _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
+                writeQueue()
                 Timber.i("progress sent item=%s pos=%dms played=%s", p.itemId, p.positionMs, p.played)
             },
         )
@@ -423,7 +440,9 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     // ---- persistence ----
 
     private fun load(): DownloadIndex {
-        if (!indexFile.exists()) return DownloadIndex()
+        // The queue is read whatever else is there: without downloads, downloads.json may
+        // never be written, and returning early here lost the queue on every restart.
+        if (!indexFile.exists()) return DownloadIndex(pendingProgress = journal.read().orEmpty())
         val idx = runCatching { json.decodeFromString<DownloadIndex>(indexFile.readText()) }
             .onFailure { Timber.w(it, "downloads index unreadable; starting empty") }
             .getOrDefault(DownloadIndex())
@@ -436,7 +455,8 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                 else -> id to e.copy(bytesDone = if (e.isDone) e.bytesTotal else partFile(e).length())
             }
         }.toMap()
-        return idx.copy(entries = entries)
+        val queue = journal.read() ?: idx.pendingProgress
+        return idx.copy(entries = entries, pendingProgress = queue)
     }
 
     private suspend fun save(idx: DownloadIndex) = withContext(Dispatchers.IO) {

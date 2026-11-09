@@ -29,7 +29,20 @@ class PendingQueueTest {
     @Test fun newestOfEachKindReplacesOlder() {
         val q = pendingAfter(listOf(p("e1", 5_000), p("e2", 7_000), p("e1", 6_000, profile = "other")), "pr", "e1", sent = false, next = p("e1", 9_000))
         assertEquals(listOf("e2:7000", "e1:6000", "e1:9000"), q.map { "${it.itemId}:${it.positionMs}" })
-        assertEquals(listOf(false, true), pendingAfter(listOf(p("e1", 0, played = true), p("e1", 5_000)), "pr", "e1", sent = false, next = p("e1", 0, played = true)).map { it.played })
+        // Two marks in a row are one.
+        assertEquals(listOf(true), pendingAfter(listOf(p("e1", 0, played = true)), "pr", "e1", sent = false, next = p("e1", 0, played = true)).map { it.played })
+    }
+
+    // Found in review: one entry per kind collapsed watched / rewatched part-way / watched
+    // again into one mark (the server counted one play, not two). Every change of kind stays.
+    @Test fun watchedRewatchedWatchedAgainKeepsAllThree() {
+        var q = listOf<PendingProgress>()
+        q = pendingAfter(q, "pr", "e1", false, p("e1", 1_400_000))
+        q = pendingAfter(q, "pr", "e1", false, p("e1", 0, played = true))
+        q = pendingAfter(q, "pr", "e1", false, p("e1", 300_000))
+        q = pendingAfter(q, "pr", "e1", false, p("e1", 600_000)) // a newer position: one entry
+        q = pendingAfter(q, "pr", "e1", false, p("e1", 0, played = true))
+        assertEquals(listOf("1400000:false", "0:true", "600000:false", "0:true"), q.map { "${it.positionMs}:${it.played}" })
     }
 
     private fun drain(entries: List<PendingProgress>, now: Long = 0, answers: Map<String, Throwable>): Triple<Throwable?, List<String>, List<String>> = runBlocking {
@@ -63,4 +76,24 @@ class PendingQueueTest {
         val (r3, sent3, _) = drain(listOf(p("e1", 1), p("e2", 2)), answers = mapOf("e1" to ApiException(401, "signed out")))
         assertEquals(emptyList<String>(), sent3); assertTrue(r3 is ApiException)
     }
+
+    // Found in review: the queue rode in downloads.json, saved 400 ms after a change, so a mark
+    // recorded just before Android killed the app could be lost. Its own journal is written at
+    // once: what a new owner (the restarted app) reads is what was last written.
+    @Test fun journalSurvivesARestartImmediately() {
+        val dir = java.nio.file.Files.createTempDirectory("journal").toFile()
+        try {
+            val file = java.io.File(dir, "progress-queue.json")
+            val before = ProgressJournal(file)
+            assertNull("no journal yet: an older install's queue is used", before.read())
+            val q = listOf(p("e1", 1_400_000), p("e1", 0, played = true))
+            before.write(q)
+            assertEquals("read back by a new owner, no wait", q, ProgressJournal(file).read())
+            before.write(emptyList())
+            assertEquals(emptyList<PendingProgress>(), ProgressJournal(file).read())
+            file.writeText("{ not json")
+            assertNull("unreadable: treated as none", ProgressJournal(file).read())
+        } finally { dir.deleteRecursively() }
+    }
 }
+
