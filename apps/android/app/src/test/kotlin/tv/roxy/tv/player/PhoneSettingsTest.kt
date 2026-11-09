@@ -152,6 +152,32 @@ class PhoneSettingsTest {
         assertEquals("then Back leaves full screen", 1, leftFullscreen)
     }
 
+    // Turning the phone with the settings open: they stay open, on the same list, and move
+    // to the other layout (upright: a window under the back arrow; sideways: in the player
+    // under the title bar), and back.
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun settingsFollowTheRotation() {
+        var sheet by mutableStateOf(Sheet.Quality)
+        var fullscreen by mutableStateOf(false)
+        compose.setContent {
+            val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, fullscreen = fullscreen)
+            Box(if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                PlayerControls(state = state, visible = true, sheet = sheet, onSheet = { sheet = it }, onInteraction = {}, actions = actions)
+            }
+        }
+        compose.onAllNodes(isRoot()).assertCountEquals(2)
+        compose.onNodeWithText("Quality").assertIsDisplayed()
+        for (sideways in listOf(true, false, true)) {
+            fullscreen = sideways
+            compose.waitForIdle()
+            compose.onAllNodes(isRoot()).assertCountEquals(if (sideways) 1 else 2) // upright: the page's own window
+            compose.onNodeWithText("Quality").assertIsDisplayed()
+            assertEquals("still open, same list", Sheet.Quality, sheet)
+        }
+        // Sideways, the title bar shows over the page.
+        compose.onNodeWithText("E2 — An Explosion for This Chunchunmaru!").assertIsDisplayed()
+    }
+
     @Test fun backClosesThePage() {
         val sheet = show()
         compose.onNodeWithContentDescription("Back").performClick()

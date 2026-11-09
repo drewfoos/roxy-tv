@@ -178,6 +178,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
         onDispose { main?.onPipChanged = null; main?.clearPip() }
     }
     host.isLandscape = landscape
+    // Turning the phone moves the controls (and open settings) to the other layout at once,
+    // not at the player's next half-second refresh: until then the settings of the old
+    // layout showed over the new one.
+    LaunchedEffect(landscape) { session?.refreshUi() }
     host.back = onBack
     host.nowPlaying = { req -> episode = req.item; expanded = false }
 
