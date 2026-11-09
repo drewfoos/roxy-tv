@@ -201,7 +201,32 @@ suspend fun awaitNext(call: Deferred<Item?>, waitMs: Long = OPENING_NEXT_WAIT_MS
 fun openingSeason(seasons: List<Item>, wait: NextWait): Int =
     wait.next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
 
-class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, initial: Item? = null) : ViewModel() {
+/** What the series page reads from the server (the [RoxyApi] calls it makes; a fake in tests). */
+interface SeriesSource {
+    suspend fun item(id: String): Item
+    suspend fun seasons(seriesId: String): List<Item>
+    suspend fun sections(seriesId: String): List<Section>
+    suspend fun next(seriesId: String): Item?
+    suspend fun related(seriesId: String): List<RelatedEntry>
+    suspend fun extras(seriesId: String): List<Item>
+    /** Every episode under [parentId] (a season, or the show with [recursive]), with files. */
+    suspend fun episodes(parentId: String, recursive: Boolean): ItemsResponse
+}
+
+class ApiSeriesSource(private val api: RoxyApi) : SeriesSource {
+    override suspend fun item(id: String) = api.item(id)
+    override suspend fun seasons(seriesId: String) = api.items(type = "season", parent = seriesId, sort = "index").items
+    override suspend fun sections(seriesId: String) = api.sections(seriesId)
+    override suspend fun next(seriesId: String) = api.next(seriesId)
+    override suspend fun related(seriesId: String) = api.related(seriesId).related
+    override suspend fun extras(seriesId: String) = api.extras(seriesId)
+    override suspend fun episodes(parentId: String, recursive: Boolean) =
+        api.allItems(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index")
+}
+
+class SeriesViewModel(private val api: SeriesSource, private val seriesId: String, initial: Item? = null) : ViewModel() {
+    constructor(api: RoxyApi, seriesId: String, initial: Item? = null) : this(ApiSeriesSource(api), seriesId, initial)
+
     // Seeded from the list that opened the page, so the header paints at once and only the
     // episode rows wait on the network.
     private val _state = MutableStateFlow(SeriesUiState(series = initial, episodesLoading = initial != null))
@@ -210,11 +235,14 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     fun load() = load(onFailed = null)
 
     private fun load(onFailed: (() -> Unit)?) {
+        // Episode reads started after this point (a season picked while the page is read
+        // again) are newer than anything this read would do to the episodes.
+        val gen = episodesGen
         viewModelScope.launch {
             runCatching {
                 val series = api.item(seriesId)
                 // Specials (season 0) go last, like Jellyfin; regular seasons in order.
-                val plain = api.items(type = "season", parent = seriesId, sort = "index").items
+                val plain = api.seasons(seriesId)
                     .sortedBy { val n = it.indexAired ?: Int.MAX_VALUE; if (n == 0) Int.MAX_VALUE - 1 else n }
                 // In release order with the specials between the seasons and the franchise's
                 // films as entries of their own; the plain list from an older server.
@@ -224,12 +252,19 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
             }.onSuccess { (series, plain, ordered) ->
                 val seasons = ordered?.seasons ?: plain
                 sources = ordered?.sources ?: emptyMap()
-                val keep = _state.value.selectedSeason.coerceIn(0, (seasons.size - 1).coerceAtLeast(0))
+                // The entry on screen, by id: the list read again may be ordered differently
+                // (the release-order sections answering this time put an OVA before it).
+                val was = _state.value.let { it.seasons.getOrNull(it.selectedSeason)?.id }
+                val keep = seasons.indexOfFirst { it.id == was }.takeIf { it >= 0 }
+                    ?: _state.value.selectedSeason.coerceIn(0, (seasons.size - 1).coerceAtLeast(0))
+                val newerPick = episodesGen != gen
                 // A reload (after marking watched, say) keeps the episodes and related rows on
                 // screen until the fresh ones land, so the list doesn't empty and jump to the top.
                 _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep, sectionCounts = ordered?.counts ?: emptyMap(), sectionLabels = ordered?.labels ?: emptyMap())
                     .episodesPending(firstLoad, seasons.isNotEmpty())
-                if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
+                // A season picked meanwhile is already being read (or is read): not again.
+                if (newerPick) Unit
+                else if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
                 else if (seasons.isEmpty()) loadEpisodes(seriesId, recursive = true) // flat series without season folders
                 loadUpNext(seasons)
                 // Related titles do not change while you watch: once per page, not on every return.
@@ -238,7 +273,9 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 Timber.e(t, "series load failed")
                 // A reload that fails (back from the player during a Wi-Fi drop) keeps the
                 // page that is showing; only a first load turns into the error.
-                if (_state.value.series != null) { _state.value = _state.value.copy(loading = false); onFailed?.invoke() }
+                // A retry's failure brings its problem back, unless a season was picked
+                // meanwhile: that season's own read decides what the list says.
+                if (_state.value.series != null) { _state.value = _state.value.copy(loading = false); if (episodesGen == gen) onFailed?.invoke() }
                 else _state.value = SeriesUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this series"))
             }
         }
@@ -277,7 +314,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
 
     private fun loadRelated() {
         viewModelScope.launch {
-            runCatching { api.related(seriesId).related }
+            runCatching { api.related(seriesId) }
                 .onSuccess { rel -> relatedLoaded = true; _state.value = _state.value.copy(related = rel) }
                 .onFailure { Timber.w(it, "related load failed") } // older server: no row, nothing else breaks
             runCatching { api.extras(seriesId) }
@@ -300,6 +337,8 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
 
     private var userPicked = false
     private var episodesJob: Job? = null
+    /** Counts episode reads started; see [load]. */
+    private var episodesGen = 0
 
     fun selectExtras() {
         _state.value = _state.value.copy(showExtras = true)
@@ -316,23 +355,24 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
         _state.value = _state.value.copy(episodesLoading = true, episodesIncomplete = false, episodesError = null)
         // Only the latest request counts: two quick season picks cannot land out of order.
         episodesJob?.cancel()
+        episodesGen++
         val source = sources[parentId]
         episodesJob = viewModelScope.launch {
-            val started = android.os.SystemClock.elapsedRealtime()
+            val started = System.nanoTime()
             runCatching {
                 // The read as it came (complete or not): episodeRows makes the rows of it.
                 val read = when (source) {
                     // A film of the franchise: its one row (with its file, to play and download).
                     is SectionSource.Movie -> api.item(source.item.id).let { ItemsResponse(listOf(it), 1) }
                     // Some of the Specials season: episodeRows picks the section's, in its order.
-                    is SectionSource.Specials -> api.allItems(type = "episode", parent = source.seasonId, includeSources = true, sort = "index")
-                    null -> api.allItems(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index")
+                    is SectionSource.Specials -> api.episodes(source.seasonId, recursive = false)
+                    null -> api.episodes(parentId, recursive)
                 }
                 episodeRows(source, read)
             }
                 .onSuccess { rows ->
                     // Read by ops' tv-measure.sh (load time of a long list on the device).
-                    Timber.i("episodes: %d loaded in %d ms", rows.items.size, android.os.SystemClock.elapsedRealtime() - started)
+                    Timber.i("episodes: %d loaded in %d ms", rows.items.size, (System.nanoTime() - started) / 1_000_000)
                     if (!rows.complete) Timber.w("episodes: %d of %d loaded; the list is incomplete", rows.items.size, rows.expected)
                 }
                 .onFailure { t ->

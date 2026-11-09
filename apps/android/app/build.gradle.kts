@@ -30,8 +30,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 95
-        versionName = "0.5.74"
+        versionCode = 96
+        versionName = "0.5.75"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -130,4 +130,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     // JVM unit tests (src/test): ./gradlew testDebugUnitTest
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
