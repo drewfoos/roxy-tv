@@ -77,36 +77,39 @@ func TestReplayedRequestsAreHarmless(t *testing.T) {
 		}
 		return d
 	}
-	// The event happened a minute ago; the replay goes 3 s later, its age 3 s larger.
+	// The event happened a minute ago. A replay's age is measured as the phone measures it,
+	// at send time: the first send's age plus the time really gone by since (not an assumed
+	// delay: a busy machine sleeps longer than asked). The pause is uneven on purpose.
 	const age = int64(60_000)
-	wait := func() { time.Sleep(30 * time.Millisecond) }
+	var sentAt time.Time
+	first := func() int64 { sentAt = time.Now(); return age }
+	again := func() int64 { time.Sleep(250 * time.Millisecond); return age + time.Since(sentAt).Milliseconds() }
+	ageBody := func(id string, pos int64, a int64) string {
+		return `{"itemId":"` + id + `","positionMs":` + strconv.FormatInt(pos, 10) + `,"ageMs":` + strconv.FormatInt(a, 10) + `}`
+	}
 
-	mark("mark", age)
-	wait()
-	mark("mark", age+30)
+	mark("mark", first())
+	mark("mark", again())
 	if d := state("mark"); !d.Played || d.PlayCount != 1 {
 		t.Fatalf("a replayed watched mark counted twice: %+v", d)
 	}
 
-	progress(`{"itemId":"finish","positionMs":1400000,"ageMs":60000}`)
-	wait()
-	progress(`{"itemId":"finish","positionMs":1400000,"ageMs":60030}`)
+	progress(ageBody("finish", 1400000, first()))
+	progress(ageBody("finish", 1400000, again()))
 	if d := state("finish"); !d.Played || d.PlayCount != 1 {
 		t.Fatalf("a replayed finish counted twice: %+v", d)
 	}
 
-	progress(`{"itemId":"pos","positionMs":600000,"ageMs":60000}`)
-	wait()
-	progress(`{"itemId":"pos","positionMs":600000,"ageMs":60030}`)
+	progress(ageBody("pos", 600000, first()))
+	progress(ageBody("pos", 600000, again()))
 	if d := state("pos"); d.Played || d.PositionMs != 600000 {
 		t.Fatalf("a replayed position changed it: %+v", d)
 	}
 
 	// Watched a minute ago, rewatched part-way 30 s ago; the old mark replayed now is dropped.
-	mark("re", age)
-	progress(`{"itemId":"re","positionMs":600000,"ageMs":30000}`)
-	wait()
-	mark("re", age+30)
+	mark("re", first())
+	progress(ageBody("re", 600000, 30_000))
+	mark("re", again())
 	if d := state("re"); d.Played || d.PositionMs != 600000 || d.PlayCount != 1 {
 		t.Fatalf("an old mark replayed after a rewatch undid it: %+v", d)
 	}
