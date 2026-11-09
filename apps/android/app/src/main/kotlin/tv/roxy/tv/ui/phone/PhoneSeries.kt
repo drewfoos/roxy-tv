@@ -305,6 +305,9 @@ fun PhoneSeries(
                                 Text("Try again", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.padding(top = 6.dp).clickable { vm.retryEpisodes() }.padding(vertical = 4.dp))
                             }
                         }
+                    } else if (state.episodesLoading && state.episodes.isEmpty()) {
+                        // On their way (a season picked, a retry): rows of shimmer, not a blank.
+                        items(3, key = { "eps-skeleton-$it" }) { EpisodeRowSkeleton() }
                     } else if (!state.episodesLoading && !state.loading && state.episodes.isEmpty()) {
                         item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
                     } else if (state.episodes.isNotEmpty() && state.episodes.none { it.isPlayable }) {

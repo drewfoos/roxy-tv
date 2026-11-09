@@ -23,22 +23,27 @@ export function Series() {
   const { id = '' } = useParams()
   const nav = useNavigate()
   const { data: series, error, loading, reload } = useAsync(`item:${id}`, () => api.item(id), [id])
-  const { data: seasonsRes } = useAsync(`seasons:${id}`, () => api.items({ type: 'season', parent: id, sort: 'index' }), [id])
+  const { data: seasonsRes, error: seasonsError, loading: seasonsLoading, reload: reloadSeasons } = useAsync(`seasons:${id}`, () => api.items({ type: 'season', parent: id, sort: 'index' }), [id])
   // The season list in release order: the seasons, the specials between them ("OVAs") and
   // the franchise's films, as entries of their own (the plain list from an older server).
-  const { data: sections, reload: reloadSections } = useAsync(`sections:${id}`, () => api.sections(id).catch(() => null), [id])
+  const { data: sections, loading: sectionsLoading, reload: reloadSections } = useAsync(`sections:${id}`, () => api.sections(id).catch(() => null), [id])
+  const seasonsSettled = seasonsRes != null && !(sectionsLoading && sections == null)
   const seasons: SeasonEntry[] = useMemo(() => {
+    if (!seasonsSettled) return []
     const list = seasonsRes?.items ?? []
     return sectionEntries(sections, list) ?? plainEntries(list)
-  }, [seasonsRes, sections])
+  }, [seasonsRes, sections, seasonsSettled])
   const [seasonIndex, setSeasonIndex] = useState(0)
   const [newest, setNewest] = useState(false)
   const [tab, setTab] = useState(0)
   useEffect(() => setSeasonIndex(0), [id])
 
-  const flat = seasonsRes != null && seasons.length === 0
-  const season = seasons[Math.min(seasonIndex, Math.max(0, seasons.length - 1))]
-  const epsKey = flat ? `episodes:${id}` : season ? `episodes:${season.key}` : null
+  // The season list is known once both reads have answered: the plain list first and the
+  // release-order one a moment later reshuffled the picker (and read a season twice).
+  const listReady = seasonsSettled
+  const flat = listReady && seasons.length === 0
+  const season = listReady ? seasons[Math.min(seasonIndex, Math.max(0, seasons.length - 1))] : undefined
+  const epsKey = !listReady ? null : flat ? `episodes:${id}` : season ? `episodes:${season.key}` : null
   const { data: epsRes, loading: epsLoading, error: epsError, reload: reloadEpisodes } = useAsync(
     epsKey,
     () =>
@@ -58,9 +63,12 @@ export function Series() {
   // Part of the list did not load (the read was cut short, or a group of specials is missing
   // one it names): the page says so instead of a partial list passing for the whole.
   const retryEpisodes = () => {
+    if (seasonsRes == null) return reloadSeasons()
     if (season?.ids) reloadSections()
     reloadEpisodes()
   }
+  // Nothing to show yet: the season list or this entry's episodes are still on their way.
+  const listFailed = seasonsRes == null && !!seasonsError && !seasonsLoading
   const completeness = entryCompleteness(season?.movie || flat ? undefined : season, episodes, epsRes as ItemsResponse | undefined)
   // Play looks across every season, like the apps, not just the one picked in the dropdown.
   // What Play plays, worked out by the server (it used to need every episode of the show).
@@ -127,7 +135,13 @@ export function Series() {
               <button className="btn btn--grey" onClick={retryEpisodes}>Try again</button>
             </div>
           )}
-          {epsLoading && !epsRes ? (
+          {listFailed && (
+            <div className="notice notice--error notice--action" style={{ margin: '0 var(--gutter) 16px' }}>
+              <span>Couldn't load the seasons.</span>
+              <button className="btn btn--grey" onClick={retryEpisodes}>Try again</button>
+            </div>
+          )}
+          {listFailed ? null : (epsLoading || !listReady) && !epsRes ? (
             <GridSkeleton thumbs count={10} />
           ) : episodes.length === 0 && epsError ? null : episodes.length === 0 ? (
             <div className="empty">No episodes in this season.</div>

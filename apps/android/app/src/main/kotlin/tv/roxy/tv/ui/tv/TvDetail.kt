@@ -451,7 +451,10 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
                 }
             }
             if (episodes.isEmpty()) {
-                if (problem == null) Text(if (loading) "" else "No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+                if (problem == null) {
+                    if (loading) EpisodeRowsSkeleton()
+                    else Text("No episodes in this season.", color = RoxyColors.muted, fontSize = 16.sp, modifier = Modifier.padding(top = 8.dp))
+                }
             } else {
                 // Right from the seasons comes back to the episode last focused (the first one
                 // for a new season). It used to aim at episode 1 only, a dead end once scrolled.
@@ -459,6 +462,25 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
                     itemsIndexed(episodes, key = { _, ep -> ep.id }) { i, ep ->
                         EpisodeRow(ep, api, index = i, code = code(ep), onClick = { if (ep.isPlayable) onPlay(ep) }, onLongClick = { if (ep.isPlayable) menuFor = ep }, modifier = if (i == 0) Modifier.focusRequester(firstEpisode) else Modifier)
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Episode rows while they load (a season picked, a retry): the rows' shapes, breathing. */
+@Composable
+private fun EpisodeRowsSkeleton() {
+    val pulse = rememberSkeletonPulse()
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.padding(start = TvDims.FocusBorder, top = TvDims.FocusBorder)) {
+        repeat(3) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SkeletonBlock(pulse, Modifier.width(EpisodeThumbWidth).aspectRatio(16f / 9f))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SkeletonBlock(pulse, Modifier.width(220.dp).height(18.dp))
+                    SkeletonBlock(pulse, Modifier.width(120.dp).height(13.dp))
+                    SkeletonBlock(pulse, Modifier.width(300.dp).height(13.dp))
+                    SkeletonBlock(pulse, Modifier.width(260.dp).height(13.dp))
                 }
             }
         }

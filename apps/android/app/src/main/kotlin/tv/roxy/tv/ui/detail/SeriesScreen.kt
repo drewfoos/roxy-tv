@@ -112,6 +112,24 @@ fun SeriesUiState.withEpisodes(result: Result<EpisodeRows>, numbers: (List<Item>
         },
     )
 
+/**
+ * Try again pressed: the problem message gives way to the loading rows at once, rather than
+ * staying up (looking ignored) until the page has been read again.
+ */
+fun SeriesUiState.retrying(): SeriesUiState = copy(episodesLoading = true, episodesError = null, episodesIncomplete = false)
+
+/** The retry could not even read the page: the problem it was retrying is shown again. */
+fun SeriesUiState.retryFailed(before: SeriesUiState): SeriesUiState =
+    copy(episodesLoading = false, episodesError = before.episodesError, episodesIncomplete = before.episodesIncomplete, episodesExpected = before.episodesExpected)
+
+/**
+ * The page has been read. On the first read of a show with seasons the episodes come after
+ * the show's next episode is known (the page opens on its season): they count as loading
+ * until then, so "No episodes in this season" does not flash first.
+ */
+fun SeriesUiState.episodesPending(firstLoad: Boolean, hasSeasons: Boolean): SeriesUiState =
+    if (firstLoad && hasSeasons) copy(episodesLoading = true) else this
+
 /** Where an entry of the season list that is not a season gets its rows. */
 sealed interface SectionSource {
     /** Some of the Specials season's episodes, in this order. */
@@ -169,7 +187,9 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     private val _state = MutableStateFlow(SeriesUiState(series = initial, episodesLoading = initial != null))
     val state: StateFlow<SeriesUiState> = _state
 
-    fun load() {
+    fun load() = load(onFailed = null)
+
+    private fun load(onFailed: (() -> Unit)?) {
         viewModelScope.launch {
             runCatching {
                 val series = api.item(seriesId)
@@ -188,6 +208,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 // A reload (after marking watched, say) keeps the episodes and related rows on
                 // screen until the fresh ones land, so the list doesn't empty and jump to the top.
                 _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep, sectionCounts = ordered?.counts ?: emptyMap(), sectionLabels = ordered?.labels ?: emptyMap())
+                    .episodesPending(firstLoad, seasons.isNotEmpty())
                 if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
                 else if (seasons.isEmpty()) loadEpisodes(seriesId, recursive = true) // flat series without season folders
                 loadUpNext(seasons)
@@ -197,7 +218,7 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
                 Timber.e(t, "series load failed")
                 // A reload that fails (back from the player during a Wi-Fi drop) keeps the
                 // page that is showing; only a first load turns into the error.
-                if (_state.value.series != null) _state.value = _state.value.copy(loading = false)
+                if (_state.value.series != null) { _state.value = _state.value.copy(loading = false); onFailed?.invoke() }
                 else _state.value = SeriesUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this series"))
             }
         }
@@ -260,7 +281,11 @@ class SeriesViewModel(private val api: RoxyApi, private val seriesId: String, in
     }
 
     /** The incomplete-list message's Retry: the whole page again (sections too, which name the specials). */
-    fun retryEpisodes() = load()
+    fun retryEpisodes() {
+        val before = _state.value
+        _state.value = before.retrying()
+        load(onFailed = { _state.value = _state.value.retryFailed(before) })
+    }
 
     private fun loadEpisodes(parentId: String, recursive: Boolean = false) {
         _state.value = _state.value.copy(episodesLoading = true, episodesIncomplete = false, episodesError = null)
