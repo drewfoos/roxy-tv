@@ -197,7 +197,7 @@ const val OPENING_NEXT_WAIT_MS = 3_000L
 suspend fun awaitNext(call: Deferred<Item?>, waitMs: Long = OPENING_NEXT_WAIT_MS): NextWait =
     withTimeoutOrNull(waitMs) { NextWait(call.await(), answered = true) } ?: NextWait(null, answered = false)
 
-/** The season the page opens on: the next episode's, else the first. */
+/** The season the page opens on: the next episode's, else the first (in the list as it is now). */
 fun openingSeason(seasons: List<Item>, wait: NextWait): Int =
     wait.next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
 
@@ -271,11 +271,12 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                 // A reload (after marking watched, say) keeps the episodes and related rows on
                 // screen until the fresh ones land, so the list doesn't empty and jump to the top.
                 _state.value = _state.value.copy(loading = false, error = null, series = series, seasons = seasons, selectedSeason = keep, sectionCounts = ordered?.counts ?: emptyMap(), sectionLabels = ordered?.labels ?: emptyMap())
-                    .episodesPending(firstLoad, seasons.isNotEmpty())
+                    .episodesPending(opening, seasons.isNotEmpty())
                 // A season picked meanwhile is already being read (or is read): not again.
                 if (newerPick) Unit
-                else if (seasons.isNotEmpty() && !firstLoad) loadEpisodes(seasons[keep].id)
-                else if (seasons.isEmpty()) loadEpisodes(seriesId, recursive = true) // flat series without season folders
+                // While the opening is undecided its /next picks the season (see loadUpNext).
+                else if (seasons.isNotEmpty() && !opening) loadEpisodes(seasons[keep].id)
+                else if (seasons.isEmpty()) { opening = false; loadEpisodes(seriesId, recursive = true) } // flat series without season folders
                 loadUpNext(seasons)
                 // Related titles do not change while you watch: once per page, not on every return.
                 if (!relatedLoaded) loadRelated()
@@ -297,7 +298,13 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
     /** Entries of the season list that are not seasons: where their rows come from. */
     private var sources: Map<String, SectionSource> = emptyMap()
 
-    private var firstLoad = true
+    /**
+     * The page has not chosen its opening season yet (the next episode's: Crunchyroll). One
+     * decision for the page, made by the LATEST /next lookup only: a page read that lands
+     * while the first lookup runs starts a newer one, and the older answer (perhaps from
+     * before a watch elsewhere, about a season list since replaced) is not acted on.
+     */
+    private var opening = true
     private var relatedLoaded = false
 
     /**
@@ -305,20 +312,24 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
      * opens on that episode's season (Crunchyroll), so Play and the list agree.
      */
     private fun loadUpNext(seasons: List<Item>) {
-        val opening = firstLoad
-        firstLoad = false
         val mine = ++nextGen
         viewModelScope.launch {
             // The server works it out: the page used to load every episode of the show for it.
             val call = async { runCatching { api.next(seriesId) }.onFailure { Timber.w(it, "up next") }.getOrNull() }
-            // Not if a season was picked meanwhile (the all-episodes fetch is slow on long shows).
             if (opening && seasons.isNotEmpty()) {
                 val wait = awaitNext(call)
-                if (!wait.answered) Timber.w("up next: no answer in %d ms; opening the first season", OPENING_NEXT_WAIT_MS)
-                if (!userPicked) {
-                    val at = openingSeason(seasons, wait)
-                    _state.value = _state.value.copy(selectedSeason = at)
-                    loadEpisodes(seasons[at].id)
+                // A newer lookup started meanwhile: the opening is its to make. A season
+                // picked meanwhile (the user) ends the opening altogether.
+                if (mine == nextGen && opening && !userPicked) {
+                    opening = false
+                    if (!wait.answered) Timber.w("up next: no answer in %d ms; opening the first season", OPENING_NEXT_WAIT_MS)
+                    // In the list on screen now, by id (a later page read may have reordered it).
+                    val now = _state.value.seasons
+                    val at = openingSeason(now, wait)
+                    if (at in now.indices) {
+                        _state.value = _state.value.copy(selectedSeason = at)
+                        loadEpisodes(now[at].id)
+                    }
                 }
             }
             // Play's target, whenever it comes (after the episodes when /next was slow).
@@ -343,6 +354,7 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
         if (index !in s.seasons.indices) return
         if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showExtras) return
         userPicked = true
+        opening = false
         // A different season empties the list until its episodes land, so the old season's
         // episodes are never shown (or played) under the new season's name.
         val other = index != s.selectedSeason
