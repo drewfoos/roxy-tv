@@ -95,5 +95,21 @@ class PendingQueueTest {
             assertNull("unreadable: treated as none", ProgressJournal(file).read())
         } finally { dir.deleteRecursively() }
     }
+
+    // Found in review: a failed write was swallowed, and the replace (rename, else delete and
+    // rename) could leave no journal if the app died in between. A write that fails now says
+    // so, and the journal still holds the previous queue, whole.
+    @Test fun aFailedWriteKeepsThePreviousJournal() {
+        val dir = java.nio.file.Files.createTempDirectory("journal").toFile()
+        try {
+            val file = java.io.File(dir, "progress-queue.json")
+            val j = ProgressJournal(file)
+            val q1 = listOf(p("e1", 60_000))
+            assertTrue(j.write(q1).isSuccess)
+            java.io.File(file.path + ".tmp").mkdirs() // the disk refuses the temporary file
+            assertTrue("the failure is returned", j.write(listOf(p("e1", 0, played = true))).isFailure)
+            assertEquals("the previous queue, whole", q1, ProgressJournal(file).read())
+        } finally { dir.deleteRecursively() }
+    }
 }
 

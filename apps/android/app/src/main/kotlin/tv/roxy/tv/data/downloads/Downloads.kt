@@ -9,6 +9,7 @@ import android.os.StatFs
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -109,6 +110,9 @@ fun pendingAfter(queue: List<PendingProgress>, profile: String?, itemId: String,
     return kept + next
 }
 
+/** How soon a failed write of the progress journal is tried again. */
+const val JOURNAL_RETRY_MS = 5_000L
+
 /** How long an entry the server keeps refusing (a 500, say) is retried before it is let go. */
 const val PENDING_REFUSED_KEEP_MS = 24 * 60 * 60 * 1000L
 
@@ -165,7 +169,14 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     private val indexFile = File(context.filesDir, "downloads.json")
     /** The progress queue's own file, written at once (see ProgressJournal). */
     private val journal = ProgressJournal(File(context.filesDir, "progress-queue.json"))
-    private val journalLock = Any()
+    /** One thread for the journal: writes in order, off the player's thread. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val journalThread = Dispatchers.IO.limitedParallelism(1)
+    private val journalScope = CoroutineScope(SupervisorJob() + journalThread)
+    private val queueWriteWaiting = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** The last write of the queue failed: its newest entries are only in memory (retried). */
+    @Volatile var queueWriteFailed = false
+        private set
 
     /** Video and image files; the external app dir is large and needs no permission, with the internal one as a fallback. */
     val root: File = (context.getExternalFilesDir("downloads") ?: File(context.filesDir, "downloads")).apply { mkdirs() }
@@ -365,8 +376,26 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         writeQueue()
     }
 
-    /** Write the queue as it is now (under a lock, so the latest state is the last written). */
-    private fun writeQueue() = synchronized(journalLock) { journal.write(_index.value.pendingProgress) }
+    /**
+     * Write the queue as it is now, on the journal's own thread (a report is made on the
+     * player's; a disk that stalls must not stall playback). Writes run one at a time, in
+     * order, without the index's 400 ms wait; changes made while one is waiting are written
+     * by it (it reads the queue when it runs), so many quick changes are one write. A write
+     * that fails is tried again every few seconds until one goes through, and any new
+     * report tries again too (every write is the whole queue).
+     */
+    private fun writeQueue() {
+        if (!queueWriteWaiting.compareAndSet(false, true)) return
+        journalScope.launch {
+            queueWriteWaiting.set(false)
+            val ok = journal.write(_index.value.pendingProgress).isSuccess
+            queueWriteFailed = !ok
+            if (!ok) { kotlinx.coroutines.delay(JOURNAL_RETRY_MS); writeQueue() }
+        }
+    }
+
+    /** Waits until the queue as it is now has been written (tests; a clean shutdown). */
+    internal suspend fun awaitQueueWritten() { writeQueue(); kotlinx.coroutines.withContext(journalThread) { } }
 
     /** Whether a position for [itemId] (this profile) is waiting to be sent. */
     /** The newest progress this profile recorded offline for [itemId] and has not sent yet. */
