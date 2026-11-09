@@ -274,10 +274,21 @@ class PlayerSession(
     private var skipWindowSec = 20
     private var nextCardEnabled = false
     private var next: PlayRequest? = null
-    /** The lookup of [next] for the current item has answered (it may be none). */
-    private var nextKnown = false
-    /** The file reached its end before the lookup answered: act on the answer. */
-    private var endPending = false
+    /**
+     * Where the player is with its file: opening (and why), playing, reconnecting, waiting
+     * for the server, ended; whether the item's own file has opened; the next-episode lookup.
+     * The names below read it (they were flags kept in step by hand; see PlaybackLifecycle).
+     */
+    private val life = PlaybackLifecycle()
+    /** A new stream is on its way: the old one's end events are not the end of this item. */
+    private val switching get() = life.switching
+    /** mpv still plays the previous episode: its position is not this item's. */
+    private val changingItem get() = life.changingItem
+    private val reconnecting get() = life.reconnecting
+    /** After the quick attempts: paused here until the server answers. */
+    private val waitingAt get() = life.waitingAt
+    /** This file's end was reported (EOF and END_FILE both arrive at the end). */
+    private val endReported get() = life.ended
     // When the position last moved (or tracks were picked), by the monotonic clock: a report's
     // age (see reportProgress). Reset per item.
     private var lastPosSec: Double? = null
@@ -289,25 +300,10 @@ class PlayerSession(
         if (positionMoved(lastPosSec, pos)) { lastPosSec = pos; lastPosAt = android.os.SystemClock.elapsedRealtime() }
     }
 
-    /** The current item's own file has been asked of the player (see onFileLoaded). */
-    @Volatile private var newFileRequested = true
-    /** The lookup could not find out (server away): asked again at the end. */
-    private var nextFailed = false
     private var endWaitJob: Job? = null
     var nextCard by mutableStateOf<NextCard?>(null); private set
     private var nextCardDismissed = false
     private var countdownJob: Job? = null
-    /** True from "load the next file" until it has loaded, so the old file's end events are ignored. */
-    @Volatile private var switching = false
-    /**
-     * True from playNext until the next episode's file has loaded. [itemId] already names
-     * the next episode then, but for a stream mpv keeps playing the old file until the
-     * server's subtitle languages (and a media token) come back, so its position and tracks
-     * belong to the previous episode and must not be reported under the new id.
-     */
-    @Volatile private var changingItem = false
-    /** This file's end was reported (EOF and END_FILE both arrive at the end). */
-    private var endReported = false
     // The age rating card: what it says, and whether it is up (a few seconds per title).
     private var advisory: Advisory? = null
     private var advisoryUp = false
@@ -316,11 +312,9 @@ class PlayerSession(
     // Lost connection: the stream ended (or would not open) well before the end of the file.
     /** Reconnects in a row; reset only once a reopened stream has really played on. */
     private val reconnects = ReconnectBudget()
-    private var reconnecting = false
     private var reconnectJob: Job? = null
     /** After the quick attempts: waits for the server to answer, then reopens at [waitingAt]. */
     private var waitJob: Job? = null
-    private var waitingAt: Double? = null
     /** Half-second ticks the stream has been buffering with nothing else going on. */
     private var stallTicks = 0
     private var stallShown = false
@@ -384,13 +378,11 @@ class PlayerSession(
                 // Mid-switch, before the next episode's file was even asked for, a load is the
                 // OLD file reopening (passthrough watchdog, token retry): taking it for the new
                 // one sent the old file's position under the new item's id.
-                if (changingItem && !newFileRequested) { Timber.w("old file reloaded during a switch: ignored"); return }
+                val wasReconnecting = reconnecting
+                if (!life.fileLoaded()) { Timber.w("old file reloaded during a switch: ignored"); return }
                 if (startState.value == StartState.Loading && startProbeSec == null) startProbeSec = player.timePosSeconds() ?: 0.0
-                switching = false
-                changingItem = false
-                endReported = false
-                if (reconnecting) { reconnecting = false; flashOsd(null) }
-                stallTicks = 0; stallShown = false; waitingAt = null
+                if (wasReconnecting) flashOsd(null)
+                stallTicks = 0; stallShown = false
                 applyTrackPicks()
                 // Ask the display for the film's rate (24p on a TV that has it).
                 player.containerFps()?.let { player.hintFrameRate(it.toFloat()) }
@@ -410,15 +402,14 @@ class PlayerSession(
                     return
                 }
                 Timber.i("end of file")
-                endReported = true
-                reportProgress("end")
+                if (life.fileEnded()) reportProgress("end")
                 // Ended with an error near the end (no eof-reached follows): still the end.
                 atFileEnd()
             }
 
             override fun onLoadFailed() {
                 if (startState.value == StartState.Loading) startState.value = StartState.Failed
-                if (fromDisk) { switching = false; changingItem = false; reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
+                if (fromDisk) { life.localFileFailed(); reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
                 val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
                 reconnect(at)
             }
@@ -650,6 +641,9 @@ class PlayerSession(
             sourceHeight = src?.streams?.firstOrNull { it.type == "video" }?.height ?: 0
             sourceDurationSec = src?.durationMs?.let { it / 1000.0 }
             player.subtitleLanguageOverrides = subtitleInfos(src?.streams.orEmpty()).filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+            // A download as the next episode: without this its load was taken for the old
+            // file's and ignored, and the player stayed mid-switch (no progress, Next blocked).
+            life.fileRequested()
             player.play(url, start)
             // Seek previews are a bonus when the server happens to be reachable.
             if (sourceId != null && app.prefs.session.value.isLoggedIn) scope.launch {
@@ -692,34 +686,32 @@ class PlayerSession(
                 if (wantTranscode && !use) Timber.i("preferred quality %s skipped: the file is already smaller", quality.key)
                 transcoding = use
                 val mt = if (use) runCatching { app.api.mediaToken(sourceId) }.getOrNull() else null
-                newFileRequested = true
+                life.fileRequested()
                 player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null)
             }
         } else {
-            newFileRequested = true
+            life.fileRequested()
             player.play(url, start)
         }
         // What comes after this one (null for movies and the last episode).
-        nextKnown = false
-        endPending = false
         endWaitJob?.cancel()
-        val id = itemId ?: run { nextKnown = true; return }
+        val id = itemId ?: run { life.noLookup(); return }
         lookUpNext(id)
     }
 
     private fun lookUpNext(id: String) {
-        nextFailed = false
+        life.lookupStarted()
         scope.launch {
             val r = nextEpisodeLookup(context, id)
             if (itemId != id || destroyed) return@launch
             r.onSuccess { n ->
-                next = n; nextKnown = true
+                next = n; life.lookupAnswered()
                 Timber.i("next episode: %s", n?.item?.displayLabel ?: "none"); refreshUi()
             }.onFailure {
                 Timber.w(it, "next episode: could not find out; asking again at the end")
-                nextFailed = true
+                life.lookupFailed()
             }
-            if (endPending && r.isSuccess) { endPending = false; endWaitJob?.cancel(); if (stillAtEnd()) atFileEnd() }
+            if (r.isSuccess && life.stopWaitingForNext()) { endWaitJob?.cancel(); if (stillAtEnd()) atFileEnd() }
         }
     }
 
@@ -740,14 +732,12 @@ class PlayerSession(
         }
         // A wait for the server or a reconnect belongs to the item being left: resumed later
         // it reopened the NEW episode at the old one's position (and saved it there).
-        reconnectJob?.cancel(); waitJob?.cancel(); waitingAt = null; reconnecting = false
+        reconnectJob?.cancel(); waitJob?.cancel()
         flashOsd(null)
-        newFileRequested = false
         lastPosSec = null; lastPosAt = android.os.SystemClock.elapsedRealtime(); lastAudio = null; lastSub = null
         seekReportJob?.cancel()
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
-        switching = true
-        changingItem = true
+        life.startNext() // ends any reconnect or wait: they belonged to the item left behind
         reconnects.reset() // a new item starts afresh
         next = null
         itemId = req.item.id
@@ -810,29 +800,28 @@ class PlayerSession(
             return
         }
         Timber.i("reached the end")
-        if (!endReported) { endReported = true; reportProgress("end") }
+        if (life.fileEnded()) reportProgress("end")
         atFileEnd()
     }
 
     /** The file is over: go on to the next episode, close, or wait (see [endAction]). */
     private fun atFileEnd(waitedOut: Boolean = false) {
         if (destroyed || switching) return
-        when (endAction(autoplay, nextKnown, next != null, waitedOut, cardUp = nextCard != null)) {
+        when (endAction(autoplay, life.nextKnown, next != null, waitedOut, cardUp = nextCard != null)) {
             // Ran out while the card was up (or with no outro marker): go on now.
             EndAction.PlayNext -> playNext()
             EndAction.Close -> { Timber.i("nothing follows: closing the player"); host.ended() }
             EndAction.WaitForNext -> {
-                if (endPending) return // already waiting (eof-reached after an end-file)
-                endPending = true
+                if (!life.startWaitingForNext()) return // already waiting (eof-reached after an end-file)
                 endWaitJob?.cancel()
                 val id = itemId
                 // The lookup failed earlier (server away then): ask again now.
-                if (nextFailed && id != null) lookUpNext(id)
+                if (life.nextLookup == PlaybackLifecycle.NextLookup.Failed && id != null) lookUpNext(id)
                 endWaitJob = scope.launch {
                     delay(END_WAIT_MS)
                     // Still the same item, still at its end, and the lookup never answered.
-                    if (endPending && itemId == id && stillAtEnd()) {
-                        endPending = false
+                    if (itemId == id && life.waitingForNext && stillAtEnd()) {
+                        life.stopWaitingForNext()
                         Timber.w("next-episode lookup did not answer in %d ms: closing", END_WAIT_MS)
                         atFileEnd(waitedOut = true)
                     }
@@ -850,11 +839,9 @@ class PlayerSession(
     private fun reconnect(at: Double) {
         if (destroyed) return
         reconnectJob?.cancel()
-        waitJob?.cancel(); waitingAt = null
+        waitJob?.cancel()
         if (reconnects.used >= RECONNECT_DELAYS_MS.size) {
             Timber.w("reconnects used up at %.1f s; waiting for the server", at)
-            reconnecting = false
-            switching = false
             reloadTarget = null
             reconnects.reset()
             waitForServer(at)
@@ -862,8 +849,7 @@ class PlayerSession(
         }
         val wait = RECONNECT_DELAYS_MS[reconnects.used]
         reconnects.reconnected(at)
-        reconnecting = true
-        switching = true // the dropped stream's end events are not the end of the episode
+        life.reconnectScheduled(at) // the dropped stream's end events are not the end of the episode
         reloadTarget = at
         flashOsd(LOST_CONNECTION, 0)
         refreshUi(forceGlue = true)
@@ -880,6 +866,7 @@ class PlayerSession(
             val sid = sourceId
             val url = if (sid != null && !local) runCatching { app.api.streamUrl(sid, app.api.mediaToken(sid)) }.getOrNull() ?: directUrl else directUrl
             directUrl = url
+            life.reopening()
             player.play(url, at.toInt())
         }
     }
@@ -887,7 +874,7 @@ class PlayerSession(
     /** Paused on [at] until the server answers (checked every 5 s), then reopened there. */
     private fun waitForServer(at: Double) {
         waitJob?.cancel()
-        waitingAt = at
+        life.waitForServer(at)
         player.setPaused(true)
         flashOsd(WAITING_FOR_SERVER, 0)
         showControls()
@@ -904,9 +891,8 @@ class PlayerSession(
     }
 
     private fun resumeAfterWaiting() {
-        val at = waitingAt ?: return
+        val at = life.resumeFromWait() ?: return
         waitJob?.cancel()
-        waitingAt = null
         flashOsd(null)
         player.setPaused(false)
         reconnect(at)
@@ -1133,7 +1119,7 @@ class PlayerSession(
         Timber.i("transcode %s from %.1f s", quality.key, at)
         transcoding = true
         reloadTarget = at
-        switching = true // the replaced stream's end is not the end of the episode
+        life.reloadStarted() // the replaced stream's end is not the end of the episode
         val cached = app.api.cachedMediaToken(sid)
         if (cached != null) {
             player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at, cached), 0, transcoded = true)
@@ -1156,10 +1142,11 @@ class PlayerSession(
     private fun watchReload(at: Double) {
         scope.launch {
             delay(20_000)
-            if (!destroyed && switching && !reconnecting && reloadTarget == at) {
+            if (!destroyed && reloadTarget == at && life.reloadTimedOut()) {
                 Timber.w("reload at %.1f s did not start", at)
-                switching = false
                 reloadTarget = null
+                // Started while waiting for the server: wait again (and ask it again).
+                waitingAt?.let { w -> waitForServer(w); return@launch }
                 flashOsd("The server could not start this quality", 4000)
             }
         }
@@ -1176,7 +1163,7 @@ class PlayerSession(
         if (q.isOriginal) {
             transcoding = false
             reloadTarget = pos
-            switching = true
+            life.reloadStarted()
             player.play(directUrl, pos.toInt(), transcoded = false)
             watchReload(pos)
         } else {
