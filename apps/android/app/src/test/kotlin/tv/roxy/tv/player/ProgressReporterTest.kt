@@ -186,8 +186,11 @@ class ProgressReporterTest {
             r.report("pause", "e$i", i.toDouble(), null, null, null, null); expected += "progress e$i ${i * 1000}"
             r.markWatched("w$i"); expected += "played w$i"
         }
-        withTimeout(20_000) { while (f.sent.count { it != "refresh" } < expected.size) delay(10) }
-        assertEquals(expected, f.sent.filter { it != "refresh" })
+        // The log is appended on the pool's threads: read a copy taken under its lock
+        // (iterating it bare raced with the appends, ConcurrentModificationException).
+        fun sentNow() = synchronized(f.sent) { f.sent.toList() }.filter { it != "refresh" }
+        withTimeout(20_000) { while (sentNow().size < expected.size) delay(10) }
+        assertEquals(expected, sentNow())
     }
 
     // Cancelled mid-send is not a failure: no rest, and what was queued stays queued.

@@ -77,5 +77,51 @@ class QueueDurabilityTest {
         first.cancel() // killed at once: nothing else is written
         assertEquals(listOf("e1:30000:false", "e1:0:true"), queueOf(store(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))))
     }
+
+    // Writes refused for 30 s: the journal is tried once at once, then once every
+    // JOURNAL_RETRY_MS, never in a loop in between (the first version of the retry spun),
+    // and the queue goes down on the first try after the disk takes writes again.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun sustainedFailureRetriesEveryFiveSecondsThenRecovers() {
+        val clock = kotlinx.coroutines.test.TestCoroutineScheduler()
+        // At most 200 tasks: a retry loop (as the first version had) stops here and shows up
+        // as too many attempts, instead of spinning the test for ever.
+        val writer = Bounded(kotlinx.coroutines.test.StandardTestDispatcher(clock), 200)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val d = Downloads(context, Prefs(context, scope), scope, journalDispatcher = writer)
+        clock.runCurrent() // the startup write
+        val blocker = File(context.filesDir, "progress-queue.json.tmp").apply { mkdirs() } // the disk refuses
+        val start = d.journalWriteAttempts.get()
+        d.recordProgress("e1", 0, reportedToServer = false, played = true) // written in the background
+        clock.runCurrent()
+        assertEquals("tried at once", start + 1, d.journalWriteAttempts.get())
+        assertTrue(d.queueWriteFailed)
+        for (n in 1..6) { // 30 s of refused writes
+            clock.advanceTimeBy(JOURNAL_RETRY_MS - 1); clock.runCurrent()
+            assertEquals("no try before $n x 5 s", start + n, d.journalWriteAttempts.get())
+            clock.advanceTimeBy(1); clock.runCurrent()
+            assertEquals("one try at $n x 5 s", start + n + 1, d.journalWriteAttempts.get())
+            assertTrue(d.queueWriteFailed)
+        }
+        blocker.deleteRecursively() // the disk takes writes again
+        clock.advanceTimeBy(JOURNAL_RETRY_MS); clock.runCurrent()
+        assertFalse("recovered on the next try", d.queueWriteFailed)
+        val settled = d.journalWriteAttempts.get()
+        clock.advanceTimeBy(60_000); clock.runCurrent()
+        assertEquals("no more tries once it went down", settled, d.journalWriteAttempts.get())
+        scope.cancel()
+        assertEquals(listOf("e1:0:true"), queueOf(store(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))))
+    }
+
+    /** A dispatcher that runs at most [max] tasks (on [inner]'s virtual clock) and drops the rest. */
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+    private class Bounded(private val inner: kotlinx.coroutines.CoroutineDispatcher, private val max: Int) : kotlinx.coroutines.CoroutineDispatcher(), kotlinx.coroutines.Delay {
+        private val tasks = java.util.concurrent.atomic.AtomicInteger()
+        override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) {
+            if (tasks.incrementAndGet() <= max) inner.dispatch(context, block)
+        }
+        override fun scheduleResumeAfterDelay(timeMillis: Long, continuation: kotlinx.coroutines.CancellableContinuation<Unit>) =
+            (inner as kotlinx.coroutines.Delay).scheduleResumeAfterDelay(timeMillis, continuation)
+    }
 }
 

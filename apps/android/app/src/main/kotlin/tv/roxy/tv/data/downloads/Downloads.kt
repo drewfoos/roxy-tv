@@ -163,7 +163,12 @@ data class DownloadedTitle(val id: String, val title: Item, val entries: List<Do
  * fetch and writes progress back through [update]. Every change lands in [index] at once
  * and on disk shortly after (debounced), so the UI never waits on I/O.
  */
-class Downloads(private val context: Context, private val prefs: Prefs, private val scope: CoroutineScope) {
+class Downloads(
+    private val context: Context, private val prefs: Prefs, private val scope: CoroutineScope,
+    /** The journal's writer (tests: a dispatcher on a virtual clock). One at a time, in order. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    journalDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
+) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val indexFile = File(context.filesDir, "downloads.json")
@@ -173,8 +178,9 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     private val journalLock = Any()
     private val queueRetryWaiting = java.util.concurrent.atomic.AtomicBoolean(false)
     /** One thread for the journal: writes in order, off the player's thread. */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val journalThread = Dispatchers.IO.limitedParallelism(1)
+    private val journalThread = journalDispatcher
+    /** Writes of the journal tried (tests: how often a failing disk is retried). */
+    internal val journalWriteAttempts = java.util.concurrent.atomic.AtomicInteger()
     private val journalScope = CoroutineScope(SupervisorJob() + journalThread)
     private val queueWriteWaiting = java.util.concurrent.atomic.AtomicBoolean(false)
     /** The last write of the queue failed: its newest entries are only in memory (retried). */
@@ -426,6 +432,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
      * the lock, so a write never puts down an older queue after a newer one.
      */
     private fun writeQueueNow(): Boolean = synchronized(journalLock) {
+        journalWriteAttempts.incrementAndGet()
         val ok = journal.write(_index.value.pendingProgress).isSuccess
         queueWriteFailed = !ok
         if (!ok) retryLater()
