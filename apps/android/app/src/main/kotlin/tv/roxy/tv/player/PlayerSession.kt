@@ -475,6 +475,11 @@ class PlayerSession(
                 app.scope.launch { app.prefs.saveSettings(app.prefs.settings.value.copy(autoSkip = autoSkip)) }
                 refreshUi()
             }
+            override fun toggleAutoplay() {
+                autoplay = !autoplay
+                app.scope.launch { app.prefs.saveSettings(app.prefs.settings.value.copy(autoplay = autoplay)) }
+                refreshUi()
+            }
             override fun toggleFill() { player.setFill(!player.isFill()); refreshUi() }
             override fun enterPip() { host.enterPip() }
             override fun toggleFullscreen() { host.toggleFullscreen() }
@@ -1001,6 +1006,7 @@ class PlayerSession(
             advisory = if (advisoryUp) advisory else null,
             segments = if (settling) emptyList() else segments,
             autoSkip = autoSkip,
+            autoplay = autoplay,
             skipWindowSec = skipWindowSec,
             subtitleTracks = tracks.filter { it.type == "sub" },
             audioTracks = tracks.filter { it.type == "audio" },

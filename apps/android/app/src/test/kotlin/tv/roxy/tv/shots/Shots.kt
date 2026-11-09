@@ -125,6 +125,18 @@ class Shots {
         shot(name)
     }
 
+    @Test @Config(qualifiers = "w915dp-h412dp-land-xxhdpi")
+    fun phonePlayerSettings() {
+        val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, hasNext = true, fullscreen = true, autoplay = false)
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color(0xFF6A5A4A))) {
+                PlayerControls(state = state, visible = true, sheet = Sheet.Settings, onSheet = {}, onInteraction = {}, actions = noActions)
+            }
+        }
+        compose.waitForIdle()
+        shot("phone-player-settings")
+    }
+
     @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
     fun tvPlayerControls() = tvPlayer("tv-player", Sheet.None)
 

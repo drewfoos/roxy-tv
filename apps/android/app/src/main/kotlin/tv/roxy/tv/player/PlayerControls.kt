@@ -65,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -127,6 +128,8 @@ data class PlayerUiState(
     val nextCardShown: Boolean = false,
     val segments: List<MediaSegment> = emptyList(),
     val autoSkip: Boolean = false,
+    /** The next episode plays at the end (settings; switched in the player's settings too). */
+    val autoplay: Boolean = true,
     /** Seconds the Skip button stays after a segment starts (0 = until it ends). */
     val skipWindowSec: Int = 20,
     /** Hosted on a page: false = in its 16:9 box, true = filling the screen; null = the player owns the screen. */
@@ -209,6 +212,7 @@ interface PlayerActions {
     fun cast() {}
     /** The title box's "Go to Details" (TV): the show's (or the film's) page. */
     fun openDetails() {}
+    fun toggleAutoplay() {}
 }
 
 enum class Sheet { None, Settings, Subtitles, Audio, Quality, Speed }
@@ -364,16 +368,18 @@ fun PlayerControls(
         // transparent scrim behind it closes it on tap.
         if (sheet != Sheet.None) {
             Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onSheet(Sheet.None) } })
-            Box(modifier = if (cr) Modifier.align(Alignment.TopEnd).padding(end = if (compact) 8.dp else 16.dp, top = if (compact) 40.dp else 56.dp, bottom = if (compact) 24.dp else 40.dp) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f)) {
-                CompositionLocalProvider(LocalCompactMenu provides compact, LocalTvPanel provides tv) { when (sheet) {
+            Box(modifier = if (cr) Modifier.fillMaxSize().padding(top = if (compact) PhoneTitleGapCompact else PhoneTitleGap) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f)) {
+                CompositionLocalProvider(LocalCompactMenu provides compact, LocalTvPanel provides tv, LocalPhonePanel provides cr, LocalCloseSheet provides { onSheet(Sheet.None) }) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
                         title = null,
+                        // Audio, Subtitles, Quality, Playback speed, the switches last (Autoplay at the bottom).
                         rows = listOf(
-                            MenuRow("quality", "Quality", state.qualityOptions.firstOrNull { it.key == state.qualityKey }?.label ?: QualityOption.byKey(state.qualityKey).label, submenu = true),
-                            MenuRow("speed", "Playback speed", if (state.speed == 1.0) "Normal" else "${state.speed}×", submenu = true),
                             MenuRow("audio", "Audio", state.audioTracks.firstOrNull { it.id == state.currentAid }?.let { shortTrackName(it) } ?: "—", submenu = true),
                             MenuRow("subtitles", "Subtitles", state.subtitleTracks.firstOrNull { it.id == state.currentSid }?.let { shortTrackName(it) } ?: "Off", submenu = true),
-                            MenuRow("autoskip", "Auto-skip intro & outro", if (state.autoSkip) "On" else "Off", checked = state.autoSkip),
+                            MenuRow("quality", "Quality", state.qualityOptions.firstOrNull { it.key == state.qualityKey }?.label ?: QualityOption.byKey(state.qualityKey).label, submenu = true),
+                            MenuRow("speed", "Playback speed", if (state.speed == 1.0) "Normal" else "${state.speed}×", submenu = true),
+                            MenuRow("autoskip", "Auto-skip intro & outro", if (state.autoSkip) "On" else "Off", checked = state.autoSkip, toggle = true),
+                            MenuRow("autoplay", "Autoplay", if (state.autoplay) "On" else "Off", checked = state.autoplay, toggle = true),
                         ),
                         onPick = { key ->
                             when (key) {
@@ -382,6 +388,7 @@ fun PlayerControls(
                                 "audio" -> onSheet(Sheet.Audio)
                                 "subtitles" -> onSheet(Sheet.Subtitles)
                                 "autoskip" -> { actions.toggleAutoSkip(); onInteraction() }
+                                "autoplay" -> { actions.toggleAutoplay(); onInteraction() }
                             }
                         },
                         onInteraction = onInteraction,
@@ -454,6 +461,13 @@ private fun splitSubtitle(sub: String): Pair<String, String?> {
 private val LocalCompactMenu = compositionLocalOf { false }
 /** The TV: menus are a full-height panel down the right side (Crunchyroll's TV app). */
 private val LocalTvPanel = compositionLocalOf { false }
+/** The phone: menus are a page over the player (Crunchyroll's phone app). */
+/** The phone's settings page starts this far down: the player's top bar (series, episode title) stays in view above it. */
+internal val PhoneTitleGap = 64.dp
+internal val PhoneTitleGapCompact = 44.dp
+private val LocalPhonePanel = compositionLocalOf { false }
+/** Closes the menu (the phone page's back arrow at its top level). */
+private val LocalCloseSheet = compositionLocalOf<() -> Unit> { {} }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
@@ -647,7 +661,7 @@ private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp
     }
 }
 
-private data class MenuRow(val key: String, val label: String, val value: String? = null, val submenu: Boolean = false, val checked: Boolean = false)
+private data class MenuRow(val key: String, val label: String, val value: String? = null, val submenu: Boolean = false, val checked: Boolean = false, val toggle: Boolean = false)
 
 /**
  * YouTube's settings popup: a compact dark panel, rows of "Label · value ›" for
@@ -656,6 +670,7 @@ private data class MenuRow(val key: String, val label: String, val value: String
 @Composable
 private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> Unit, onInteraction: () -> Unit, onBack: (() -> Unit)? = null, footer: String? = null) {
     if (LocalTvPanel.current) { TvMenuPanel(title ?: "Settings", rows, onPick, onInteraction, footer); return }
+    if (LocalPhonePanel.current) { PhoneMenuPanel(title ?: "Playback Settings", rows, onPick, onInteraction, onBack ?: LocalCloseSheet.current, footer); return }
     val first = remember { FocusRequester() }
     LaunchedEffect(title, rows.size) { runCatching { first.requestFocus() } }
     val focusKey = rows.firstOrNull { it.checked }?.key ?: rows.firstOrNull()?.key
@@ -677,6 +692,56 @@ private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> U
             MenuRowView(row, isBack = false, focusRequester = if (row.key == focusKey) first else null, onClick = { onPick(row.key) }, onInteraction = onInteraction)
         }
         if (footer != null && !compact) Text(footer, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 320.dp))
+    }
+}
+
+/**
+ * The phone's menu (Crunchyroll's phone app): a black page over the player, a back arrow and
+ * the title at the top, then rows with the setting at the left and, at the right, its value
+ * and a chevron, a switch for on/off settings, or a tick on the choice in a list. The arrow
+ * goes up a level (a list back to the settings) or closes them.
+ */
+@Composable
+private fun PhoneMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) -> Unit, onInteraction: () -> Unit, onBack: () -> Unit, footer: String?) {
+    val compact = LocalCompactMenu.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) { detectTapGestures { } } // taps here are the panel's, not the scrim's
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = if (compact) 12.dp else 20.dp, vertical = 4.dp),
+    ) {
+        // Header and rows sized so the six settings fit under the title bar on a phone held
+        // sideways (~410 dp tall), Autoplay last and in view without scrolling.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(if (compact) 36.dp else 40.dp).clip(CircleShape).tapClick { onInteraction(); onBack() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(if (compact) 20.dp else 26.dp))
+            }
+            Text(title, color = Color.White, fontSize = if (compact) 16.sp else 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = if (compact) 10.dp else 20.dp))
+        }
+        rows.forEach { row ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().height(if (compact) 40.dp else 46.dp).tapClick { onInteraction(); onPick(row.key) },
+            ) {
+                Text(row.label, color = Color.White, fontSize = if (compact) 14.sp else 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                when {
+                    row.toggle -> androidx.compose.material3.Switch(
+                        checked = row.checked, onCheckedChange = { onInteraction(); onPick(row.key) },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Bar, uncheckedThumbColor = Color(0xFFE0E0E0), uncheckedTrackColor = Color(0xFF3A3A3E), uncheckedBorderColor = Color.Transparent),
+                        modifier = Modifier.scale(if (compact) 0.75f else 0.9f),
+                    )
+                    row.submenu -> {
+                        if (row.value != null) Text(row.value, color = Color(0xFFD8D8D8), fontSize = if (compact) 13.sp else 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color(0xFFD8D8D8), modifier = Modifier.padding(start = 8.dp).size(if (compact) 20.dp else 26.dp))
+                    }
+                    row.checked -> Icon(Icons.Filled.Check, contentDescription = "Selected", tint = Bar, modifier = Modifier.size(if (compact) 20.dp else 24.dp))
+                    row.value != null -> Text(row.value, color = Color(0xFFD8D8D8), fontSize = if (compact) 13.sp else 15.sp)
+                }
+            }
+        }
+        if (footer != null) Text(footer, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
 }
 
