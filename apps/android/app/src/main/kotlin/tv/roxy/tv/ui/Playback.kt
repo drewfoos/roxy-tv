@@ -91,10 +91,18 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
         startMs != null -> startMs
         else -> position
     }
-    val start = if (watched && startAt == 0L) 0 else (startAt / 1000).toInt()
+    // A saved position in the last stretch (the credits; a Watch Next entry from before the
+    // end was reported) starts over: resuming there ended the file, and the player closed
+    // or moved on, at once.
+    val lengthMs = source.durationMs ?: full.runtimeMs
+    val resumeAt = if (!explicit && lengthMs != null && lengthMs > 0 && startAt >= lengthMs - END_STRETCH_MS) 0L else startAt
+    val start = if (watched && resumeAt == 0L) 0 else (resumeAt / 1000).toInt()
     val url = local?.path ?: runCatching { app.api.streamUrl(source.id, app.api.mediaToken(source.id)) }.getOrElse { return Result.failure(it) }
     return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, explicitStart = fromStart || startMs != null, local = local != null))
 }
+
+/** A resume point this close to the end starts the item from the beginning (see [playRequest]). */
+const val END_STRETCH_MS = 15_000L
 
 /** Starts [PlayerActivity] for an item (see [playRequest]). */
 suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false, startMs: Long? = null): Result<Unit> {
@@ -129,19 +137,31 @@ suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false, s
  * Online it asks the server for the series' episodes; away from it, the downloads of the
  * same show are the list, and only downloaded episodes count.
  */
-suspend fun nextEpisode(context: Context, itemId: String): PlayRequest? {
+suspend fun nextEpisode(context: Context, itemId: String): PlayRequest? = nextEpisodeLookup(context, itemId).getOrNull()
+
+/**
+ * [nextEpisode], telling "nothing follows" (success, null) from "could not find out"
+ * (failure): the server not answering while a streamed episode plays. The player closes on
+ * the first and asks again on the second; a Wi-Fi blip at the start of an episode closed
+ * the player at its end instead of playing the next one. Away from the server, playing a
+ * download, the downloads are the answer.
+ */
+suspend fun nextEpisodeLookup(context: Context, itemId: String): Result<PlayRequest?> {
     val app = RoxyApp.get(context)
-    val current = app.downloads.entry(itemId)?.item ?: runCatching { app.api.item(itemId) }.getOrNull() ?: return null
-    if (!current.isEpisode) return null
-    val seriesId = current.seriesId ?: return null
+    val download = app.downloads.entry(itemId)?.item
+    val current = download ?: runCatching { app.api.item(itemId) }.getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; return Result.failure(it) }
+    if (!current.isEpisode) return Result.success(null)
+    val seriesId = current.seriesId ?: return Result.success(null)
     // Order and playability only: playRequest fetches the one episode it plays, files and
     // all (with every episode's files a long show's list was megabytes for the TV to parse).
-    val online = runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }.getOrNull()
+    val onlineRead = runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
+    onlineRead.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it; if (download == null) return Result.failure(it) }
+    val online = onlineRead.getOrNull()
     val episodes = online ?: app.downloads.index.value.entries.values.filter { it.titleId == seriesId && it.isDone }.map { it.item }
     fun seasonKey(e: Item) = (e.seasonAired ?: 0).let { if (it == 0) Int.MAX_VALUE else it }
     val ordered = episodes.sortedWith(compareBy({ seasonKey(it) }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
     val at = ordered.indexOfFirst { it.id == current.id }
-    if (at < 0) return null
-    val next = ordered.drop(at + 1).firstOrNull { it.isPlayable && (online != null || app.downloads.localFile(it.id) != null) } ?: return null
-    return playRequest(context, next).getOrNull()
+    if (at < 0) return Result.success(null)
+    val next = ordered.drop(at + 1).firstOrNull { it.isPlayable && (online != null || app.downloads.localFile(it.id) != null) } ?: return Result.success(null)
+    return playRequest(context, next)
 }

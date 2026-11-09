@@ -22,7 +22,7 @@ import tv.roxy.tv.api.subtitleInfos
 import tv.roxy.tv.data.PlayerSettings
 import tv.roxy.tv.diagnostics.DeviceReport
 import tv.roxy.tv.ui.PlayRequest
-import tv.roxy.tv.ui.nextEpisode
+import tv.roxy.tv.ui.nextEpisodeLookup
 
 /**
  * One playback: libmpv plus everything the controls need (position, tracks, segments,
@@ -108,13 +108,32 @@ class PlayerSession(
          * gone) counts as nothing next, so the player still closes instead of holding the
          * last frame for ever.
          */
-        fun endAction(autoplay: Boolean, nextKnown: Boolean, hasNext: Boolean, waitedOut: Boolean = false): EndAction = when {
+        fun endAction(autoplay: Boolean, nextKnown: Boolean, hasNext: Boolean, waitedOut: Boolean = false, cardUp: Boolean = true): EndAction = when {
             !nextKnown && waitedOut -> EndAction.Close
             !nextKnown -> EndAction.WaitForNext
             hasNext && autoplay -> EndAction.PlayNext
-            hasNext -> EndAction.Stay
+            // Autoplay off: stay only while the next-episode card offers it. The card is
+            // opt-in (and gone once dismissed or in PiP): without it, staying was a frozen
+            // last frame.
+            hasNext && cardUp -> EndAction.Stay
             else -> EndAction.Close
         }
+
+        /** Seconds before the end at which running out of stream counts as the end. */
+        const val END_MARGIN_S = 10.0
+
+        /**
+         * Running out of stream at [pos] is a dropped connection, not the end: a stream (not
+         * a file on disk) well before the end. With no length known it counts as the end.
+         */
+        fun droppedStream(pos: Double, dur: Double?, fromDisk: Boolean): Boolean = !fromDisk && dur != null && pos < dur - END_MARGIN_S
+
+        /**
+         * Still where the file ended (nothing seeked back since): the same margin the end was
+         * taken at. A 2 s margin here, against 10 s for the end, left a player that ended 2-10
+         * s early (a transcode a little shorter than the file) waiting for ever.
+         */
+        fun stillAtEnd(pos: Double?, dur: Double?): Boolean = dur == null || pos == null || pos >= dur - END_MARGIN_S
 
         /**
          * Watch-state calls go to the server one at a time, in the order they were made.
@@ -245,6 +264,8 @@ class PlayerSession(
     private var nextKnown = false
     /** The file reached its end before the lookup answered: act on the answer. */
     private var endPending = false
+    /** The lookup could not find out (server away): asked again at the end. */
+    private var nextFailed = false
     private var endWaitJob: Job? = null
     var nextCard by mutableStateOf<NextCard?>(null); private set
     private var nextCardDismissed = false
@@ -352,7 +373,7 @@ class PlayerSession(
                 // restarted, connection reset) is a dropped connection, not the end.
                 val dur = knownDuration()
                 val pos = player.timePosSeconds() ?: ui.positionSec
-                if (!fromDisk && dur != null && pos < dur - 10.0) {
+                if (droppedStream(pos, dur, fromDisk)) {
                     Timber.w("stream closed at %.1f of %.1f s: reconnecting", pos, dur)
                     reconnect(pos)
                     return
@@ -360,6 +381,8 @@ class PlayerSession(
                 Timber.i("end of file")
                 endReported = true
                 reportProgress("end")
+                // Ended with an error near the end (no eof-reached follows): still the end.
+                atFileEnd()
             }
 
             override fun onLoadFailed() {
@@ -647,13 +670,22 @@ class PlayerSession(
         endPending = false
         endWaitJob?.cancel()
         val id = itemId ?: run { nextKnown = true; return }
+        lookUpNext(id)
+    }
+
+    private fun lookUpNext(id: String) {
+        nextFailed = false
         scope.launch {
-            val n = nextEpisode(context, id)
-            if (itemId == id) {
+            val r = nextEpisodeLookup(context, id)
+            if (itemId != id || destroyed) return@launch
+            r.onSuccess { n ->
                 next = n; nextKnown = true
                 Timber.i("next episode: %s", n?.item?.displayLabel ?: "none"); refreshUi()
-                if (endPending) { endPending = false; endWaitJob?.cancel(); if (atEnd()) atFileEnd() }
+            }.onFailure {
+                Timber.w(it, "next episode: could not find out; asking again at the end")
+                nextFailed = true
             }
+            if (endPending && r.isSuccess) { endPending = false; endWaitJob?.cancel(); if (stillAtEnd()) atFileEnd() }
         }
     }
 
@@ -706,7 +738,12 @@ class PlayerSession(
 
     /** The length the file really has: the server's for a transcode (the stream has none of its own). */
     private fun knownDuration(): Double? =
-        ((if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec)?.takeIf { it > 0 }
+        ((if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec ?: itemDurationSec())?.takeIf { it > 0 }
+
+    /** The item's own length, when the source lookup failed and the stream gives none (a transcode). */
+    private fun itemDurationSec(): Double? = itemId?.let { app.items[it] }?.let { it.primarySource?.durationMs ?: it.runtimeMs }?.let { it / 1000.0 }
+
+    private fun stillAtEnd(): Boolean = stillAtEnd(player.timePosSeconds(), knownDuration())
 
     private fun atEnd(): Boolean {
         val d = knownDuration() ?: return false
@@ -722,7 +759,7 @@ class PlayerSession(
     private fun handleEof() {
         val pos = player.timePosSeconds() ?: 0.0
         val dur = knownDuration()
-        if (!fromDisk && dur != null && pos < dur - 10.0) {
+        if (droppedStream(pos, dur, fromDisk)) {
             Timber.w("stream ended at %.1f of %.1f s: reconnecting", pos, dur)
             reconnect(pos)
             return
@@ -735,18 +772,21 @@ class PlayerSession(
     /** The file is over: go on to the next episode, close, or wait (see [endAction]). */
     private fun atFileEnd(waitedOut: Boolean = false) {
         if (destroyed || switching) return
-        when (endAction(autoplay, nextKnown, next != null, waitedOut)) {
+        when (endAction(autoplay, nextKnown, next != null, waitedOut, cardUp = nextCard != null)) {
             // Ran out while the card was up (or with no outro marker): go on now.
             EndAction.PlayNext -> playNext()
             EndAction.Close -> { Timber.i("nothing follows: closing the player"); host.ended() }
             EndAction.WaitForNext -> {
+                if (endPending) return // already waiting (eof-reached after an end-file)
                 endPending = true
                 endWaitJob?.cancel()
                 val id = itemId
+                // The lookup failed earlier (server away then): ask again now.
+                if (nextFailed && id != null) lookUpNext(id)
                 endWaitJob = scope.launch {
                     delay(END_WAIT_MS)
                     // Still the same item, still at its end, and the lookup never answered.
-                    if (endPending && itemId == id && atEnd()) {
+                    if (endPending && itemId == id && stillAtEnd()) {
                         endPending = false
                         Timber.w("next-episode lookup did not answer in %d ms: closing", END_WAIT_MS)
                         atFileEnd(waitedOut = true)
@@ -1231,7 +1271,7 @@ class PlayerSession(
             app.remote.reportState(null, "", 0, false)
             app.server.playerActive.value = false
         }
-        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel()
+        countdownJob?.cancel(); hideJob?.cancel(); osdJob?.cancel(); flashJob?.cancel(); scrubJob?.cancel(); reconnectJob?.cancel(); waitJob?.cancel(); endWaitJob?.cancel()
         runCatching { displayManager?.unregisterDisplayListener(displayListener) }
         glue.release()
         player.listener = null
