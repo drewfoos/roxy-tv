@@ -308,7 +308,7 @@ fun PhoneSeries(
                     } else if (state.episodesLoading && state.episodes.isEmpty()) {
                         // On their way (a season picked, a retry): rows of shimmer, not a blank.
                         items(3, key = { "eps-skeleton-$it" }) { EpisodeRowSkeleton() }
-                    } else if (!state.episodesLoading && !state.loading && state.episodes.isEmpty()) {
+                    } else if (!state.episodesLoading && !state.loading && state.episodes.isEmpty() && !state.episodesIncomplete) {
                         item(key = "eps-empty") { Text("No episodes in this season.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad)) }
                     } else if (state.episodes.isNotEmpty() && state.episodes.none { it.isPlayable }) {
                         // Nothing on disk for this season (provider placeholders only): offer to request it.

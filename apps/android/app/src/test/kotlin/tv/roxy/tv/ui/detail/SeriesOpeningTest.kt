@@ -117,4 +117,66 @@ class SeriesOpeningTest {
         assertEquals(1, vm.state.value.selectedSeason)
         assertEquals(listOf("episodes:s2"), episodeReads(server))
     }
+
+    // The first read fails on a page opened from a list (header from its card): the rows
+    // said loading for ever with no Try again. Now an error with Try again, which works.
+    @Test fun firstReadFailingShowsTryAgain() {
+        val server = FakeSeriesServer()
+        val vm = SeriesViewModel(server, "show", initial = show)
+        vm.load()
+        server.fail("item")
+        assertEquals(false, vm.state.value.episodesLoading)
+        assertEquals("Can't reach Roxy right now.", vm.state.value.episodesError)
+        vm.retryEpisodes()
+        assertEquals(true, vm.state.value.episodesLoading)
+        page(server)
+        server.answer("next", ep("s2", 4))
+        server.answer("episodes:s2", eps("s2"))
+        assertEquals(1, vm.state.value.selectedSeason)
+        assertEquals(1, vm.state.value.episodes.size)
+        assertEquals(null, vm.state.value.episodesError)
+    }
+
+    // The error page (nothing cached) shows loading again while its Try again reads.
+    @Test fun errorPageRetryShowsLoading() {
+        val server = FakeSeriesServer()
+        val vm = SeriesViewModel(server, "show", initial = null)
+        vm.load()
+        server.fail("item")
+        assertEquals("Can't reach Roxy right now.", vm.state.value.error)
+        vm.load()
+        assertEquals(true, vm.state.value.loading)
+        assertEquals(null, vm.state.value.error)
+    }
+
+    // Tapping the season already shown while the opening waits is not a pick: the opening
+    // still opens the next episode's season.
+    @Test fun tappingTheShownSeasonKeepsTheOpening() {
+        val server = FakeSeriesServer()
+        val vm = SeriesViewModel(server, "show", initial = show)
+        vm.load()
+        page(server)
+        vm.selectSeason(0)
+        assertEquals(emptyList<String>(), episodeReads(server))
+        server.answer("next", ep("s2", 4))
+        assertEquals(1, vm.state.value.selectedSeason)
+        assertEquals(listOf("episodes:s2"), episodeReads(server))
+    }
+
+    // Next is an OVA, listed in release order in its own entry (its parent, the Specials
+    // season, is not an entry): the page opens on the OVA entry, not the first season.
+    @Test fun openingOnASpecialFindsItsEntry() {
+        val server = FakeSeriesServer()
+        val vm = SeriesViewModel(server, "show", initial = show)
+        vm.load()
+        page(server, listOf(
+            Section(kind = "season", seasonId = "s1"),
+            Section(kind = "specials", title = "OVA", seasonId = "s0", episodeIds = listOf("ova1"), episodes = 1),
+            Section(kind = "season", seasonId = "s2"),
+        ))
+        server.answer("next", Item(id = "ova1", type = "episode", title = "OVA", parentId = "s0"))
+        assertEquals(1, vm.state.value.selectedSeason)
+        assertEquals("OVA", vm.state.value.seasons[1].title)
+        assertEquals(listOf("episodes:s0"), episodeReads(server))
+    }
 }

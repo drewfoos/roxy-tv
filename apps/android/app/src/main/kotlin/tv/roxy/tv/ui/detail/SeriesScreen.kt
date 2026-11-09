@@ -197,9 +197,23 @@ const val OPENING_NEXT_WAIT_MS = 3_000L
 suspend fun awaitNext(call: Deferred<Item?>, waitMs: Long = OPENING_NEXT_WAIT_MS): NextWait =
     withTimeoutOrNull(waitMs) { NextWait(call.await(), answered = true) } ?: NextWait(null, answered = false)
 
-/** The season the page opens on: the next episode's, else the first (in the list as it is now). */
-fun openingSeason(seasons: List<Item>, wait: NextWait): Int =
-    wait.next?.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
+/**
+ * The season the page opens on: the entry holding the next episode, else the first (in the
+ * list as it is now). In release order a special sits in an OVA/Specials entry and a film
+ * in its own entry, neither of which is its parent season: they are found by the episode.
+ */
+fun openingSeason(seasons: List<Item>, wait: NextWait, sources: Map<String, SectionSource> = emptyMap()): Int {
+    val next = wait.next ?: return 0
+    val bySource = seasons.indexOfFirst { e ->
+        when (val src = sources[e.id]) {
+            is SectionSource.Specials -> next.id in src.episodeIds
+            is SectionSource.Movie -> src.item.id == next.id
+            null -> false
+        }
+    }
+    if (bySource >= 0) return bySource
+    return next.parentId?.let { pid -> seasons.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 } ?: 0
+}
 
 /** What the series page reads from the server (the [RoxyApi] calls it makes; a fake in tests). */
 interface SeriesSource {
@@ -244,6 +258,8 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
         // list or sections never replace newer ones. A Try again it replaces is carried
         // over: the newer read's failure still brings the problem back.
         val page = ++pageGen
+        // The error page's Try again: back to loading while it reads.
+        if (_state.value.series == null && _state.value.error != null) _state.value = _state.value.copy(loading = true, error = null)
         if (onFailed != null) retryFailed = onFailed to gen
         pageJob?.cancel()
         pageJob = viewModelScope.launch {
@@ -289,7 +305,16 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                 // page that is showing; only a first load turns into the error.
                 // A retry's failure brings its problem back, unless a season was picked
                 // meanwhile: that season's own read decides what the list says.
-                if (_state.value.series != null) { _state.value = _state.value.copy(loading = false); retry?.let { (put, at) -> if (episodesGen == at) put() } }
+                if (_state.value.series != null) {
+                    _state.value = _state.value.copy(loading = false)
+                    if (retry != null) retry.let { (put, at) -> if (episodesGen == at) put() }
+                    // Opened from a list (the header drawn from its card), the first read
+                    // failed: no episode read was ever started, so say so with Try again
+                    // rather than loading rows that never end.
+                    else if (opening && _state.value.episodes.isEmpty()) _state.value = _state.value.copy(
+                        episodesLoading = false, episodesError = tv.roxy.tv.data.friendlyError(t, "the episodes"),
+                    )
+                }
                 else _state.value = SeriesUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this series"))
             }
         }
@@ -325,7 +350,7 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                     if (!wait.answered) Timber.w("up next: no answer in %d ms; opening the first season", OPENING_NEXT_WAIT_MS)
                     // In the list on screen now, by id (a later page read may have reordered it).
                     val now = _state.value.seasons
-                    val at = openingSeason(now, wait)
+                    val at = openingSeason(now, wait, sources)
                     if (at in now.indices) {
                         _state.value = _state.value.copy(selectedSeason = at)
                         loadEpisodes(now[at].id)
@@ -352,7 +377,9 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
     fun selectSeason(index: Int) {
         val s = _state.value
         if (index !in s.seasons.indices) return
-        if (index == s.selectedSeason && s.episodes.isNotEmpty() && !s.showExtras) return
+        // The season on screen again: nothing to do while its rows are shown or on their way
+        // (during the opening that would also have cancelled the opening's own choice).
+        if (index == s.selectedSeason && !s.showExtras && (s.episodes.isNotEmpty() || s.episodesLoading)) return
         userPicked = true
         opening = false
         // A different season empties the list until its episodes land, so the old season's
