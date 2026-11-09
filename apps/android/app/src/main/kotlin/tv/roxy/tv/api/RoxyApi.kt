@@ -176,8 +176,9 @@ class RoxyApi(private val prefs: Prefs) {
     }
 
     /** [at]: when an offline watched mark was made (Unix ms), so the server can drop it if the item was played since. */
-    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null) {
-        if (on) postNoBody("/v1/me/played/$itemId" + (at?.let { "?at=$it" } ?: ""), "") else delete("/v1/me/played/$itemId")
+    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null, ageMs: Long? = null) {
+        val q = listOfNotNull(at?.let { "at=$it" }, ageMs?.let { "age=$it" }).joinToString("&")
+        if (on) postNoBody("/v1/me/played/$itemId" + (if (q.isEmpty()) "" else "?$q"), "") else delete("/v1/me/played/$itemId")
     }
 
     // ---- profiles ----
@@ -470,8 +471,13 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun history(limit: Int = 100): ItemsResponse = get("/v1/me/history?limit=$limit")
 
     /** [at]: when an offline report was made (Unix ms), so the server can drop it if it is out of date. */
-    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null) {
-        val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at)
+    /**
+     * [ageMs]: how long ago, by this device's clock, the position was reached (a player left
+     * paused, a report sent from the offline queue). The server orders reports by it, so a
+     * stale one cannot undo what another device did since; [at] is for older servers.
+     */
+    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null) {
+        val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at, ageMs)
         postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body))
     }
 
@@ -1461,7 +1467,7 @@ data class WebhookEvent(val id: Long = 0, val at: String = "", val source: Strin
 data class WebhookEventsResponse(val events: List<WebhookEvent> = emptyList())
 
 @Serializable
-private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null, val at: Long? = null)
+private data class ProgressRequest(val itemId: String, val positionMs: Long, val audioIndex: Int? = null, val subtitleIndex: Int? = null, val at: Long? = null, val ageMs: Long? = null)
 
 /**
  * Subtitle tracks as mpv will number them (1..N in container order; embedded first,

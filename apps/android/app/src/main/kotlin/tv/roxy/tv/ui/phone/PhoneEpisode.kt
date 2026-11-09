@@ -236,7 +236,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     BackHandler(enabled = landscape) { setFullscreen(false) }
     // Pin the session the effect was keyed on: the lambda must not read the state delegate
     // at dispose time, or the effect for "no session yet" would destroy the one just made.
-    DisposableEffect(session) { val s = session; onDispose { s?.destroy() } }
+    // Leaving the page in the app (back, the next episode's card) stops nothing: the final
+    // position is reported here, or up to 10 s and any skip since the last tick were lost.
+    DisposableEffect(session) { val s = session; onDispose { s?.let { if (!it.destroyed) it.reportProgress("stop") }; s?.destroy() } }
 
     val ep = episode
     val next = siblings.dropWhile { it.id != ep?.id }.drop(1).firstOrNull { it.isPlayable }

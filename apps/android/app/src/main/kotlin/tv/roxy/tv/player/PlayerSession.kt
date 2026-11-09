@@ -119,6 +119,18 @@ class PlayerSession(
             else -> EndAction.Close
         }
 
+        /**
+         * The position a report carries: the one named, else a seek still loading, else the
+         * start position not yet reached, else mpv's clock (the order the controls show).
+         * mpv's clock alone sent the pre-seek position when Back came during a seek's load,
+         * or nothing while the file opened.
+         */
+        fun reportPosition(atSec: Double?, reloadTarget: Double?, pendingStart: Double?, timePos: Double?): Double? =
+            atSec ?: reloadTarget ?: pendingStart ?: timePos
+
+        /** The position moved (more than mpv's jitter on a paused frame) since [last]. */
+        fun positionMoved(last: Double?, pos: Double): Boolean = last == null || kotlin.math.abs(pos - last) > 0.5
+
         /** Seconds before the end at which running out of stream counts as the end. */
         const val END_MARGIN_S = 10.0
 
@@ -264,6 +276,19 @@ class PlayerSession(
     private var nextKnown = false
     /** The file reached its end before the lookup answered: act on the answer. */
     private var endPending = false
+    // When the position last moved (or tracks were picked), by the monotonic clock: a report's
+    // age (see reportProgress). Reset per item.
+    private var lastPosSec: Double? = null
+    private var lastPosAt = android.os.SystemClock.elapsedRealtime()
+    private var lastAudio: Int? = null
+    private var lastSub: Int? = null
+
+    private fun notePosition(pos: Double) {
+        if (positionMoved(lastPosSec, pos)) { lastPosSec = pos; lastPosAt = android.os.SystemClock.elapsedRealtime() }
+    }
+
+    /** The current item's own file has been asked of the player (see onFileLoaded). */
+    @Volatile private var newFileRequested = true
     /** The lookup could not find out (server away): asked again at the end. */
     private var nextFailed = false
     private var endWaitJob: Job? = null
@@ -354,6 +379,10 @@ class PlayerSession(
         )
         player.listener = object : MpvPlayer.Listener {
             override fun onFileLoaded() {
+                // Mid-switch, before the next episode's file was even asked for, a load is the
+                // OLD file reopening (passthrough watchdog, token retry): taking it for the new
+                // one sent the old file's position under the new item's id.
+                if (changingItem && !newFileRequested) { Timber.w("old file reloaded during a switch: ignored"); return }
                 if (startState.value == StartState.Loading && startProbeSec == null) startProbeSec = player.timePosSeconds() ?: 0.0
                 switching = false
                 changingItem = false
@@ -660,9 +689,11 @@ class PlayerSession(
                 if (wantTranscode && !use) Timber.i("preferred quality %s skipped: the file is already smaller", quality.key)
                 transcoding = use
                 val mt = if (use) runCatching { app.api.mediaToken(sourceId) }.getOrNull() else null
+                newFileRequested = true
                 player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null)
             }
         } else {
+            newFileRequested = true
             player.play(url, start)
         }
         // What comes after this one (null for movies and the last episode).
@@ -697,9 +728,19 @@ class PlayerSession(
         countdownJob?.cancel()
         nextCard = null
         nextCardDismissed = false
-        // Moving on counts as finishing this one (Netflix): report the last position and mark it watched.
-        if (!endReported) reportProgress("end")
-        itemId?.let { finished -> markWatched(finished) }
+        // Moving on counts as finishing this one (Netflix): report the last position and mark it
+        // watched. Not one that never opened (a switch that failed and gave up): skipping past
+        // it marked an unwatched episode watched.
+        if (!changingItem) {
+            if (!endReported) reportProgress("end")
+            itemId?.let { finished -> markWatched(finished) }
+        }
+        // A wait for the server or a reconnect belongs to the item being left: resumed later
+        // it reopened the NEW episode at the old one's position (and saved it there).
+        reconnectJob?.cancel(); waitJob?.cancel(); waitingAt = null; reconnecting = false
+        flashOsd(null)
+        newFileRequested = false
+        lastPosSec = null; lastPosAt = android.os.SystemClock.elapsedRealtime(); lastAudio = null; lastSub = null
         Timber.i("next: %s start=%ds local=%s", req.item.displayLabel, req.startSeconds, req.local)
         switching = true
         changingItem = true
@@ -727,7 +768,7 @@ class PlayerSession(
         app.scope.launch { WatchNext.remove(app, id) }
         app.scope.launch {
             reportLock.withLock {
-                val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true) }.isSuccess
+                val ok = System.currentTimeMillis() >= serverDownUntil && runCatching { app.api.setPlayed(id, true, ageMs = 0) }.isSuccess
                 if (ok) app.items.userDataChanged()
                 if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, 0, reportedToServer = ok, played = true)
             }
@@ -757,7 +798,7 @@ class PlayerSession(
      * mark the episode watched or jump to the next one; reopen where it stopped.
      */
     private fun handleEof() {
-        val pos = player.timePosSeconds() ?: 0.0
+        val pos = player.timePosSeconds() ?: ui.positionSec
         val dur = knownDuration()
         if (droppedStream(pos, dur, fromDisk)) {
             Timber.w("stream ended at %.1f of %.1f s: reconnecting", pos, dur)
@@ -962,6 +1003,7 @@ class PlayerSession(
         val tracks = runCatching { player.tracks() }.getOrDefault(emptyList())
         val wasPaused = ui.paused
         val timePos = player.timePosSeconds()
+        if (!changingItem) (reloadTarget ?: pendingStart ?: timePos)?.let { notePosition(it) }
         if (timePos != null && !switching) reloadTarget = null
         pendingStart?.let { want -> if (timePos != null && !switching && timePos >= want - 3.0) pendingStart = null }
         val settling = pendingStart != null
@@ -1183,8 +1225,9 @@ class PlayerSession(
         // Mid-switch the player still holds the previous episode (see changingItem); only a
         // caller that names the position (a reconnect of the new file) may report.
         if (changingItem && atSec == null) return
-        val pos = atSec ?: runCatching { player.timePosSeconds() }.getOrNull() ?: return
+        val pos = reportPosition(atSec, reloadTarget, pendingStart, runCatching { player.timePosSeconds() }.getOrNull()) ?: return
         val positionMs = (pos * 1000).toLong()
+        notePosition(pos)
         if (positionMs <= 0) return
         if (reason == "tick" && positionMs == lastReportedMs) return
         lastReportedMs = positionMs
@@ -1199,6 +1242,10 @@ class PlayerSession(
                 else -> null
             }
         }.getOrNull()
+        if (audioIndex != lastAudio || subIndex != lastSub) { lastAudio = audioIndex; lastSub = subIndex; lastPosAt = android.os.SystemClock.elapsedRealtime() }
+        // How long ago this position was reached (or the tracks picked): a player left paused
+        // that reports on closing is older than an episode finished on another device since.
+        val ageMs = android.os.SystemClock.elapsedRealtime() - lastPosAt
         app.remote.reportState(id, title, positionMs, reason == "pause" || reason == "stop" || (reason != "resume" && ui.paused))
         // A pause or stop is when the launcher's Watch Next row should show this title at this position.
         if (reason == "pause" || reason == "stop") {
@@ -1210,7 +1257,10 @@ class PlayerSession(
                 // While the server is unreachable (playing a download away from home) skip the
                 // network for a minute at a time instead of timing out on every tick.
                 val skip = System.currentTimeMillis() < serverDownUntil
-                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex) }
+                // A "watched" mark from offline goes before this report, or this newer
+                // report would make the server drop it as older.
+                if (!skip && app.downloads.hasPendingProgress(id)) app.downloads.syncProgress(app.api)
+                val ok = !skip && runCatching { app.api.progress(id, positionMs, audioIndex, subIndex, ageMs = ageMs) }
                     .onSuccess { Timber.i("progress %s item=%s pos=%dms audio=%s sub=%s", reason, id, positionMs, audioIndex, subIndex) }
                     .onFailure {
                         Timber.w("progress %s item=%s pos=%dms failed: %s", reason, id, positionMs, it.message)
@@ -1220,7 +1270,7 @@ class PlayerSession(
                 // Downloaded items keep their position locally too (Downloads page offline); a
                 // failed report is queued and replayed when the server is back. A success
                 // clears this item's queued one, so an older position never replays over it.
-                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex)
+                if (app.downloads.entry(id) != null || !ok || app.downloads.hasPendingProgress(id)) app.downloads.recordProgress(id, positionMs, reportedToServer = ok, audioIndex = audioIndex, subtitleIndex = subIndex, ageMs = ageMs)
                 // The server answers again: send what was saved while it was away.
                 if (ok) app.downloads.syncProgress(app.api)
                 // Watched state may have changed (finished, or a rewatch made it "in

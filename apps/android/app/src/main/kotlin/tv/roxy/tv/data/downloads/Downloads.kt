@@ -86,6 +86,18 @@ data class PendingProgress(
     val subtitleIndex: Int? = null,
 )
 
+/**
+ * The queue after recording [next] for one item: it replaces what was queued for the item,
+ * except a "watched" mark not yet sent, which stays (and goes first) when [next] is plain
+ * progress. Finishing an episode offline and opening it again for a few seconds used to
+ * replace the mark, and the server never learned it was finished. A report the server took
+ * ([sent]) is not queued.
+ */
+fun pendingAfter(queue: List<PendingProgress>, profile: String?, itemId: String, sent: Boolean, next: PendingProgress): List<PendingProgress> {
+    val kept = queue.filterNot { it.itemId == itemId && it.profileId == profile && !(it.played && !next.played) }
+    return if (sent) kept else kept + next
+}
+
 @Serializable
 data class DownloadIndex(
     val entries: Map<String, DownloadEntry> = emptyMap(),
@@ -288,7 +300,7 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
      * Playback position for a downloaded item: shown on the Downloads page straight away
      * and, when [reportedToServer] is false, kept for [syncProgress] once the server answers.
      */
-    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null) {
+    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null, ageMs: Long = 0) {
         val profile = prefs.session.value.profileId
         _index.update { idx ->
             val e = idx.entries[itemId]
@@ -302,8 +314,8 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                 )
                 idx.entries + (itemId to e.copy(item = e.item.copy(userData = ud)))
             }
-            val pending = if (reportedToServer) idx.pendingProgress.filterNot { it.itemId == itemId && it.profileId == profile }
-            else idx.pendingProgress.filterNot { it.itemId == itemId && it.profileId == profile } + PendingProgress(profile, itemId, positionMs, System.currentTimeMillis(), played, audioIndex, subtitleIndex)
+            val pending = pendingAfter(idx.pendingProgress, profile, itemId, reportedToServer,
+                PendingProgress(profile, itemId, positionMs, System.currentTimeMillis() - ageMs.coerceAtLeast(0), played, audioIndex, subtitleIndex))
             idx.copy(entries = entries, pendingProgress = pending)
         }
     }
@@ -325,7 +337,10 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
         for (p in mine) {
-            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true, at = p.at) else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at) }
+            // Sent as an age by this device's clock (both times are this clock's, so a clock
+            // set wrong cancels out); at stays for an older server.
+            val age = (System.currentTimeMillis() - p.at).coerceAtLeast(0)
+            val result = runCatching { if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age) else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age) }
             result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
             // A 4xx (the title was deleted meanwhile) will never succeed: drop it rather than block the rest.
             val rejected = (result.exceptionOrNull() as? tv.roxy.tv.api.ApiException)?.let { it.code in 400..499 && !it.isUnauthorized } == true
