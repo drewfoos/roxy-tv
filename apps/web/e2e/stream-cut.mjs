@@ -103,7 +103,9 @@ try {
   }
   for (let cuts = 2; cuts <= 8; cuts++) {
     const before = remux.length
-    await page.waitForTimeout(2000)
+    // Soon after the stream starts: CI's film is small (about 6 MB), and a reopened remux
+    // there arrives whole in about 4 s, its ffmpeg gone before a later cut.
+    await page.waitForTimeout(700)
     if (!(await cutNow()) && (await page.locator('text=keeps dropping').count()) === 0) fail('no stream to cut, and the player said nothing')
     await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.playbackRate = 4 })
     let next = false
