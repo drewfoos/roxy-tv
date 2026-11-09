@@ -92,49 +92,43 @@ try {
   // film was marked watched at the stream header's duration and autoplay moved on. It must
   // say the connection keeps dropping, save where it got to, and stay on the film.
   const url = page.url()
-  // The cut command fails when no remux is running at that moment (the reopened one not
-  // started yet, or the player already gave up): retry briefly, then judge what is shown.
-  const cutNow = async () => {
-    for (let i = 0; i < 10; i++) {
-      try {
-        execSync(process.env.CUT_CMD, { stdio: 'ignore' })
-        return true
-      } catch {
-        await page.waitForTimeout(500)
-      }
-    }
-    return false
+  // From here every stream is cut short, the same way each time: the browser serves each
+  // remux from the server truncated after its first 3 MB, so every reopened stream ends early
+  // too. (Killing ffmpeg at the right moment for each reopening was a race CI kept losing:
+  // a remux there could be gone, or not started, when the cut came.)
+  await page.route(/\/remux/, async (route) => {
+    const resp = await route.fetch()
+    const body = await resp.body()
+    const headers = { ...resp.headers() }
+    delete headers['content-length']
+    await route.fulfill({ status: resp.status(), headers, body: body.subarray(0, 3_000_000) })
+  })
+  // A seek past what is buffered opens a new stream (cut, like all from now on).
+  const streamsBefore = remux.length
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(100)
   }
-  // Set only once every assertion about the given-up state has passed: the loop running out
-  // of cuts (the player reopening every time) must fail, not pass unchecked.
+  // Set only once every assertion about the given-up state has passed: the player
+  // reopening without end must fail, not pass unchecked.
   let verifiedFailureState = false
-  for (let cuts = 2; cuts <= 8; cuts++) {
-    const before = remux.length
-    // Soon after the stream starts: CI's film is small (about 6 MB), and a reopened remux
-    // there arrives whole in about 4 s, its ffmpeg gone before a later cut.
-    await page.waitForTimeout(700)
-    if (!(await cutNow()) && (await page.locator('text=keeps dropping').count()) === 0) fail('no stream to cut, and the player said nothing')
+  let shown = 0
+  for (let i = 0; i < 240 && !shown; i++) {
+    await page.waitForTimeout(500)
     await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.playbackRate = 4 })
-    let next = false
-    for (let i = 0; i < 120 && !next; i++) {
-      await page.waitForTimeout(500)
-      const s = await state()
-      if (s?.ended && remux.length === before && (await page.locator('text=keeps dropping').count()) > 0) break
-      next = remux.length > before
-    }
-    if (next) continue
-    const shown = await page.locator('text=keeps dropping').count()
-    const watched = (await api('/v1/items/' + item.id, {}, tok)).userData
-    console.log(`after ${cuts} cuts in a row: ${remux.length} streams, error shown=${shown > 0}, marked watched=${watched?.played}, position ${watched?.positionMs} ms`)
-    if (!shown) fail('the player stopped reopening without saying the connection keeps dropping')
-    if (watched?.played) fail('a stream cut too often in a row counted as the end: the film was marked watched')
-    if (page.url() !== url) fail('the player moved on (autoplay) after a cut stream')
-    if (!(watched?.positionMs > 0) || watched.positionMs > (item.runtimeMs ?? Infinity) * 0.5) fail(`the saved position is not where the stream got to: ${watched?.positionMs} ms`)
-    console.log('OK: cut too often in a row, the player says so and keeps the film unwatched')
-    verifiedFailureState = true
-    break
+    shown = await page.locator('text=keeps dropping').count()
   }
-  if (!verifiedFailureState) fail(`the player never gave up after ${remux.length} streams: kept reopening without limit, or the end state was never checked`)
+  const watched = (await api('/v1/items/' + item.id, {}, tok)).userData
+  const cutStreams = remux.length - streamsBefore
+  console.log(`cut streams: ${cutStreams}, error shown=${shown > 0}, marked watched=${watched?.played}, position ${watched?.positionMs} ms`)
+  if (!shown) fail(`the player never said the connection keeps dropping after ${cutStreams} cut streams`)
+  if (cutStreams < 2) fail(`the player gave up without reopening (${cutStreams} cut streams)`)
+  if (watched?.played) fail('a stream cut too often in a row counted as the end: the film was marked watched')
+  if (page.url() !== url) fail('the player moved on (autoplay) after a cut stream')
+  if (!(watched?.positionMs > 0) || watched.positionMs > (item.runtimeMs ?? Infinity) * 0.5) fail(`the saved position is not where the stream got to: ${watched?.positionMs} ms`)
+  console.log('OK: cut too often in a row, the player says so and keeps the film unwatched')
+  verifiedFailureState = true
+  if (!verifiedFailureState) fail('the given-up state was never checked')
 } finally {
   await browser.close()
 }
