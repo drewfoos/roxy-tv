@@ -1,6 +1,7 @@
 package tv.roxy.tv.api
 
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ensureActive
@@ -29,6 +30,7 @@ suspend fun OkHttpClient.fetch(req: Request): Fetched = withContext(Dispatchers.
     }
     try {
         call.execute().use { Fetched(it.code, it.isSuccessful, it.body.string()) }
+            .also { ensureActive() } // given up while the last bytes came in: not handed on
     } catch (e: java.io.IOException) {
         // Stopped because the caller gave up: that is a cancellation, not a network error
         // (as an error it would be shown, "Couldn't load", for a season already left).
@@ -38,4 +40,14 @@ suspend fun OkHttpClient.fetch(req: Request): Fetched = withContext(Dispatchers.
         done.set(true)
         watcher.cancel()
     }
+}
+
+/**
+ * [parse] of a body, unless the caller has given up meanwhile: a cancel landing between the
+ * read and the parse would otherwise parse (a long list: most of the work) for nothing. The
+ * parse itself cannot be interrupted; this is the last point to skip it.
+ */
+suspend fun <T> parseUnlessCancelled(text: String, parse: (String) -> T): T {
+    currentCoroutineContext().ensureActive()
+    return parse(text)
 }

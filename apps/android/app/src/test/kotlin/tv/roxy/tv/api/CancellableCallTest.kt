@@ -2,7 +2,9 @@ package tv.roxy.tv.api
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
@@ -58,5 +60,19 @@ class CancellableCallTest {
             assertEquals(false, r.ok)
             assertEquals("{\"error\":\"no\"}\n", r.text)
         }
+    }
+
+    // Given up between the read and the parse: the parse does not run.
+    @Test fun noParseAfterCancel() = runBlocking {
+        var parsed = false
+        val job = launch(Dispatchers.Default) {
+            coroutineContext.cancel() // the cancel lands now, the body already read
+            parseUnlessCancelled("[1,2,3]") { parsed = true; it.length }
+        }
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(false, parsed)
+        // Not cancelled: parsed as usual.
+        assertEquals(7, parseUnlessCancelled("[1,2,3]") { it.length })
     }
 }

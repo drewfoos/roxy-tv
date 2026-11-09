@@ -598,7 +598,7 @@ class RoxyApi(private val prefs: Prefs) {
             }
             // A 200 that is not our JSON (a captive portal, a half-started server) is a
             // network-style failure, not a bug: an IOException like the rest.
-            return try { json.decodeFromString(text) } catch (e: IllegalArgumentException) { // SerializationException is one
+            return try { parseUnlessCancelled(text) { json.decodeFromString<T>(it) } } catch (e: IllegalArgumentException) { // SerializationException is one
                 throw IOException("Unexpected answer from the server at ${req.url.encodedPath}", e)
             }
         }
