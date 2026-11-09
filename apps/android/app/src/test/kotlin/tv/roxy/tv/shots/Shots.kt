@@ -8,6 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
@@ -130,20 +134,27 @@ class Shots {
     @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
     fun phoneUprightSettings() {
         val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, hasNext = true, fullscreen = false)
+        var titleBottom by androidx.compose.runtime.mutableStateOf<Float?>(null)
         compose.setContent {
-            Box(Modifier.fillMaxSize().background(Color(0xFF101014))) {
-                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color(0xFF6A5A4A))) {
-                    PlayerControls(state = state, visible = true, sheet = Sheet.Settings, onSheet = {}, onInteraction = {}, actions = noActions)
+            // The episode page in miniature: the video, then the series and episode title.
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().background(Color(0xFF101014))) {
+                androidx.compose.runtime.CompositionLocalProvider(tv.roxy.tv.player.LocalSettingsTop provides titleBottom?.let { it + 30f }) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color(0xFF6A5A4A))) {
+                        PlayerControls(state = state, visible = true, sheet = Sheet.Settings, onSheet = {}, onInteraction = {}, actions = noActions)
+                    }
                 }
+                androidx.compose.material3.Text("KonoSuba", color = Color(0xFF4FA8FF), modifier = Modifier.padding(start = 16.dp, top = 14.dp))
+                androidx.compose.material3.Text("E2 - An Explosion for This Chunchunmaru!", color = Color.White,
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp).onGloballyPositioned { titleBottom = it.boundsInWindow().bottom })
             }
         }
         compose.waitForIdle()
         val dir = File("build/shots").apply { mkdirs() }
-        // The page is a window of its own (a dialog): draw that window's view.
+        // Two windows: the episode page, and the settings page over it (a dialog).
+        val act = compose.onAllNodes(androidx.compose.ui.test.isRoot())[0].captureToImage().asAndroidBitmap().copy(Bitmap.Config.ARGB_8888, true)
         val v = org.robolectric.shadows.ShadowDialog.getLatestDialog().window!!.decorView
-        val bmp = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
-        v.draw(android.graphics.Canvas(bmp))
-        bmp.compress(Bitmap.CompressFormat.PNG, 100, File(dir, "phone-upright-settings.png").outputStream())
+        v.draw(android.graphics.Canvas(act))
+        act.compress(Bitmap.CompressFormat.PNG, 100, File(dir, "phone-upright-settings.png").outputStream())
     }
 
     @Test @Config(qualifiers = "w915dp-h412dp-land-xxhdpi")

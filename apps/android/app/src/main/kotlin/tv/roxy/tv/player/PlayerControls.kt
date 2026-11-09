@@ -66,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.focus.FocusRequester
@@ -482,9 +483,25 @@ private val LocalTvPanel = compositionLocalOf { false }
 @Composable
 private fun SheetHost(page: Boolean, modifier: Modifier, onBack: () -> Unit, content: @Composable () -> Unit) {
     if (page) androidx.compose.ui.window.Dialog(onDismissRequest = onBack, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) { content() }
+        // The video and the title above the page stay as they are: not dimmed.
+        val view = androidx.compose.ui.platform.LocalView.current
+        LaunchedEffect(view) { (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.setDimAmount(0f) }
+        val top = LocalSettingsTop.current
+        Column(Modifier.fillMaxSize()) {
+            if (top != null) {
+                // Above the page: the episode page as it is; a tap there closes the settings.
+                Box(Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { top.toDp() }).pointerInput(Unit) { detectTapGestures { onBack() } })
+                Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)) { content() }
+            } else Box(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)) { content() }
+        }
     } else Box(modifier) { content() }
 }
+
+/**
+ * Where the upright phone's settings page starts, in window pixels: under the episode's
+ * title on the episode page (its video and title stay in view). Null: the whole screen.
+ */
+val LocalSettingsTop = compositionLocalOf<Float?> { null }
 
 /** The phone's settings page starts this far down: the player's top bar (series, episode title) stays in view above it. */
 internal val PhoneTitleGap = 64.dp
