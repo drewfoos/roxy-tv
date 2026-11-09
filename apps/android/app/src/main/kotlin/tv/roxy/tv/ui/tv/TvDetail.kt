@@ -447,7 +447,9 @@ private fun EpisodesTab(seasons: List<Item>, selected: Int, onSelectSeason: (Int
             if (problem != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(bottom = 12.dp)) {
                     Text(problem, color = RoxyColors.onBackground, fontSize = 17.sp, modifier = Modifier.widthIn(max = 560.dp))
-                    TvButton("Try again", onClick = onRetry, modifier = if (episodes.isEmpty()) Modifier.focusRequester(firstEpisode) else Modifier)
+                    // The button leaves the screen as the retry starts: focus goes to the
+                    // season on screen first, or it was dropped (nothing focused on the TV).
+                    TvButton("Try again", onClick = { runCatching { first.requestFocus() }; onRetry() }, modifier = if (episodes.isEmpty()) Modifier.focusRequester(firstEpisode) else Modifier)
                 }
             }
             if (episodes.isEmpty()) {

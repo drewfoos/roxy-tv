@@ -38,10 +38,15 @@ export function Series() {
   }, [seasonsRes, sections, seasonsSettled])
   // The picked entry belongs to its show: another show starts on its first entry from its
   // first render (an effect resetting it ran a render late and read the wrong season once).
-  const [picked, setPicked] = useState({ id, index: 0 })
-  const seasonIndex = picked.id === id ? Math.min(picked.index, Math.max(0, seasons.length - 1)) : 0
-  const setSeasonIndex = (f: number | ((i: number) => number)) =>
-    setPicked({ id, index: typeof f === 'function' ? f(seasonIndex) : f })
+  // Held by the entry's key (stable across a list read again, see sectionKey), with its
+  // place as the fallback: a list that changed under the viewer keeps the same entry.
+  const [picked, setPicked] = useState<{ id: string; key?: string; index: number }>({ id, index: 0 })
+  const byKey = picked.id === id && picked.key ? seasons.findIndex((s) => s.key === picked.key) : -1
+  const seasonIndex = picked.id !== id ? 0 : byKey >= 0 ? byKey : Math.min(picked.index, Math.max(0, seasons.length - 1))
+  const setSeasonIndex = (f: number | ((i: number) => number)) => {
+    const index = typeof f === 'function' ? f(seasonIndex) : f
+    setPicked({ id, key: seasons[index]?.key, index })
+  }
   const [newest, setNewest] = useState(false)
   const [tab, setTab] = useState(0)
 
@@ -50,8 +55,8 @@ export function Series() {
   const listReady = seasonsSettled
   const flat = listReady && seasons.length === 0
   const season = listReady ? seasons[seasonIndex] : undefined
-  // Every show's entries are "section:0", "section:1"...: the key names the show, or a
-  // film entry of one show was served from another's cache.
+  // Entry keys are not unique across shows (a show's plain seasons aside): the key names the
+  // show, or a film entry of one show was served from another's cache.
   const whole = flat
   const epsKey = !listReady ? null : whole ? `episodes:${id}:whole` : season ? `episodes:${id}:${season.key}` : null
   const { data: epsRes, loading: epsLoading, error: epsError, reload: reloadEpisodes } = useAsync(

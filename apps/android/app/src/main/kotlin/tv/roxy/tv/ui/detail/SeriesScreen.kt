@@ -2,10 +2,8 @@ package tv.roxy.tv.ui.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -154,6 +152,16 @@ data class SectionList(
     val labels: Map<String, String>,
 )
 
+/**
+ * An entry's id that stays the same when the list is read again: by what it holds, not by
+ * its place ("section:3" became another entry when a new OVA came in before it, and the
+ * page kept its selection by id). The place only tells apart two otherwise equal entries.
+ */
+fun sectionKey(sec: Section, i: Int): String = when (sec.kind) {
+    "movie" -> sec.item?.id?.let { "film:$it" } ?: "section:$i"
+    else -> sec.episodeIds.firstOrNull()?.let { "specials:${sec.seasonId}:$it:${sec.title}" } ?: "section:$i"
+}
+
 fun sectionEntries(sections: List<Section>, seasons: List<Item>): SectionList? {
     if (sections.isEmpty()) return null
     val byId = seasons.associateBy { it.id }
@@ -166,14 +174,14 @@ fun sectionEntries(sections: List<Section>, seasons: List<Item>): SectionList? {
             "season" -> list += byId[sec.seasonId] ?: return null
             "specials" -> {
                 val seasonId = sec.seasonId ?: return null
-                val id = "section:$i"
+                val id = sectionKey(sec, i)
                 list += Item(id = id, type = "season", title = sec.title)
                 sources[id] = SectionSource.Specials(seasonId, sec.episodeIds)
                 counts[id] = sec.episodes
             }
             "movie" -> {
                 val film = sec.item ?: return@forEachIndexed
-                val id = "section:$i"
+                val id = sectionKey(sec, i)
                 list += Item(id = id, type = "season", title = sec.title.ifEmpty { film.title })
                 sources[id] = SectionSource.Movie(film)
                 counts[id] = 1
@@ -187,15 +195,8 @@ fun sectionEntries(sections: List<Section>, seasons: List<Item>): SectionList? {
 /** The show's next episode as far as the page's opening waits for it: [answered] false = no answer in time. */
 data class NextWait(val next: Item?, val answered: Boolean)
 
-/** How long a page's opening waits for /next before showing the first season anyway. */
+/** How long a page's opening waits for /next (from its first lookup) before showing the first season anyway. */
 const val OPENING_NEXT_WAIT_MS = 3_000L
-
-/**
- * Waits for the next-episode answer at most [waitMs]. The page opens on that episode's
- * season, but the episodes must not hang on it: a slow or stuck /next opens the first season.
- */
-suspend fun awaitNext(call: Deferred<Item?>, waitMs: Long = OPENING_NEXT_WAIT_MS): NextWait =
-    withTimeoutOrNull(waitMs) { NextWait(call.await(), answered = true) } ?: NextWait(null, answered = false)
 
 /**
  * The season the page opens on: the entry holding the next episode, else the first (in the
@@ -338,30 +339,42 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
      */
     private fun loadUpNext(seasons: List<Item>) {
         val mine = ++nextGen
+        // The opening waits OPENING_NEXT_WAIT_MS from its first lookup, however many page
+        // reads land meanwhile: each newer lookup used to start a fresh 3 s, so reloads in a
+        // row (back from the player, watched marks) kept pushing the episodes back.
+        if (opening && seasons.isNotEmpty() && openingTimer == null) openingTimer = viewModelScope.launch {
+            delay(OPENING_NEXT_WAIT_MS)
+            if (opening && !userPicked) {
+                Timber.w("up next: no answer in %d ms; opening the first season", OPENING_NEXT_WAIT_MS)
+                openOn(NextWait(null, answered = false))
+            }
+        }
         viewModelScope.launch {
             // The server works it out: the page used to load every episode of the show for it.
-            val call = async { runCatching { api.next(seriesId) }.onFailure { Timber.w(it, "up next") }.getOrNull() }
-            if (opening && seasons.isNotEmpty()) {
-                val wait = awaitNext(call)
-                // A newer lookup started meanwhile: the opening is its to make. A season
-                // picked meanwhile (the user) ends the opening altogether.
-                if (mine == nextGen && opening && !userPicked) {
-                    opening = false
-                    if (!wait.answered) Timber.w("up next: no answer in %d ms; opening the first season", OPENING_NEXT_WAIT_MS)
-                    // In the list on screen now, by id (a later page read may have reordered it).
-                    val now = _state.value.seasons
-                    val at = openingSeason(now, wait, sources)
-                    if (at in now.indices) {
-                        _state.value = _state.value.copy(selectedSeason = at)
-                        loadEpisodes(now[at].id)
-                    }
-                }
-            }
+            val next = runCatching { api.next(seriesId) }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; Timber.w(it, "up next") }.getOrNull()
+            // A newer lookup started meanwhile: its answer is the one used (for the opening
+            // too). A season picked meanwhile (the user) has ended the opening.
+            if (mine != nextGen) return@launch
+            if (opening && !userPicked && _state.value.seasons.isNotEmpty()) openOn(NextWait(next, answered = true))
             // Play's target, whenever it comes (after the episodes when /next was slow).
-            val next = call.await()
-            if (mine == nextGen) _state.value = _state.value.copy(upNext = next)
+            _state.value = _state.value.copy(upNext = next)
         }
     }
+
+    /** Make the opening: the entry of [wait]'s episode in the list on screen now, by id. */
+    private fun openOn(wait: NextWait) {
+        opening = false
+        openingTimer?.cancel()
+        val now = _state.value.seasons
+        val at = openingSeason(now, wait, sources)
+        if (at in now.indices) {
+            _state.value = _state.value.copy(selectedSeason = at)
+            loadEpisodes(now[at].id)
+        }
+    }
+
+    private var openingTimer: Job? = null
 
     private fun loadRelated() {
         viewModelScope.launch {

@@ -22,6 +22,16 @@ describe('sectionEntries', () => {
     expect(got[1]).toMatchObject({ seasonId: 's0', ids: ['ova1', 'ova2'], count: 2 })
     expect(got[3]).toMatchObject({ movie: film, label: 'Film · 2014' })
   })
+  // Keys by what the entry holds: a new OVA coming in before an entry does not make it
+  // another entry (the page keeps its pick by key).
+  it('keeps entry keys when an entry is added before them', () => {
+    const film1: Section = { kind: 'movie', title: 'The Movie', item: film, episodes: 1, year: 2014 }
+    const ova: Section = { kind: 'specials', title: 'OVAs', seasonId: 's0', episodeIds: ['ova1'], episodes: 1 }
+    const before = sectionEntries([{ kind: 'season', title: 'Season 1', seasonId: 's1', episodes: 12 }, film1], [s0, s1])!
+    const after = sectionEntries([{ kind: 'season', title: 'Season 1', seasonId: 's1', episodes: 12 }, ova, film1], [s0, s1])!
+    expect(after.find((e) => e.movie)!.key).toBe(before.find((e) => e.movie)!.key)
+    expect(new Set(after.map((e) => e.key)).size).toBe(after.length)
+  })
   it('falls back to the plain list when the sections cannot be used', () => {
     expect(sectionEntries(null, [s1])).toBeNull()
     expect(sectionEntries([], [s1])).toBeNull()

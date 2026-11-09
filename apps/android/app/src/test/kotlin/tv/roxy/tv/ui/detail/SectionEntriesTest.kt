@@ -26,12 +26,12 @@ class SectionEntriesTest {
             listOf(s1, s2, specials),
         )!!
         assertEquals(listOf("Season 1", "OVAs", "Season 2", "The Movie", "Specials"), got.seasons.map { it.title })
-        assertEquals(listOf("s1", "section:1", "s2", "section:3", "section:4"), got.seasons.map { it.id })
-        assertEquals(SectionSource.Specials("s0", listOf("ova1", "ova2")), got.sources["section:1"])
-        assertEquals(SectionSource.Movie(film), got.sources["section:3"])
-        assertEquals(2, got.counts["section:1"])
-        assertEquals("Film · 2014", got.labels["section:3"])
-        assertNull(got.labels["section:1"])
+        assertEquals(listOf("s1", "specials:s0:ova1:OVAs", "s2", "film:film", "specials:s0:odd:Specials"), got.seasons.map { it.id })
+        assertEquals(SectionSource.Specials("s0", listOf("ova1", "ova2")), got.sources["specials:s0:ova1:OVAs"])
+        assertEquals(SectionSource.Movie(film), got.sources["film:film"])
+        assertEquals(2, got.counts["specials:s0:ova1:OVAs"])
+        assertEquals("Film · 2014", got.labels["film:film"])
+        assertNull(got.labels["specials:s0:ova1:OVAs"])
     }
 
     // Nothing usable: the plain season list instead.

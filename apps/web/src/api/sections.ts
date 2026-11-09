@@ -34,6 +34,16 @@ export function plainEntries(seasons: Item[]): SeasonEntry[] {
  * The entries from the server's sections, or null when they cannot be used (none; a
  * season it names is not among `seasons`): the plain list then.
  */
+/**
+ * An entry's key that stays the same when the list is read again: by what it holds, not by
+ * its place ("section:3" became another entry when a new OVA came in before it).
+ */
+export function sectionKey(sec: Section, i: number): string {
+  if (sec.kind === 'movie') return sec.item ? `film:${sec.item.id}` : `section:${i}`
+  const first = sec.episodeIds?.[0]
+  return first ? `specials:${sec.seasonId}:${first}:${sec.title}` : `section:${i}`
+}
+
 export function sectionEntries(sections: Section[] | null | undefined, seasons: Item[]): SeasonEntry[] | null {
   if (!sections?.length) return null
   const byId = new Map(seasons.map((s) => [s.id, s]))
@@ -45,10 +55,10 @@ export function sectionEntries(sections: Section[] | null | undefined, seasons: 
       out.push({ key: s.id, title: sec.title || s.title || `Season ${s.indexAired ?? i + 1}`, seasonId: s.id, count: sec.episodes })
     } else if (sec.kind === 'specials') {
       if (!sec.seasonId) return null
-      out.push({ key: `section:${i}`, title: sec.title, seasonId: sec.seasonId, ids: sec.episodeIds ?? [], count: sec.episodes })
+      out.push({ key: sectionKey(sec, i), title: sec.title, seasonId: sec.seasonId, ids: sec.episodeIds ?? [], count: sec.episodes })
     } else if (sec.kind === 'movie' && sec.item) {
       const year = sec.year ?? sec.item.year
-      out.push({ key: `section:${i}`, title: sec.title || sec.item.title, movie: sec.item, label: year ? `Film · ${year}` : 'Film' })
+      out.push({ key: sectionKey(sec, i), title: sec.title || sec.item.title, movie: sec.item, label: year ? `Film · ${year}` : 'Film' })
     }
   }
   return out

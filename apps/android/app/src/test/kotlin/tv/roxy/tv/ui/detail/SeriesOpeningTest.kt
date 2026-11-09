@@ -179,4 +179,40 @@ class SeriesOpeningTest {
         assertEquals("OVA", vm.state.value.seasons[1].title)
         assertEquals(listOf("episodes:s0"), episodeReads(server))
     }
+
+    // Reloads landing during the opening do not push it back: 3 s from the first lookup,
+    // not from the newest (each reload used to start a fresh 3 s).
+    @Test fun reloadsDoNotPushTheOpeningBack() {
+        val server = FakeSeriesServer()
+        val vm = SeriesViewModel(server, "show", initial = show)
+        vm.load()
+        page(server)
+        clock.advanceTimeBy(2_000); clock.runCurrent()
+        vm.load() // back from somewhere, 2 s in
+        page(server)
+        clock.advanceTimeBy(1_001); clock.runCurrent() // 3 s after the first lookup
+        assertEquals(listOf("episodes:s1"), episodeReads(server))
+        assertEquals(false, vm.state.value.seasons.isEmpty())
+    }
+
+    // Entry ids follow what the entry holds: an OVA coming in before a film keeps the film
+    // picked across the reload.
+    @Test fun pickedFilmSurvivesAnEntryAddedBeforeIt() {
+        val server = FakeSeriesServer()
+        val film = Item(id = "film1", type = "movie", title = "The Movie")
+        val vm = SeriesViewModel(server, "show", initial = show)
+        vm.load()
+        page(server, listOf(Section(kind = "season", seasonId = "s1"), Section(kind = "movie", item = film), Section(kind = "season", seasonId = "s2")))
+        server.answer("next", null)
+        vm.selectSeason(1)
+        assertEquals("The Movie", vm.state.value.seasons[vm.state.value.selectedSeason].title)
+        vm.load()
+        page(server, listOf(
+            Section(kind = "season", seasonId = "s1"),
+            Section(kind = "specials", title = "OVA", seasonId = "s0", episodeIds = listOf("ova1"), episodes = 1),
+            Section(kind = "movie", item = film),
+            Section(kind = "season", seasonId = "s2"),
+        ))
+        assertEquals("The Movie", vm.state.value.seasons[vm.state.value.selectedSeason].title)
+    }
 }
