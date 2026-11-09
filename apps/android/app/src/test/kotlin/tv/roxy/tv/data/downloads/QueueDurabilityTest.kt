@@ -59,4 +59,23 @@ class QueueDurabilityTest {
         scope.cancel()
         assertEquals("both on disk", listOf("e1:0:true", "e2:30000:false"), queueOf(store(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))))
     }
+
+    // Found in review: the journal was written on its own thread, after recordProgress had
+    // returned, so a kill right after a watched mark could still lose it (the test above
+    // waited for that thread). Watched marks, stop and end reports are written before the
+    // call returns now. The background writer is paused here, and nothing is waited for: the
+    // mark is on disk (with the tick before it, the queue as it was), the tick recorded after
+    // it is not (ticks are written moments later, so a kill can cost a few seconds of position).
+    @Test fun aWatchedMarkIsOnDiskBeforeTheCallReturns() {
+        val first = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val before = store(first)
+        runBlocking { before.awaitQueueWritten() } // the startup write, before pausing
+        before.pauseBackgroundWrites = true
+        before.recordProgress("e1", 30_000, reportedToServer = false)
+        assertTrue(before.recordProgress("e1", 0, reportedToServer = false, played = true, durableNow = true))
+        before.recordProgress("e1", 60_000, reportedToServer = false)
+        first.cancel() // killed at once: nothing else is written
+        assertEquals(listOf("e1:30000:false", "e1:0:true"), queueOf(store(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))))
+    }
 }
+

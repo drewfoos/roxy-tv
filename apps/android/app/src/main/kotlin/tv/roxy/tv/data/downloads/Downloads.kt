@@ -169,6 +169,8 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
     private val indexFile = File(context.filesDir, "downloads.json")
     /** The progress queue's own file, written at once (see ProgressJournal). */
     private val journal = ProgressJournal(File(context.filesDir, "progress-queue.json"))
+    /** One writer of the journal at a time (the background writer, or a report written at once). */
+    private val journalLock = Any()
     /** One thread for the journal: writes in order, off the player's thread. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val journalThread = Dispatchers.IO.limitedParallelism(1)
@@ -355,7 +357,14 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
      * Playback position for a downloaded item: shown on the Downloads page straight away
      * and, when [reportedToServer] is false, kept for [syncProgress] once the server answers.
      */
-    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null, ageMs: Long = 0, sourceId: String? = null, durationMs: Long? = null) {
+    /**
+     * Queue a position (or, [played], a watched mark) for [itemId]. [durableNow]: written to
+     * the journal before this returns (watched marks, stop and end reports: the ones a kill
+     * right after must not lose; they come at transitions, not while frames are drawn). Other
+     * reports are written moments later on the journal's thread. Returns false when a
+     * [durableNow] write failed (kept in memory, retried).
+     */
+    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null, ageMs: Long = 0, sourceId: String? = null, durationMs: Long? = null, durableNow: Boolean = false): Boolean {
         val profile = prefs.session.value.profileId
         _index.update { idx ->
             val e = idx.entries[itemId]
@@ -373,7 +382,9 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
                 PendingProgress(profile, itemId, positionMs, System.currentTimeMillis() - ageMs.coerceAtLeast(0), played, audioIndex, subtitleIndex, sourceId, durationMs))
             idx.copy(entries = entries, pendingProgress = pending)
         }
+        if (durableNow) return writeQueueNow()
         writeQueue()
+        return true
     }
 
     /**
@@ -388,11 +399,26 @@ class Downloads(private val context: Context, private val prefs: Prefs, private 
         if (!queueWriteWaiting.compareAndSet(false, true)) return
         journalScope.launch {
             queueWriteWaiting.set(false)
-            val ok = journal.write(_index.value.pendingProgress).isSuccess
-            queueWriteFailed = !ok
-            if (!ok) { kotlinx.coroutines.delay(JOURNAL_RETRY_MS); writeQueue() }
+            if (pauseBackgroundWrites) return@launch
+            if (!writeQueueNow()) { kotlinx.coroutines.delay(JOURNAL_RETRY_MS); writeQueue() }
         }
     }
+
+    /**
+     * Write the queue as it is now, on this thread, and say whether it went down. The
+     * background writer goes through here too: one at a time, each reading the queue under
+     * the lock, so a write never puts down an older queue after a newer one.
+     */
+    private fun writeQueueNow(): Boolean = synchronized(journalLock) {
+        val ok = journal.write(_index.value.pendingProgress).isSuccess
+        queueWriteFailed = !ok
+        if (!ok) writeQueue() // retried in the background
+        ok
+    }
+
+
+    /** Tests: the background writer does nothing (to show what a kill right after a report keeps). */
+    @Volatile internal var pauseBackgroundWrites = false
 
     /** Waits until the queue as it is now has been written (tests; a clean shutdown). */
     internal suspend fun awaitQueueWritten() { writeQueue(); kotlinx.coroutines.withContext(journalThread) { } }
