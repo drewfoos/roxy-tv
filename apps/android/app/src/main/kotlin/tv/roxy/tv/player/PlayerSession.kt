@@ -104,9 +104,12 @@ class PlayerSession(
          * play (a film, the last episode, offline with the next not downloaded) the player
          * closes. With autoplay off and a next episode the player stays, its card offering
          * it. The next episode is looked up when the file starts; at an end reached before
-         * the answer it waits for it.
+         * the answer it waits for it, but only [END_WAIT_MS]: a lookup that hangs (network
+         * gone) counts as nothing next, so the player still closes instead of holding the
+         * last frame for ever.
          */
-        fun endAction(autoplay: Boolean, nextKnown: Boolean, hasNext: Boolean): EndAction = when {
+        fun endAction(autoplay: Boolean, nextKnown: Boolean, hasNext: Boolean, waitedOut: Boolean = false): EndAction = when {
+            !nextKnown && waitedOut -> EndAction.Close
             !nextKnown -> EndAction.WaitForNext
             hasNext && autoplay -> EndAction.PlayNext
             hasNext -> EndAction.Stay
@@ -123,6 +126,8 @@ class PlayerSession(
          */
         private val reportLock = Mutex()
         private const val AUTO_HIDE_MS = 4000L
+        /** How long the end of a file waits for the next-episode lookup before closing. */
+        const val END_WAIT_MS = 8_000L
         private const val PROGRESS_INTERVAL_MS = 10_000L
         /** Seconds the next-episode card counts down before it plays (Netflix uses about this). */
         private const val NEXT_COUNTDOWN_S = 10
@@ -240,6 +245,7 @@ class PlayerSession(
     private var nextKnown = false
     /** The file reached its end before the lookup answered: act on the answer. */
     private var endPending = false
+    private var endWaitJob: Job? = null
     var nextCard by mutableStateOf<NextCard?>(null); private set
     private var nextCardDismissed = false
     private var countdownJob: Job? = null
@@ -639,13 +645,14 @@ class PlayerSession(
         // What comes after this one (null for movies and the last episode).
         nextKnown = false
         endPending = false
+        endWaitJob?.cancel()
         val id = itemId ?: run { nextKnown = true; return }
         scope.launch {
             val n = nextEpisode(context, id)
             if (itemId == id) {
                 next = n; nextKnown = true
                 Timber.i("next episode: %s", n?.item?.displayLabel ?: "none"); refreshUi()
-                if (endPending) { endPending = false; if (atEnd()) atFileEnd() }
+                if (endPending) { endPending = false; endWaitJob?.cancel(); if (atEnd()) atFileEnd() }
             }
         }
     }
@@ -726,13 +733,26 @@ class PlayerSession(
     }
 
     /** The file is over: go on to the next episode, close, or wait (see [endAction]). */
-    private fun atFileEnd() {
+    private fun atFileEnd(waitedOut: Boolean = false) {
         if (destroyed || switching) return
-        when (endAction(autoplay, nextKnown, next != null)) {
+        when (endAction(autoplay, nextKnown, next != null, waitedOut)) {
             // Ran out while the card was up (or with no outro marker): go on now.
             EndAction.PlayNext -> playNext()
             EndAction.Close -> { Timber.i("nothing follows: closing the player"); host.ended() }
-            EndAction.WaitForNext -> endPending = true
+            EndAction.WaitForNext -> {
+                endPending = true
+                endWaitJob?.cancel()
+                val id = itemId
+                endWaitJob = scope.launch {
+                    delay(END_WAIT_MS)
+                    // Still the same item, still at its end, and the lookup never answered.
+                    if (endPending && itemId == id && atEnd()) {
+                        endPending = false
+                        Timber.w("next-episode lookup did not answer in %d ms: closing", END_WAIT_MS)
+                        atFileEnd(waitedOut = true)
+                    }
+                }
+            }
             EndAction.Stay -> {}
         }
     }
