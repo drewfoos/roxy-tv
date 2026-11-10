@@ -47,6 +47,16 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_ANIME = "anime"      // the title is anime: smart subtitles pair a dub with signs & songs
         const val EXTRA_SLANG = "slang"      // preferred subtitle language, ISO 639-2
         const val EXTRA_SUBS_OFF = "subsOff" // the item was last watched with subtitles off
+        const val EXTRA_SUB_INDEX = "subIndex"     // the item's saved subtitle stream (server numbering)
+        const val EXTRA_AUDIO_INDEX = "audioIndex" // the item's saved audio stream
+
+        /**
+         * The item's saved subtitle and audio streams, as the request carried them. Found on
+         * the TV: only "subtitles off" was passed here, so a saved track (Alya: "Dialogue")
+         * never reached the player opened from a page; only the next episode in a row had it.
+         */
+        fun savedStreams(intent: Intent): Pair<Int?, Int?> =
+            intent.getIntExtra(EXTRA_SUB_INDEX, 0).takeIf { it > 0 } to intent.getIntExtra(EXTRA_AUDIO_INDEX, 0).takeIf { it > 0 }
 
         fun intent(
             context: Context,
@@ -61,8 +71,12 @@ class PlayerActivity : ComponentActivity() {
             anime: Boolean = false,
             explicitStart: Boolean = false,
             subtitlesOff: Boolean = false,
+            subtitleIndex: Int? = null,
+            audioIndex: Int? = null,
         ): Intent = Intent(context, PlayerActivity::class.java)
             .putExtra(EXTRA_SUBS_OFF, subtitlesOff)
+            .putExtra(EXTRA_SUB_INDEX, subtitleIndex?.takeIf { it > 0 } ?: 0)
+            .putExtra(EXTRA_AUDIO_INDEX, audioIndex?.takeIf { it > 0 } ?: 0)
             .putExtra(EXTRA_START_EXPLICIT, explicitStart)
             .putExtra(EXTRA_ANIME, anime)
             .putExtra(EXTRA_SLANG, settings.subLang)
@@ -81,7 +95,7 @@ class PlayerActivity : ComponentActivity() {
 
         fun intent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
             intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime, explicitStart = req.explicitStart,
-                subtitlesOff = req.item.userData?.subtitleIndex == -1)
+                subtitlesOff = req.item.userData?.subtitleIndex == -1, subtitleIndex = req.item.userData?.subtitleIndex, audioIndex = req.item.userData?.audioIndex)
     }
 
     private lateinit var app: RoxyApp
@@ -166,6 +180,8 @@ class PlayerActivity : ComponentActivity() {
             anime = intent.getBooleanExtra(EXTRA_ANIME, false),
             showStats = intent.getBooleanExtra(EXTRA_STATS, settings.showStats),
             subtitlesOff = intent.getBooleanExtra(EXTRA_SUBS_OFF, false),
+            subtitleIndex = savedStreams(intent).first,
+            audioIndex = savedStreams(intent).second,
         )
         val host = object : PlayerSession.Host {
             override fun back() = finish()

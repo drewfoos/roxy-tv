@@ -322,6 +322,7 @@ class MpvPlayer(
     @Volatile private var lastOpenHttp4xx = false
 
     private fun loadPending() {
+        frameRateGate.newFile()
         val url = pendingUrl ?: return
         pendingUrl = null
         lastUrl = url
@@ -702,6 +703,7 @@ class MpvPlayer(
     // ---- display frame rate ----
 
     private var frameRate = 0f
+    private val frameRateGate = FrameRateGate()
 
     /**
      * Ask the display for a mode that fits [fps] (24p on a TV that has it, a 120 Hz phone
@@ -709,8 +711,7 @@ class MpvPlayer(
      * black, as every TV app does); phones only switch when it is seamless.
      */
     fun hintFrameRate(fps: Float) {
-        frameRate = fps
-        applyFrameRate()
+        frameRateGate.hint(fps)?.let { frameRate = it; applyFrameRate() }
     }
 
     private fun applyFrameRate() {
@@ -791,6 +792,7 @@ class MpvPlayer(
                 ended = false
                 post { leaveNativeHdr() }
             }
+            MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> post { frameRateGate.firstFrame()?.let { frameRate = it; applyFrameRate() } }
             MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
                 loading = false
                 post { onFileLoaded() }
