@@ -4,7 +4,7 @@ import tv.roxy.tv.api.SubtitleInfo
 
 // The server's two lists (transcode.matroskaSubtitles, model.IsTextSubtitleCodec): keep in step.
 private val MATROSKA_SUBTITLES = setOf("subrip", "srt", "ass", "ssa", "webvtt", "vtt", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "hdmv_text_subtitle")
-private val TEXT_SUBTITLES = setOf("ass", "ssa", "subrip", "srt", "webvtt", "vtt", "mov_text", "text", "microdvd", "sami")
+internal val TEXT_SUBTITLES = setOf("ass", "ssa", "subrip", "srt", "webvtt", "vtt", "mov_text", "text", "microdvd", "sami")
 
 /**
  * Does the server's transcode of a file in [container] carry this subtitle track? It copies
