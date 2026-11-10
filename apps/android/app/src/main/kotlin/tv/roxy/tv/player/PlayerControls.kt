@@ -703,7 +703,16 @@ private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp
     }
 }
 
-private data class MenuRow(val key: String, val label: String, val value: String? = null, val submenu: Boolean = false, val checked: Boolean = false, val toggle: Boolean = false)
+internal data class MenuRow(val key: String, val label: String, val value: String? = null, val submenu: Boolean = false, val checked: Boolean = false, val toggle: Boolean = false)
+
+/**
+ * The row a menu opens on: the choice in force (the ticked track, quality or speed), so a
+ * list opens where the viewer is. A switch that is on is not such a choice, nor is a row
+ * that leads to another list: Settings opens on its first row, not on Autoplay because
+ * Autoplay happens to be on.
+ */
+internal fun menuFocusKey(rows: List<MenuRow>): String? =
+    (rows.firstOrNull { it.checked && !it.submenu && !it.toggle } ?: rows.firstOrNull())?.key
 
 /**
  * YouTube's settings popup: a compact dark panel, rows of "Label · value ›" for
@@ -715,7 +724,7 @@ private fun MenuPopup(title: String?, rows: List<MenuRow>, onPick: (String) -> U
     if (LocalPhonePanel.current) { PhoneMenuPanel(title ?: "Playback Settings", rows, onPick, onInteraction, onBack ?: LocalCloseSheet.current, footer); return }
     val first = remember { FocusRequester() }
     LaunchedEffect(title, rows.size) { runCatching { first.requestFocus() } }
-    val focusKey = rows.firstOrNull { it.checked }?.key ?: rows.firstOrNull()?.key
+    val focusKey = menuFocusKey(rows)
     val compact = LocalCompactMenu.current
     Column(
         modifier = Modifier
@@ -799,7 +808,7 @@ private fun PhoneMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) 
 private fun TvMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) -> Unit, onInteraction: () -> Unit, footer: String?) {
     val first = remember { FocusRequester() }
     LaunchedEffect(title, rows.size) { runCatching { first.requestFocus() } }
-    val focusKey = rows.firstOrNull { it.checked && !it.submenu }?.key ?: rows.firstOrNull()?.key
+    val focusKey = menuFocusKey(rows)
     Column(
         modifier = Modifier
             .fillMaxHeight()
