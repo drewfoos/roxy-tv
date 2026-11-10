@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/roxy-media/roxy/server/internal/model"
 )
 
 // Encoder is one way to encode H.264.
@@ -47,6 +49,9 @@ type Request struct {
 	VAAPIDevice string
 	// Audio lists the file's embedded audio tracks in order (what `-map 0:a` picks up).
 	Audio []AudioTrack
+	// Subtitles lists the codecs of the file's embedded subtitle tracks in order (what
+	// `-map 0:s` picks up). Empty: the choice falls back to the container.
+	Subtitles []string
 	// Web: for a browser, which cannot switch audio tracks or decode AC3 / E-AC3 / DTS /
 	// TrueHD: carry one audio track (WebAudio, by its stream index) as AAC unless it is
 	// already a codec browsers decode, leave subtitles and fonts out (the page draws
@@ -372,16 +377,56 @@ func (d *Detector) Args(r Request) []string {
 	}
 	// Audio: every track (dub and sub stay switchable), each copied or converted on its own.
 	args = append(args, audioArgs(r)...)
-	// Subtitles and fonts pass through untouched; MP4's mov_text has no Matroska form.
-	if strings.Contains(strings.ToLower(r.Container), "mp4") || strings.Contains(strings.ToLower(r.Container), "mov") {
-		args = append(args, "-c:s", "srt")
-	} else {
-		args = append(args, "-c:s", "copy")
-	}
+	args = append(args, subtitleArgs(r)...)
 	args = append(args, "-c:t", "copy",
 		"-avoid_negative_ts", "disabled", "-max_muxing_queue_size", "4096",
 		"-f", "matroska", "pipe:1")
 	return args
+}
+
+// matroskaSubtitles are the subtitle codecs a Matroska stream carries as they are.
+var matroskaSubtitles = map[string]bool{
+	"subrip": true, "srt": true, "ass": true, "ssa": true, "webvtt": true, "vtt": true,
+	"hdmv_pgs_subtitle": true, "dvd_subtitle": true, "dvb_subtitle": true,
+	"hdmv_text_subtitle": true,
+}
+
+// subtitleArgs decides each subtitle track on its own. Subtitles pass through untouched
+// where Matroska can carry them; a text format it cannot carry (MP4's mov_text) becomes
+// SRT. One choice for the whole file went wrong both ways: an MP4 with a picture track
+// (DVD subtitles) was asked to turn pictures into SRT, and ffmpeg gave up on the whole
+// stream. A track that can be neither carried nor converted (teletext in a TS file) is
+// left out, which is better than no stream: the tracks after it then sit one place
+// earlier than in the file. A Matroska source is always copied: whatever it holds,
+// Matroska can hold.
+func subtitleArgs(r Request) []string {
+	container := strings.ToLower(r.Container)
+	if len(r.Subtitles) == 0 {
+		if strings.Contains(container, "mp4") || strings.Contains(container, "mov") {
+			return []string{"-c:s", "srt"}
+		}
+		return []string{"-c:s", "copy"}
+	}
+	matroska := strings.Contains(container, "mkv") || strings.Contains(container, "matroska") || strings.Contains(container, "webm")
+	var drop, codecs []string
+	out := 0
+	for i, codec := range r.Subtitles {
+		codec = strings.ToLower(codec)
+		choice := ""
+		switch {
+		case matroska || matroskaSubtitles[codec]:
+			choice = "copy"
+		case model.IsTextSubtitleCodec(codec):
+			choice = "srt"
+		}
+		if choice == "" {
+			drop = append(drop, "-map", "-0:s:"+strconv.Itoa(i))
+			continue
+		}
+		codecs = append(codecs, "-c:s:"+strconv.Itoa(out), choice)
+		out++
+	}
+	return append(drop, codecs...)
 }
 
 // hwInit is the device setup before the input. Decoding stays on the CPU except for

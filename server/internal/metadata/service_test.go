@@ -22,6 +22,8 @@ type fakeProvider struct {
 	seasons  map[int]*Season
 	matches  int
 	episodes int
+	// seasonErr: the seasons whose lookup fails (a timeout, a 429).
+	seasonErr map[int]error
 }
 
 func (f *fakeProvider) Name() string { return f.name }
@@ -40,6 +42,9 @@ func (f *fakeProvider) Episodes(ctx context.Context, r *Result, n int) (*Season,
 	f.episodes++
 	if r == nil || r.Provider != f.name {
 		return nil, nil
+	}
+	if err := f.seasonErr[n]; err != nil {
+		return nil, err
 	}
 	return f.seasons[n], nil
 }
@@ -469,5 +474,78 @@ func TestPlaceholdersTakeTheSeriesLibrary(t *testing.T) {
 	got := f.layout()
 	if r, v := countVirtual(got[2]); r != 0 || v != 2 {
 		t.Errorf("S2: %d real, %d virtual", r, v)
+	}
+}
+
+// A provider that does not answer for one season (a timeout, a 429 halfway through a
+// series) is asked again: the attempt is not recorded as finished, or that season's
+// episodes stayed "Episode N" until the weekly refresh. And the re-queued job is not
+// stopped by the very back-off the failure set.
+func TestFailedSeasonLookupIsAskedAgain(t *testing.T) {
+	f := newFixture(t, false)
+	f.svc.retryDelay = time.Millisecond
+	f.realSeason(1, 2)
+	f.realSeason(2, 2)
+	f.tmdb.result = &Result{Provider: "tmdb", ID: "1", Title: "Show", ProviderIDs: map[string]string{"tmdb": "1"},
+		Seasons: []SeasonInfo{{Number: 1, EpisodeCount: 2}, {Number: 2, EpisodeCount: 2}}}
+	f.tmdb.seasons[1] = episodes(1, 2, 0, "A")
+	f.tmdb.seasons[2] = episodes(2, 2, 0, "B")
+	f.tmdb.seasonErr = map[int]error{2: &httpError{Status: 429, Body: "Too Many Requests"}}
+	if err := f.run(false); err != nil {
+		t.Fatal(err)
+	}
+	got := f.layout()
+	if got[1][1].title != "A1" || got[2][1].title != "Episode 1" {
+		t.Fatalf("after the failure: S1E1 %q (want A1), S2E1 %q (want it left alone)", got[1][1].title, got[2][1].title)
+	}
+	if at, _ := f.st.MetadataAttemptedAt(f.ctx, f.series.ID); at != nil {
+		t.Errorf("a lookup a provider did not answer counts as tried: %v", at)
+	}
+	var again job
+	select {
+	case again = <-f.svc.queue:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lookup was not queued again")
+	}
+	// The provider answers now.
+	f.tmdb.seasonErr = nil
+	if err := f.svc.process(f.ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.layout(); got[2][1].title != "B1" || got[2][2].title != "B2" {
+		t.Errorf("after the retry: S2 = %q, %q; want B1, B2", got[2][1].title, got[2][2].title)
+	}
+	if at, _ := f.st.MetadataAttemptedAt(f.ctx, f.series.ID); at == nil {
+		t.Error("the finished retry is not recorded as tried")
+	}
+	f.svc.mu.Lock()
+	n := f.svc.retries[f.series.ID]
+	f.svc.mu.Unlock()
+	if n != 0 {
+		t.Errorf("retries = %d after it worked, want the count cleared", n)
+	}
+}
+
+// A season the other provider did not answer for is not "it has none either": a forced
+// refresh must not clear the episodes' details on a failed lookup.
+func TestFailedLookupDoesNotResetASeason(t *testing.T) {
+	f := newFixture(t, true)
+	f.realSeason(1, 2)
+	f.al.result = &Result{Provider: "anilist", ID: "1", Title: "Show", ProviderIDs: map[string]string{"anilist": "1"},
+		Seasons: []SeasonInfo{{Number: 1, EpisodeCount: 2, NoEpisodeData: true}}}
+	f.tmdb.result = &Result{Provider: "tmdb", ID: "9", Title: "Show", ProviderIDs: map[string]string{"tmdb": "9"}, Seasons: []SeasonInfo{{Number: 1, EpisodeCount: 2}}}
+	f.tmdb.seasons[1] = episodes(1, 2, 0, "T")
+	if err := f.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.layout(); got[1][1].title != "T1" {
+		t.Fatalf("S1E1 = %q, want TMDB's T1", got[1][1].title)
+	}
+	f.tmdb.seasonErr = map[int]error{1: &httpError{Status: 503, Body: "down"}}
+	if err := f.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.layout(); got[1][1].title != "T1" {
+		t.Errorf("S1E1 = %q after a failed lookup, want T1 kept", got[1][1].title)
 	}
 }

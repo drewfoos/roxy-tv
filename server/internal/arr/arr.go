@@ -132,6 +132,11 @@ func New(name string, cfg Config) *Client {
 	return &Client{Name: name, cfg: cfg, http: noRedirects(30 * time.Second)}
 }
 
+// maxReply bounds one reply from Sonarr / Radarr (a variable so a test can lower it).
+// Pokemon's episode list is 1.4 MB and a busy show's history 1.6 MB; an interactive
+// search of a popular season returns several megabytes.
+var maxReply int64 = 64 << 20
+
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body any, out any) error {
 	var rdr io.Reader
 	if body != nil {
@@ -162,7 +167,16 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		return fmt.Errorf("%s: %w", c.Name, err)
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// One byte past the limit shows a reply that does not fit. A reply cut short used to
+	// be handed to the JSON decoder ("unexpected end of JSON input"): a long show's
+	// episode list or history, or a big search result, is well over a megabyte.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxReply+1))
+	if err != nil {
+		return fmt.Errorf("%s: reading the reply to %s %s: %w", c.Name, method, path, err)
+	}
+	if int64(len(data)) > maxReply {
+		return fmt.Errorf("%s: the reply to %s %s is larger than %d MB", c.Name, method, path, maxReply>>20)
+	}
 	if resp.StatusCode == 401 {
 		return fmt.Errorf("%s: the API key was rejected", c.Name)
 	}
@@ -269,8 +283,9 @@ func (c *Client) rootAndProfile(ctx context.Context, anime bool) (string, int, [
 
 // MonitorEpisodes marks specific episodes of a Sonarr series monitored and searches for
 // them (specials are asked for one at a time; Sonarr cannot search season 0 usefully).
-// codes are "S0E5"-style.
-func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []string) error {
+// codes are "S0E5"-style; specials says how the asking side numbers the specials, when
+// that is not Sonarr's numbering (see RenumberSpecials).
+func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []string, specials []EpisodeRef) error {
 	if len(codes) == 0 {
 		return nil
 	}
@@ -278,16 +293,11 @@ func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []stri
 	for _, code := range codes {
 		want[strings.ToUpper(code)] = true
 	}
-	var eps []struct {
-		ID            int  `json:"id"`
-		SeasonNumber  int  `json:"seasonNumber"`
-		EpisodeNumber int  `json:"episodeNumber"`
-		Monitored     bool `json:"monitored"`
-		HasFile       bool `json:"hasFile"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/episode", url.Values{"seriesId": {strconv.Itoa(seriesID)}}, nil, &eps); err != nil {
+	eps, err := c.Episodes(ctx, seriesID)
+	if err != nil {
 		return err
 	}
+	eps = RenumberSpecials(eps, specials)
 	var ids []int
 	for _, e := range eps {
 		if want[fmt.Sprintf("S%dE%d", e.SeasonNumber, e.EpisodeNumber)] && !e.HasFile {
@@ -313,7 +323,7 @@ func (c *Client) MonitorEpisodes(ctx context.Context, seriesID int, codes []stri
 // means those episodes only, nothing else monitored. Returns the Sonarr series id. A series
 // Sonarr already has gets the requested seasons monitored and a SeasonSearch for each
 // instead of an error.
-func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons []int, episodes []string) (int, error) {
+func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons []int, episodes []string, specials []EpisodeRef) (int, error) {
 	want := map[int]bool{}
 	for _, n := range seasons {
 		want[n] = true
@@ -371,7 +381,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 				}(int(id))
 			}
 			// Sonarr has the episodes already: monitor (and search) the asked-for ones now.
-			if err := c.MonitorEpisodes(ctx, int(id), episodes); err != nil {
+			if err := c.MonitorEpisodes(ctx, int(id), episodes, specials); err != nil {
 				return 0, err
 			}
 			return int(id), nil
@@ -429,7 +439,7 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 		return 0, err
 	}
 	if added.ID != 0 && (c.cfg.searchOnAdd() || len(episodes) > 0) {
-		go c.searchWhenReady(added.ID, want, !episodesOnly, episodes)
+		go c.searchWhenReady(added.ID, want, !episodesOnly, episodes, specials)
 	}
 	return added.ID, nil
 }
@@ -439,10 +449,13 @@ func (c *Client) AddSeries(ctx context.Context, tvdbID int, anime bool, seasons 
 // background search is still reading it.
 var (
 	readyPoll    atomicDuration
-	readyTimeout = 2 * time.Minute
+	readyTimeout atomicDuration
 )
 
-func init() { readyPoll.Store(2 * time.Second) }
+func init() {
+	readyPoll.Store(2 * time.Second)
+	readyTimeout.Store(2 * time.Minute)
+}
 
 type atomicDuration struct{ v atomic.Int64 }
 
@@ -455,8 +468,8 @@ func (d *atomicDuration) Store(v time.Duration) { d.v.Store(int64(v)) }
 // after the add runs against no episodes and finds nothing ("Series search completed. 0
 // reports downloaded.", and no episode ever marked searched), and there is nothing yet to
 // monitor one by one.
-func (c *Client) searchWhenReady(seriesID int, want map[int]bool, seasons bool, episodes []string) {
-	ctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
+func (c *Client) searchWhenReady(seriesID int, want map[int]bool, seasons bool, episodes []string, specials []EpisodeRef) {
+	ctx, cancel := context.WithTimeout(context.Background(), readyTimeout.Load())
 	defer cancel()
 wait:
 	for {
@@ -476,7 +489,12 @@ wait:
 		defer cancel()
 		c.searchSeasons(sctx, seriesID, want)
 	}
-	if err := c.MonitorEpisodes(ctx, seriesID, episodes); err != nil {
+	// Their own time: the wait's context may have run out during the season searches
+	// above (the pack finder's indexer searches take minutes), and the single episodes
+	// were then never monitored.
+	ectx, ecancel := context.WithTimeout(context.Background(), readyTimeout.Load())
+	defer ecancel()
+	if err := c.MonitorEpisodes(ectx, seriesID, episodes, specials); err != nil {
 		slog.Warn("sonarr: monitor requested episodes", "series", seriesID, "err", err)
 	}
 }

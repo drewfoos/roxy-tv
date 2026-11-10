@@ -135,6 +135,8 @@ type Service struct {
 	details  *ttlCache[*Detail]
 	search   *ttlCache[[]Item]
 	episodes *ttlCache[[]Episode]
+	// specials: the last TMDB specials list read per title (see specialRefs).
+	specials sync.Map
 	dl       tracker
 }
 
@@ -953,39 +955,8 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 			return nil, errors.New("already in the library")
 		}
 	} else {
-		// Everything requestable that is not complete in the library.
-		var missing []int
-		for _, sn := range det.Seasons {
-			if sn.Special {
-				continue
-			}
-			if sn.Known == 0 || sn.Have < sn.Episodes {
-				missing = append(missing, sn.Number)
-			}
-		}
-		if len(seasons) == 0 {
-			if len(det.Seasons) > 0 && len(missing) == 0 {
-				return nil, errors.New("every season is already in the library")
-			}
-			if len(missing) < len(det.Seasons) {
-				seasons = missing // only ask for what is not there
-			}
-		} else {
-			hasSpecials := false
-			for _, sn := range det.Seasons {
-				hasSpecials = hasSpecials || sn.Special
-			}
-			var keep []int
-			for _, n := range seasons {
-				// Specials (season 0) can be asked for as a whole, besides one by one.
-				if contains(missing, n) || len(det.Seasons) == 0 || (n == 0 && hasSpecials) {
-					keep = append(keep, n)
-				}
-			}
-			if len(keep) == 0 {
-				return nil, errors.New("those seasons are already in the library")
-			}
-			seasons = keep
+		if seasons, err = seasonsToRequest(det.Seasons, seasons); err != nil {
+			return nil, err
 		}
 	}
 	r := det.Request
@@ -1043,6 +1014,48 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 		return nil, err
 	}
 	return r, nil
+}
+
+// seasonsToRequest is what a series request asks for: asked narrowed to the seasons
+// the library lacks, or, with nothing asked, every season it lacks. Empty means the
+// whole series, new seasons included as they are announced.
+//
+// Specials are not a season to lack: they are asked for by themselves (season 0, or one
+// by one). Counting them made a new series with specials never a whole-series request,
+// so its later seasons were not monitored.
+func seasonsToRequest(all []Season, asked []int) ([]int, error) {
+	var missing []int
+	regular, hasSpecials := 0, false
+	for _, sn := range all {
+		if sn.Special {
+			hasSpecials = true
+			continue
+		}
+		regular++
+		if sn.Known == 0 || sn.Have < sn.Episodes {
+			missing = append(missing, sn.Number)
+		}
+	}
+	if len(asked) == 0 {
+		if regular > 0 && len(missing) == 0 {
+			return nil, errors.New("every season is already in the library")
+		}
+		if len(missing) < regular {
+			return missing, nil // only ask for what is not there
+		}
+		return nil, nil
+	}
+	var keep []int
+	for _, n := range asked {
+		// Specials (season 0) can be asked for as a whole, besides one by one.
+		if contains(missing, n) || len(all) == 0 || (n == 0 && hasSpecials) {
+			keep = append(keep, n)
+		}
+	}
+	if len(keep) == 0 {
+		return nil, errors.New("those seasons are already in the library")
+	}
+	return keep, nil
 }
 
 // sendOrHold sends a request to Sonarr / Radarr, unless it comes from a basic user and
@@ -1170,7 +1183,7 @@ func (s *Service) send(ctx context.Context, r *store.Request, det *Detail) {
 		}
 		// Episodes (specials) are monitored inside AddSeries: for a new series only once
 		// Sonarr has listed them, which takes a few seconds after the add.
-		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, seasonsForSonarr(r), r.Episodes)
+		id, err := sonarr.AddSeries(ctx, det.TVDBID, det.IsAnime, seasonsForSonarr(r), r.Episodes, s.specialRefs(ctx, r))
 		if err != nil {
 			r.Status, r.Error = "failed", err.Error()
 			slog.Warn("discover: sonarr add failed", "title", r.Title, "err", err)
@@ -1244,24 +1257,8 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Episode is one episode of a season on Discover, with whether the library has it.
-type Episode struct {
-	Number   int    `json:"number"`
-	Title    string `json:"title"`
-	Overview string `json:"overview,omitempty"`
-	AirDate  string `json:"airDate,omitempty"`
-	Still    string `json:"still,omitempty"`
-	Have     bool   `json:"have"`
-	// Specials only: covered by a request (season requests never cover season 0).
-	Requested bool `json:"requested,omitempty"`
-	// Download: this episode's state while it is requested and has no file yet.
-	Download *EpisodeDL `json:"download,omitempty"`
-}
-
-// Episodes lists a season's episodes from TMDB (cached 10 min) marked with what the
-// library holds (so a half-complete season shows which half) and, for specials, whether
-// each one is requested.
-func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, error) {
+// seasonBase is a season's episodes as TMDB lists them (cached 10 min), nothing marked.
+func (s *Service) seasonBase(ctx context.Context, tmdbID, season int) ([]Episode, error) {
 	key := fmt.Sprintf("eps:%d:%d", tmdbID, season)
 	base, ok := s.episodes.get(key)
 	// A show laid out by an episode group lists that group's episodes, numbered within
@@ -1291,6 +1288,74 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 			base = append(base, Episode{Number: e.EpisodeNumber, Title: e.Name, Overview: e.Overview, AirDate: e.AirDate, Still: s.tmdb.ImageURL("w300", e.StillPath)})
 		}
 		s.episodes.put(key, base)
+	}
+	return base, nil
+}
+
+// specialRefs is how a request's specials are numbered: the TMDB list the apps show and
+// ask from ("S0E5" is its fifth), which is not how Sonarr numbers them. Nil when the
+// request involves no specials. A list that cannot be fetched right now is answered
+// from the last one that could, so a request's episodes do not change under it.
+func (s *Service) specialRefs(ctx context.Context, r *store.Request) []arr.EpisodeRef {
+	if r == nil || r.MediaType != "tv" || s.tmdb == nil || s.episodes == nil {
+		return nil
+	}
+	involved := contains(r.Seasons, 0)
+	for _, code := range r.Episodes {
+		involved = involved || strings.HasPrefix(code, "S0E")
+	}
+	if !involved {
+		return nil
+	}
+	base, err := s.seasonBase(ctx, r.TMDBID, 0)
+	if err != nil {
+		if last, ok := s.specials.Load(r.TMDBID); ok {
+			return last.([]arr.EpisodeRef)
+		}
+		slog.Warn("discover: the specials list; using Sonarr's numbers", "title", r.Title, "err", err)
+		return nil
+	}
+	refs := make([]arr.EpisodeRef, 0, len(base))
+	for _, e := range base {
+		refs = append(refs, arr.EpisodeRef{Number: e.Number, Title: e.Title, AirDate: e.AirDate})
+	}
+	s.specials.Store(r.TMDBID, refs)
+	return refs
+}
+
+// episodesOf is Sonarr's episode list for a request, its specials numbered the way the
+// request numbers them (see arr.RenumberSpecials). Everything that compares a request's
+// episode codes with Sonarr's episodes reads the list through here; Sonarr itself is
+// always told episode ids.
+func (s *Service) episodesOf(ctx context.Context, c *arr.Client, r *store.Request) ([]arr.Episode, error) {
+	eps, err := c.Episodes(ctx, r.ArrID)
+	if err != nil {
+		return nil, err
+	}
+	return arr.RenumberSpecials(eps, s.specialRefs(ctx, r)), nil
+}
+
+// Episode is one episode of a season on Discover, with whether the library has it.
+type Episode struct {
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	Overview string `json:"overview,omitempty"`
+	AirDate  string `json:"airDate,omitempty"`
+	Still    string `json:"still,omitempty"`
+	Have     bool   `json:"have"`
+	// Specials only: covered by a request (season requests never cover season 0).
+	Requested bool `json:"requested,omitempty"`
+	// Download: this episode's state while it is requested and has no file yet.
+	Download *EpisodeDL `json:"download,omitempty"`
+}
+
+// Episodes lists a season's episodes from TMDB (cached 10 min) marked with what the
+// library holds (so a half-complete season shows which half) and, for specials, whether
+// each one is requested.
+func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, error) {
+	base, err := s.seasonBase(ctx, tmdbID, season)
+	if err != nil {
+		return nil, err
 	}
 	out := append([]Episode(nil), base...)
 	if r, err := s.store.GetRequest(ctx, "tv", tmdbID); err == nil && r != nil && r.Status != "failed" && r.Status != "declined" {

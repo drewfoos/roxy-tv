@@ -10,6 +10,7 @@
 package arrhook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -64,13 +65,39 @@ type payload struct {
 		SeasonNumber  int `json:"seasonNumber"`
 		EpisodeNumber int `json:"episodeNumber"`
 	} `json:"episodes"`
-	EpisodeFile         *file  `json:"episodeFile"`
-	EpisodeFiles        []file `json:"episodeFiles"`
-	MovieFile           *file  `json:"movieFile"`
-	DeletedFiles        []file `json:"deletedFiles"`
-	RenamedEpisodeFiles []file `json:"renamedEpisodeFiles"`
-	RenamedMovieFiles   []file `json:"renamedMovieFiles"`
-	Message             string `json:"message"`
+	EpisodeFile         *file   `json:"episodeFile"`
+	EpisodeFiles        []file  `json:"episodeFiles"`
+	MovieFile           *file   `json:"movieFile"`
+	DeletedFiles        deleted `json:"deletedFiles"`
+	RenamedEpisodeFiles []file  `json:"renamedEpisodeFiles"`
+	RenamedMovieFiles   []file  `json:"renamedMovieFiles"`
+	Message             string  `json:"message"`
+}
+
+// deleted is "deletedFiles", which is two things under one name: on an import, the
+// files an upgrade replaced; on SeriesDelete / MovieDelete, a yes or no (were the files
+// deleted with the title?). Read as a list only, the yes/no made every such notice
+// "bad JSON", so a title deleted in Sonarr or Radarr stayed in the library.
+type deleted struct {
+	Files []file
+	// Kept: the notice said the files were not deleted.
+	Kept bool
+}
+
+func (d *deleted) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	if b[0] == '[' {
+		return json.Unmarshal(b, &d.Files)
+	}
+	var yes bool
+	if err := json.Unmarshal(b, &yes); err != nil {
+		return err
+	}
+	d.Kept = !yes
+	return nil
 }
 
 // episodeHint: the season/episode(s) in the payload, for a single-file import.
@@ -137,7 +164,7 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 	switch p.EventType {
 	case "Download":
 		// An upgrade replaces files: drop the old sources first, then ingest the new file.
-		for _, f := range p.DeletedFiles {
+		for _, f := range p.DeletedFiles.Files {
 			s.remove(ctx, p, f)
 		}
 		files := p.EpisodeFiles
@@ -229,6 +256,12 @@ func (s *Service) Handle(ctx context.Context, source string, body []byte) (store
 		ev.Path = local
 		if !ok {
 			ev.Result = "ignored: unknown folder"
+			break
+		}
+		// Removed from Sonarr / Radarr with its files left on disk: still playable, so it
+		// stays (were the files gone after all, the folder watcher or a scan sees that).
+		if p.DeletedFiles.Kept {
+			ev.Result = "kept: the files were not deleted"
 			break
 		}
 		// Noted first: the same show or film added again elsewhere gets its history back.

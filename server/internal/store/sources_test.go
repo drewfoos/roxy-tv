@@ -93,3 +93,71 @@ func TestSourcesForItems(t *testing.T) {
 		t.Fatalf("GetSource: %+v %v", g, err)
 	}
 }
+
+// The audio fingerprints belong to the file's sound. A re-read of the same file keeps
+// them (they take a decode of sixteen minutes of audio to make); another file at the
+// same path (a re-download, an upgrade) drops them, or intros and credits are matched
+// from the audio of the file that is gone.
+func TestFingerprintsFollowTheFile(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	lib := &model.Library{Name: "Movies", Kind: model.KindMovies, Root: t.TempDir()}
+	if err := s.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertItem(ctx, &model.Item{ID: "m", GUID: "g-m", LibraryID: lib.ID, Type: model.TypeMovie, Title: "Film"}); err != nil {
+		t.Fatal(err)
+	}
+	file := func(size int64, mtime time.Time) *model.MediaSource {
+		return &model.MediaSource{ID: "src", ItemID: "m", IsPrimary: true,
+			Parts: []model.MediaPart{{ID: "part", Path: filepath.Join(lib.Root, "Film.mkv"), Size: size, ModTime: mtime}}}
+	}
+	at := time.Unix(1700000000, 0)
+	prints := func() int {
+		n := 0
+		for _, kind := range []string{"head", "tail"} {
+			if fp, err := s.GetFingerprint(ctx, "src", kind); err != nil {
+				t.Fatal(err)
+			} else if fp != nil {
+				n++
+			}
+		}
+		return n
+	}
+	put := func() {
+		for _, kind := range []string{"head", "tail"} {
+			if err := s.PutFingerprint(ctx, &Fingerprint{SourceID: "src", Kind: kind, LengthMs: 1000, Points: []uint32{1, 2, 3}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.ReplaceSource(ctx, file(1000, at), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	put()
+	// The same file read in again (a forced scan, a new subtitle next to it).
+	if err := s.ReplaceSource(ctx, file(1000, at), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if prints() != 2 {
+		t.Fatalf("a re-read of the same file dropped its fingerprints: %d left", prints())
+	}
+	// Another file under the same name: by size, then by time alone.
+	if err := s.ReplaceSource(ctx, file(2500, at), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if prints() != 0 {
+		t.Fatalf("a bigger file at the same path kept the old file's fingerprints: %d", prints())
+	}
+	put()
+	if err := s.ReplaceSource(ctx, file(2500, at.Add(time.Hour)), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if prints() != 0 {
+		t.Fatalf("a newer file of the same size kept the old file's fingerprints: %d", prints())
+	}
+}

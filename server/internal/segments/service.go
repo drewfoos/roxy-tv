@@ -33,6 +33,14 @@ const (
 	seasonDebounce = 20 * time.Second
 )
 
+// maxFailedPasses is how many detection passes in a row may fail to fingerprint an
+// episode's audio before it is marked as worked on anyway (see markDetected).
+const maxFailedPasses = 3
+
+// aniskipMaxFailures is how many lookups in a row may fail before a pass stops asking
+// (AniSkip is down, not one episode it cannot answer for).
+const aniskipMaxFailures = 3
+
 // DetectorVersion is stored per source after a detection pass (store.MarkDetected).
 // Raise it when detection changes enough that every season should be redone once.
 const DetectorVersion = 1
@@ -232,7 +240,7 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 	if len(eps) < 2 {
 		// Nothing to compare a lone episode with; AniSkip may still know it.
 		if !dry {
-			s.markDetected(ctx, eps, nil, nil)
+			s.markDetected(ctx, seasonID, eps, nil, nil)
 		}
 		s.fillFromAniSkip(ctx, seasonID, dry, rep)
 		rep.Elapsed = time.Since(started).String()
@@ -340,7 +348,7 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 		}
 	}
 	if !dry {
-		s.markDetected(ctx, eps, heads, tails)
+		s.markDetected(ctx, seasonID, eps, heads, tails)
 	}
 	s.fillFromAniSkip(ctx, seasonID, dry, rep)
 	rep.Elapsed = time.Since(started).String()
@@ -348,26 +356,30 @@ func (s *Service) DetectSeason(ctx context.Context, seasonID string, dry bool) (
 	return rep, nil
 }
 
-// bestNeighbour compares episode i's fingerprint with its neighbours (±1, then ±2) and
-// returns the longest valid shared run.
+// bestNeighbour compares episode i's fingerprint with its direct neighbours (±1) and
+// returns the longest valid shared run; the episodes two away (±2) are tried only when
+// neither direct neighbour matched (or there is none: the first and last episode).
 func bestNeighbour(fps [][]uint32, i int, minSec, maxSec float64) (match, int, bool) {
 	var best match
 	bestWith := -1
-	for _, d := range []int{1, -1, 2, -2} {
+	try := func(d int) {
 		j := i + d
 		if j < 0 || j >= len(fps) || len(fps[i]) == 0 || len(fps[j]) == 0 {
-			continue
+			return
 		}
 		m, ok := longestCommon(fps[i], fps[j], MaxDiff, MaxGapSec, minSec)
 		if !ok || m.length() > maxSec {
-			continue
+			return
 		}
 		if bestWith < 0 || m.length() > best.length() {
 			best, bestWith = m, j
 		}
-		if d == -1 && bestWith >= 0 {
-			break // both direct neighbours tried; ±2 only when neither matched
-		}
+	}
+	try(1)
+	try(-1)
+	if bestWith < 0 {
+		try(2)
+		try(-2)
 	}
 	return best, bestWith, bestWith >= 0
 }
@@ -399,7 +411,7 @@ func (s *Service) fillFromAniSkip(ctx context.Context, seasonID string, dry bool
 	if err != nil {
 		return
 	}
-	added := 0
+	added, failures := 0, 0
 	for _, e := range eps {
 		dur := float64(e.DurationMs) / 1000
 		// A dry run shows what AniSkip has now; a real one asks once per episode and MAL id.
@@ -411,9 +423,16 @@ func (s *Service) fillFromAniSkip(ctx context.Context, seasonID string, dry bool
 		}
 		segs, err := s.aniskip.Lookup(ctx, mal, e.Index, dur)
 		if err != nil {
+			// One episode it cannot answer for must not keep the rest of the season from
+			// being asked about (it stays unasked, for the next pass). Several in a row:
+			// AniSkip is down, so the pass stops asking.
 			slog.Warn("aniskip lookup failed; trying again on the next pass", "season", seasonID, "mal", mal, "episode", e.Index, "err", err)
-			return
+			if failures++; failures >= aniskipMaxFailures || ctx.Err() != nil {
+				break
+			}
+			continue
 		}
+		failures = 0
 		if !dry {
 			if err := s.store.MarkAniSkipAsked(ctx, e.SourceID, mal); err != nil {
 				slog.Warn("aniskip: recording the lookup", "item", e.ItemID, "err", err)
@@ -489,12 +508,24 @@ func ms(sec float64) int64 { return int64(sec*1000 + 0.5) }
 
 // markDetected records the pass on every episode it could fingerprint (heads/tails nil:
 // a lone episode, nothing to fingerprint against) and on files too short to have an
-// OP/ED. An episode whose fingerprint failed stays unmarked, so the next sweep retries it.
-func (s *Service) markDetected(ctx context.Context, eps []store.SeasonEpisode, heads, tails [][]uint32) {
+// OP/ED. An episode whose fingerprint failed stays unmarked, so the next sweep retries
+// it: but only maxFailedPasses times. A file that can never be fingerprinted (no sound,
+// cut short) is then marked as well, or it would bring its whole season back on every
+// sweep for good. A new file at that path starts over (the store drops the mark).
+func (s *Service) markDetected(ctx context.Context, seasonID string, eps []store.SeasonEpisode, heads, tails [][]uint32) {
 	for i, e := range eps {
 		short := float64(e.DurationMs)/1000 < MinEpisodeSec
 		if heads != nil && !short && (len(heads[i]) == 0 || len(tails[i]) == 0) {
-			continue
+			if ctx.Err() != nil {
+				continue // interrupted (shutting down): says nothing about the file
+			}
+			if e.FailedPasses+1 < maxFailedPasses {
+				if err := s.store.NoteFingerprintFailure(ctx, e.SourceID); err != nil {
+					slog.Warn("segments: recording the failed pass", "item", e.ItemID, "err", err)
+				}
+				continue
+			}
+			slog.Warn("segments: no audio fingerprint after several passes; left alone until the file changes", "season", seasonID, "item", e.ItemID, "passes", e.FailedPasses+1)
 		}
 		if err := s.store.MarkDetected(ctx, e.SourceID, DetectorVersion); err != nil {
 			slog.Warn("segments: recording the pass", "item", e.ItemID, "err", err)

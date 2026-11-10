@@ -61,6 +61,11 @@ Notes:
   filename (TRaSH anime format) or from the anime-lists offset.
 - `mediaInfo` lacks bit depth; Roxy always probes.
 - `SeriesDelete` / `EpisodeFileDelete` carry the series and file ids and paths.
+- `deletedFiles` has two shapes. On `Download` it is the list of files an upgrade
+  replaced. On `SeriesDelete` (and Radarr's `MovieDelete`) it is `true` or `false`: whether
+  the title's files were deleted with it. `false` means the title was only taken out of
+  the app and its files are still on disk, so Roxy keeps it (the event is logged as
+  "kept"). Any other shape is rejected as a bad payload.
 
 ## Radarr
 
@@ -76,7 +81,7 @@ Notes:
   "movieFile": { "id": 3, "relativePath": "Title (2019) [..]-Grp.mkv", "path": "/data/media/movies/.../....mkv",
                  "quality": "Bluray-1080p", "qualityVersion": 1, "releaseGroup": "Grp", "sceneName": "...",
                  "size": 9000000000, "mediaInfo": { ... }, "sourcePath": "..." },
-  "deletedFiles": [ ... ],
+  "deletedFiles": [ ... ],   // a list on upgrades; true / false on MovieDelete
   "renamedMovieFiles": [ { "previousPath": "...", "path": "..." } ]
 }
 ```
@@ -90,7 +95,7 @@ Notes:
 | `Download` | upsert series/movie by IDs; remove `deletedFiles[]` sources; add new source; probe; extract; metadata refresh; publish `LibraryChanged`; make visible in `/Items/Latest` |
 | `Rename` | update `media_parts.path` from previous->new; no probe |
 | `EpisodeFileDelete` / `MovieFileDelete` | remove source; keep item if other sources remain, else mark missing (keep user data by GUID) |
-| `SeriesDelete` / `MovieDelete` | remove item tree; user data retained by GUID |
+| `SeriesDelete` / `MovieDelete` | `deletedFiles: true`: remove the files that are gone from disk (user data retained by GUID). `deletedFiles: false`: nothing removed, the title stays |
 | `SeriesAdd` / `MovieAdded` | create item shell with IDs and pre-fetch metadata (shows as "requested/missing") |
 | `Health*`, `ApplicationUpdate`, `ManualInteractionRequired` | 200, log |
 

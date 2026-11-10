@@ -70,13 +70,16 @@ type SeasonEpisode struct {
 	// is false when it never was.
 	AniSkipMal   string
 	AniSkipAsked bool
+	// FailedPasses is how many detection passes in a row could not fingerprint the
+	// source's audio (NoteFingerprintFailure).
+	FailedPasses int
 }
 
 // SeasonEpisodes lists a season's episodes that have a primary file, in aired order,
 // with the segments known so far.
 func (s *Store) SeasonEpisodes(ctx context.Context, seasonID string) ([]SeasonEpisode, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, COALESCE(i.index_aired, 0), ms.id, ms.duration_ms, mp.path, COALESCE(sd.version, 0), sd.aniskip_mal
+		SELECT i.id, COALESCE(i.index_aired, 0), ms.id, ms.duration_ms, mp.path, COALESCE(sd.version, 0), sd.aniskip_mal, COALESCE(sd.failed_passes, 0)
 		FROM items i
 		JOIN media_sources ms ON ms.item_id = i.id AND ms.is_primary = 1
 		JOIN media_parts mp ON mp.source_id = ms.id AND mp.part_index = 0
@@ -91,7 +94,7 @@ func (s *Store) SeasonEpisodes(ctx context.Context, seasonID string) ([]SeasonEp
 	for rows.Next() {
 		var e SeasonEpisode
 		var mal sql.NullString
-		if err := rows.Scan(&e.ItemID, &e.Index, &e.SourceID, &e.DurationMs, &e.Path, &e.DetectVersion, &mal); err != nil {
+		if err := rows.Scan(&e.ItemID, &e.Index, &e.SourceID, &e.DurationMs, &e.Path, &e.DetectVersion, &mal, &e.FailedPasses); err != nil {
 			return nil, err
 		}
 		e.AniSkipMal, e.AniSkipAsked = mal.String, mal.Valid
@@ -181,6 +184,14 @@ func (s *Store) ReplaceSegmentsByOrigin(ctx context.Context, sourceID, origin st
 func (s *Store) MarkDetected(ctx context.Context, sourceID string, version int) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO segment_detection (source_id, version, detected_at) VALUES (?,?,?)
 		ON CONFLICT(source_id) DO UPDATE SET version = excluded.version, detected_at = excluded.detected_at`, sourceID, version, Now())
+	return err
+}
+
+// NoteFingerprintFailure counts a detection pass that could not fingerprint the source's
+// audio. The source stays "never worked on" (version 0), so the next sweep tries again.
+func (s *Store) NoteFingerprintFailure(ctx context.Context, sourceID string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO segment_detection (source_id, version, detected_at, failed_passes) VALUES (?,0,?,1)
+		ON CONFLICT(source_id) DO UPDATE SET failed_passes = failed_passes + 1`, sourceID, Now())
 	return err
 }
 

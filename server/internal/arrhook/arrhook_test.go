@@ -1,9 +1,16 @@
 package arrhook
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/roxy-media/roxy/server/internal/library"
+	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 func TestResolve(t *testing.T) {
@@ -131,5 +138,62 @@ func TestResolveSameFolderInTwoLibraries(t *testing.T) {
 				t.Errorf("%s with roots %v: got %q ok=%v, want %q ok=%v", c.in, rs, got, ok, want, c.ok)
 			}
 		}
+	}
+}
+
+// "deletedFiles" is a list on an import (what an upgrade replaced) and true / false on
+// SeriesDelete and MovieDelete. Read as a list only, a delete notice was "bad JSON":
+// the title stayed in the library after Sonarr or Radarr deleted it. And false means the
+// files are still on disk, so the title stays.
+func TestTitleDeleteNotice(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	lib := &model.Library{Name: "Movies", Kind: model.KindMovies, Root: t.TempDir()}
+	if err := st.CreateLibrary(ctx, lib); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(lib.Root, "Film (2000)")
+	if err := st.UpsertItem(ctx, &model.Item{ID: "m", GUID: "g-m", LibraryID: lib.ID, Type: model.TypeMovie, Title: "Film"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceSource(ctx, &model.MediaSource{ID: "src", ItemID: "m", IsPrimary: true,
+		Parts: []model.MediaPart{{ID: "part", Path: filepath.Join(folder, "Film.mkv")}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, library.New(st, nil, nil))
+	files := func() int {
+		paths, err := st.ListPartPaths(ctx, lib.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(paths)
+	}
+	notice := func(deletedFiles string) string {
+		body := fmt.Sprintf(`{"eventType":"MovieDelete","movie":{"title":"Film","folderPath":%q},"deletedFiles":%s}`, folder, deletedFiles)
+		ev, err := s.Handle(ctx, "radarr", []byte(body))
+		if err != nil {
+			t.Fatalf("deletedFiles %s: %v", deletedFiles, err)
+		}
+		return ev.Result
+	}
+	if got := notice("false"); !strings.HasPrefix(got, "kept") || files() != 1 {
+		t.Fatalf("files left on disk: result %q, %d file(s) recorded; want it kept", got, files())
+	}
+	if got := notice("true"); got != "removed 1 file(s)" || files() != 0 {
+		t.Fatalf("files deleted: result %q, %d file(s) recorded; want it removed", got, files())
+	}
+
+	// The list form still reads (an upgrade names the file it replaced).
+	var p payload
+	if err := json.Unmarshal([]byte(`{"eventType":"Download","isUpgrade":true,"deletedFiles":[{"path":"/data/a.mkv"}]}`), &p); err != nil || len(p.DeletedFiles.Files) != 1 || p.DeletedFiles.Kept {
+		t.Fatalf("list form: %+v err %v", p.DeletedFiles, err)
+	}
+	// Anything else under that name is still an error, not silently nothing.
+	if err := json.Unmarshal([]byte(`{"deletedFiles":"yes"}`), &p); err == nil {
+		t.Fatal("a string was accepted")
 	}
 }

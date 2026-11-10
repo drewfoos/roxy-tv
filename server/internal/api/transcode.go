@@ -73,6 +73,8 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 			req.SrcHDR = st.ColorTransfer == "smpte2084" || st.ColorTransfer == "arib-std-b67"
 		case st.Type == model.StreamAudio && !st.IsExternal:
 			req.Audio = append(req.Audio, transcode.AudioTrack{Codec: st.Codec, Channels: st.Channels, Bitrate: st.Bitrate})
+		case st.Type == model.StreamSubtitle && !st.IsExternal:
+			req.Subtitles = append(req.Subtitles, st.Codec)
 		}
 	}
 	select {

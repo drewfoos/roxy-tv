@@ -64,7 +64,7 @@ func TestAddSeriesAnimeTypeDefaultsToStandard(t *testing.T) {
 		var sent map[string]any
 		srv := fakeSonarr(t, &sent)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, AnimeRootFolder: "/data/Anime", AnimeQualityProfileID: 4, AnimeSeriesType: tc.setting})
-		id, err := c.AddSeries(context.Background(), 424536, tc.isAnime, nil, nil)
+		id, err := c.AddSeries(context.Background(), 424536, tc.isAnime, nil, nil, nil)
 		srv.Close()
 		if err != nil || id != 7 {
 			t.Fatalf("setting %q: id %d err %v", tc.setting, id, err)
@@ -121,7 +121,7 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 		episodeCalls.Store(0)
 		srv := fakeSonarr(t, &sent, &cmds)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
-		if _, err := c.AddSeries(context.Background(), 424536, false, tc.seasons, nil); err != nil {
+		if _, err := c.AddSeries(context.Background(), 424536, false, tc.seasons, nil, nil); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		cmds = commandsAfter(&cmds, 1)
@@ -143,7 +143,7 @@ func TestAddSeriesSearchesBySeason(t *testing.T) {
 	srv := fakeSonarr(t, &sent, &cmds)
 	off := false
 	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, SearchOnAdd: &off})
-	if _, err := c.AddSeries(context.Background(), 424536, false, nil, nil); err != nil {
+	if _, err := c.AddSeries(context.Background(), 424536, false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	cmds = commandsAfter(&cmds, 0)
@@ -209,7 +209,7 @@ func TestAddSeriesOlderAnimeProfile(t *testing.T) {
 		var calls []string
 		srv := fakeSonarrWith(t, tc.lookup, `[]`, &sent, &calls)
 		c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4, AnimeQualityProfileID: 4, OldAnimeQualityProfileID: 7})
-		if _, err := c.AddSeries(context.Background(), 1, tc.anime, nil, nil); err != nil {
+		if _, err := c.AddSeries(context.Background(), 1, tc.anime, nil, nil, nil); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		srv.Close()
@@ -227,7 +227,7 @@ func TestAddSeriesLeavesUnmonitoredAlone(t *testing.T) {
 	srv := fakeSonarrWith(t, `[]`, `[{"id":3,"tvdbId":1,"monitored":false,"seasons":[{"seasonNumber":1,"monitored":false}]}]`, &sent, &calls)
 	defer srv.Close()
 	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
-	if _, err := c.AddSeries(context.Background(), 1, false, nil, nil); err != ErrManagedByHand {
+	if _, err := c.AddSeries(context.Background(), 1, false, nil, nil, nil); err != ErrManagedByHand {
 		t.Fatalf("err %v, want ErrManagedByHand", err)
 	}
 	for _, call := range calls {
@@ -300,7 +300,7 @@ func TestAddSeriesEpisodesOnly(t *testing.T) {
 	defer srv.Close()
 	readyPoll.Store(time.Millisecond)
 	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
-	if _, err := c.AddSeries(context.Background(), 1, false, []int{-1}, []string{"S0E5"}); err != nil {
+	if _, err := c.AddSeries(context.Background(), 1, false, []int{-1}, []string{"S0E5"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 200; i++ {
@@ -407,5 +407,105 @@ func TestSeriesByTVDBAndAirDates(t *testing.T) {
 	eps, err := c.Episodes(ctx, 42)
 	if err != nil || len(eps) != 1 || eps[0].AirDate != "2012-04-11" {
 		t.Fatalf("episodes: %+v %v", eps, err)
+	}
+}
+
+// A long show's episode list is over a megabyte (Pokemon: 1.4 MB). The reply used to be
+// cut at 1 MB and handed to the JSON decoder: "unexpected end of JSON input", for every
+// call about that series.
+func TestLargeReplyIsReadWhole(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("[")
+	const n = 3000
+	for i := 1; i <= n; i++ {
+		if i > 1 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"id":%d,"seasonNumber":1,"episodeNumber":%d,"overview":%q}`, i, i, strings.Repeat("x", 500))
+	}
+	b.WriteString("]")
+	body := b.String()
+	if len(body) < 1<<20 {
+		t.Fatalf("test reply is only %d bytes", len(body))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) }))
+	defer srv.Close()
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k"})
+	eps, err := c.Episodes(context.Background(), 23)
+	if err != nil || len(eps) != n {
+		t.Fatalf("got %d episodes, err %v; want %d", len(eps), err, n)
+	}
+}
+
+// A reply past the limit is an error that says so, not a JSON error from a cut body.
+func TestOversizedReplyIsNamed(t *testing.T) {
+	old := maxReply
+	maxReply = 1 << 10
+	defer func() { maxReply = old }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":1,"seasonNumber":1,"episodeNumber":1,"overview":"` + strings.Repeat("x", 4<<10) + `"}]`))
+	}))
+	defer srv.Close()
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k"})
+	_, err := c.Episodes(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "larger than") || strings.Contains(err.Error(), "JSON") {
+		t.Fatalf("err %v, want one that says the reply is too large", err)
+	}
+}
+
+// A new series asked for with a whole season and single specials: the season search (the
+// pack finder's indexer searches) can outlast the wait for Sonarr's episodes, and the
+// specials were then monitored on a context already expired, so never.
+func TestSingleEpisodesMonitoredAfterALongSeasonSearch(t *testing.T) {
+	var mu sync.Mutex
+	var monitored []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series":
+			w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/series/lookup":
+			w.Write([]byte(`[{"tvdbId":1,"seasons":[{"seasonNumber":0},{"seasonNumber":1}]}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/series":
+			w.Write([]byte(`{"id":7}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/episode":
+			w.Write([]byte(`[{"id":50,"seasonNumber":0,"episodeNumber":5},{"id":1,"seasonNumber":1,"episodeNumber":1}]`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v3/episode/monitor":
+			monitored, _ = body["episodeIds"].([]any)
+			w.Write([]byte(`[]`))
+		default:
+			w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+	readyPoll.Store(time.Millisecond)
+	oldWait := readyTimeout.Load()
+	readyTimeout.Store(300 * time.Millisecond)
+	defer readyTimeout.Store(oldWait)
+	c := New("sonarr", Config{URL: srv.URL, APIKey: "k", RootFolder: "/data/TV", QualityProfileID: 4})
+	// The season search takes longer than the whole wait.
+	c.SetPackFinder(func(ctx context.Context, seriesID, season int) bool {
+		time.Sleep(600 * time.Millisecond)
+		return true
+	})
+	if _, err := c.AddSeries(context.Background(), 1, false, []int{1}, []string{"S0E5"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 400; i++ {
+		mu.Lock()
+		done := monitored != nil
+		mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(monitored) != 1 || monitored[0] != float64(50) {
+		t.Fatalf("monitored %v, want [50] (S0E5)", monitored)
 	}
 }
