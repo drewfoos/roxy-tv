@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -15,6 +16,16 @@ import (
 	"github.com/roxy-media/roxy/server/internal/probe"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 )
+
+func extractedCount(atts []model.Attachment) int {
+	n := 0
+	for _, a := range atts {
+		if a.ExtractedPath != "" {
+			n++
+		}
+	}
+	return n
+}
 
 // GET /stream/{id} and /v1/stream/{id}: direct play with HTTP range support.
 // {id} is a media source id, or (convenience) a file name stem such as "test-hi10p-ass".
@@ -114,13 +125,24 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 			}
 			dir := filepath.Join(s.cfg.AttachmentsDir(), src.ID)
 			atts := src.Attachments
+			known := extractedCount(atts)
 			if err := probe.EnsureAttachments(r.Context(), s.ff, video, dir, atts); err != nil {
-				writeError(w, 500, err.Error())
-				return
+				// Some of the fonts came out and others did not: the ones that did are
+				// recorded and served; only a request for one of the others fails.
+				var missing *probe.MissingAttachments
+				if !errors.As(err, &missing) {
+					writeError(w, 500, err.Error())
+					return
+				}
+				slog.Warn("attachments not extracted", "source", src.ID, "err", err)
 			}
 			// Recorded, so the next request finds the fonts without coming through here.
-			if err := s.store.SetAttachmentsExtracted(r.Context(), src.ID, atts); err != nil {
-				slog.Warn("recording extracted attachments", "source", src.ID, "err", err)
+			// (Nothing new to record when this was one more request for a font that
+			// does not come out of the file.)
+			if extractedCount(atts) != known {
+				if err := s.store.SetAttachmentsExtracted(r.Context(), src.ID, atts); err != nil {
+					slog.Warn("recording extracted attachments", "source", src.ID, "err", err)
+				}
 			}
 			for _, b := range atts {
 				if b.Index == idx {
