@@ -93,7 +93,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     val view = LocalView.current
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    var episode by remember { mutableStateOf(app.items[episodeId]) }
+    // The episode playing here (autoplay moves it on) and whether the route's start was used:
+    // kept with the page's saved state, so coming back to the page resumes that one.
+    val start = rememberEpisodeStart(episodeId, fromStart, startMs)
+    var episode by remember { mutableStateOf(app.items[start.currentId]) }
     var session by remember { mutableStateOf<PlayerSession?>(null) }
     var siblings by remember { mutableStateOf<List<Item>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -183,15 +186,22 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     // layout showed over the new one.
     LaunchedEffect(landscape) { session?.refreshUi() }
     host.back = onBack
-    host.nowPlaying = { req -> episode = req.item; expanded = false }
+    host.nowPlaying = { req -> episode = req.item; expanded = false; start.moved(req.item.id) }
 
     LaunchedEffect(episodeId) {
-        val seed = app.items[episodeId] ?: Item(id = episodeId, type = "episode", title = fallbackTitle)
+        // Back on this page after another one (a cast member, the Next Episode row): the
+        // composition was dropped with the player, and this runs again. It plays what was
+        // on screen, from the server's position: the route's episode and its explicit start
+        // (Play from start, a handover's position) restarted episode 1 after autoplay had
+        // moved on, and its reports overwrote the saved place.
+        val args = start.args()
+        val seed = app.items[args.id] ?: Item(id = args.id, type = "episode", title = if (args.id == episodeId) fallbackTitle else "")
         // Server away (restart, Wi-Fi drop): say so and keep trying, instead of a dead box.
         var wait = 3_000L
         while (true) {
-            val r = playRequest(context, seed, fromStart, startMs)
+            val r = playRequest(context, seed, args.fromStart, args.startMs)
             r.onSuccess { req ->
+                start.started()
                 error = null
                 episode = req.item
                 if (session == null) session = PlayerSession(context, app, PlayerSession.Params.from(req, app.prefs.settings.value), scope, host)
@@ -426,3 +436,37 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
+
+/**
+ * What the episode page plays when it (re)starts: the route's episode with its start
+ * arguments the first time; after that (autoplay moved on, or the page came back from
+ * another one) the episode on screen, resumed where the server has it. Saved with the
+ * page's state (see [rememberEpisodeStart]).
+ */
+internal class EpisodeStart(
+    private val fromStart: Boolean,
+    private val startMs: Long?,
+    currentId: String,
+    startUsed: Boolean = false,
+) {
+    data class Args(val id: String, val fromStart: Boolean, val startMs: Long?)
+
+    var currentId: String = currentId; private set
+    var startUsed: Boolean = startUsed; private set
+
+    fun args(): Args = if (startUsed) Args(currentId, fromStart = false, startMs = null) else Args(currentId, fromStart, startMs)
+    /** The page's player is up: the route's start is spent. */
+    fun started() { startUsed = true }
+    /** Autoplay or Next took the player to [id]. */
+    fun moved(id: String) { currentId = id; startUsed = true }
+}
+
+@Composable
+internal fun rememberEpisodeStart(episodeId: String, fromStart: Boolean, startMs: Long?): EpisodeStart =
+    rememberSaveable(
+        episodeId,
+        saver = androidx.compose.runtime.saveable.listSaver(
+            save = { listOf(it.currentId, it.startUsed) },
+            restore = { EpisodeStart(fromStart, startMs, currentId = it[0] as String, startUsed = it[1] as Boolean) },
+        ),
+    ) { EpisodeStart(fromStart, startMs, currentId = episodeId) }
