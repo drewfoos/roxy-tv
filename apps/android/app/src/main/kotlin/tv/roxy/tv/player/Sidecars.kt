@@ -16,7 +16,7 @@ internal data class Sidecar(val streamIndex: Int, val source: String, val title:
 private const val SIDECAR_TITLE = "External"
 
 private fun sidecarOf(s: SubtitleInfo, source: String) =
-    Sidecar(s.index, source, s.title.ifBlank { SIDECAR_TITLE }, s.effectiveLanguage.lowercase(), s.isForced)
+    Sidecar(s.index, source, MpvTracks.hearingTitle(s.title, s.isHearingImpaired).ifBlank { SIDECAR_TITLE }, s.effectiveLanguage.lowercase(), s.isForced)
 
 /**
  * The subtitle files beside a streamed source, from the server's list. Text formats only:

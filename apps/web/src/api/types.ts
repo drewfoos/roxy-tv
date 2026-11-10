@@ -70,6 +70,7 @@ export interface MediaStream {
   title?: string
   isDefault?: boolean
   isForced?: boolean
+  isHearingImpaired?: boolean
   isExternal?: boolean
   isTextFormat?: boolean
 }

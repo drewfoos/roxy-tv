@@ -17,6 +17,20 @@ internal object MpvTracks {
         else -> ""
     }
 
+    private val hearingRegex = Regex("""(?i)\b(sdh|cc|hi|hearing[ -]?impaired|closed captions?)\b""")
+
+    /**
+     * A subtitle track's title with "SDH" in it when the track is for the deaf and hard of
+     * hearing ([hearingImpaired]) and its title does not say so already. A file named
+     * `Show.en.hi.srt` has no title of its own, so beside `Show.en.srt` the menu listed
+     * two tracks that read the same.
+     */
+    fun hearingTitle(title: String, hearingImpaired: Boolean): String = when {
+        !hearingImpaired || hearingRegex.containsMatchIn(title) -> title
+        title.isBlank() -> "SDH"
+        else -> "$title · SDH"
+    }
+
     /** An mpv `aid` / `sid` value: null = auto (mpv's alang/slang choice), 0 or less = none. */
     private fun trackOption(id: Int?): String = when {
         id == null -> "auto"

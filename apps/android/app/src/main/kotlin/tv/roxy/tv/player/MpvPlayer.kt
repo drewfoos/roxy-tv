@@ -112,7 +112,7 @@ class MpvPlayer(
     var subtitleLanguageOverrides: Map<Int, String> = emptyMap()
 
     /** One entry of mpv's track-list. */
-    data class Track(val id: Int, val type: String, val lang: String, val title: String, val codec: String, val isDefault: Boolean, val isForced: Boolean)
+    data class Track(val id: Int, val type: String, val lang: String, val title: String, val codec: String, val isDefault: Boolean, val isForced: Boolean, val isHearingImpaired: Boolean = false)
 
     /** Every call arrives on the main thread. */
     interface Listener {
@@ -516,6 +516,7 @@ class MpvPlayer(
                 codec = str("$p/codec").orEmpty(),
                 isDefault = bool("$p/default") ?: false,
                 isForced = bool("$p/forced") ?: false,
+                isHearingImpaired = bool("$p/hearing-impaired") ?: false,
             )
         }
         trackCache.put(gen, list)

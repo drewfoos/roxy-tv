@@ -878,15 +878,19 @@ private fun MenuRowView(row: MenuRow, isBack: Boolean, focusRequester: FocusRequ
 }
 
 private fun trackLabel(t: MpvPlayer.Track): String =
-    listOf(langName(t.lang), t.title, t.codec.uppercase()).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "Track ${t.id}" }
+    listOf(langName(t.lang), trackTitle(t), t.codec.uppercase()).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "Track ${t.id}" }
+
+/** A track's title as the menus show it: a subtitle track for the hard of hearing says so. */
+private fun trackTitle(t: MpvPlayer.Track): String = if (t.type == "sub") MpvTracks.hearingTitle(t.title, t.isHearingImpaired) else t.title
 
 /** Language first ("English"), then a short title hint when several tracks share it. */
 private fun shortTrackName(t: MpvPlayer.Track): String {
     val lang = langName(t.lang)
+    val title = trackTitle(t)
     return when {
-        lang.isNotEmpty() && t.title.isNotEmpty() -> "$lang · ${t.title.take(18)}"
+        lang.isNotEmpty() && title.isNotEmpty() -> "$lang · ${title.take(18)}"
         lang.isNotEmpty() -> lang
-        t.title.isNotEmpty() -> t.title.take(24)
+        title.isNotEmpty() -> title.take(24)
         else -> "Track ${t.id}"
     }
 }

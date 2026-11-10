@@ -26,4 +26,14 @@ describe('trackLabel', () => {
   it('falls back to the track number', () => {
     expect(trackLabel(s({ type: 'subtitle' }))).toBe('Track 3')
   })
+  // `Show.en.hi.srt` beside `Show.en.srt`: without the mark the menu lists two "English".
+  it('marks subtitles for the hard of hearing', () => {
+    const sub = (p: Partial<MediaStream>) => s({ type: 'subtitle', language: 'eng', ...p })
+    expect(trackLabel(sub({ isHearingImpaired: true }))).toBe('English · SDH')
+    expect(trackLabel(sub({ isHearingImpaired: true, title: 'Full' }))).toBe('English · Full · SDH')
+    expect(trackLabel(sub({ isHearingImpaired: true, title: 'English [SDH]' }))).toBe('English · English [SDH]')
+    expect(trackLabel(sub({ isHearingImpaired: true, title: 'Closed captions' }))).toBe('English · Closed captions')
+    expect(trackLabel(sub({ isHearingImpaired: false, title: 'Signs' }))).toBe('English · Signs')
+    expect(trackLabel(s({ type: 'subtitle', isHearingImpaired: true }))).toBe('SDH')
+  })
 })
