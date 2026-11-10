@@ -28,7 +28,7 @@ const subs = vi.hoisted(() => ({
 }))
 vi.mock('./subtitles', () => ({ createSubtitleRenderer: () => subs }))
 
-import { Player } from './Player'
+import { Player, REMUX_ZERO_WAIT_MS } from './Player'
 
 // ---- a <video> the test drives ----
 interface Fake {
@@ -282,15 +282,33 @@ describe('Player', () => {
     expect(lastReport()?.ms).toBe(605500)
   })
 
-  // Found on CI: play() waited for remuxStart (an ffmpeg run on the server), so every resume
-  // and reopening of a remux started that much later.
-  it('a remux plays without waiting for the keyframe answer', async () => {
+  // Found in review: playing on startSec as the zero and correcting it when the answer came
+  // moved the clock and subtitles back mid-play. A prompt answer is in place before play().
+  it('a prompt keyframe answer is the zero before playback starts', async () => {
+    const order: string[] = []
+    api.remuxStart.mockImplementation(async () => { await new Promise((r) => setTimeout(r, 20)); return 600 })
+    play.mockImplementation(() => { order.push('play@' + subs.setOffset.mock.calls.at(-1)?.[0]) })
+    await mount(item('a', 'ac3', { positionMs: 605_000, played: false, isFavorite: false }))
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
+    expect(order).toEqual(['play@600'])
+    expect(subs.setOffset.mock.calls.map((c) => c[0])).not.toContain(undefined)
+    play.mockReset()
+  })
+
+  // Found on CI: play() waited for remuxStart without a limit, so on a throttled link every
+  // resume and reopening of a remux waited behind it. A slow answer holds play() for at most
+  // REMUX_ZERO_WAIT_MS, and is applied when it comes.
+  it('a slow keyframe answer holds playback only briefly', async () => {
     let answer: (s: number) => void = () => undefined
     api.remuxStart.mockImplementation(() => new Promise<number>((r) => { answer = r }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     await mount(item('a', 'ac3', { positionMs: 605_000, played: false, isFavorite: false }))
+    await act(async () => { await new Promise((r) => setTimeout(r, REMUX_ZERO_WAIT_MS + 100)) })
     expect(play).toHaveBeenCalled()
-    expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(605) // until the answer: the start point
+    expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(605) // still the start point
     await act(async () => { answer(600) })
     expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(600)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

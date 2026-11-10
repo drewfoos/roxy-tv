@@ -11,6 +11,9 @@ import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
 import { usePlayerKeys } from './usePlayerKeys'
 
+/** How long a remux load waits for the stream's zero (see load) before playing without it. */
+export const REMUX_ZERO_WAIT_MS = 1000
+
 export interface PlayerProps {
   item: Item
   /** The series, for the age rating and advisories shown at the start. */
@@ -305,19 +308,29 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         // a GOP before startSec, often 10 s): that is the stream's zero, which the server
         // tells. Taken as startSec, subtitles ran that much early after every resume, seek
         // or reopening. Asked for while the stream opens.
-        // Not waited for: the answer is an ffmpeg run on the server, and playing only after
-        // it delayed every resume, seek and reopening of a remux (on a busy machine, enough
-        // that a stream cut again and again never reached the reconnect limit). Until it
-        // comes the zero is taken as startSec, then corrected.
+        // The answer (one ffmpeg seek on the server, ~70 ms) is waited for while the stream
+        // opens, for at most REMUX_ZERO_WAIT_MS: the browser needs longer than that for its
+        // first frame anyway, so the clock and subtitles start right with no wait. Taking
+        // startSec as the zero and correcting it later moved the time and subtitles back by
+        // up to a GOP mid-play; waiting without a limit held every resume, seek and
+        // reopening behind a slow answer (a throttled link queues it behind the video).
+        // Only an answer slower than the limit is applied late, then logged.
         const audio = chosen?.index ?? null
-        modeRef.current = { kind: 'server', audio, offset: startSec }
+        const zero = startSec > 0 ? api.remuxStart(source.id, startSec).catch(() => startSec) : Promise.resolve(0)
+        const setZero = (at: number) => {
+          modeRef.current = { kind: 'server', audio, offset: at }
+          subsRef.current?.setOffset(at)
+        }
+        setZero(startSec)
         v.src = api.remuxUrl(source.id, audio, startSec, tokenRef.current)
-        subsRef.current?.setOffset(startSec)
         if (startSec > 0) {
-          void api.remuxStart(source.id, startSec).catch(() => startSec).then((at) => {
+          const early = await Promise.race([zero, new Promise<null>((r) => window.setTimeout(() => r(null), REMUX_ZERO_WAIT_MS))])
+          if (stale()) return
+          if (early !== null) setZero(early)
+          else void zero.then((at) => {
             if (stale() || at === startSec) return
-            modeRef.current = { kind: 'server', audio, offset: at }
-            subsRef.current?.setOffset(at)
+            console.warn(`remux zero came late: ${at} s for a start at ${startSec} s (the clock moves back ${(startSec - at).toFixed(1)} s)`)
+            setZero(at)
           })
         }
       }
