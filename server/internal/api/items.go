@@ -47,6 +47,13 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		SortBy:    r.URL.Query().Get("sort"),
 		Desc:      r.URL.Query().Get("desc") == "1" || r.URL.Query().Get("desc") == "true",
 	}
+	// A parent id the client still holds from before its file moved names the item that
+	// replaced it (as GET /v1/items/{id} does): the list used to come back empty.
+	if q.ParentID != "" {
+		if parent, err := s.store.GetItemOrMoved(r.Context(), q.ParentID); err == nil && parent != nil {
+			q.ParentID = parent.ID
+		}
+	}
 	if t := r.URL.Query().Get("type"); t != "" {
 		for _, p := range strings.Split(t, ",") {
 			q.Types = append(q.Types, model.ItemType(strings.TrimSpace(p)))

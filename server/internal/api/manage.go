@@ -199,7 +199,7 @@ func (s *Server) editMetadata(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
 	if err != nil || it == nil {
 		writeError(w, 404, "item not found")
 		return
@@ -207,6 +207,17 @@ func (s *Server) editMetadata(w http.ResponseWriter, r *http.Request) {
 	var m store.ManualMetadata
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil || strings.TrimSpace(m.Title) == "" {
 		writeError(w, 400, "a title is required")
+		return
+	}
+	// A date that is not one would be stored as typed and then sorted and shown as a date.
+	if m.Premiered = strings.TrimSpace(m.Premiered); m.Premiered != "" {
+		if _, err := time.Parse("2006-01-02", m.Premiered); err != nil {
+			writeError(w, 400, "the release date must be a date like 2024-03-31")
+			return
+		}
+	}
+	if m.Year != nil && (*m.Year < 1800 || *m.Year > 2200) {
+		writeError(w, 400, "the year must be four digits")
 		return
 	}
 	if err := s.store.EditItemMetadata(r.Context(), it.ID, m); err != nil {
@@ -223,7 +234,7 @@ func (s *Server) topItem(w http.ResponseWriter, r *http.Request) (*model.Item, b
 		writeError(w, 503, "metadata service not running")
 		return nil, false
 	}
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
 	if err != nil || it == nil {
 		writeError(w, 404, "item not found")
 		return nil, false
