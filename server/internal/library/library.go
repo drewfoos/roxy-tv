@@ -918,7 +918,7 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 		if err != nil {
 			continue
 		}
-		if r := langdetect.Detect(string(b)); r.Lang != "" && r.Confidence >= 0.4 {
+		if r := langdetect.DetectTagged(st.Language, string(b)); r.Lang != "" && r.Confidence >= 0.4 {
 			st.DetectedLanguage = r.Lang
 			if st.Language != "" && langdetect.Normalize(st.Language) != r.Lang {
 				slog.Info("subtitle language mismatch", "file", filepath.Base(path), "stream", st.Index, "tagged", st.Language, "detected", r.Lang, "title", st.Title)
