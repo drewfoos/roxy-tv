@@ -5,8 +5,10 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -190,6 +192,11 @@ class PlayerActivity : ComponentActivity() {
         }
 
         app = RoxyApp.get(this)
+        onBackPressedDispatcher.addCallback(this, backCallback)
+        lifecycleScope.launch {
+            snapshotFlow { shown.value?.let { backStep(it.sheet, it.controlsVisible) != BackStep.Leave } ?: false }
+                .collect { backCallback.isEnabled = it }
+        }
         restoredState = savedInstanceState
         val restart = restartPlan(intent, savedInstanceState)
         if (restart != null) restartJob = lifecycleScope.launch { restart(restart) }
@@ -346,8 +353,41 @@ class PlayerActivity : ComponentActivity() {
         if (isInPictureInPictureMode) session.hideControls() else session.showControls()
     }
 
+    /**
+     * Back, from the key or from the system's back callback: up a level in the settings,
+     * then the controls away (see [backStep]). False when there is nothing to close: Back
+     * then leaves the player.
+     */
+    private fun handleBack(): Boolean {
+        if (!::session.isInitialized) return false
+        when (backStep(session.sheet, session.controlsVisible)) {
+            BackStep.SheetUp -> session.openSheet(Sheet.Settings)
+            BackStep.CloseSheet -> session.openSheet(Sheet.None)
+            BackStep.HideControls -> session.hideControls()
+            BackStep.Leave -> return false
+        }
+        return true
+    }
+
+    /**
+     * Android 16 no longer sends the Back key to onKeyDown for apps that target it: the
+     * system asks the back dispatcher instead, and with nothing registered there Back left
+     * the player with the settings still open. Enabled only while [handleBack] would close
+     * something, so leaving the player stays the system's own Back (and its animation).
+     */
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            if (handleBack()) return
+            // Nothing to close after all (the state changed under us): let Back through.
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (!::session.isInitialized) return super.onKeyDown(keyCode, event)
+        // A held key repeats: the keys that act once per press drop their repeats (see dropsRepeat).
+        if (dropsRepeat(keyCode, event.repeatCount)) return true
         // Media keys and the diagnostics shortcuts work regardless of the control layer.
         // PLAY and PAUSE are explicit (HDMI-CEC, Bluetooth remotes and Assistant send them):
         // "pause" on a paused video must not start it.
@@ -363,12 +403,7 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_I -> { session.toggleStats(); return true }
             KeyEvent.KEYCODE_CAPTIONS -> { session.openSheet(Sheet.Subtitles); return true }
             KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK, KeyEvent.KEYCODE_A -> { session.openSheet(Sheet.Audio); return true }
-            KeyEvent.KEYCODE_BACK -> {
-                // Up a level: a list (Audio, Subtitles...) back to Settings, Settings closed.
-                if (session.sheet != Sheet.None) { session.openSheet(if (session.sheet == Sheet.Settings) Sheet.None else Sheet.Settings); return true }
-                if (session.controlsVisible) { session.hideControls(); return true }
-                return super.onKeyDown(keyCode, event)
-            }
+            KeyEvent.KEYCODE_BACK -> return handleBack() || super.onKeyDown(keyCode, event)
         }
         if (!session.controlsVisible) {
             // Hidden: the first D-pad press reveals the controls (YouTube on TV); Left/Right
