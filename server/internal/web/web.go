@@ -44,13 +44,19 @@ func isJassubWorker(p string) bool {
 }
 
 // Handler serves the built app: real files as they are (hashed assets with a long
-// cache), anything else as index.html so the client-side router owns the URL. API
-// paths never reach it (the /v1 router answers them, found or not).
+// cache), a missing file under /assets/ as 404, anything else as index.html so the
+// client-side router owns the URL. API paths never reach it (the /v1 router answers
+// them, found or not).
 func Handler() http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic(err)
 	}
+	return handlerFor(sub)
+}
+
+// handlerFor is Handler over any build folder (the tests bring their own).
+func handlerFor(sub fs.FS) http.Handler {
 	files := http.FS(sub)
 	fileServer := http.FileServer(files)
 	_, statErr := fs.Stat(sub, "index.html")
@@ -83,6 +89,16 @@ func Handler() http.Handler {
 				}
 				f.Close()
 			}
+		}
+		if p == "/assets" || strings.HasPrefix(p, "/assets/") {
+			// A built file that is not in this build: a tab left open across an update
+			// asking for the old build's script or style. Answering with the shell (200,
+			// text/html) gave the browser a page where it wanted a script, which fails
+			// with a baffling error and, behind a cache, can be kept; a plain 404 lets
+			// the app see the chunk is gone.
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "not found", http.StatusNotFound)
+			return
 		}
 		// A route of the app (/series/abc, /watch/xyz): the shell, never cached.
 		w.Header().Set("Cache-Control", "no-cache")
