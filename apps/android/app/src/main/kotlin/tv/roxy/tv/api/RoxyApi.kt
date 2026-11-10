@@ -493,21 +493,51 @@ class RoxyApi(private val prefs: Prefs) {
     // libmpv (and an external player) cannot send headers, so the credential has to ride
     // in the URL. It is a media token: one source, one day, nothing else; the account
     // token never goes into a URL.
-    private val mediaTokens = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    //
+    // A media token belongs to the sign-in that asked for it (the server ties it to that
+    // sign-in's device, and signing out ends it), so the cache does too: after a sign-out
+    // and a new sign-in in the same run of the app, a token of the old sign-in is never
+    // handed out. (It used to be: the cache was keyed by source alone and kept for the
+    // life of the process, so replaying something within its day sent a dead token.)
+    private class MediaTokens(val account: String?) {
+        val bySource = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    }
+
+    @Volatile private var mediaTokens = MediaTokens(null)
+
+    /** The cache of the sign-in [account]; the cache of another sign-in is dropped. */
+    private fun mediaTokensOf(account: String?): MediaTokens {
+        mediaTokens.let { if (it.account == account) return it }
+        return synchronized(this) {
+            mediaTokens.takeIf { it.account == account } ?: MediaTokens(account).also { mediaTokens = it }
+        }
+    }
 
     /** A media token for [sourceId], reused while it has more than an hour left. */
     suspend fun mediaToken(sourceId: String): String {
         val now = System.currentTimeMillis()
-        mediaTokens[sourceId]?.let { (tok, exp) -> if (exp - now > 3_600_000L) return tok }
+        // Kept in the cache of the sign-in it was asked under: when the sign-in changes
+        // while the request is out, the answer lands in a cache nobody reads any more.
+        val cache = mediaTokensOf(token)
+        cache.bySource[sourceId]?.let { (tok, exp) -> if (exp - now > 3_600_000L) return tok }
         val r: MediaTokenResponse = get("/v1/sources/$sourceId/token")
         val exp = runCatching { java.time.Instant.parse(r.expiresAt).toEpochMilli() }.getOrDefault(now + 6 * 3_600_000L)
-        mediaTokens[sourceId] = r.token to exp
+        cache.bySource[sourceId] = r.token to exp
         return r.token
     }
 
     /** The cached media token, for places that cannot wait (fetched when playback started). */
     fun cachedMediaToken(sourceId: String): String? =
-        mediaTokens[sourceId]?.takeIf { (_, exp) -> exp - System.currentTimeMillis() > 60_000L }?.first
+        mediaTokensOf(token).bySource[sourceId]?.takeIf { (_, exp) -> exp - System.currentTimeMillis() > 60_000L }?.first
+
+    /**
+     * Forgets the cached media token of [sourceId], so the next [mediaToken] asks the server
+     * for a new one: for a caller the server has just refused (401 / 403) a stream, a
+     * subtitle or a transcode with it.
+     */
+    fun forgetMediaToken(sourceId: String) {
+        mediaTokensOf(token).bySource.remove(sourceId)
+    }
 
     fun streamUrl(sourceId: String, mediaToken: String): String = "$baseUrl/v1/stream/$sourceId?mt=$mediaToken"
 
