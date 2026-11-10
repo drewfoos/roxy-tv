@@ -1,5 +1,6 @@
 // Item helpers shared by every page, mirroring the Android app's Item extensions so the
 // two clients read a title the same way.
+import { lang3 } from './prefs'
 import type { Item, MediaSource, MediaStream } from './types'
 
 export const isEpisode = (it: Item) => it.type === 'episode'
@@ -120,15 +121,20 @@ export function ageLabel(rating: string): string {
 
 export const yearOf = (it: Item): number | null => it.year ?? (it.premiered ? Number(it.premiered.slice(0, 4)) || null : null)
 
-/** The subtitle track to render: ASS first, the detected language over the tag, English preferred. */
+/**
+ * The subtitle track to render: ASS first, the detected language over the tag, English
+ * preferred. Languages are compared as lang3 folds them: a file says "ger", "fre", "dut",
+ * "chi" or two letters where the preference says "deu", "fra", "nld", "zho".
+ */
 export function pickSubtitle(source: MediaSource | undefined, wantLang = 'eng'): MediaStream | null {
   const subs = (source?.streams ?? []).filter((s) => s.type === 'subtitle' && s.isTextFormat)
   if (!subs.length) return null
-  const lang = (s: MediaStream) => (s.detectedLanguage || s.language || '').toLowerCase()
+  const want = lang3(wantLang)
+  const lang = (s: MediaStream) => lang3(s.detectedLanguage || s.language)
   const score = (s: MediaStream) => {
     let n = 0
     if (s.codec === 'ass' || s.codec === 'ssa') n += 4
-    if (lang(s) === wantLang || (wantLang === 'eng' && lang(s) === 'en')) n += 2
+    if (want && lang(s) === want) n += 2
     if (s.isDefault) n += 1
     if (s.isForced) n -= 3
     if (/sign|song/i.test(s.title ?? '')) n -= 2

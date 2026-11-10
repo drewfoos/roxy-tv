@@ -90,6 +90,22 @@ describe('pickSubtitle', () => {
     expect(got?.index).toBe(2)
     expect(pickSubtitle(src([sub({ isTextFormat: false })]))).toBeNull()
   })
+  // Files tag German, French, Dutch and Chinese with the older codes (ger, fre, dut, chi) or
+  // two letters; Preferences offers deu, fra, nld, zho. Compared as written, the wanted
+  // language never matched and the first track (English, usually) was shown.
+  it('matches a language whichever of its codes the file and the preference use', () => {
+    const file = src([sub({ index: 1, language: 'eng' }), sub({ index: 2, language: 'ger' }), sub({ index: 3, language: 'fre' }), sub({ index: 4, language: 'dut' }), sub({ index: 5, language: 'chi' }), sub({ index: 6, language: 'pt-BR' })])
+    expect(pickSubtitle(file, 'deu')?.index).toBe(2)
+    expect(pickSubtitle(file, 'fra')?.index).toBe(3)
+    expect(pickSubtitle(file, 'nld')?.index).toBe(4)
+    expect(pickSubtitle(file, 'zho')?.index).toBe(5)
+    expect(pickSubtitle(file, 'por')?.index).toBe(6)
+    expect(pickSubtitle(file, 'eng')?.index).toBe(1)
+    // The detected language still wins over the tag, in either spelling.
+    expect(pickSubtitle(src([sub({ index: 1, language: 'eng' }), sub({ index: 2, language: 'und', detectedLanguage: 'fr' })]), 'fra')?.index).toBe(2)
+    // No language on the track and none wanted is not a match.
+    expect(pickSubtitle(src([sub({ index: 1, language: 'und' }), sub({ index: 2, language: 'eng', isDefault: true })]), '')?.index).toBe(2)
+  })
 })
 
 // Continue Watching's tag: the time left once started, the length before (it was blank).
