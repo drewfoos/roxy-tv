@@ -269,10 +269,6 @@ class MpvPlayer(
         opt("msg-level", logLevel(options.verboseLog))
 
         mpv.init()
-        mpv.addObserver(this)
-        mpv.addLogObserver(this)
-
-        for ((name, fmt) in observed) mpv.observeProperty(name, fmt)
         Timber.i("mpv initialised: hwdec=%s vo=%s ao=%s spdif=%s smooth=%s lowRam=%s", mpvHwdec(options.hwdec), options.vo, options.ao, spdif, options.smoothMotion, options.lowRam)
     }
 
@@ -986,5 +982,16 @@ class MpvPlayer(
         }
         conf.writeText(xml)
         return conf
+    }
+
+    // Last in the class, on purpose: mpv calls back on its own thread as soon as it is
+    // observed (the first "track-list" comes at once), and fields declared below the old
+    // place of this (trackGen, queuedLoads, ...) were still null then. Found on the TV: a
+    // NullPointerException on trackGen in eventProperty aborted the app (it came back at
+    // Home). Kotlin runs initialisers in order: here, every field is set. Keep no field below.
+    init {
+        mpv.addObserver(this)
+        mpv.addLogObserver(this)
+        for ((name, fmt) in observed) mpv.observeProperty(name, fmt)
     }
 }
