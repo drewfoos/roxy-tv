@@ -104,6 +104,24 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
 /** A resume point this close to the end starts the item from the beginning (see [playRequest]). */
 const val END_STRETCH_MS = 15_000L
 
+/**
+ * A play request for the item a player already shows ([playingId]): what that player does
+ * instead of being replaced. Null: [itemId] is something else (or no player is up), open it.
+ * Otherwise it carries on, after jumping to [SamePlayer.seekToSec] when the request chose a
+ * position (Play from start, a "Play on" handover); a plain repeat keeps its own, fresher,
+ * place. The TV's PlayerActivity.onNewIntent does the same for its Intents.
+ */
+data class SamePlayer(val seekToSec: Int?)
+
+fun samePlayer(playingId: String?, itemId: String, fromStart: Boolean, startMs: Long?): SamePlayer? {
+    if (playingId == null || playingId != itemId) return null
+    return SamePlayer(seekToSec = when {
+        fromStart -> 0
+        startMs != null -> (startMs / 1000).toInt()
+        else -> null
+    })
+}
+
 /** Starts [PlayerActivity] for an item (see [playRequest]). */
 suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false, startMs: Long? = null): Result<Unit> {
     val app = RoxyApp.get(context)
