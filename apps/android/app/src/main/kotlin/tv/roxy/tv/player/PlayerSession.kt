@@ -1120,16 +1120,17 @@ class PlayerSession(
         // An auto-skipped outro that ends the file simply reaches EOF and onEofReached moves on.
         // The card is opt-in (settings): without it, autoplay still moves on at the end of the file.
         val n = next
-        if (nextCardEnabled && n != null && nextCard == null && !nextCardDismissed && !switching && !ui.paused && ui.durationSec > 0 && !host.inPip) {
+        if (!switching && ui.durationSec > 0) {
             val outro = segments.firstOrNull { it.type == "outro" }
-            val preview = segments.firstOrNull { it.type == "preview" }
-            val outroEndsFile = outro != null && outro.endSec >= ui.durationSec - 5.0
-            val triggerAt = when {
-                outroEndsFile -> if (autoSkip) Double.MAX_VALUE else outro!!.startSec
-                preview != null -> preview.startSec
-                else -> ui.durationSec - 15.0
+            val triggerAt = nextCardTrigger(outro?.startSec, outro?.endSec, segments.firstOrNull { it.type == "preview" }?.startSec, ui.durationSec, autoSkip)
+            // A card that is up: gone again after a seek back to before it, and no countdown
+            // once autoplay is off (only with a position mpv really reported).
+            if (timePos != null) when (nextCardStep(nextCard != null, nextCard?.secondsLeft != null, autoplay, ui.positionSec, triggerAt)) {
+                NextCardStep.Hide -> { countdownJob?.cancel(); nextCard = null }
+                NextCardStep.StopCountdown -> { countdownJob?.cancel(); nextCard = nextCard?.copy(secondsLeft = null) }
+                NextCardStep.Keep -> {}
             }
-            if (ui.positionSec >= triggerAt) showNextCard(n)
+            if (nextCardEnabled && n != null && nextCard == null && !nextCardDismissed && !ui.paused && !host.inPip && ui.positionSec >= triggerAt) showNextCard(n)
         }
     }
 
