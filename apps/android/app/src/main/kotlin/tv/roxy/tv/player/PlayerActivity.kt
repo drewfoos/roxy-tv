@@ -348,6 +348,8 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (!::session.isInitialized) return super.onKeyDown(keyCode, event)
+        // A held key repeats: the keys that act once per press drop their repeats (see dropsRepeat).
+        if (dropsRepeat(keyCode, event.repeatCount)) return true
         // Media keys and the diagnostics shortcuts work regardless of the control layer.
         // PLAY and PAUSE are explicit (HDMI-CEC, Bluetooth remotes and Assistant send them):
         // "pause" on a paused video must not start it.
