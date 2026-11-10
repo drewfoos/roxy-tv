@@ -168,6 +168,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 			}
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
+			sweepCaches(ctx, lib)
 		}()
 	} else {
 		// No scan: still sweep for missing/stale metadata and thumbnails.
@@ -179,6 +180,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 			}
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
+			sweepCaches(ctx, lib)
 		}()
 	}
 
@@ -202,6 +204,21 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	}
 	slog.Info("roxy server listening", "addr", cfg.Listen, "data", cfg.DataDir)
 	return serveHTTP(ctx, ln, api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs))
+}
+
+// sweepCaches clears the caches of what removed titles and files left there: once now
+// (after the first scan, when the library is known) and then daily.
+func sweepCaches(ctx context.Context, lib *library.Library) {
+	for {
+		if _, err := lib.SweepCaches(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("cache sweep failed", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(24 * time.Hour):
+		}
+	}
 }
 
 // serveHTTP answers HTTP on ln until ctx ends. Requests end with the server: their contexts

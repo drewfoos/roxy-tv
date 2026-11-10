@@ -172,7 +172,13 @@ type failure struct {
 }
 
 func (s *Service) failurePath(sourceID string) string {
-	return filepath.Join(s.cfg.TrickplayDir(), sourceID+".failed")
+	return FailureNote(s.cfg, sourceID)
+}
+
+// FailureNote is where the note about a source's failed previews is kept. The library
+// removes it with the source's other caches when the file is replaced.
+func FailureNote(cfg *config.Config, sourceID string) string {
+	return filepath.Join(cfg.TrickplayDir(), sourceID+".failed")
 }
 
 // readFailure returns the note about a source if it still applies: written by this

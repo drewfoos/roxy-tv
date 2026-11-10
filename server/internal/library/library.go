@@ -32,6 +32,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/probe"
 	"github.com/roxy-media/roxy/server/internal/store"
+	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
 
 var videoExts = map[string]bool{
@@ -835,8 +836,8 @@ func (l *Library) AddFileHinted(ctx context.Context, lib model.Library, path str
 	return nil
 }
 
-// dropStaleCaches deletes the extracted subtitles and trickplay sheets of a source whose
-// file changed (size or modification time) since it was last ingested. The subtitle
+// dropStaleCaches deletes the extracted subtitles, fonts, trickplay sheets and frame thumb
+// of a source whose file changed (size or modification time) since it was last ingested. The subtitle
 // endpoint and trickplay both reuse whatever is cached for the source id, and the id
 // comes from the path alone, so without this a re-encoded or replaced file kept serving
 // the old file's subtitles and thumbnails. A forced rescan of an unchanged file keeps them.
@@ -855,10 +856,23 @@ func (l *Library) dropStaleCaches(ctx context.Context, path, sourceID string, si
 	if part != nil && part.Size == size && part.ModTime.Equal(modTime.UTC().Truncate(time.Millisecond)) {
 		return
 	}
-	for _, dir := range []string{filepath.Join(l.cfg.SubtitlesDir(), sourceID), filepath.Join(l.cfg.TrickplayDir(), sourceID)} {
+	// The fonts too: they are extracted again only if the new file has some, and a font the
+	// new file names but ffmpeg could not write would be served from the old file's copy.
+	// And the note that previews failed, which was about the old file.
+	for _, dir := range []string{filepath.Join(l.cfg.SubtitlesDir(), sourceID), filepath.Join(l.cfg.TrickplayDir(), sourceID),
+		filepath.Join(l.cfg.AttachmentsDir(), sourceID), trickplay.FailureNote(l.cfg, sourceID)} {
 		if err := safefs.RemoveAll(dir); err != nil {
 			slog.Warn("removing stale cache", "dir", dir, "err", err)
 		}
+	}
+	// A thumb that is a frame of the old file: the next view takes one from the new file.
+	// (Its resized copies are older than the new frame and are made again when asked for.)
+	thumbs, err := l.store.DropFrameThumbs(ctx, sourceID)
+	if err != nil {
+		slog.Warn("dropping the old file's frame thumb", "source", sourceID, "err", err)
+	}
+	for _, p := range thumbs {
+		_ = safefs.Remove(p)
 	}
 }
 
