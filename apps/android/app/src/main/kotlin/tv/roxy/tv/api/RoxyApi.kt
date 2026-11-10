@@ -51,13 +51,18 @@ class RoxyApi(private val prefs: Prefs) {
             // A request that names its profile keeps it: a queued report belongs to the profile
             // that made it, whichever is active by the time it is sent.
             if (req.header(PROFILE_HEADER) == null) s.profileId?.let { b.header(PROFILE_HEADER, it) }
+            val sent = b.build()
             // Any answer means the server is there; a failed connection (not one we cancelled)
             // tells ServerStatus to check, which drives the "Can't reach Roxy" banner.
-            val resp = try { chain.proceed(b.build()) } catch (e: IOException) {
+            val resp = try { chain.proceed(sent) } catch (e: IOException) {
                 if (!chain.call().isCanceled()) onReachability?.invoke(false)
                 throw e
             }
             onReachability?.invoke(true)
+            // The profile this request named is not the login's any more (deleted on another
+            // device): the server refuses it instead of quietly using another profile. If it is
+            // the active one, back to "Who's watching?".
+            profileRefused(resp.code, resp.header(PROFILE_GONE_HEADER), sent.header(PROFILE_HEADER))?.let { prefs.forgetProfile(it) }
             resp
         })
         .build()
@@ -655,8 +660,17 @@ class RoxyApi(private val prefs: Prefs) {
     private companion object {
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
         const val PROFILE_HEADER = "X-Roxy-Profile"
+        const val PROFILE_GONE_HEADER = "X-Roxy-Profile-Gone"
     }
 }
+
+/**
+ * The profile the server refused, if this answer is that refusal: a 409 marked with the
+ * X-Roxy-Profile-Gone header, to a request that named a profile ([sentProfile]). Any other
+ * 409 (a title already requested, say) is not.
+ */
+fun profileRefused(code: Int, goneHeader: String?, sentProfile: String?): String? =
+    if (code == 409 && goneHeader != null) sentProfile?.takeIf { it.isNotEmpty() } else null
 
 // ---- wire types (subset of the native API; unknown fields are ignored) ----
 

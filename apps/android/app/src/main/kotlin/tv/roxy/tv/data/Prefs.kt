@@ -293,6 +293,26 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         saveSession(cur.copy(profileId = null, profileName = "", profileHasAvatar = false, lastProfileId = cur.profileId ?: cur.lastProfileId))
     }
 
+    /**
+     * The server refused a request naming profile [id]: it was deleted on another device.
+     * If it is still the active one, back to the picker, where it is no longer "the one
+     * used last" either. A profile picked meanwhile is left alone. Any thread.
+     */
+    fun forgetProfile(id: String) {
+        if (_session.value.profileId != id) return
+        scope.launch {
+            val cur = _session.value
+            if (cur.profileId != id) return@launch
+            val next = cur.copy(profileId = null, profileName = "", profileHasAvatar = false, lastProfileId = cur.lastProfileId?.takeIf { it != id })
+            _session.value = next // before the file is written: the next request must not name it again
+            onProfileForgotten?.invoke(id)
+            saveSession(next)
+        }
+    }
+
+    /** Told which profile [forgetProfile] dropped (set by RoxyApp: its queued reports go too). */
+    @Volatile var onProfileForgotten: ((String) -> Unit)? = null
+
     suspend fun clearSession() {
         val keepUrl = _session.value.serverUrl
         _session.value = Session(serverUrl = keepUrl)

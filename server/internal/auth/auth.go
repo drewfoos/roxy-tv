@@ -297,9 +297,20 @@ func WithPrincipal(ctx context.Context, p *model.Principal) context.Context {
 	return context.WithValue(ctx, ctxKey{}, p)
 }
 
+// ErrProfileGone: the request names a profile that does not exist or is another login's.
+var ErrProfileGone = errors.New("profile not found")
+
+// ProfileGoneHeader marks the 409 that answers such a request, so a client can tell it
+// from the other conflicts and go back to "Who's watching?".
+const ProfileGoneHeader = "X-Roxy-Profile-Gone"
+
 // resolveScope picks the profile that keys this request's watch state: the one named by
-// the X-Roxy-Profile header when it belongs to the user, else the user's default.
-func (s *Service) resolveScope(ctx context.Context, userID, requested string) (string, error) {
+// the X-Roxy-Profile header, or the user's default when the request names none. A named
+// profile that is not the user's (deleted on another device, or another login's) is
+// ErrProfileGone: it used to mean the default profile too, so a device still holding a
+// deleted profile went on showing its name while reading and writing the default
+// profile's watch state. Only where anyProfile is set does it still mean the default.
+func (s *Service) resolveScope(ctx context.Context, userID, requested string, anyProfile bool) (string, error) {
 	if requested != "" {
 		p, err := s.store.GetProfile(ctx, requested)
 		if err != nil {
@@ -308,8 +319,26 @@ func (s *Service) resolveScope(ctx context.Context, userID, requested string) (s
 		if p != nil && p.UserID == userID {
 			return p.ID, nil
 		}
+		if !anyProfile {
+			return "", ErrProfileGone
+		}
 	}
 	return s.store.DefaultProfileID(ctx, userID)
+}
+
+// ProfileFreePath: the routes that answer whatever profile the request names, because a
+// client needs them to get out of that state (list the profiles and pick one, sign out,
+// update itself) and none of them reads or writes a profile's watch state.
+func ProfileFreePath(path string) bool {
+	if path == "/v1/me/profiles" || path == "/v1/me/password" {
+		return true
+	}
+	for _, prefix := range []string{"/v1/me/profiles/", "/v1/auth/", "/v1/avatars/", "/v1/apps/", "/v1/legal/", "/v1/link/", "/v1/diagnostics/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func PrincipalFrom(ctx context.Context) *model.Principal {
@@ -357,7 +386,14 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 			}
 			if p != nil {
 				if p.User != nil && p.MediaSource == "" {
-					scope, err := s.resolveScope(r.Context(), p.UserID, r.Header.Get("X-Roxy-Profile"))
+					scope, err := s.resolveScope(r.Context(), p.UserID, r.Header.Get("X-Roxy-Profile"), ProfileFreePath(r.URL.Path))
+					if errors.Is(err, ErrProfileGone) {
+						w.Header().Set("Content-Type", "application/json")
+						w.Header().Set(ProfileGoneHeader, "1")
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"error":"That profile no longer exists. Choose a profile again.","code":"profile_gone"}`))
+						return
+					}
 					if err != nil {
 						http.Error(w, `{"Message":"profile lookup failed"}`, http.StatusInternalServerError)
 						return

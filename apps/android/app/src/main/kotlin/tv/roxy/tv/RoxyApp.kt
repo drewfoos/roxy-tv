@@ -81,6 +81,7 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
         prefs = Prefs(this, scope)
         api = RoxyApi(prefs)
         downloads = Downloads(this, prefs, scope)
+        prefs.onProfileForgotten = { downloads.dropPendingOf(it) }
         updates = Updates(this, api, prefs, scope)
         remote = RemotePlay(this, api, prefs, scope)
         server = tv.roxy.tv.data.ServerStatus(this, api, prefs, scope)

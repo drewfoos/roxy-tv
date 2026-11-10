@@ -393,9 +393,13 @@ class Downloads(
      * right after must not lose; they come at transitions, not while frames are drawn). Other
      * reports are written moments later on the journal's thread. Returns false when a
      * [durableNow] write failed (kept in memory, retried).
+     * [profile]: the profile that is watching (the player names the one it was opened by).
+     * When that is no longer the active one (it was deleted on another device while this
+     * one played on, see [Prefs.forgetProfile]) nothing is queued for the server: sent with
+     * no profile, the rest of the film would land in the login's default profile.
      */
-    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null, ageMs: Long = 0, sourceId: String? = null, durationMs: Long? = null, durableNow: Boolean = false): Boolean {
-        val profile = prefs.session.value.profileId
+    fun recordProgress(itemId: String, positionMs: Long, reportedToServer: Boolean, played: Boolean = false, audioIndex: Int? = null, subtitleIndex: Int? = null, ageMs: Long = 0, sourceId: String? = null, durationMs: Long? = null, durableNow: Boolean = false, profile: String? = prefs.session.value.profileId): Boolean {
+        val reportedToServer = reportedToServer || profile != prefs.session.value.profileId
         _index.update { idx ->
             val e = idx.entries[itemId]
             val entries = if (e == null) idx.entries else {
@@ -511,6 +515,13 @@ class Downloads(
                 Timber.i("progress sent item=%s pos=%dms played=%s", p.itemId, p.positionMs, p.played)
             },
         )
+    }
+
+    /** The queued reports of a profile that no longer exists: there is nowhere to send them. */
+    fun dropPendingOf(profileId: String) {
+        if (_index.value.pendingProgress.none { it.profileId == profileId }) return
+        _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress.filterNot { it.profileId == profileId }) }
+        writeQueue()
     }
 
     /** One drain at a time: the reporter's, the server coming back, the app starting (two at once sent entries twice). */

@@ -355,21 +355,32 @@ func TestUsersStayWithinTheirPermissions(t *testing.T) {
 	if rec := w.do(http.MethodDelete, "/v1/me/profiles/"+w.adminProf, alice); rec.Code != 404 {
 		t.Errorf("another user's profile: DELETE = %d, want 404", rec.Code)
 	}
-	// Watch state written with another user's profile in the header lands on alice's own.
+	// Watch state written with another user's profile in the header is refused: it lands
+	// on neither profile (it used to land on alice's default one, under the other's name).
 	r := httptest.NewRequest(http.MethodPost, "/v1/me/played/item1", nil)
 	r.Header.Set("Authorization", "Bearer "+w.aliceTok)
 	r.Header.Set("X-Roxy-Profile", w.adminProf)
 	r.RemoteAddr = "192.168.1.50:5000"
 	rec := httptest.NewRecorder()
 	w.h.ServeHTTP(rec, r)
-	if rec.Code != 200 && rec.Code != 204 {
-		t.Fatalf("mark watched: %d %s", rec.Code, rec.Body)
+	if rec.Code != 409 || rec.Header().Get(auth.ProfileGoneHeader) == "" {
+		t.Fatalf("mark watched on another user's profile: %d %s, want a marked 409", rec.Code, rec.Body)
 	}
 	if d, _ := w.st.GetUserItemData(ctx, w.adminProf, "g1"); d != nil && d.Played {
 		t.Error("alice marked an item watched on the admin's profile")
 	}
-	if d, _ := w.st.GetUserItemData(ctx, w.aliceProf, "g1"); d == nil || !d.Played {
-		t.Error("alice's mark did not land on her own profile")
+	if d, _ := w.st.GetUserItemData(ctx, w.aliceProf, "g1"); d != nil && d.Played {
+		t.Error("a mark naming another user's profile landed on alice's own")
+	}
+	// Her profile list still answers with that header, so the app can pick again.
+	r = httptest.NewRequest(http.MethodGet, "/v1/me/profiles", nil)
+	r.Header.Set("Authorization", "Bearer "+w.aliceTok)
+	r.Header.Set("X-Roxy-Profile", w.adminProf)
+	r.RemoteAddr = "192.168.1.50:5000"
+	rec = httptest.NewRecorder()
+	w.h.ServeHTTP(rec, r)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), w.aliceProf) || strings.Contains(rec.Body.String(), w.adminProf) {
+		t.Errorf("profile list with another user's profile named: %d %s", rec.Code, rec.Body)
 	}
 	for _, c := range []struct{ method, path string }{
 		{http.MethodPost, "/v1/items/item1/refresh"}, {http.MethodGet, "/v1/items/item1/identify"},

@@ -57,13 +57,18 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive })
   if (!res.ok) {
     let msg = `${res.status} ${method} ${path}`
+    let code = ''
     try {
-      const j = (await res.json()) as { error?: string }
+      const j = (await res.json()) as { error?: string; code?: string }
       if (j.error) msg = j.error
+      if (j.code) code = j.code
     } catch {
       /* not JSON */
     }
     if (res.status === 401 && auth && s) session.expire(s.token)
+    // The profile this request named is not this login's any more (deleted on another
+    // device): forget it, which sends the app to "Who's watching?".
+    if (res.status === 409 && code === 'profile_gone' && auth && s?.profileId) session.forgetProfile(s.profileId)
     throw new ApiError(res.status, msg)
   }
   if (res.status === 204) return undefined as T

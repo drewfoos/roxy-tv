@@ -284,8 +284,13 @@ and the `/v1/me/*` endpoints answer them 401.
 
 Several viewers on one login (Netflix-style). Watch state, favourites, `/v1/me/resume`
 and `/v1/home` are **per profile**. Clients send `X-Roxy-Profile: <id>` on every request;
-without it (or with a profile that is not the caller's) the user's default profile is
-used. Migration 0007 gave every
+without it the user's default profile is used. A profile that is not the caller's (deleted
+on another device, or another login's) is refused: **409** with the header
+`X-Roxy-Profile-Gone: 1` and `{"error": "...", "code": "profile_gone"}`; the client drops
+its saved profile and shows "Who's watching?". The routes it needs for that still answer
+(as the default profile) whatever the header says: `/v1/me/profiles*`, `/v1/auth/*`,
+`/v1/me/password`, `/v1/avatars/*`, `/v1/apps/*`, `/v1/legal/*`, `/v1/link/*`,
+`/v1/diagnostics/*`. Migration 0007 gave every
 existing user a default profile that inherited their history. At most 6 per account.
 
 | Method | Path | Notes |

@@ -69,3 +69,43 @@ describe('a request the server answers with 401', () => {
     expect(session.get()).toBeNull()
   })
 })
+
+// A profile deleted on another device: the server refuses requests naming it (409 with
+// code profile_gone). The browser forgets the profile, which shows "Who's watching?".
+describe('a request the server refuses because its profile is gone', () => {
+  const gone = { ok: false, status: 409, json: async () => ({ error: 'That profile no longer exists.', code: 'profile_gone' }) }
+  beforeEach(() => {
+    localStorage.clear()
+    session.set(S)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    session.set(null)
+  })
+
+  it('forgets the profile and stays signed in', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => gone))
+    await expect(api.item('x')).rejects.toBeInstanceOf(ApiError)
+    expect(session.get()).toEqual({ ...S, profileId: null, profileName: '' })
+  })
+
+  it('leaves alone a profile picked while the request was out', async () => {
+    const picked = { ...S, profileId: 'p2', profileName: 'Coffee' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        session.set(picked)
+        return gone
+      }),
+    )
+    await expect(api.item('x')).rejects.toBeInstanceOf(ApiError)
+    expect(session.get()).toEqual(picked)
+  })
+
+  it('keeps the profile on any other conflict', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ error: 'already requested' }) })))
+    await expect(api.item('x')).rejects.toBeInstanceOf(ApiError)
+    expect(session.get()).toEqual(S)
+  })
+})

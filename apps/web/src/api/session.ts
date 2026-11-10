@@ -78,14 +78,25 @@ export const session = {
   },
   /**
    * Given the login's profile ids as the server just listed them, drops the selected
-   * profile if it is not among them (deleted on another device). The server quietly
+   * profile if it is not among them (deleted on another device). An older server quietly
    * serves the default profile for an unknown one, so this browser went on showing the
-   * deleted profile's name while reading and writing another's watch state. Dropping it
-   * sends the app to "Who's watching?". True when it was dropped.
+   * deleted profile's name while reading and writing another's watch state (a newer one
+   * refuses: see forgetProfile). Dropping it sends the app to "Who's watching?". True
+   * when it was dropped.
    */
   forgetMissingProfile(ids: string[]): boolean {
     const cur = read()
     if (!cur?.profileId || ids.includes(cur.profileId)) return false
+    session.set({ ...cur, profileId: null, profileName: '', profileHasAvatar: false, profileAvatarKey: '' })
+    return true
+  },
+  /**
+   * Drops the selected profile if it is still [id]: the server refused a request naming
+   * it (409 profile_gone). A profile picked meanwhile is left alone. True when dropped.
+   */
+  forgetProfile(id: string): boolean {
+    const cur = read()
+    if (!cur?.profileId || cur.profileId !== id) return false
     session.set({ ...cur, profileId: null, profileName: '', profileHasAvatar: false, profileAvatarKey: '' })
     return true
   },

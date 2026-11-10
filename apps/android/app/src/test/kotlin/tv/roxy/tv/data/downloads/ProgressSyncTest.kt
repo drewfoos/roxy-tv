@@ -93,6 +93,33 @@ class ProgressSyncTest {
         assertEquals("pB", server.seen.last().header("X-Roxy-Profile"))
     }
 
+    // A profile deleted on another device while this one plays on: the server refuses it and
+    // the app forgets it (Prefs.forgetProfile). The player's later reports, sent with no
+    // profile, would be written to the login's default profile: they are not queued, and what
+    // was queued for the deleted profile is dropped, not kept for ever.
+    @Test fun aForgottenProfilesReportsGoNowhere() {
+        val d = Downloads(context, prefs, scope)
+        prefs.onProfileForgotten = { d.dropPendingOf(it) }
+        signIn("pB")
+        d.recordProgress("e9", 5_000, reportedToServer = false, profile = "pB") // another profile's, still waiting
+        signIn("pA")
+        d.recordProgress("e1", 60_000, reportedToServer = false, profile = "pA") // queued while pA was active
+        prefs.forgetProfile("pA")
+        assertNull(prefs.session.value.profileId)
+        d.recordProgress("e1", 90_000, reportedToServer = false, profile = "pA") // the player, still open
+        d.recordProgress("e1", 0, reportedToServer = false, played = true, profile = "pA")
+        assertNull(runBlocking { d.syncProgress(RoxyApi(prefs)) })
+        assertEquals("nothing is sent as the default profile", emptyList<String>(), server.seen.map { it.path })
+        // The other profile's report is still there for when that profile is back.
+        signIn("pB")
+        assertNull(runBlocking { d.syncProgress(RoxyApi(prefs)) })
+        assertEquals(listOf("e9" to "pB"), server.seen.map { Json.parseToJsonElement(it.body).jsonObject.getValue("itemId").jsonPrimitive.content to it.header("X-Roxy-Profile") })
+        // And nothing of the deleted profile is left for a profile that might come to hold its id.
+        signIn("pA")
+        assertNull(runBlocking { d.syncProgress(RoxyApi(prefs)) })
+        assertEquals(1, server.seen.size)
+    }
+
     // After a restart the time since boot starts again: only the dates are left, as before.
     // The same for an entry queued by an older build, which has no such reading.
     @Test fun afterARestartTheAgeIsByTheDates() {

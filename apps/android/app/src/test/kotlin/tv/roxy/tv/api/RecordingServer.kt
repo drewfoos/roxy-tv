@@ -9,7 +9,11 @@ import java.util.concurrent.CopyOnWriteArrayList
  * keeps every request (method, path, query, headers, body) and answers with what [answer]
  * says (status and body; 200 and `{}` unless told otherwise).
  */
-class RecordingServer(private val answer: (Seen) -> Pair<Int, String> = { 200 to "{}" }) : AutoCloseable {
+class RecordingServer(
+    /** Headers to answer with, beside Content-Type. */
+    private val answerHeaders: (Seen) -> Map<String, String> = { emptyMap() },
+    private val answer: (Seen) -> Pair<Int, String> = { 200 to "{}" },
+) : AutoCloseable {
     data class Seen(val method: String, val path: String, val query: String, val headers: Map<String, String>, val body: String) {
         fun header(name: String): String? = headers[name.lowercase()]
     }
@@ -26,6 +30,7 @@ class RecordingServer(private val answer: (Seen) -> Pair<Int, String> = { 200 to
             val (code, body) = answer(s)
             val bytes = body.toByteArray()
             ex.responseHeaders.add("Content-Type", "application/json")
+            answerHeaders(s).forEach { (k, v) -> ex.responseHeaders.add(k, v) }
             ex.sendResponseHeaders(code, bytes.size.toLong().takeIf { it > 0 } ?: -1)
             if (bytes.isNotEmpty()) ex.responseBody.use { it.write(bytes) }
             ex.close()
