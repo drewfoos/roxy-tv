@@ -1,7 +1,8 @@
-// Playback preferences for this browser (the phone keeps the same set in its DataStore;
-// neither syncs to the server). One listener set so pages and the player re-render on
-// change, and a one-time migration of the old `roxy.autoplay` key.
+// Playback preferences for this browser, one set per profile (the phone keeps the same
+// set in its DataStore; neither syncs to the server). One listener set so pages and the
+// player re-render on change, and a one-time migration of the old `roxy.autoplay` key.
 import { useSyncExternalStore } from 'react'
+import { session } from './session'
 
 export type SubMode = 'signs' | 'foreign' | 'full' | 'none'
 export type QualityPref = 'original' | 2160 | 1440 | 1080 | 720 | 480
@@ -46,22 +47,30 @@ export const SKIP_WINDOWS: { id: number; label: string }[] = [
   { id: 0, label: 'Whole intro / outro' },
 ]
 
+// KEY alone is the set this browser had before each profile got its own
+// (`roxy.prefs.<profile id>`): a profile starts from it until its first change, so nobody
+// lost their settings, and a login with no profile picked still uses it.
 const KEY = 'roxy.prefs'
+const keyFor = (profile: string | null) => (profile ? `${KEY}.${profile}` : KEY)
 const listeners = new Set<() => void>()
 let cached: Prefs | undefined
+let cachedFor: string | null = null // the profile `cached` belongs to
 
 function read(): Prefs {
-  if (cached) return cached
+  const profile = session.get()?.profileId ?? null
+  if (cached && cachedFor === profile) return cached
   let p: Prefs = { ...DEFAULT_PREFS }
   try {
-    const raw = localStorage.getItem(KEY)
+    const own = profile ? localStorage.getItem(keyFor(profile)) : null
+    const raw = own ?? localStorage.getItem(KEY)
     if (raw) p = { ...p, ...(JSON.parse(raw) as Partial<Prefs>) }
     else if (localStorage.getItem('roxy.autoplay') === 'off') p.autoplay = false
     // Defaults that changed: every save stores the whole set, so a save made before carried
     // the old default. v2 (2026-10-28): full subtitles. v3 (2026-11-08): the Skip button
     // stays 20 s, not 15 (a saved 15 was the old default; any other choice is kept).
+    // A profile's own set was saved after these (reading comes first, and moves them).
     const v = Number(localStorage.getItem('roxy.prefs.v')) || 1
-    if (v < 3) {
+    if (v < 3 && !own) {
       if (v < 2) p.subMode = 'full'
       if (p.skipWindowSec === 15) p.skipWindowSec = 20
       localStorage.setItem('roxy.prefs.v', '3')
@@ -71,15 +80,21 @@ function read(): Prefs {
     /* defaults */
   }
   cached = p
+  cachedFor = profile
   return p
 }
+
+// Another profile (or signing out) is another set: the pages showing one re-read.
+session.subscribe(() => {
+  if ((session.get()?.profileId ?? null) !== cachedFor) listeners.forEach((l) => l())
+})
 
 export const prefs = {
   get: read,
   set(patch: Partial<Prefs>) {
     cached = { ...read(), ...patch }
     try {
-      localStorage.setItem(KEY, JSON.stringify(cached))
+      localStorage.setItem(keyFor(cachedFor), JSON.stringify(cached))
     } catch {
       /* private mode */
     }
