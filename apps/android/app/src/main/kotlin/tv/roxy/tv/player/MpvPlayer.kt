@@ -290,14 +290,21 @@ class MpvPlayer(
      * [transcoded]: a server transcode stream, which already begins at the wanted position
      * and carries the original file's timestamps; mpv must not rebase them to 0.
      */
-    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false) {
+    /**
+     * [sid]: the subtitle track to open the file on (0 = none; null = the policy picks once
+     * it is open). A transcode numbers its tracks itself: never preselected.
+     */
+    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null) {
         if (destroyed) return
         startSeconds = if (transcoded) 0 else start
         pendingTranscode = transcoded
+        pendingSid = if (transcoded) null else sid
         pendingUrl = url
         if (surfaceReady) loadPending()
     }
 
+    @Volatile private var pendingSid: Int? = null
+    @Volatile private var preselectedSid: Int? = null
     private var lastUrl: String? = null
     private var lastTranscoded = false
 
@@ -342,6 +349,11 @@ class MpvPlayer(
         // A transcode started mid-file has its first frame at e.g. 300 s; keep that clock so
         // the position, subtitles and skip segments line up with the original file.
         mpv.setPropertyString("rebase-start-time", if (pendingTranscode) "no" else "yes")
+        // The subtitle track chosen before the load: mpv opens on it (no switch, so no
+        // going back for its subtitles). The policy then leaves this file alone.
+        preselectedSid = pendingSid
+        pendingSid = null
+        preselectedSid?.let { mpv.setPropertyString("sid", if (it == 0) "no" else it.toString()) }
         queuedLoads.incrementAndGet()
         mpv.command(arrayOf("loadfile", loadUrl, "replace"))
         mpv.setPropertyBoolean("pause", false)
@@ -368,6 +380,8 @@ class MpvPlayer(
     /** mpv subtitle id (1-based) or 0 for off. */
     fun setSubtitleTrack(id: Int) {
         if (destroyed) return
+        // Already on it: setting it again is not free (mpv re-reads the track's subtitles).
+        if (currentTrackId("sub") == id.coerceAtLeast(0)) return
         if (id <= 0) mpv.setPropertyString("sid", "no") else mpv.setPropertyInt("sid", id)
     }
 
@@ -553,6 +567,11 @@ class MpvPlayer(
             setSubtitleTrack(forceSid)
             Timber.i("subtitle forced -> sid=%d", forceSid)
             forceSid = 0
+            return
+        }
+        preselectedSid?.let { sid ->
+            preselectedSid = null
+            Timber.i("subtitle chosen before the load: sid=%s (now %d)", sid, currentTrackId("sub"))
             return
         }
         val audioLang = currentAudioLang()

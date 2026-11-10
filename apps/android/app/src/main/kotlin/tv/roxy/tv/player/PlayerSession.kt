@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.tv.WatchNext
 import tv.roxy.tv.RoxyApp
+import tv.roxy.tv.api.SubtitleInfo
 import tv.roxy.tv.api.MediaSegment
 import tv.roxy.tv.api.subtitleInfos
 import tv.roxy.tv.data.PlayerSettings
@@ -641,7 +642,7 @@ class PlayerSession(
             // A download as the next episode: without this its load was taken for the old
             // file's and ignored, and the player stayed mid-switch (no progress, Next blocked).
             life.fileRequested()
-            player.play(url, start)
+            player.play(url, start, sid = preloadSid(subtitleStart(subPick != null, savedSubsOff, savedSubIndex), subtitleInfos(src?.streams.orEmpty())))
             // Seek previews are a bonus when the server happens to be reachable.
             if (sourceId != null && app.prefs.session.value.isLoggedIn) scope.launch {
                 val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
@@ -671,8 +672,10 @@ class PlayerSession(
             }
             // Ask the server which language each subtitle track really is, then play.
             scope.launch {
+                var serverSubs = emptyList<SubtitleInfo>()
                 runCatching { app.api.subtitleStreams(sourceId) }
                     .onSuccess { subs ->
+                        serverSubs = subs
                         subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
                         player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
                     }
@@ -684,7 +687,8 @@ class PlayerSession(
                 transcoding = use
                 val mt = if (use) runCatching { app.api.mediaToken(sourceId) }.getOrNull() else null
                 life.fileRequested()
-                player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null)
+                player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null,
+                    sid = preloadSid(subtitleStart(subPick != null, savedSubsOff, savedSubIndex), serverSubs))
             }
         } else {
             life.fileRequested()
@@ -1330,4 +1334,18 @@ internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: 
     savedOff -> SubtitleStart.Off
     savedIndex != null && savedIndex > 0 -> SubtitleStart.Saved(savedIndex)
     else -> SubtitleStart.Policy
+}
+
+/**
+ * The mpv subtitle id to open the file on (0 = none), or null to leave it to the policy
+ * after the load. Found on the TV: switching tracks once the file was open made mpv go
+ * back ~11 s for the new track's subtitles, and a resumed episode then decoded and dropped
+ * those 11 s of video first (2.5 s more before the picture). Chosen before the load, from
+ * the server's list, there is nothing to switch. The file's own tracks only: an added
+ * (external) file's number is not known before the load.
+ */
+internal fun preloadSid(start: SubtitleStart, subs: List<SubtitleInfo>): Int? = when (start) {
+    SubtitleStart.Off -> 0
+    is SubtitleStart.Saved -> subs.firstOrNull { !it.isExternal && it.index == start.streamIndex }?.mpvId
+    else -> null
 }
