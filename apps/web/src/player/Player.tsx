@@ -35,12 +35,15 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
  */
 function initialTracks(item: Item, source: ReturnType<typeof primarySource>, audioTracks: MediaStream[], subTracks: MediaStream[]) {
   const p = prefs.get()
-  const savedAudio = item.userData?.audioIndex
-  const audio = savedAudio != null && audioTracks.some((t) => t.index === savedAudio)
-    ? savedAudio
-    : (audioTracks.find((t) => lang3(t.language) === p.audioLang)?.index ?? audioTracks[0]?.index ?? null)
-  const savedSub = item.userData?.subtitleIndex
-  const sub = savedSub != null && subTracks.some((t) => t.index === savedSub) ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
+  const saved = item.userData?.audioIndex
+  // A saved track this player cannot use (a picture-based PGS subtitle: only text tracks
+  // are listed here) counts as no choice: the profile decides, and nothing is saved back
+  // (see ownTracks), so the other device keeps it.
+  const savedAudio = saved != null && audioTracks.some((t) => t.index === saved) ? saved : null
+  const audio = savedAudio ?? audioTracks.find((t) => lang3(t.language) === p.audioLang)?.index ?? audioTracks[0]?.index ?? null
+  const rawSub = item.userData?.subtitleIndex
+  const savedSub = rawSub === SUBTITLES_OFF || (rawSub != null && subTracks.some((t) => t.index === rawSub)) ? rawSub : null
+  const sub = savedSub != null && savedSub !== SUBTITLES_OFF ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
   let subsOn = true
   if (savedSub === SUBTITLES_OFF) subsOn = false
   else if (savedSub == null) {
@@ -50,7 +53,7 @@ function initialTracks(item: Item, source: ReturnType<typeof primarySource>, aud
       subsOn = !!a && lang3(a.language) !== p.audioLang
     }
   }
-  return { audio, sub, subsOn }
+  return { audio, sub, subsOn, ownAudio: savedAudio != null, ownSub: savedSub != null }
 }
 
 const SUBS_FAILED = "Subtitles couldn't be loaded."
@@ -87,8 +90,9 @@ const QUALITY_KBPS: Record<Exclude<Quality, 'original'>, number> = { 1080: 8000,
  *
  * Playback is the browser's own decoder from /v1/stream when the chosen audio track is
  * one it can decode; otherwise, or when another track is picked, the server remuxes
- * (video copied, that one track) and the clock restarts at the start point, which the
- * player adds back. Subtitles are jassub over either stream.
+ * (video copied, that one track) and the clock restarts at zero: a transcode's zero is the
+ * start point, a remux's the keyframe before it (the server says which), and the player
+ * adds it back. Subtitles are jassub over either stream.
  */
 export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const source = primarySource(item)
@@ -130,8 +134,20 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // nothing is reported: a timeupdate or pause before the start seek would save a position
   // the viewer never reached over the one they left.
   const started = useRef(false)
+  // True from the start of an item until its first load has started playing: that load
+  // plays even though nothing is playing yet. It read the `ready` state of the render it
+  // was made in, which on the next episode (the Player stays mounted) was still the last
+  // episode's true, so Next and Autoplay left the new one paused.
+  const firstLoad = useRef(true)
+  // Whether the audio / subtitle choice is this player's to save: the saved one was usable
+  // here, or the viewer picked one here. Otherwise the reports leave the saved choice alone
+  // (a PGS track picked on the TV is not listed here, and the web's own pick used to
+  // overwrite it at the first report).
+  const ownTracks = useRef({ audio: false, sub: false })
+  // The last report sent (item, position, tracks): the same report again is not sent (the
+  // end of an episode was reported by 'ended' and again by the change to the next item).
+  const lastSent = useRef('')
 
-  const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [waiting, setWaiting] = useState(false)
@@ -170,12 +186,22 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [audioIndex, setAudioIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).audio)
   const [subIndex, setSubIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).sub)
   const [subsOn, setSubsOn] = useState(() => initialTracks(item, source, audioTracks, subTracks).subsOn)
+  // The item whose tracks the audio / subtitle state holds. The Player is reused: in the
+  // commit that switches item the state is still the last item's, and the subtitle effect
+  // waits for this item's. It is the only place subtitles are fetched: the start effect
+  // fetched them too, in the same commit, megabytes of text and fonts beside the video.
+  const [tracksOf, setTracksOf] = useState(item.id)
 
   const absTime = useCallback(() => {
     const v = videoRef.current
     if (!v) return lastAbs.current
     const m = modeRef.current
-    const t = (m.kind === 'server' ? m.offset : 0) + v.currentTime
+    // A server stream that ran out (or was given up as lost): Chrome has moved the
+    // playhead to the header's duration, so the element's time is not where the viewer
+    // is; the last normal reading is (StreamClock). Reported, the jumped time marked the
+    // episode watched (on leaving the page, or on the change of item).
+    const elem = m.kind === 'server' && !clock.current.pauseIsReal(v, true) && !v.seeking ? clock.current.playedTo : v.currentTime
+    const t = (m.kind === 'server' ? m.offset : 0) + elem
     lastAbs.current = t
     return t
   }, [])
@@ -192,14 +218,20 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       if (positionMs <= 0) return
       lastReport.current = now
       // Subtitles off is saved as SUBTITLES_OFF; leaving it out (as this used to) kept the
-      // last track saved, so they came back on next time.
-      const sub = subsOn ? (subIndex ?? undefined) : SUBTITLES_OFF
+      // last track saved, so they came back on next time. Left out on purpose while the
+      // choice is not this player's (ownTracks).
+      const own = ownTracks.current
+      const sub = own.sub ? (subsOn ? (subIndex ?? undefined) : SUBTITLES_OFF) : undefined
+      const audio = own.audio ? (audioIndex ?? undefined) : undefined
+      const tracks = `${audio}/${sub}`
+      const sent = `${item.id}/${positionMs}/${tracks}`
+      if (sent === lastSent.current) return
+      lastSent.current = sent
       const mono = performance.now()
       const lm = lastMoved.current
-      const tracks = `${audioIndex}/${sub}`
       if (Math.abs(pos - lm.pos) > MOVED_SEC || tracks !== lm.tracks) lastMoved.current = { pos, at: mono, tracks }
       const ageMs = Math.max(0, Math.round(mono - lastMoved.current.at))
-      api.progress(item.id, positionMs, audioIndex ?? undefined, sub, ageMs, sourceId || undefined, duration > 0 ? Math.round(duration * 1000) : undefined).catch(() => undefined)
+      api.progress(item.id, positionMs, audio, sub, ageMs, sourceId || undefined, duration > 0 ? Math.round(duration * 1000) : undefined).catch(() => undefined)
     },
     [item.id, absTime, audioIndex, subIndex, subsOn, sourceId, duration],
   )
@@ -269,19 +301,28 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
           v.currentTime = startSec
         }
       } else {
+        // The video is copied, so the remux begins at the keyframe the seek lands on (up to
+        // a GOP before startSec, often 10 s): that is the stream's zero, which the server
+        // tells. Taken as startSec, subtitles ran that much early after every resume, seek
+        // or reopening. Asked for while the stream opens.
+        const zero = startSec > 0 ? api.remuxStart(source.id, startSec).catch(() => startSec) : Promise.resolve(0)
         modeRef.current = { kind: 'server', audio: chosen?.index ?? null, offset: startSec }
         v.src = api.remuxUrl(source.id, chosen?.index ?? null, startSec, tokenRef.current)
         subsRef.current?.setOffset(startSec)
+        const at = await zero
+        if (stale()) return
+        modeRef.current = { kind: 'server', audio: chosen?.index ?? null, offset: at }
+        subsRef.current?.setOffset(at)
       }
       setCurrent(startSec)
       setBuffered(startSec)
       v.playbackRate = rate
-      if (wasPlaying || resume || !ready) await v.play().catch(() => undefined)
+      if (wasPlaying || resume || firstLoad.current) await v.play().catch(() => undefined)
       if (stale()) return
+      firstLoad.current = false
       started.current = true
-      setReady(true)
     },
-    [source, audioTracks, rate, ready],
+    [source, audioTracks, rate],
   )
 
   /**
@@ -312,6 +353,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       // 10 s tick: a crash or a killed tab right after a skip resumed from before it.
       if (seekReport.current) window.clearTimeout(seekReport.current)
       seekReport.current = window.setTimeout(() => reportRef.current(true), 1500)
+      // The viewer moved: cuts before this no longer count as "in a row".
+      reopens.current.reset()
       const m = modeRef.current
       if (m.kind === 'direct') {
         v.currentTime = t
@@ -336,7 +379,6 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     if (!v || !source) return
     let live = true
     setError(null)
-    setReady(false)
     setAdvisory(true)
     // The previous episode's seek previews: its tile size and sheet numbers must not be used
     // with this source's images while the new manifest loads (or at all, if it has none).
@@ -346,6 +388,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     lastMoved.current = { pos: -1, at: 0, tracks: '' }
     if (seekReport.current) window.clearTimeout(seekReport.current) // a seek in the last item is not this one's
     started.current = false
+    firstLoad.current = true
+    lastSent.current = ''
     // The first report waits a full interval after the start, like every later one.
     lastReport.current = Date.now()
     setNotice(null)
@@ -359,12 +403,12 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setAudioIndex(tracks.audio)
     setSubIndex(tracks.sub)
     setSubsOn(tracks.subsOn)
+    setTracksOf(item.id)
+    ownTracks.current = { audio: tracks.ownAudio, sub: tracks.ownSub }
     setSkip(null)
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
     load(start > 5 ? start : 0, tracks.audio).catch((e: unknown) => live && setError(errorText(e)))
-    const sub = tracks.subsOn ? (subTracks.find((s) => s.index === tracks.sub) ?? null) : null
-    if (sub) subs.setTrack(source.id, sub).catch(() => live && showNotice(SUBS_FAILED))
     api.trickplay(source.id).then((m) => live && setTrick(m)).catch(() => undefined)
     const t = setTimeout(() => live && setAdvisory(false), 7000)
     return () => {
@@ -503,12 +547,12 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // ---- subtitles follow the picked track and the on / off switch ----
   useEffect(() => {
     const subs = subsRef.current
-    if (!subs || !source) return
+    if (!subs || !source || tracksOf !== item.id) return
     const track = subsOn ? (subTracks.find((s) => s.index === subIndex) ?? null) : null
     subs.setTrack(source.id, track).catch(() => {
       if (subsRef.current === subs) showNotice(SUBS_FAILED)
     })
-  }, [subIndex, subsOn, source, subTracks, showNotice])
+  }, [subIndex, subsOn, source, subTracks, showNotice, tracksOf, item.id])
 
   // ---- controls visibility ----
   const poke = useCallback(() => {
@@ -543,7 +587,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     volumeBy: (d) => setVolume((x) => Math.min(1, Math.max(0, x + d))),
     toggleFullscreen,
     toggleMute: () => setMuted((m) => !m),
-    toggleSubs: () => setSubsOn((x) => !x),
+    toggleSubs: () => {
+      ownTracks.current.sub = true
+      setSubsOn((x) => !x)
+    },
     next: next && onNext ? onNext : null,
     closeMenu: () => setMenu('none'),
     poke,
@@ -551,6 +598,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
 
 
   const changeAudio = (idx: number) => {
+    ownTracks.current.audio = true
+    reopens.current.reset()
     setAudioIndex(idx)
     setMenu('none')
     reload(absTime(), idx)
@@ -560,11 +609,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     qualityRef.current = q
     setQuality(q)
     setMenu('none')
+    reopens.current.reset() // a new stream the viewer asked for: a fresh start
     reload(absTime(), audioIndex)
   }
   const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
   const qualities: Quality[] = ['original', ...([1080, 720, 480] as const).filter((h) => srcHeight === 0 || h < srcHeight)]
   const changeSub = (idx: number | null) => {
+    ownTracks.current.sub = true
     setSubIndex(idx)
     setSubsOn(idx != null)
     setMenu('none')

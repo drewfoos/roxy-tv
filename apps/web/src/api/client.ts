@@ -287,9 +287,15 @@ export const api = {
    */
   transcodeUrl: (sourceId: string, height: number, kbps: number, audioIndex: number | null, startSec: number, mediaToken: string) =>
     `/v1/sources/${sourceId}/transcode?height=${height}&bitrate=${kbps}&start=${startSec.toFixed(3)}&web=1${audioIndex != null ? `&audio=${audioIndex}` : ''}&mt=${mediaToken}`,
-  /** The video copied with one audio track (by stream index), timestamps from zero at startSec. */
+  /**
+   * The video copied with one audio track (by stream index), from startSec. Its zero is
+   * the keyframe the seek lands on, up to a GOP before startSec: remuxStart says where.
+   */
   remuxUrl: (sourceId: string, audioIndex: number | null, startSec: number, mediaToken: string) =>
     `/v1/sources/${sourceId}/remux?start=${startSec.toFixed(3)}${audioIndex != null ? `&audio=${audioIndex}` : ''}&mt=${mediaToken}`,
+  /** Where in the file a remux from startSec begins (its zero), in seconds. */
+  remuxStart: async (sourceId: string, startSec: number) =>
+    (await get<{ startSec: number }>(`/v1/sources/${sourceId}/remux/start?start=${startSec.toFixed(3)}`)).startSec,
   /** Seek-preview sheets: the manifest, or null while the server is still generating them. */
   async trickplay(sourceId: string): Promise<TrickplayManifest | null> {
     const s = session.get()
