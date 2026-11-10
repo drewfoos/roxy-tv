@@ -281,7 +281,7 @@ fun PlayerControls(
         if (!state.autoSkip && !state.nextCardShown) {
             if (tv) SkipButton(
                 seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, focusRequester = skipFocus,
-                modifier = Modifier.fillMaxSize().padding(end = TvBarSide, bottom = TvSkipBottom),
+                modifier = Modifier.fillMaxSize().padding(end = TvBarSide, bottom = if (visible) TvSkipBottom else TvSkipBottomHidden),
             )
             else SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (cr) 56.dp else if (visible) 118.dp else 40.dp))
         }
@@ -671,7 +671,10 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
 
 /** The TV player's side inset, and where Skip sits: above the bar whether it shows or not. */
 private val TvBarSide = 40.dp
-private val TvSkipBottom = 180.dp // over the bar, which sits higher now
+// Skip: just above the bar while the controls show; low in the corner while they are hidden
+// (it stayed at the bar's height then, a third of the way up an empty picture).
+private val TvSkipBottom = 150.dp
+private val TvSkipBottomHidden = 48.dp
 /** The TV's bar (Crunchyroll's TV app): its middle about 23% up the screen, the times 66 dp in. */
 private val TvBarBottom = 108.dp
 private val TvTimesSide = 66.dp

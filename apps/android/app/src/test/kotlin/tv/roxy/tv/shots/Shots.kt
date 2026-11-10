@@ -131,6 +131,23 @@ class Shots {
         shot(name)
     }
 
+    // The Skip button with the controls showing (above the bar) and hidden (low in the corner).
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvSkipShown() = tvSkip("tv-skip-controls", true)
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvSkipHidden() = tvSkip("tv-skip-hidden", false)
+    private fun tvSkip(name: String, visible: Boolean) {
+        val state = PlayerUiState(title = "The End of the World", subtitle = "Sword Art Online  S01E14", positionSec = 95.0, durationSec = 1421.0, paused = false, hasNext = true, fullscreen = null,
+            segments = listOf(tv.roxy.tv.api.MediaSegment("intro", 90_000, 180_000)))
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color(0xFF6A5A4A))) {
+                PlayerControls(state = state, visible = visible, sheet = Sheet.None, onSheet = {}, onInteraction = {}, actions = noActions)
+            }
+        }
+        compose.waitForIdle()
+        shot(name)
+    }
+
     @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
     fun phoneUprightSettings() {
         val state = PlayerUiState(title = "An Explosion for This Chunchunmaru!", subtitle = "KonoSuba  S01E02", positionSec = 300.0, durationSec = 1440.0, paused = true, hasNext = true, fullscreen = false)
