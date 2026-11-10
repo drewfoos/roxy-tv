@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
-import { ageLabel, pickSubtitle, primarySource } from '../api/items'
+import { ageLabel, pickSignsSubtitle, pickSubtitle, primarySource } from '../api/items'
 import { lang3, prefs } from '../api/prefs'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
@@ -30,8 +30,8 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 /**
  * The audio and subtitle tracks an item starts with: the choice saved on this title, else
- * the profile's preferences (audio language; subtitles off, only with foreign audio, or
- * always). A saved SUBTITLES_OFF means the viewer turned them off on this title: they stay
+ * the profile's preferences (audio language; subtitles off, only with foreign audio, signs
+ * and songs only with a dub, or always). A saved SUBTITLES_OFF means the viewer turned them off on this title: they stay
  * off, and the track C would turn on is the preferred one. Worked out again for every
  * item: the Watch page keeps one Player across episodes (so fullscreen survives Autoplay
  * Next), and the next episode must not inherit the last one's tracks.
@@ -46,14 +46,21 @@ function initialTracks(item: Item, source: ReturnType<typeof primarySource>, aud
   const audio = savedAudio ?? audioTracks.find((t) => lang3(t.language) === p.audioLang)?.index ?? audioTracks[0]?.index ?? null
   const rawSub = item.userData?.subtitleIndex
   const savedSub = rawSub === SUBTITLES_OFF || (rawSub != null && subTracks.some((t) => t.index === rawSub)) ? rawSub : null
-  const sub = savedSub != null && savedSub !== SUBTITLES_OFF ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
+  let sub = savedSub != null && savedSub !== SUBTITLES_OFF ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
   let subsOn = true
   if (savedSub === SUBTITLES_OFF) subsOn = false
   else if (savedSub == null) {
+    const a = audioTracks.find((t) => t.index === audio)
+    const heard = lang3(a?.language)
     if (p.subMode === 'none') subsOn = false
-    else if (p.subMode === 'foreign') {
-      const a = audioTracks.find((t) => t.index === (savedAudio ?? -1)) ?? audioTracks.find((t) => lang3(t.language) === p.audioLang) ?? audioTracks[0]
-      subsOn = !!a && lang3(a.language) !== p.audioLang
+    else if (p.subMode === 'foreign') subsOn = !!a && heard !== p.audioLang
+    else if (p.subMode === 'signs' && heard && heard === lang3(p.subLang)) {
+      // A dub: the audio is in the language the viewer reads (as the Android app tells
+      // one). Its signs & songs track, or nothing; the dialogue track stays the one C
+      // turns on. This mode used to play like 'full'.
+      const signs = pickSignsSubtitle(source, p.subLang)
+      if (signs) sub = signs.index
+      else subsOn = false
     }
   }
   return { audio, sub, subsOn, ownAudio: savedAudio != null, ownSub: savedSub != null }

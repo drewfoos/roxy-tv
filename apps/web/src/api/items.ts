@@ -143,6 +143,26 @@ export function pickSubtitle(source: MediaSource | undefined, wantLang = 'eng'):
   return subs.slice().sort((a, b) => score(b) - score(a))[0] ?? null
 }
 
+// A signs & songs track goes by many names: "Signs/Songs", "Forced", "[FOR DUB]",
+// "English [ForcedNarrative]", "Dubtitles" (the Android app's list, MpvTracks.signsRegex).
+const SIGNS_TITLE = /\b(signs?|songs?|s&s|forced\w*|for dub|dubtitles?)\b/i
+
+/**
+ * The signs & songs track for a dub in the viewer's language: flagged forced, or named
+ * like one, in the wanted language (an untagged one only when no track has the language);
+ * styled first. Null when the file has none: full dialogue is never a stand-in, the caller
+ * turns subtitles off. The same rule as the Android app's chooseSubtitle.
+ */
+export function pickSignsSubtitle(source: MediaSource | undefined, wantLang = 'eng'): MediaStream | null {
+  const subs = (source?.streams ?? []).filter((s) => s.type === 'subtitle' && s.isTextFormat)
+  const want = lang3(wantLang)
+  const lang = (s: MediaStream) => lang3(s.detectedLanguage || s.language)
+  const mine = subs.filter((s) => want && lang(s) === want)
+  const pool = (mine.length ? mine : subs.filter((s) => !lang(s))).filter((s) => s.isForced || SIGNS_TITLE.test(s.title ?? ''))
+  const score = (s: MediaStream) => (s.codec === 'ass' || s.codec === 'ssa' ? 5 : 0) + (s.isDefault ? 1 : 0)
+  return pool.slice().sort((a, b) => score(b) - score(a))[0] ?? null
+}
+
 /** Episodes in the order they aired: specials (season 0) last, by episode number. */
 export function sortEpisodes(eps: Item[]): Item[] {
   const key = (e: Item) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSubtitle, playLabel, progressFraction, runtimeLabel, sortEpisodes, timeLeftLabel } from './items'
+import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, runtimeLabel, sortEpisodes, timeLeftLabel } from './items'
 import type { Item, MediaSource, MediaStream } from './types'
 
 const item = (p: Partial<Item>) => ({ id: 'x', type: 'episode', title: 'T', ...p }) as Item
@@ -105,6 +105,29 @@ describe('pickSubtitle', () => {
     expect(pickSubtitle(src([sub({ index: 1, language: 'eng' }), sub({ index: 2, language: 'und', detectedLanguage: 'fr' })]), 'fra')?.index).toBe(2)
     // No language on the track and none wanted is not a match.
     expect(pickSubtitle(src([sub({ index: 1, language: 'und' }), sub({ index: 2, language: 'eng', isDefault: true })]), '')?.index).toBe(2)
+  })
+})
+
+describe('pickSignsSubtitle', () => {
+  const sub = (p: Partial<MediaStream>) => ({ index: 1, type: 'subtitle', codec: 'subrip', isTextFormat: true, ...p }) as MediaStream
+  const src = (streams: MediaStream[]) => ({ id: 's', streams }) as MediaSource
+  it('finds the signs track by its flag or by its name, in the wanted language', () => {
+    expect(pickSignsSubtitle(src([sub({ index: 1, language: 'eng', title: 'Full' }), sub({ index: 2, language: 'eng', isForced: true })]), 'eng')?.index).toBe(2)
+    for (const title of ['Signs & Songs', 'Signs/Songs', 'English [ForcedNarrative]', '[FOR DUB]', 'Dubtitles', 'S&S'])
+      expect(pickSignsSubtitle(src([sub({ index: 1, language: 'eng' }), sub({ index: 2, language: 'eng', title })]), 'eng')?.index, title).toBe(2)
+    // Another language's signs track is no use; "ger" is the "deu" the preference names.
+    expect(pickSignsSubtitle(src([sub({ index: 1, language: 'spa', isForced: true })]), 'eng')).toBeNull()
+    expect(pickSignsSubtitle(src([sub({ index: 1, language: 'ger', title: 'Signs' })]), 'deu')?.index).toBe(1)
+  })
+  it('is null when there is none: full dialogue is not a stand-in, nor a picture track', () => {
+    expect(pickSignsSubtitle(src([sub({ index: 1, language: 'eng', title: 'Full Subtitles' }), sub({ index: 2, language: 'eng' })]), 'eng')).toBeNull()
+    expect(pickSignsSubtitle(src([sub({ index: 1, language: 'eng', isForced: true, codec: 'hdmv_pgs_subtitle', isTextFormat: false })]), 'eng')).toBeNull()
+    expect(pickSignsSubtitle(undefined, 'eng')).toBeNull()
+  })
+  it('takes an untagged signs track only when no track has the language, and prefers styled', () => {
+    expect(pickSignsSubtitle(src([sub({ index: 1, title: 'Signs' }), sub({ index: 2, language: 'eng', title: 'Dialogue' })]), 'eng')).toBeNull()
+    expect(pickSignsSubtitle(src([sub({ index: 1, title: 'Signs' }), sub({ index: 2, language: 'jpn' })]), 'eng')?.index).toBe(1)
+    expect(pickSignsSubtitle(src([sub({ index: 1, language: 'eng', title: 'Signs' }), sub({ index: 2, language: 'eng', title: 'Signs', codec: 'ass' })]), 'eng')?.index).toBe(2)
   })
 })
 

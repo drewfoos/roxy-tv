@@ -355,4 +355,64 @@ describe('Player', () => {
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
+
+  // "Signs & songs with a dub" was offered in Preferences and did nothing here: it played
+  // like "Always full dialogue", every line of a dub subtitled.
+  describe('subtitle mode "signs & songs with a dub"', () => {
+    /** An English dub and the Japanese original, a signs & songs track and full dialogue. */
+    const dubbed = (id: string, signsTrack = true): Item => {
+      const it = item(id, 'aac')
+      it.mediaSources![0].streams = [
+        { index: 0, type: 'video', codec: 'h264', height: 1080 },
+        { index: 1, type: 'audio', codec: 'aac', language: 'eng' },
+        { index: 2, type: 'audio', codec: 'aac', language: 'jpn' },
+        ...(signsTrack ? [{ index: 3, type: 'subtitle', codec: 'ass', language: 'eng', title: 'Signs & Songs', isForced: true, isTextFormat: true }] : []),
+        { index: 4, type: 'subtitle', codec: 'ass', language: 'eng', title: 'Full Subtitles', isTextFormat: true },
+      ] as MediaStream[]
+      return it
+    }
+    const shown = () => (subs.setTrack.mock.calls.at(-1)?.[1] as MediaStream | null | undefined)?.index ?? null
+
+    it('shows the signs & songs track over a dub in the viewer\'s language', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a'))
+      expect(shown()).toBe(3)
+    })
+    it('shows the full dialogue with the original audio', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'jpn', subLang: 'eng' })
+      await mount(dubbed('a'))
+      expect(shown()).toBe(4)
+    })
+    it('counts a dub picked on this title, whatever the audio preference', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'jpn', subLang: 'eng' })
+      await mount({ ...dubbed('a'), userData: { positionMs: 0, played: false, isFavorite: false, audioIndex: 1 } } as Item)
+      expect(shown()).toBe(3)
+    })
+    it('shows nothing over a dub with no signs track, and C still turns the dialogue on', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a', false))
+      expect(subs.setTrack.mock.calls.filter((c) => c[1] != null)).toHaveLength(0)
+      act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true })) })
+      await flush()
+      expect(shown()).toBe(4)
+    })
+    it('leaves a choice saved on the title alone', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount({ ...dubbed('a'), userData: { positionMs: 0, played: false, isFavorite: false, subtitleIndex: 4 } } as Item)
+      expect(shown()).toBe(4)
+    })
+    it('"always full dialogue" still shows the dialogue over a dub', async () => {
+      prefs.set({ subMode: 'full', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a'))
+      expect(shown()).toBe(4)
+    })
+    it('is worked out again for the next episode (the Player stays mounted)', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a', false))
+      await act(async () => setShown(dubbed('b')))
+      await flush()
+      expect(subs.setTrack.mock.calls.at(-1)?.[0]).toBe('src-b')
+      expect(shown()).toBe(3)
+    })
+  })
 })
