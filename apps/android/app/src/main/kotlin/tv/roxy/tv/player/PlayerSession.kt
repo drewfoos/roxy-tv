@@ -697,8 +697,10 @@ class PlayerSession(
                 // than it plays as-is. One picked in the menu is always honoured.
                 val use = wantTranscode && (!qualityFromSettings || worthTranscoding(quality, source.await()))
                 if (wantTranscode && !use) Timber.i("preferred quality %s skipped: the file is already smaller", quality.key)
-                transcoding = use
                 val mt = if (use) runCatching { app.api.mediaToken(sourceId) }.getOrNull() else null
+                // Without a token the file itself plays: it is not a transcode (its track
+                // numbers are the file's own, see savedAudioStart / subtitleStart).
+                transcoding = use && mt != null
                 life.fileRequested()
                 // The original file's numbering; a transcode is opened on mpv's own choice.
                 itemPreload = preloadTracks(streams.orEmpty())
@@ -717,7 +719,8 @@ class PlayerSession(
 
     /** The tracks to open this item's file on, from the server's stream list (see [preloadSid], [preloadAid]). */
     private fun preloadTracks(streams: List<tv.roxy.tv.api.MediaStream>): TrackIds {
-        val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex)
+        // The original file's numbering (a transcode is never preselected, see MpvPlayer.play).
+        val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex, transcoding = false)
         return TrackIds(
             sid = preloadSid(start, subtitleInfos(streams), subPick),
             aid = preloadAid(savedAudioIndex, audioPick, streams),
@@ -974,14 +977,15 @@ class PlayerSession(
     /** On a new file: the viewer's earlier picks, matched by language and kind (title first). */
     private fun applyTrackPicks() {
         val tracks = player.tracksWithOverrides()
-        val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex)
+        // A transcode numbers its streams its own way: the saved stream numbers are skipped there.
+        val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex, transcoding)
         // Normally the file was opened on these tracks and nothing below switches. When it
         // was not (no server list), the audio goes first; the subtitle policy follows it only
         // when nothing below sets the subtitle itself (re-running it there was two switches).
         val savedSid = (start as? SubtitleStart.Saved)?.let { player.trackIdForStreamIndex("sub", it.streamIndex) }
         val follow = start == SubtitleStart.Policy || (start is SubtitleStart.Saved && savedSid == null)
         // The item's saved audio (no pick in this session).
-        if (audioPick == null) savedAudioIndex?.let { idx ->
+        savedAudioStart(audioPick != null, savedAudioIndex, transcoding)?.let { idx ->
             player.trackIdForStreamIndex("audio", idx)?.takeIf { it != player.currentTrackId("audio") }?.let { id ->
                 Timber.i("audio saved for this item: stream %d -> %d", idx, id); player.setAudioTrack(id, followSubtitles = follow)
             }
@@ -1294,17 +1298,19 @@ class PlayerSession(
         // caller that names the position (a reconnect of the new file) may report.
         if (changingItem && atSec == null) return
         val pos = reportPosition(atSec, reloadTarget, pendingStart, runCatching { player.timePosSeconds() }.getOrNull()) ?: return
-        val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
         // Subtitles the viewer turned off (here or on an earlier watch) are reported as -1,
         // so the next start honours it. No track because the language policy chose none is
-        // not a choice: null leaves the saved one unchanged.
-        val subIndex = runCatching {
-            when {
-                player.currentTrackId("sub") > 0 -> player.currentStreamIndex("sub")
-                subPick?.off == true || (subPick == null && savedSubsOff) -> -1
-                else -> null
-            }
-        }.getOrNull()
+        // not a choice: null leaves the saved one unchanged. A transcode's stream numbers are
+        // its own, not the file's: none are reported from one.
+        val (audioIndex, subIndex) = runCatching {
+            reportedStreams(
+                transcoding = transcoding,
+                audioStream = player.currentStreamIndex("audio"),
+                subOn = player.currentTrackId("sub") > 0,
+                subStream = player.currentStreamIndex("sub"),
+                subOffChosen = subPick?.off == true || (subPick == null && savedSubsOff),
+            )
+        }.getOrDefault(null to null)
         // The version playing and its length: the server decides "watched" by them, and finds
         // the version by its length when an offline copy is sent after the item was recreated.
         val r = reporter.report(reason, id, pos, audioIndex, subIndex, sourceId, knownDuration()?.let { (it * 1000).toLong() }) ?: return
@@ -1383,12 +1389,37 @@ sealed interface SubtitleStart {
     data object Policy : SubtitleStart
 }
 
-/** The viewer's pick in this session wins; then the item's saved choice ("off" or a track); then the policy. */
-internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: Int?): SubtitleStart = when {
+/**
+ * The viewer's pick in this session wins; then the item's saved choice ("off" or a track); then the policy.
+ * [transcoding]: a server transcode maps the video, then every audio, subtitle and
+ * attachment stream, so its stream numbers match the file's only when the file is in that
+ * order. A saved track number is not used there (a saved "off" still is).
+ */
+internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: Int?, transcoding: Boolean = false): SubtitleStart = when {
     sessionPick -> SubtitleStart.CarryPick
     savedOff -> SubtitleStart.Off
-    savedIndex != null && savedIndex > 0 -> SubtitleStart.Saved(savedIndex)
+    savedIndex != null && savedIndex > 0 && !transcoding -> SubtitleStart.Saved(savedIndex)
     else -> SubtitleStart.Policy
+}
+
+/** The item's saved audio stream to switch to after the load, or null: a pick in this session, or a transcode (see [subtitleStart]). */
+internal fun savedAudioStart(sessionPick: Boolean, savedIndex: Int?, transcoding: Boolean): Int? =
+    if (sessionPick || transcoding) null else savedIndex
+
+/**
+ * The (audio, subtitle) stream numbers a progress report saves for the item: the file's
+ * own numbering (what the server stores and the next start opens on), -1 for subtitles the
+ * viewer turned off, null to leave the saved one alone. On a transcode the numbers are the
+ * transcode's, which can name another track of the file: none are sent.
+ */
+internal fun reportedStreams(transcoding: Boolean, audioStream: Int?, subOn: Boolean, subStream: Int?, subOffChosen: Boolean): Pair<Int?, Int?> {
+    val audio = if (transcoding) null else audioStream
+    val sub = when {
+        subOn -> if (transcoding) null else subStream
+        subOffChosen -> -1
+        else -> null
+    }
+    return audio to sub
 }
 
 /**
