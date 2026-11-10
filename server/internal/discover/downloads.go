@@ -323,7 +323,7 @@ func (s *Service) trackRequest(ctx context.Context, c *arr.Client, r *store.Requ
 		}
 		return s.movieStatusWith(r, m, queue, history, cmds, now), nil
 	}
-	eps, err := c.Episodes(ctx, r.ArrID)
+	eps, err := s.episodesOf(ctx, c, r)
 	if err != nil {
 		return nil, err
 	}
@@ -1032,7 +1032,7 @@ func (s *Service) SearchAgain(ctx context.Context, requestID string, seasons []i
 // leaving out what is in the download client (even a stalled download: it may recover),
 // what Sonarr is searching for right now, and what was searched in the last few minutes.
 func (s *Service) searchMissing(ctx context.Context, c *arr.Client, r *store.Request, pick func(arr.Episode) bool) error {
-	eps, err := c.Episodes(ctx, r.ArrID)
+	eps, err := s.episodesOf(ctx, c, r)
 	if err != nil {
 		return err
 	}

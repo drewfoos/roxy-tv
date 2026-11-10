@@ -25,3 +25,40 @@ func TestSplitSeasonSearches(t *testing.T) {
 		t.Errorf("busy season: whole=%v rest=%v", w, r)
 	}
 }
+
+// A new series with specials: asking for "everything" is a whole-series request (later
+// seasons get monitored). The Specials entry used to count as a season the request did
+// not cover, so the request was narrowed to the seasons known today.
+func TestSeasonsToRequest(t *testing.T) {
+	specials := Season{Number: 0, Episodes: 3, Special: true}
+	s1 := Season{Number: 1, Episodes: 12}
+	s2 := Season{Number: 2, Episodes: 12}
+	have1 := Season{Number: 1, Episodes: 12, Have: 12, Known: 12}
+	for _, tc := range []struct {
+		name    string
+		all     []Season
+		asked   []int
+		want    []int
+		wantErr bool
+	}{
+		{"new series with specials", []Season{s1, s2, specials}, nil, nil, false},
+		{"new series without specials", []Season{s1, s2}, nil, nil, false},
+		{"one season in the library", []Season{have1, s2, specials}, nil, []int{2}, false},
+		{"all in the library", []Season{have1, specials}, nil, nil, true},
+		{"asked season, missing", []Season{have1, s2, specials}, []int{2}, []int{2}, false},
+		{"asked season, in the library", []Season{have1, s2, specials}, []int{1}, nil, true},
+		{"specials as a season", []Season{have1, specials}, []int{0}, []int{0}, false},
+		{"specials asked, none exist", []Season{have1, s2}, []int{0}, nil, true},
+		{"nothing known about seasons", nil, []int{3}, []int{3}, false},
+	} {
+		got, err := seasonsToRequest(tc.all, tc.asked)
+		if (err != nil) != tc.wantErr || len(got) != len(tc.want) {
+			t.Fatalf("%s: got %v err %v, want %v (error %v)", tc.name, got, err, tc.want, tc.wantErr)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+			}
+		}
+	}
+}

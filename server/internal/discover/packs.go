@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -36,6 +37,11 @@ const (
 	packRecheck    = 24 * time.Hour
 	packMaxPushes  = 3 // candidates tried per season (Sonarr may refuse the best)
 )
+
+// packSweepFirst: the first sweep comes this long after start, not a whole
+// packSweepEvery later: a server restarted more often than that never swept at all.
+// (The once-a-day limit per season is saved, so restarts do not repeat looks.)
+var packSweepFirst = 2 * time.Minute
 
 // packFinder is the hook arr.Client calls before each season search.
 func (s *Service) packFinder(c *arr.Client) func(ctx context.Context, seriesID, season int) bool {
@@ -98,15 +104,20 @@ func (s *Service) findPack(ctx context.Context, c *arr.Client, seriesID, season 
 	// What Sonarr would take by itself: its best approved pack, or episode by episode
 	// (as good as its weakest episode), whichever is better. A pack must beat that, so a
 	// sub-only pack never displaces dubbed single episodes.
+	// Without Sonarr's own search there is no bar: nothing is pushed (a failed search
+	// used to leave the bar at "nothing", so any pack with seeders won, sub-only included,
+	// and the caller then skipped Sonarr's search for the season).
 	bar, barFrom := -1<<31, "nothing"
-	if own, err := c.SeasonReleases(ctx, seriesID, season); err == nil {
-		pack, packFrom, single := ownBest(own, episodeNumbers(eps, season))
-		if pack > bar {
-			bar, barFrom = pack, packFrom
-		}
-		if single > bar {
-			bar, barFrom = single, "single episodes"
-		}
+	own, err := c.SeasonReleases(ctx, seriesID, season)
+	if err != nil {
+		return false, fmt.Errorf("sonarr's own search of the season: %w", err)
+	}
+	pack, packFrom, single := ownBest(own, episodeNumbers(eps, season))
+	if pack > bar {
+		bar, barFrom = pack, packFrom
+	}
+	if single > bar {
+		bar, barFrom = single, "single episodes"
 	}
 	if floor != nil && *floor > bar {
 		bar, barFrom = *floor, "what was grabbed"
@@ -218,6 +229,12 @@ func (s *Service) startPackSweep(ctx context.Context) {
 		return
 	}
 	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(packSweepFirst):
+			s.packSweep(ctx)
+		}
 		t := time.NewTicker(packSweepEvery)
 		defer t.Stop()
 		for {
@@ -230,6 +247,41 @@ func (s *Service) startPackSweep(ctx context.Context) {
 		}
 	}()
 }
+
+// packLooked is when the sweep last looked at a season (zero: never). Saved as a
+// setting besides the map, so it outlives a restart.
+func (s *Service) packLooked(ctx context.Context, key string) time.Time {
+	s.packs.mu.Lock()
+	defer s.packs.mu.Unlock()
+	if s.packs.checked == nil {
+		s.packs.checked = map[string]time.Time{}
+	}
+	if at, ok := s.packs.checked[key]; ok {
+		return at
+	}
+	var at time.Time
+	if s.store != nil {
+		_, _ = s.store.GetSetting(ctx, packLookedSetting+key, &at)
+	}
+	s.packs.checked[key] = at
+	return at
+}
+
+func (s *Service) setPackLooked(ctx context.Context, key string, at time.Time) {
+	s.packs.mu.Lock()
+	if s.packs.checked == nil {
+		s.packs.checked = map[string]time.Time{}
+	}
+	s.packs.checked[key] = at
+	s.packs.mu.Unlock()
+	if s.store != nil {
+		if err := s.store.SetSetting(ctx, packLookedSetting+key, at); err != nil {
+			slog.Warn("packs: saving the time of a look", "season", key, "err", err)
+		}
+	}
+}
+
+const packLookedSetting = "packsweep:"
 
 func (s *Service) packSweep(ctx context.Context) {
 	sonarr, _ := s.clients()
@@ -277,20 +329,18 @@ func (s *Service) sweepRequest(ctx context.Context, c *arr.Client, seriesID int,
 			continue // airing, missing files (the tracker handles those), or good enough
 		}
 		key := keyOf(seriesID, season)
-		s.packs.mu.Lock()
-		if s.packs.checked == nil {
-			s.packs.checked = map[string]time.Time{}
-		}
-		last := s.packs.checked[key]
-		if now.Sub(last) < packRecheck {
-			s.packs.mu.Unlock()
+		if now.Sub(s.packLooked(ctx, key)) < packRecheck {
 			continue
 		}
-		s.packs.checked[key] = now
-		s.packs.mu.Unlock()
-		if pushed, err := s.findPack(ctx, c, seriesID, season, &floor); err != nil {
+		pushed, err := s.findPack(ctx, c, seriesID, season, &floor)
+		if err != nil {
+			// Not counted as a look: the next sweep tries again (it used to cost the
+			// season a day).
 			slog.Info("packs: sweep look failed", "series", seriesID, "season", season, "err", err)
-		} else if pushed {
+			continue
+		}
+		s.setPackLooked(ctx, key, now)
+		if pushed {
 			s.KickDownloads()
 		}
 	}
