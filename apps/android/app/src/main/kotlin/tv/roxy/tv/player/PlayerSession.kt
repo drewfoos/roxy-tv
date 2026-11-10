@@ -407,7 +407,7 @@ class PlayerSession(
                 if (startState.value == StartState.Loading) startState.value = StartState.Failed
                 if (fromDisk) { life.localFileFailed(); reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
                 val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
-                reconnect(at)
+                reconnect(at, failedHttp = player.lastOpenHttpStatus)
             }
 
             override fun onEofReached() {
@@ -862,15 +862,19 @@ class PlayerSession(
      * for a server restart). Then pause, say so, and wait for the server to answer again,
      * however long that takes; it picks up at [at] by itself, or at once on play.
      */
-    private fun reconnect(at: Double) {
+    /**
+     * Reopen the stream at [at] after it dropped or would not open. [failedHttp]: the HTTP
+     * error the server answered the failed open with, when that is what happened.
+     */
+    private fun reconnect(at: Double, failedHttp: Int? = null) {
         if (destroyed) return
         reconnectJob?.cancel()
         waitJob?.cancel()
         if (reconnects.used >= RECONNECT_DELAYS_MS.size) {
             Timber.w("reconnects used up at %.1f s; waiting for the server", at)
             reloadTarget = null
-            reconnects.reset()
-            waitForServer(at)
+            reconnects.attemptsUsedUp()
+            waitForServer(at, usedUp = true, failedHttp = failedHttp)
             return
         }
         val wait = RECONNECT_DELAYS_MS[reconnects.used]
@@ -902,14 +906,32 @@ class PlayerSession(
         }
     }
 
-    /** Paused on [at] until the server answers (checked every 5 s), then reopened there. */
-    private fun waitForServer(at: Double) {
+    /**
+     * Paused on [at] until the server answers (checked every 5 s), then reopened there.
+     * After a used-up round of reconnects ([usedUp]) the server is asked first: if it is
+     * there and it is this stream that fails ([failedHttp], or a second round in a row), the
+     * player stops and says so instead of reopening it for ever (see afterAttemptsUsedUp).
+     * Play still tries again by hand.
+     */
+    private fun waitForServer(at: Double, usedUp: Boolean = false, failedHttp: Int? = null) {
         waitJob?.cancel()
         life.waitForServer(at)
         player.setPaused(true)
-        flashOsd(WAITING_FOR_SERVER, 0)
+        // After a used-up round the "reconnecting" line stays until the server has been asked.
+        if (!usedUp) flashOsd(WAITING_FOR_SERVER, 0)
         showControls()
         waitJob = scope.launch {
+            if (usedUp) {
+                val up = app.api.reachable()
+                if (destroyed || waitingAt != at) return@launch
+                reconnects.roundFailed(up)
+                if (afterAttemptsUsedUp(up, failedHttp, reconnects.failedRounds) == AfterAttempts.GiveUp) {
+                    Timber.w("the server answers but the stream does not open (http %s, round %d): giving up at %.1f s", failedHttp, reconnects.failedRounds, at)
+                    flashOsd(cannotOpenMessage(failedHttp), 0)
+                    return@launch
+                }
+                flashOsd(WAITING_FOR_SERVER, 0)
+            }
             while (!destroyed) {
                 delay(5_000)
                 if (app.api.reachable()) {

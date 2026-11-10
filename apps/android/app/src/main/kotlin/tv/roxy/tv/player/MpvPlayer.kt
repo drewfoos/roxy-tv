@@ -340,6 +340,13 @@ class MpvPlayer(
      * broken file must not push the token into the URL (and so into the device log).
      */
     @Volatile private var lastOpenHttp4xx = false
+    /**
+     * The HTTP error the server answered the open that is under way with (404, 503...), from
+     * mpv's log; null when it failed some other way or has not failed. The session reads it
+     * when the open fails, to tell a server that refuses this stream from one that is away.
+     */
+    @Volatile var lastOpenHttpStatus: Int? = null
+        private set
 
     private fun loadPending() {
         // A surface coming back with nothing to load must not touch the frame-rate gate:
@@ -361,6 +368,7 @@ class MpvPlayer(
         }
         lastLoadUsedHeader = token != null
         lastOpenHttp4xx = false
+        lastOpenHttpStatus = null
         mpv.setPropertyString("http-header-fields", if (token != null) "X-Roxy-Media-Token: $token" else "")
         // `start` is a file-local option: set it as a property right before the load.
         mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
@@ -925,6 +933,8 @@ class MpvPlayer(
         val line = redactSecrets(text.trimEnd())
         if (line.isEmpty()) return
         if (HTTP_4XX.containsMatchIn(line)) lastOpenHttp4xx = true
+        // Only while a file is opening: a subtitle file that would not load is not the stream.
+        if (loading) httpErrorStatus(line)?.let { lastOpenHttpStatus = it }
         val interesting = prefix.contains("libass") || prefix.contains("sub") ||
             line.contains("fontselect") || line.contains("font provider") ||
             line.contains("Glyph") || line.contains("attachment", ignoreCase = true) ||
