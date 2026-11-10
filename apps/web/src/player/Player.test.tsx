@@ -53,7 +53,8 @@ Object.defineProperties(proto, {
   seeking: { configurable: true, get() { return st(this).seeking } },
   readyState: { configurable: true, get() { return 4 } },
   buffered: { configurable: true, get() { return { length: 0, start: () => 0, end: () => 0 } } },
-  src: { configurable: true, get() { return st(this).src }, set(x: string) { st(this).src = x } },
+  // As in a browser, a new src stops what was playing.
+  src: { configurable: true, get() { return st(this).src }, set(x: string) { const f = st(this); f.src = x; f.paused = true } },
 })
 proto.play = function (this: HTMLMediaElement) {
   play(st(this).src)
@@ -293,6 +294,22 @@ describe('Player', () => {
     expect(order).toEqual(['play@600'])
     expect(subs.setOffset.mock.calls.map((c) => c[0])).not.toContain(undefined)
     play.mockReset()
+  })
+
+  // Found by the CI e2e: quick seeks while a remux's zero was slow. Each new src pauses the
+  // element, so every seek after the first saw it paused, and the last stream sat at 0.
+  it('quick seeks while a remux opens leave it playing', async () => {
+    api.remuxStart.mockImplementation(() => new Promise<number>(() => undefined)) // never answers
+    await mount(item('a', 'ac3', { positionMs: 300_000, played: false, isFavorite: false }))
+    await act(async () => { await new Promise((r) => setTimeout(r, REMUX_ZERO_WAIT_MS + 100)) })
+    expect(st(video()).paused).toBe(false)
+    for (let i = 0; i < 3; i++) {
+      act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })
+      await act(async () => { await new Promise((r) => setTimeout(r, 100)) })
+    }
+    await act(async () => { await new Promise((r) => setTimeout(r, REMUX_ZERO_WAIT_MS + 100)) })
+    expect(st(video()).src).toContain('start=330')
+    expect(st(video()).paused).toBe(false)
   })
 
   // Found on CI: play() waited for remuxStart without a limit, so on a throttled link every

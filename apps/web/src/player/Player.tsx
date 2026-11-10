@@ -133,6 +133,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // older one is still waiting (on the token, the metadata, play()), and the older one used
   // to go on and seek or flag the newer stream.
   const loadGen = useRef(0)
+  /** A load under way means to play when it is done (see load's wasPlaying). */
+  const meantToPlay = useRef(false)
   // True once this item's first load has put the stream at its start position. Until then
   // nothing is reported: a timeupdate or pause before the start seek would save a position
   // the viewer never reached over the one they left.
@@ -274,7 +276,12 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const q = qualityRef.current
       const kind = chooseStream(q, audioTracks, audio)
       const direct = kind === 'direct'
-      const wasPlaying = !v.paused && !v.ended
+      // Playing, or meant to by a load this one replaces: a new src pauses the element, so
+      // a seek made while the last one still waits (for its media token, its metadata or
+      // a remux's zero) saw it paused and left the video stopped. Found by the CI e2e: six
+      // quick seeks while the zero was slow, and the last stream sat paused at 0.
+      const wasPlaying = (!v.paused && !v.ended) || meantToPlay.current
+      meantToPlay.current = wasPlaying || resume || firstLoad.current
       if (q !== 'original') {
         modeRef.current = { kind: 'server', audio: chosen?.index ?? null, offset: startSec }
         v.src = api.transcodeUrl(source.id, q, QUALITY_KBPS[q], chosen?.index ?? null, startSec, tokenRef.current)
@@ -338,6 +345,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       setBuffered(startSec)
       v.playbackRate = rate
       if (wasPlaying || resume || firstLoad.current) await v.play().catch(() => undefined)
+      meantToPlay.current = false
       if (stale()) return
       firstLoad.current = false
       started.current = true
