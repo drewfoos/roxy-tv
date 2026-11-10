@@ -31,6 +31,28 @@ describe('session', () => {
     localStorage.setItem('roxy.session', '{not json')
     expect((await load()).get()).toBeNull()
   })
+  // Each tab kept its own copy from when it loaded: after a sign-in, a profile switch or a
+  // sign-out in another tab, this one went on as who it had been.
+  it('follows what another tab stores', async () => {
+    const session = await load()
+    session.set(S)
+    let told = 0
+    session.subscribe(() => told++)
+    const other = { ...S, token: 't2', profileId: 'p2', profileName: 'Coffee' }
+    const fromOtherTab = (value: string | null) => {
+      if (value === null) localStorage.removeItem('roxy.session')
+      else localStorage.setItem('roxy.session', value)
+      window.dispatchEvent(new StorageEvent('storage', { key: 'roxy.session', newValue: value }))
+    }
+    fromOtherTab(JSON.stringify(other))
+    expect(session.get()).toEqual(other)
+    expect(told).toBe(1)
+    fromOtherTab(null) // signed out there
+    expect(session.get()).toBeNull()
+    expect(told).toBe(2)
+    window.dispatchEvent(new StorageEvent('storage', { key: 'roxy.volume', newValue: '0.5' })) // not ours
+    expect(told).toBe(2)
+  })
   it('keeps working when storage refuses writes (private mode)', async () => {
     const session = await load()
     const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {

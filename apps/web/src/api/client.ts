@@ -63,7 +63,7 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
     } catch {
       /* not JSON */
     }
-    if (res.status === 401 && auth && s) session.set(null)
+    if (res.status === 401 && auth && s) session.expire(s.token)
     throw new ApiError(res.status, msg)
   }
   if (res.status === 204) return undefined as T

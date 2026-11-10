@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chooseStream, MAX_REOPENS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, MAX_REOPENS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, startQuality, StreamClock, streamEnded, type Mode } from './stream'
 
 const aac = { index: 1, codec: 'aac' }
 const ac3 = { index: 1, codec: 'AC3' }
@@ -21,6 +21,35 @@ describe('chooseStream', () => {
   it('transcodes for any quality but the original', () => {
     expect(chooseStream(720, [aac], null)).toBe('transcode')
     expect(chooseStream(1080, [ac3], null)).toBe('transcode')
+  })
+})
+
+// The quality saved in Preferences is for saving data: it must not re-encode a file that
+// is already that small. It used to: "1080p" turned every 1080p file into a transcode.
+describe('startQuality', () => {
+  it('plays a file no taller than the preference as it is', () => {
+    expect(startQuality(1080, 1080)).toBe('original')
+    expect(startQuality(1080, 720)).toBe('original')
+    expect(startQuality(720, 480)).toBe('original')
+    expect(startQuality(480, 480)).toBe('original')
+  })
+  it('counts a file a few lines taller as that size (the gear menu does not offer it either)', () => {
+    expect(startQuality(1080, 1088)).toBe('original')
+    expect(startQuality(720, 760)).toBe('original') // 720 >= 760 * 0.94
+    expect(startQuality(720, 800)).toBe(720)
+  })
+  it('lowers a taller file', () => {
+    expect(startQuality(1080, 2160)).toBe(1080)
+    expect(startQuality(720, 1080)).toBe(720)
+    expect(startQuality(480, 1080)).toBe(480)
+  })
+  it('keeps the preference when the height is unknown', () => {
+    expect(startQuality(720, 0)).toBe(720)
+  })
+  it('has nothing above 1080p to offer: those and "best" are the file as it is', () => {
+    expect(startQuality('original', 2160)).toBe('original')
+    expect(startQuality(2160, 2160)).toBe('original')
+    expect(startQuality(1440, 2160)).toBe('original')
   })
 })
 

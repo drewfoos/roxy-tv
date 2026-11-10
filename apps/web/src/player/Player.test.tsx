@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
   mediaToken: vi.fn(async () => ({ token: 'tok' })),
   streamUrl: (id: string) => `/v1/stream/${id}`,
   remuxUrl: (id: string, audio: number | null, start: number) => `/v1/sources/${id}/remux?start=${start}&audio=${audio}`,
-  transcodeUrl: (id: string) => `/v1/sources/${id}/transcode`,
+  transcodeUrl: (id: string, height: number) => `/v1/sources/${id}/transcode?h=${height}`,
   remuxStart: vi.fn(async (_id: string, start: number) => start),
   progress: vi.fn(async (..._args: unknown[]) => undefined),
   trickplay: vi.fn(async () => null),
@@ -45,6 +45,8 @@ const st = (v: HTMLMediaElement): Fake => {
   return f
 }
 const play = vi.fn()
+/** How far the element has buffered, on its own clock (0 = nothing: every seek in a server stream opens a new one). */
+let bufferedTo = 0
 const proto = HTMLMediaElement.prototype
 Object.defineProperties(proto, {
   currentTime: { configurable: true, get() { return st(this).t }, set(x: number) { st(this).t = x } },
@@ -52,7 +54,7 @@ Object.defineProperties(proto, {
   ended: { configurable: true, get() { return st(this).ended } },
   seeking: { configurable: true, get() { return st(this).seeking } },
   readyState: { configurable: true, get() { return 4 } },
-  buffered: { configurable: true, get() { return { length: 0, start: () => 0, end: () => 0 } } },
+  buffered: { configurable: true, get() { return bufferedTo > 0 ? { length: 1, start: () => 0, end: () => bufferedTo } : { length: 0, start: () => 0, end: () => 0 } } },
   // As in a browser, a new src stops what was playing.
   src: { configurable: true, get() { return st(this).src }, set(x: string) { const f = st(this); f.src = x; f.paused = true } },
 })
@@ -130,6 +132,7 @@ beforeEach(() => {
   localStorage.clear()
   prefs.set({ subMode: 'full', audioLang: 'jpn', subLang: 'eng', quality: 'original', autoplay: true, autoSkip: false })
   vi.clearAllMocks()
+  bufferedTo = 0
   api.remuxStart.mockImplementation(async (_id: string, start: number) => start)
   onEnded = () => undefined
 })
@@ -354,5 +357,239 @@ describe('Player', () => {
     expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(600)
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  // Auto-skip jumped whenever the playhead was inside an intro or outro. A remux starts at
+  // the keyframe before the point asked for, so the stream opened by the skip began inside
+  // the segment again and was skipped again: a new stream each time, until one happened to
+  // have buffered up to the segment's end before its first time update.
+  describe('auto-skip', () => {
+    const withIntro = (id: string, audioCodec: string): Item => {
+      const it = item(id, audioCodec)
+      it.mediaSources![0].segments = [{ type: 'intro', startMs: 60_000, endMs: 150_000 }]
+      return it
+    }
+    const back10 = () => act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })) })
+    const skipButton = () => host.querySelector('.player__skip')
+
+    it('skips a segment once when the remux it opens starts before the segment\'s end', async () => {
+      prefs.set({ autoSkip: true })
+      api.remuxStart.mockImplementation(async (_id: string, start: number) => (start === 150 ? 142 : start)) // the keyframe before 150 s
+      await mount(withIntro('a', 'ac3'))
+      bufferedTo = 70
+      playTo(60.5) // into the intro: skipped, to a point far past the buffer
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/remux?start=150&audio=1')
+      expect(api.remuxStart).toHaveBeenCalledTimes(1)
+      // The new stream: its zero is 142 s, 8 s short of the intro's end, with 3 s buffered.
+      bufferedTo = 3
+      st(video()).t = 0
+      fire('loadstart')
+      playTo(2)
+      await flush()
+      expect(api.remuxStart).toHaveBeenCalledTimes(1) // no second stream
+      playTo(9) // plays on, out of the intro
+      await flush()
+      expect(api.remuxStart).toHaveBeenCalledTimes(1)
+      pagehide()
+      expect(lastReport()?.ms).toBe(151_000)
+    })
+
+    it('lets the viewer watch a skipped segment they seek back into, with the Skip button', async () => {
+      prefs.set({ autoSkip: true, skipWindowSec: 0 })
+      await mount(withIntro('a', 'aac')) // direct play
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+      back10() // to 140 s: inside the intro, on purpose
+      playTo(142)
+      expect(st(video()).t).toBe(142)
+      expect(skipButton()?.textContent).toBe('Skip intro')
+      act(() => { (skipButton() as HTMLElement).click() })
+      expect(st(video()).t).toBe(150)
+    })
+
+    it('skips it again after a seek back to before it', async () => {
+      prefs.set({ autoSkip: true })
+      await mount(withIntro('a', 'aac'))
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+      for (let i = 0; i < 10; i++) back10() // to 50 s, before the intro
+      expect(st(video()).t).toBe(50)
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+    })
+
+    it('skips the next episode\'s intro too (the Player stays mounted)', async () => {
+      prefs.set({ autoSkip: true })
+      await mount(withIntro('a', 'aac'))
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+      await act(async () => setShown(withIntro('b', 'aac')))
+      await flush()
+      st(video()).t = 0
+      fire('loadstart')
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+    })
+  })
+
+  // The volume is kept in localStorage, which can refuse (site data blocked: the read
+  // itself throws) or hold anything. Either took the whole player down: the read is in the
+  // first render, and a volume outside 0..1 makes the element throw.
+  describe('the saved volume', () => {
+    const slider = () => (host.querySelector('input[type=range]') as HTMLInputElement | null)?.value
+    it('plays at full volume when storage is blocked, and goes on when it cannot save', async () => {
+      const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('denied', 'SecurityError') })
+      const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('denied', 'SecurityError') })
+      try {
+        await mount(item('a', 'aac'))
+        expect(video()).not.toBeNull()
+        expect(slider()).toBe('1')
+        act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+        expect(slider()).toBe('0.9')
+        expect(video().volume).toBeCloseTo(0.9)
+      } finally {
+        get.mockRestore()
+        set.mockRestore()
+      }
+    })
+    it.each([
+      ['5', '1'],
+      ['-2', '0'],
+      ['loud', '1'],
+      ['', '1'],
+      ['0.35', '0.35'],
+    ])('reads a stored %j as %s', async (stored, want) => {
+      localStorage.setItem('roxy.volume', stored)
+      await mount(item('a', 'aac'))
+      expect(slider()).toBe(want)
+      expect(video().volume).toBeCloseTo(Number(want))
+    })
+    it('saves a change', async () => {
+      await mount(item('a', 'aac'))
+      act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+      expect(Number(localStorage.getItem('roxy.volume'))).toBeCloseTo(0.9)
+    })
+  })
+
+  // The quality saved in Preferences was used whatever the file: "1080p" re-encoded every
+  // 1080p file (and upscaled nothing but still transcoded a 720p one), and the gear menu,
+  // which lists only sizes below the file's, then had no row ticked.
+  describe('the quality from Preferences', () => {
+    const tall = (id: string, height: number): Item => {
+      const it = item(id, 'aac')
+      it.mediaSources![0].streams![0].height = height
+      return it
+    }
+    const click = (el: Element | null | undefined) => act(() => { (el as HTMLElement).click() })
+    const ticked = () => {
+      click(host.querySelector('[aria-label="Settings"]'))
+      const rows = [...host.querySelectorAll('.panel__list .panel__row--on')].map((b) => b.querySelector('b')?.textContent)
+      click(host.querySelector('[aria-label="Settings"]'))
+      return rows
+    }
+
+    it('plays a file of that size as it is', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(tall('a', 1080))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(ticked()).toEqual(['1080p (Original)'])
+    })
+    it('plays a smaller file as it is', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(tall('a', 720))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(ticked()).toEqual(['720p (Original)'])
+    })
+    it('lowers a larger file', async () => {
+      prefs.set({ quality: 720 })
+      await mount(tall('a', 1080))
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=720')
+      expect(ticked()).toEqual(['720p'])
+    })
+    it('is decided again for each episode (the Player stays mounted)', async () => {
+      prefs.set({ quality: 720 })
+      await mount(tall('a', 1080))
+      expect(video().src).toContain('/transcode?h=720')
+      await act(async () => setShown(tall('b', 720)))
+      await flush()
+      expect(video().src).toBe('/v1/stream/src-b')
+      expect(ticked()).toEqual(['720p (Original)'])
+      await act(async () => setShown(tall('c', 1080)))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-c/transcode?h=720')
+    })
+    it('a quality picked in the gear menu is kept as picked', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(tall('a', 1080))
+      click(host.querySelector('[aria-label="Settings"]'))
+      click([...host.querySelectorAll('.panel__row')].find((b) => b.textContent?.startsWith('720p')))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=720')
+      // The next episode is smaller than the pick: still the viewer's pick, not the preference.
+      await act(async () => setShown(tall('b', 720)))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-b/transcode?h=720')
+    })
+  })
+
+  // "Signs & songs with a dub" was offered in Preferences and did nothing here: it played
+  // like "Always full dialogue", every line of a dub subtitled.
+  describe('subtitle mode "signs & songs with a dub"', () => {
+    /** An English dub and the Japanese original, a signs & songs track and full dialogue. */
+    const dubbed = (id: string, signsTrack = true): Item => {
+      const it = item(id, 'aac')
+      it.mediaSources![0].streams = [
+        { index: 0, type: 'video', codec: 'h264', height: 1080 },
+        { index: 1, type: 'audio', codec: 'aac', language: 'eng' },
+        { index: 2, type: 'audio', codec: 'aac', language: 'jpn' },
+        ...(signsTrack ? [{ index: 3, type: 'subtitle', codec: 'ass', language: 'eng', title: 'Signs & Songs', isForced: true, isTextFormat: true }] : []),
+        { index: 4, type: 'subtitle', codec: 'ass', language: 'eng', title: 'Full Subtitles', isTextFormat: true },
+      ] as MediaStream[]
+      return it
+    }
+    const shown = () => (subs.setTrack.mock.calls.at(-1)?.[1] as MediaStream | null | undefined)?.index ?? null
+
+    it('shows the signs & songs track over a dub in the viewer\'s language', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a'))
+      expect(shown()).toBe(3)
+    })
+    it('shows the full dialogue with the original audio', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'jpn', subLang: 'eng' })
+      await mount(dubbed('a'))
+      expect(shown()).toBe(4)
+    })
+    it('counts a dub picked on this title, whatever the audio preference', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'jpn', subLang: 'eng' })
+      await mount({ ...dubbed('a'), userData: { positionMs: 0, played: false, isFavorite: false, audioIndex: 1 } } as Item)
+      expect(shown()).toBe(3)
+    })
+    it('shows nothing over a dub with no signs track, and C still turns the dialogue on', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a', false))
+      expect(subs.setTrack.mock.calls.filter((c) => c[1] != null)).toHaveLength(0)
+      act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true })) })
+      await flush()
+      expect(shown()).toBe(4)
+    })
+    it('leaves a choice saved on the title alone', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount({ ...dubbed('a'), userData: { positionMs: 0, played: false, isFavorite: false, subtitleIndex: 4 } } as Item)
+      expect(shown()).toBe(4)
+    })
+    it('"always full dialogue" still shows the dialogue over a dub', async () => {
+      prefs.set({ subMode: 'full', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a'))
+      expect(shown()).toBe(4)
+    })
+    it('is worked out again for the next episode (the Player stays mounted)', async () => {
+      prefs.set({ subMode: 'signs', audioLang: 'eng', subLang: 'eng' })
+      await mount(dubbed('a', false))
+      await act(async () => setShown(dubbed('b')))
+      await flush()
+      expect(subs.setTrack.mock.calls.at(-1)?.[0]).toBe('src-b')
+      expect(shown()).toBe(3)
+    })
   })
 })

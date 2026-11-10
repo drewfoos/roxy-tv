@@ -13,7 +13,14 @@ let actions: { [K in keyof PlayerKeyActions]: ReturnType<typeof vi.fn> }
 
 function Harness({ a }: { a: PlayerKeyActions }) {
   usePlayerKeys(a)
-  return <input data-testid="field" />
+  return (
+    <>
+      <input data-testid="field" />
+      <input type="range" data-testid="volume" />
+      <textarea />
+      <select />
+    </>
+  )
 }
 
 beforeEach(() => {
@@ -77,5 +84,27 @@ describe('usePlayerKeys', () => {
     press('x')
     expect(actions.togglePlay).not.toHaveBeenCalled()
     expect(actions.poke).not.toHaveBeenCalled()
+  })
+
+  // The volume slider keeps the focus once it is dragged: it is an <input>, and every key
+  // was ignored from then on (space, arrows, F) until something else was clicked.
+  it('still works with the focus on the volume slider (an input nobody types in)', () => {
+    const slider = host.querySelector('input[type=range]')!
+    press(' ', {}, slider)
+    press('ArrowRight', {}, slider)
+    press('f', {}, slider)
+    expect(actions.togglePlay).toHaveBeenCalledTimes(1)
+    expect(actions.seekBy.mock.calls).toEqual([[10]])
+    expect(actions.toggleFullscreen).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores keys in every place text is typed or chosen', () => {
+    for (const el of [host.querySelector('input:not([type])')!, host.querySelector('textarea')!, host.querySelector('select')!]) press('k', {}, el)
+    const search = document.createElement('input')
+    search.type = 'search'
+    host.appendChild(search)
+    press('k', {}, search)
+    search.remove()
+    expect(actions.togglePlay).not.toHaveBeenCalled()
   })
 })

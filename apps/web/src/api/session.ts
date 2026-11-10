@@ -17,15 +17,29 @@ const DEVICE_KEY = 'roxy.deviceId'
 const listeners = new Set<() => void>()
 let cached: Session | null | undefined
 
-function read(): Session | null {
-  if (cached !== undefined) return cached
+/** What storage holds now: another tab may have written it since this one last looked. */
+function stored(): Session | null {
   try {
     const raw = localStorage.getItem(KEY)
-    cached = raw ? (JSON.parse(raw) as Session) : null
+    return raw ? (JSON.parse(raw) as Session) : null
   } catch {
-    cached = null
+    return null
   }
+}
+
+function read(): Session | null {
+  if (cached === undefined) cached = stored()
   return cached
+}
+
+// Another tab signed in, switched profile or signed out: this tab follows, instead of
+// going on as who it was when it loaded (the event only fires for other tabs' writes).
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== null && e.key !== KEY) return // null: all of storage was cleared
+    cached = undefined
+    listeners.forEach((l) => l())
+  })
 }
 
 export const session = {
@@ -41,6 +55,22 @@ export const session = {
       /* private mode: the session lives for the tab only */
     }
     listeners.forEach((l) => l())
+  },
+  /**
+   * The server refused `token` (a 401): signs out if that is still this browser's token.
+   * When another tab has signed in again since the request left, the refusal is about the
+   * old token, so the newer session stays (it used to be wiped for every tab).
+   */
+  expire(token: string) {
+    const now = stored()
+    if (now && now.token !== token) {
+      if (cached?.token !== now.token) {
+        cached = now
+        listeners.forEach((l) => l())
+      }
+      return
+    }
+    if (read()?.token === token) session.set(null)
   },
   update(patch: Partial<Session>) {
     const cur = read()
