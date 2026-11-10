@@ -91,6 +91,13 @@ data class PendingProgress(
     /** The version played (its length decides "watched"), and that length. */
     val sourceId: String? = null,
     val durationMs: Long? = null,
+    /**
+     * The same moment as [at], as time since boot, and which boot that was: the age of the
+     * entry no longer depends on the date staying put (see [pendingAgeMs]). Null on an entry
+     * queued by an older build.
+     */
+    val elapsedAt: Long? = null,
+    val bootCount: Int? = null,
 )
 
 /**
@@ -124,8 +131,12 @@ const val PENDING_REFUSED_KEEP_MS = 24 * 60 * 60 * 1000L
  * "Slow down" (429, the server's rate limit) and "took too long" (408) say nothing about
  * the entry: it is kept and the drain stops, as when the server is away.
  * Returns null when all were sent, else the failure that stopped it or the last refusal.
+ * [age] is how old an entry is ([pendingAgeMs]; by the dates alone when not given).
  */
-suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspend (PendingProgress) -> Unit, remove: (PendingProgress) -> Unit): Throwable? {
+suspend fun drainPending(
+    entries: List<PendingProgress>, now: Long, send: suspend (PendingProgress) -> Unit, remove: (PendingProgress) -> Unit,
+    age: (PendingProgress) -> Long = { now - it.at },
+): Throwable? {
     var refused: Throwable? = null
     for (p in entries) {
         val failure = runCatching { send(p) }.exceptionOrNull()
@@ -136,7 +147,7 @@ suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspen
             failure.isUnauthorized -> return failure // signed out: nothing else will go either
             failure.code == 408 || failure.code == 429 -> return failure // asked to wait: the rest would be refused too
             failure.code in 400..499 -> remove(p) // will never succeed (the title was deleted meanwhile)
-            now - p.at > PENDING_REFUSED_KEEP_MS -> { remove(p); refused = failure }
+            age(p) > PENDING_REFUSED_KEEP_MS -> { remove(p); refused = failure }
             else -> refused = failure
         }
     }
@@ -173,6 +184,8 @@ class Downloads(
     journalDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
     /** How soon a failed journal write is tried again (tests: shorter, on real threads). */
     private val journalRetryMs: Long = JOURNAL_RETRY_MS,
+    /** The date, the time since boot and the boot's number (tests: their own). */
+    private val clock: DeviceClock = DeviceClock.system(context),
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
@@ -390,8 +403,10 @@ class Downloads(
                 )
                 idx.entries + (itemId to e.copy(item = e.item.copy(userData = ud)))
             }
+            val ago = ageMs.coerceAtLeast(0)
             val pending = pendingAfter(idx.pendingProgress, profile, itemId, reportedToServer,
-                PendingProgress(profile, itemId, positionMs, System.currentTimeMillis() - ageMs.coerceAtLeast(0), played, audioIndex, subtitleIndex, sourceId, durationMs))
+                PendingProgress(profile, itemId, positionMs, clock.wallMs() - ago, played, audioIndex, subtitleIndex, sourceId, durationMs,
+                    elapsedAt = clock.elapsedMs() - ago, bootCount = clock.bootCount()))
             idx.copy(entries = entries, pendingProgress = pending)
         }
         if (durableNow) return writeQueueNow()
@@ -472,11 +487,13 @@ class Downloads(
     suspend fun syncProgress(api: RoxyApi): Throwable? = syncLock.withLock {
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
-        drainPending(mine, System.currentTimeMillis(),
+        val ageOf = { p: PendingProgress -> pendingAgeMs(p, clock.wallMs(), clock.elapsedMs(), clock.bootCount()) }
+        drainPending(mine, clock.wallMs(), age = ageOf,
             send = { p ->
-                // Sent as an age by this device's clock (both times are this clock's, so a clock
-                // set wrong cancels out); at stays for an older server.
-                val age = (System.currentTimeMillis() - p.at).coerceAtLeast(0)
+                // Sent as an age by this device's clocks: the time since boot when the entry is
+                // from this boot (the date may have been set meanwhile), else the difference
+                // of two dates; at stays for an older server.
+                val age = ageOf(p)
                 if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age)
                 else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs)
             },

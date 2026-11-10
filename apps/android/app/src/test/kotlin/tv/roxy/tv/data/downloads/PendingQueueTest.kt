@@ -51,6 +51,19 @@ class PendingQueueTest {
         Triple(r, sent, removed)
     }
 
+    // Found in review: "refused for more than a day" was counted by the date, so a date set
+    // ahead let go of a report the server had refused once, a minute ago. The age comes from
+    // the caller (the time since boot when it can be used: see pendingAgeMs).
+    @Test fun aRefusedEntryIsLetGoByItsAgeNotByTheDate() = runBlocking {
+        val removed = mutableListOf<String>()
+        val entry = p("e1", 1, at = 0)
+        val dayLater = PENDING_REFUSED_KEEP_MS + 1 // what the date says
+        drainPending(listOf(entry), dayLater, send = { throw ApiException(500, "boom") }, remove = { removed += it.itemId }, age = { 60_000 })
+        assertEquals("a minute old: kept", emptyList<String>(), removed)
+        drainPending(listOf(entry), 0, send = { throw ApiException(500, "boom") }, remove = { removed += it.itemId }, age = { PENDING_REFUSED_KEEP_MS + 1 })
+        assertEquals("a day old, whatever the date says: let go", listOf("e1"), removed)
+    }
+
     // Found in review: every report goes through this queue, so one entry the server keeps
     // refusing (a 500) stopped all watch progress. A refusal skips that entry; the rest goes.
     @Test fun aRefusedEntryDoesNotHoldUpTheRest() {
