@@ -305,14 +305,21 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         // a GOP before startSec, often 10 s): that is the stream's zero, which the server
         // tells. Taken as startSec, subtitles ran that much early after every resume, seek
         // or reopening. Asked for while the stream opens.
-        const zero = startSec > 0 ? api.remuxStart(source.id, startSec).catch(() => startSec) : Promise.resolve(0)
-        modeRef.current = { kind: 'server', audio: chosen?.index ?? null, offset: startSec }
-        v.src = api.remuxUrl(source.id, chosen?.index ?? null, startSec, tokenRef.current)
+        // Not waited for: the answer is an ffmpeg run on the server, and playing only after
+        // it delayed every resume, seek and reopening of a remux (on a busy machine, enough
+        // that a stream cut again and again never reached the reconnect limit). Until it
+        // comes the zero is taken as startSec, then corrected.
+        const audio = chosen?.index ?? null
+        modeRef.current = { kind: 'server', audio, offset: startSec }
+        v.src = api.remuxUrl(source.id, audio, startSec, tokenRef.current)
         subsRef.current?.setOffset(startSec)
-        const at = await zero
-        if (stale()) return
-        modeRef.current = { kind: 'server', audio: chosen?.index ?? null, offset: at }
-        subsRef.current?.setOffset(at)
+        if (startSec > 0) {
+          void api.remuxStart(source.id, startSec).catch(() => startSec).then((at) => {
+            if (stale() || at === startSec) return
+            modeRef.current = { kind: 'server', audio, offset: at }
+            subsRef.current?.setOffset(at)
+          })
+        }
       }
       setCurrent(startSec)
       setBuffered(startSec)

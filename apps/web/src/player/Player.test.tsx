@@ -281,4 +281,16 @@ describe('Player', () => {
     pagehide()
     expect(lastReport()?.ms).toBe(605500)
   })
+
+  // Found on CI: play() waited for remuxStart (an ffmpeg run on the server), so every resume
+  // and reopening of a remux started that much later.
+  it('a remux plays without waiting for the keyframe answer', async () => {
+    let answer: (s: number) => void = () => undefined
+    api.remuxStart.mockImplementation(() => new Promise<number>((r) => { answer = r }))
+    await mount(item('a', 'ac3', { positionMs: 605_000, played: false, isFavorite: false }))
+    expect(play).toHaveBeenCalled()
+    expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(605) // until the answer: the start point
+    await act(async () => { answer(600) })
+    expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(600)
+  })
 })

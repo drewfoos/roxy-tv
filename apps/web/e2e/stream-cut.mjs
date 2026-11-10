@@ -48,7 +48,7 @@ try {
   page.on('request', (r) => {
     // One entry per stream: Chrome sometimes asks for the same stream twice, which counted
     // as a reopening, and the next cut found no new stream running.
-    if (!r.url().includes('/remux')) return
+    if (!r.url().includes('/remux') || r.url().includes('/remux/start')) return // the keyframe question is not a stream
     const start = Number(new URL(r.url()).searchParams.get('start'))
     if (remux.length === 0 || remux[remux.length - 1] !== start) remux.push(start)
   })
