@@ -42,6 +42,18 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 			return err
 		}
 	}
+	// The audio fingerprints are slow to make, so they outlive a re-read of the same
+	// file. Another file at the same path (a re-download, an upgrade) is another sound:
+	// kept, they had intros and credits matched from the audio of the file that is gone.
+	same, err := sameFiles(ctx, tx, src)
+	if err != nil {
+		return err
+	}
+	if !same {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM audio_fingerprints WHERE source_id = ?`, src.ID); err != nil {
+			return err
+		}
+	}
 	for _, t := range []string{"media_parts", "media_streams", "attachments", "media_segments", "segment_detection"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE source_id = ?`, src.ID); err != nil {
 			return err
@@ -562,4 +574,53 @@ func (s *Store) eachRow(ctx context.Context, query string, args []any, fn func(*
 		}
 	}
 	return rows.Err()
+}
+
+// SetAttachmentsExtracted records where a source's attachments were extracted to, for the
+// ones that have a path. Used when a request had to extract them itself: without it every
+// later request for a font found none recorded and went through extraction again.
+func (s *Store) SetAttachmentsExtracted(ctx context.Context, sourceID string, atts []model.Attachment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, a := range atts {
+		if a.ExtractedPath == "" {
+			continue
+		}
+		var at sql.NullString
+		if a.ExtractedAt != nil {
+			at = nullStr(a.ExtractedAt.UTC().Format(TimeFormat))
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE attachments SET extracted_path = ?, extracted_at = ? WHERE source_id = ? AND stream_index = ?`,
+			a.ExtractedPath, at, sourceID, a.Index); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// sameFiles reports whether src's parts are the files recorded for the source now: the
+// same paths, sizes and modification times, in order.
+func sameFiles(ctx context.Context, tx *sql.Tx, src *model.MediaSource) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT path, size, mtime FROM media_parts WHERE source_id = ? ORDER BY part_index`, src.ID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	n := 0
+	same := true
+	for rows.Next() {
+		var path, mtime string
+		var size int64
+		if err := rows.Scan(&path, &size, &mtime); err != nil {
+			return false, err
+		}
+		if n >= len(src.Parts) || src.Parts[n].Path != path || src.Parts[n].Size != size || src.Parts[n].ModTime.UTC().Format(TimeFormat) != mtime {
+			same = false
+		}
+		n++
+	}
+	return same && n == len(src.Parts), rows.Err()
 }
