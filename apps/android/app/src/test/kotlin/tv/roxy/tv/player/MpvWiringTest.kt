@@ -34,4 +34,18 @@ class MpvWiringTest {
         val played = b.indexOf("play(")
         assertTrue("the listener is asked first, the player reopens only if it declines", asked >= 0 && (played < 0 || asked < played))
     }
+
+    // mpv keeps aid/sid for later files: a load that left either unset opened on the last
+    // file's numbers. Both go in on every load (see loadTrackOptions).
+    @Test fun everyLoadSetsBothTracks() {
+        val b = body("private fun loadPending()")
+        assertTrue("loadPending sets aid and sid from loadTrackOptions", Regex("""\n\s*for \(\(name, value\) in MpvTracks\.loadTrackOptions\(""").containsMatchIn(b))
+        assertTrue("before the loadfile", b.indexOf("loadTrackOptions(") < b.indexOf("\"loadfile\""))
+    }
+
+    @Test fun theFrameRateGateIsResetOnStartFile() {
+        assertTrue("START_FILE resets the gate", "frameRateGate.fileStarted()" in body("MPVLib.MpvEvent.MPV_EVENT_START_FILE ->"))
+        val b = body("private fun loadPending()")
+        assertTrue("the load is told to the gate only after the pending-URL check", b.indexOf("pendingUrl ?: return") in 0 until b.indexOf("frameRateGate.loadRequested()"))
+    }
 }

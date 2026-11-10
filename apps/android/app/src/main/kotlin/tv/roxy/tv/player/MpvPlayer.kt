@@ -298,20 +298,26 @@ class MpvPlayer(
      * and carries the original file's timestamps; mpv must not rebase them to 0.
      */
     /**
-     * [sid]: the subtitle track to open the file on (0 = none; null = the policy picks once
-     * it is open). A transcode numbers its tracks itself: never preselected.
+     * [sid]: the subtitle track to open the file on (0 = none; null = mpv's slang choice,
+     * then the policy once it is open). [aid]: the audio track (null = mpv's alang choice).
+     * A transcode numbers its tracks itself: never preselected.
      */
-    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null) {
+    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null, aid: Int? = null) {
         if (destroyed) return
         startSeconds = if (transcoded) 0 else start
         pendingTranscode = transcoded
         pendingSid = if (transcoded) null else sid
+        pendingAid = if (transcoded) null else aid
         pendingUrl = url
         if (surfaceReady) loadPending()
     }
 
     @Volatile private var pendingSid: Int? = null
+    @Volatile private var pendingAid: Int? = null
     @Volatile private var preselectedSid: Int? = null
+    /** The tracks the last loadfile was given: a retry of that load (token in the URL) opens on them too. */
+    @Volatile private var lastLoadSid: Int? = null
+    @Volatile private var lastLoadAid: Int? = null
     private var lastUrl: String? = null
     private var lastTranscoded = false
 
@@ -361,11 +367,14 @@ class MpvPlayer(
         // A transcode started mid-file has its first frame at e.g. 300 s; keep that clock so
         // the position, subtitles and skip segments line up with the original file.
         mpv.setPropertyString("rebase-start-time", if (pendingTranscode) "no" else "yes")
-        // The subtitle track chosen before the load: mpv opens on it (no switch, so no
-        // going back for its subtitles). The policy then leaves this file alone.
+        // The tracks chosen before the load: mpv opens on them (no switch, so no going back
+        // for the subtitles). A preselected subtitle leaves the policy out for this file.
+        // Both are always set, "auto" when not chosen: mpv would otherwise open this file
+        // on whatever numbers the last one ended on.
         preselectedSid = pendingSid
-        pendingSid = null
-        preselectedSid?.let { mpv.setPropertyString("sid", if (it == 0) "no" else it.toString()) }
+        lastLoadSid = pendingSid; lastLoadAid = pendingAid
+        for ((name, value) in MpvTracks.loadTrackOptions(pendingSid, pendingAid)) mpv.setPropertyString(name, value)
+        pendingSid = null; pendingAid = null
         queuedLoads.incrementAndGet()
         mpv.command(arrayOf("loadfile", loadUrl, "replace"))
         mpv.setPropertyBoolean("pause", false)
@@ -397,12 +406,18 @@ class MpvPlayer(
         if (id <= 0) mpv.setPropertyString("sid", "no") else mpv.setPropertyInt("sid", id)
     }
 
-    fun setAudioTrack(id: Int) {
+    /**
+     * [followSubtitles]: re-run the subtitle policy for the new audio (a viewer's switch).
+     * Code that sets the subtitle itself right after passes false: re-running it moved the
+     * subtitle off the track the file was opened on, and the second switch back cost
+     * another of mpv's refresh seeks.
+     */
+    fun setAudioTrack(id: Int, followSubtitles: Boolean = true) {
         if (destroyed) return
         if (id <= 0) mpv.setPropertyString("aid", "no") else mpv.setPropertyInt("aid", id)
         // Subtitles follow the audio: switching to the Japanese track brings the dialogue
         // subs in, switching back to the dub drops to signs & songs (or off).
-        if (options.subMode != "none") {
+        if (followSubtitles && options.subMode != "none") {
             val all = tracksWithOverrides()
             val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.let { audioLangOf(it) }.orEmpty()
             val sub = chooseSubtitle(all, options.subMode, options.subLangs, lang, options.anime)
@@ -498,17 +513,8 @@ class MpvPlayer(
         }
     }
 
-    // Signs & songs tracks go by many names: "Signs/Songs", "Forced", "[FOR DUB]" (FMA:B),
-    // "English [ForcedNarrative]" (Netflix rips), "Dubtitles".
-    private val signsRegex = Regex("""(?i)\b(signs?|songs?|s&s|signs/songs|forced\w*|for dub|dubtitles?)\b""")
-    private val fullRegex = Regex("""(?i)\b(full|dialog(ue)?|complete)\b""")
-
     /** "signs" / "full" / "" from a subtitle track's title: carries a viewer's pick to the next episode. */
-    fun subtitleClass(t: Track): String = when {
-        signsRegex.containsMatchIn(t.title) || t.isForced -> "signs"
-        fullRegex.containsMatchIn(t.title) -> "full"
-        else -> ""
-    }
+    fun subtitleClass(t: Track): String = MpvTracks.subtitleKind(t.title, t.isForced)
 
     private fun sameLang(a: String, b: String): Boolean = a.isNotEmpty() && b.isNotEmpty() && Languages.canonical(a) == Languages.canonical(b)
 
@@ -528,8 +534,8 @@ class MpvPlayer(
         if (subs.isEmpty()) return null
         val subLang = langs.firstOrNull().orEmpty()
         val mine = subs.filter { sameLang(it.lang, subLang) }
-        fun signs(t: Track) = signsRegex.containsMatchIn(t.title) || t.isForced
-        fun full(t: Track) = fullRegex.containsMatchIn(t.title)
+        fun signs(t: Track) = MpvTracks.signsRegex.containsMatchIn(t.title) || t.isForced
+        fun full(t: Track) = MpvTracks.fullRegex.containsMatchIn(t.title)
         fun styled(t: Track) = if (t.codec == "ass" || t.codec == "ssa") 5 else 0
 
         val dubbed = audioLang.isNotEmpty() && sameLang(audioLang, subLang)
@@ -836,7 +842,7 @@ class MpvPlayer(
                     // An older server: it only takes the token in the URL.
                     Timber.w("open with the token header failed; retrying with it in the URL")
                     tokenInHeader = false
-                    post { if (pendingUrl == null) { pendingUrl = lastUrl; if (surfaceReady) loadPending() } }
+                    post { if (pendingUrl == null) { pendingUrl = lastUrl; pendingSid = lastLoadSid; pendingAid = lastLoadAid; if (surfaceReady) loadPending() } }
                 } else if (failed) {
                     Timber.w("the file failed to open: %s", lastUrl?.substringBefore("?"))
                     post { listener?.onLoadFailed() }
@@ -911,7 +917,7 @@ class MpvPlayer(
         // file's END_FILE looked like a dropped stream (a false "Lost connection" and a
         // reconnect) or, with no length known, the end of the episode.
         if (listener?.onPassthroughFailed(at) == true) return
-        play(w.url, at.toInt(), w.transcoded)
+        play(w.url, at.toInt(), w.transcoded, sid = currentTrackId("sub"), aid = currentTrackId("audio").takeIf { it > 0 })
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {

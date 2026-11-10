@@ -1480,7 +1480,7 @@ fun subtitleInfos(streams: List<MediaStream>): List<SubtitleInfo> {
     var n = 0
     return streams.filter { it.type == "subtitle" }.map { s ->
         n += 1
-        SubtitleInfo(mpvId = n, index = s.index, codec = s.codec, language = s.language, detectedLanguage = s.detectedLanguage, title = s.title.orEmpty(), isExternal = s.isExternal)
+        SubtitleInfo(mpvId = n, index = s.index, codec = s.codec, language = s.language, detectedLanguage = s.detectedLanguage, title = s.title.orEmpty(), isExternal = s.isExternal, isForced = s.isForced)
     }
 }
 
@@ -1493,6 +1493,8 @@ data class SubtitleInfo(
     val detectedLanguage: String?,
     val title: String,
     val isExternal: Boolean,
+    /** Flagged forced in the container (a signs & songs track, to the player's track kinds). */
+    val isForced: Boolean = false,
 ) {
     /** The language to trust: sniffed text beats the container tag. */
     val effectiveLanguage: String get() = (detectedLanguage ?: language).orEmpty().lowercase()
