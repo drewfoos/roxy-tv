@@ -206,6 +206,7 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Head("/stream/{id}", s.stream)
 			r.Get("/sources/{id}/transcode", s.transcodeStream)
 			r.Get("/sources/{id}/remux", s.remuxStream)
+			r.Get("/sources/{id}/remux/start", s.remuxStart)
 			r.Get("/system/transcoding", s.transcodingInfo)
 		})
 		// An unknown /v1 path is an API error, not the web shell.
