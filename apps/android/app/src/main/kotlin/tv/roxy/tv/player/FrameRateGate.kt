@@ -12,16 +12,25 @@ package tv.roxy.tv.player
 internal class FrameRateGate {
     private var fps = 0f
     private var shown = false
+    /** A file was handed to mpv and its START_FILE has not come yet: frames up now are the old file's. */
+    private var awaitingStart = false
 
-    /** A new file is being opened: hold its rate until its first frame. */
-    fun newFile() { shown = false; fps = 0f }
+    /**
+     * A file was handed to mpv (loadfile). Nothing is reset yet: mpv still plays the old
+     * file, and its queued playback-restart must not count as the new file's first frame.
+     * Only a real load calls this (a surface coming back with nothing to load does not).
+     */
+    fun loadRequested() { awaitingStart = true }
+
+    /** mpv's START_FILE, in event order: the new file is opening; hold its rate until its first frame. */
+    fun fileStarted() { awaitingStart = false; shown = false; fps = 0f }
 
     /** The file's rate is known: the rate to ask for now, or null while held. */
-    fun hint(rate: Float): Float? { fps = rate; return if (shown) rate else null }
+    fun hint(rate: Float): Float? { fps = rate; return if (shown && !awaitingStart) rate else null }
 
     /** A frame is up (mpv's playback-restart, also after seeks): the held rate, the first time only. */
     fun firstFrame(): Float? {
-        if (shown) return null
+        if (shown || awaitingStart) return null
         shown = true
         return fps.takeIf { it != 0f }
     }

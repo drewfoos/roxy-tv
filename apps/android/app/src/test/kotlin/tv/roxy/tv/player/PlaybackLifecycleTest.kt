@@ -202,5 +202,37 @@ class PlaybackLifecycleTest {
         assertTrue(l.fileLoaded())
         assertNull(l.waitingAt)
     }
-}
 
+    // The audit: the passthrough watchdog reopened the file behind the session's back; the
+    // replaced file's END_FILE then looked like a dropped stream mid-file (false "Lost
+    // connection", reconnects spent) or, with no length known, the end of the episode.
+    @Test fun aPassthroughReopenIsAReload() {
+        val l = playing()
+        assertTrue(l.audioOutputReload())
+        assertTrue("the replaced file's end is ignored", l.switching)
+        assertFalse(l.reconnecting)
+        assertTrue(l.fileLoaded())
+        assertEquals(Phase.Playing, l.phase)
+    }
+
+    @Test fun aPassthroughFailureWithNothingPlayingReopensNothing() {
+        val next = playing().apply { startNext() }
+        assertFalse("mid-switch: the next episode's stream opens with the new setting", next.audioOutputReload())
+        val lost = playing().apply { reconnectScheduled(600.0) }
+        assertFalse("the reconnect reopens it", lost.audioOutputReload())
+        assertEquals(Phase.Reconnecting(600.0), lost.phase)
+    }
+
+    // A reconnect whose stream came back (or was reloaded) before its delay ran out must not
+    // reopen a stream that is playing.
+    @Test fun aReconnectNoLongerDueReopensNothing() {
+        val l = playing()
+        l.reconnectScheduled(600.0)
+        assertTrue(l.fileLoaded()) // the old stream recovered meanwhile
+        assertFalse(l.reopening())
+        assertEquals(Phase.Playing, l.phase)
+        l.reconnectScheduled(700.0)
+        assertTrue(l.reopening())
+        assertTrue(l.reconnecting)
+    }
+}

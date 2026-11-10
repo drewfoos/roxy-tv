@@ -169,10 +169,28 @@ class PlaybackLifecycle {
         phase = Phase.Reconnecting(at)
     }
 
-    /** The wait is over: the stream is asked for again. */
-    fun reopening() {
+    /**
+     * The wait is over: the stream is asked for again. False when the reconnect is no longer
+     * due (the stream came back, another reload or the next episode took over): then nothing
+     * is reopened. Reopening anyway restarted a stream that was playing.
+     */
+    fun reopening(): Boolean {
+        if (phase !is Phase.Reconnecting) return false
         itemFileRequested = true // the reconnect plays the item's own stream
-        if (phase is Phase.Reconnecting) phase = Phase.Opening(Why.Reconnect, fileRequested = true)
+        phase = Phase.Opening(Why.Reconnect, fileRequested = true)
+        return true
+    }
+
+    /**
+     * The player has to reopen the playing file itself (passthrough audio never started, so
+     * it is decoded here now): a reload, so the replaced file's end is not a dropped stream
+     * or the end of the episode. False when nothing is playing to reopen (a switch, a
+     * reconnect or the end): the stream that comes next opens with the new audio setting.
+     */
+    fun audioOutputReload(): Boolean {
+        if (phase != Phase.Playing) return false
+        reloadStarted()
+        return true
     }
 
     /** Reconnects used up: paused until the server answers. */

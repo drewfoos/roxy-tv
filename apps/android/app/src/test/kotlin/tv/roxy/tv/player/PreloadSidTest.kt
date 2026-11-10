@@ -30,4 +30,22 @@ class PreloadSidTest {
         assertNull(preloadSid(SubtitleStart.Policy, alya))
         assertNull(preloadSid(SubtitleStart.CarryPick, alya))
     }
+
+    // A viewer's pick earlier in this session, matched on the server's list as it is after
+    // the load: opened on it, the next episode needs no switch (and no refresh seek).
+    private val dialoguePick = TrackPick(off = false, lang = "eng", kind = "full", title = "Dialogue")
+
+    @Test fun thisSessionsPickIsOpenedOnWhenTheListHasIt() = assertEquals(2, preloadSid(SubtitleStart.CarryPick, alya, dialoguePick))
+
+    @Test fun thisSessionsOffIsOpenedWithout() =
+        assertEquals(0, preloadSid(SubtitleStart.CarryPick, alya, TrackPick(off = true, lang = "", kind = "", title = "")))
+
+    @Test fun aPickOfAKindTheFileLacksIsLeftToAfterTheLoad() =
+        assertNull(preloadSid(SubtitleStart.CarryPick, alya, TrackPick(off = false, lang = "jpn", kind = "", title = "")))
+
+    @Test fun aForcedFlagMakesASignsTrack() {
+        val forced = listOf(SubtitleInfo(mpvId = 1, index = 2, codec = "ass", language = "eng", detectedLanguage = null, title = "English", isExternal = false, isForced = true),
+            SubtitleInfo(mpvId = 2, index = 3, codec = "ass", language = "eng", detectedLanguage = null, title = "English", isExternal = false))
+        assertEquals(1, preloadSid(SubtitleStart.CarryPick, forced, TrackPick(off = false, lang = "eng", kind = "signs", title = "English")))
+    }
 }

@@ -128,6 +128,13 @@ class MpvPlayer(
         fun onBufferingChanged(buffering: Boolean) {}
         /** Native HDR output switched on (true) for this file: styled subtitles are not drawn. */
         fun onHdrNative(active: Boolean) {}
+        /**
+         * Passthrough never started for this file's audio (see [watchPassthrough]); the codec
+         * is decoded here from now on. True: the listener reopens the file at [atSec] itself,
+         * as one of its own reloads, so the old file's end is not taken for a lost
+         * connection or the end of the episode. False: the player reopens it.
+         */
+        fun onPassthroughFailed(atSec: Double): Boolean = false
     }
 
     var listener: Listener? = null
@@ -291,20 +298,26 @@ class MpvPlayer(
      * and carries the original file's timestamps; mpv must not rebase them to 0.
      */
     /**
-     * [sid]: the subtitle track to open the file on (0 = none; null = the policy picks once
-     * it is open). A transcode numbers its tracks itself: never preselected.
+     * [sid]: the subtitle track to open the file on (0 = none; null = mpv's slang choice,
+     * then the policy once it is open). [aid]: the audio track (null = mpv's alang choice).
+     * A transcode numbers its tracks itself: never preselected.
      */
-    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null) {
+    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null, aid: Int? = null) {
         if (destroyed) return
         startSeconds = if (transcoded) 0 else start
         pendingTranscode = transcoded
         pendingSid = if (transcoded) null else sid
+        pendingAid = if (transcoded) null else aid
         pendingUrl = url
         if (surfaceReady) loadPending()
     }
 
     @Volatile private var pendingSid: Int? = null
+    @Volatile private var pendingAid: Int? = null
     @Volatile private var preselectedSid: Int? = null
+    /** The tracks the last loadfile was given: a retry of that load (token in the URL) opens on them too. */
+    @Volatile private var lastLoadSid: Int? = null
+    @Volatile private var lastLoadAid: Int? = null
     private var lastUrl: String? = null
     private var lastTranscoded = false
 
@@ -329,9 +342,14 @@ class MpvPlayer(
     @Volatile private var lastOpenHttp4xx = false
 
     private fun loadPending() {
-        frameRateGate.newFile()
+        // A surface coming back with nothing to load must not touch the frame-rate gate:
+        // the gate is reset on the new file's START_FILE (in event order, see FrameRateGate).
         val url = pendingUrl ?: return
         pendingUrl = null
+        frameRateGate.loadRequested()
+        // The passthrough watch belongs to the file it was armed for: left running, it
+        // reopened THIS file at the old one's position.
+        stopPassthroughWatch()
         lastUrl = url
         lastTranscoded = pendingTranscode
         Timber.i("loadfile %s start=%ds transcoded=%s", url.substringBefore("?"), startSeconds, pendingTranscode)
@@ -349,11 +367,14 @@ class MpvPlayer(
         // A transcode started mid-file has its first frame at e.g. 300 s; keep that clock so
         // the position, subtitles and skip segments line up with the original file.
         mpv.setPropertyString("rebase-start-time", if (pendingTranscode) "no" else "yes")
-        // The subtitle track chosen before the load: mpv opens on it (no switch, so no
-        // going back for its subtitles). The policy then leaves this file alone.
+        // The tracks chosen before the load: mpv opens on them (no switch, so no going back
+        // for the subtitles). A preselected subtitle leaves the policy out for this file.
+        // Both are always set, "auto" when not chosen: mpv would otherwise open this file
+        // on whatever numbers the last one ended on.
         preselectedSid = pendingSid
-        pendingSid = null
-        preselectedSid?.let { mpv.setPropertyString("sid", if (it == 0) "no" else it.toString()) }
+        lastLoadSid = pendingSid; lastLoadAid = pendingAid
+        for ((name, value) in MpvTracks.loadTrackOptions(pendingSid, pendingAid)) mpv.setPropertyString(name, value)
+        pendingSid = null; pendingAid = null
         queuedLoads.incrementAndGet()
         mpv.command(arrayOf("loadfile", loadUrl, "replace"))
         mpv.setPropertyBoolean("pause", false)
@@ -385,12 +406,18 @@ class MpvPlayer(
         if (id <= 0) mpv.setPropertyString("sid", "no") else mpv.setPropertyInt("sid", id)
     }
 
-    fun setAudioTrack(id: Int) {
+    /**
+     * [followSubtitles]: re-run the subtitle policy for the new audio (a viewer's switch).
+     * Code that sets the subtitle itself right after passes false: re-running it moved the
+     * subtitle off the track the file was opened on, and the second switch back cost
+     * another of mpv's refresh seeks.
+     */
+    fun setAudioTrack(id: Int, followSubtitles: Boolean = true) {
         if (destroyed) return
         if (id <= 0) mpv.setPropertyString("aid", "no") else mpv.setPropertyInt("aid", id)
         // Subtitles follow the audio: switching to the Japanese track brings the dialogue
         // subs in, switching back to the dub drops to signs & songs (or off).
-        if (options.subMode != "none") {
+        if (followSubtitles && options.subMode != "none") {
             val all = tracksWithOverrides()
             val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.let { audioLangOf(it) }.orEmpty()
             val sub = chooseSubtitle(all, options.subMode, options.subLangs, lang, options.anime)
@@ -451,13 +478,14 @@ class MpvPlayer(
 
     // track-list is observed with no value: a change only drops the cache, and the next
     // read builds it again (about seven JNI reads per track, so not twice a second).
-    @Volatile private var trackCache: List<Track>? = null
-    private val trackGen = java.util.concurrent.atomic.AtomicInteger(0)
+    // The list is kept with the generation it was read at (see GenerationCache): checking the
+    // counter and then writing the cache let a change land in between and stay unseen.
+    private val trackCache = GenerationCache<List<Track>>()
 
     fun tracks(): List<Track> {
         if (destroyed) return emptyList()
-        trackCache?.let { return it }
-        val gen = trackGen.get()
+        trackCache.get()?.let { return it }
+        val gen = trackCache.generation()
         val n = mpv.getPropertyInt("track-list/count") ?: 0
         val list = (0 until n).mapNotNull { i ->
             val p = "track-list/$i"
@@ -472,7 +500,7 @@ class MpvPlayer(
                 isForced = bool("$p/forced") ?: false,
             )
         }
-        if (trackGen.get() == gen) trackCache = list
+        trackCache.put(gen, list)
         return list
     }
 
@@ -485,17 +513,8 @@ class MpvPlayer(
         }
     }
 
-    // Signs & songs tracks go by many names: "Signs/Songs", "Forced", "[FOR DUB]" (FMA:B),
-    // "English [ForcedNarrative]" (Netflix rips), "Dubtitles".
-    private val signsRegex = Regex("""(?i)\b(signs?|songs?|s&s|signs/songs|forced\w*|for dub|dubtitles?)\b""")
-    private val fullRegex = Regex("""(?i)\b(full|dialog(ue)?|complete)\b""")
-
     /** "signs" / "full" / "" from a subtitle track's title: carries a viewer's pick to the next episode. */
-    fun subtitleClass(t: Track): String = when {
-        signsRegex.containsMatchIn(t.title) || t.isForced -> "signs"
-        fullRegex.containsMatchIn(t.title) -> "full"
-        else -> ""
-    }
+    fun subtitleClass(t: Track): String = MpvTracks.subtitleKind(t.title, t.isForced)
 
     private fun sameLang(a: String, b: String): Boolean = a.isNotEmpty() && b.isNotEmpty() && Languages.canonical(a) == Languages.canonical(b)
 
@@ -515,8 +534,8 @@ class MpvPlayer(
         if (subs.isEmpty()) return null
         val subLang = langs.firstOrNull().orEmpty()
         val mine = subs.filter { sameLang(it.lang, subLang) }
-        fun signs(t: Track) = signsRegex.containsMatchIn(t.title) || t.isForced
-        fun full(t: Track) = fullRegex.containsMatchIn(t.title)
+        fun signs(t: Track) = MpvTracks.signsRegex.containsMatchIn(t.title) || t.isForced
+        fun full(t: Track) = MpvTracks.fullRegex.containsMatchIn(t.title)
         fun styled(t: Track) = if (t.codec == "ass" || t.codec == "ssa") 5 else 0
 
         val dubbed = audioLang.isNotEmpty() && sameLang(audioLang, subLang)
@@ -777,7 +796,7 @@ class MpvPlayer(
     // ---- events (libmpv's event thread: record, then post) ----
 
     override fun eventProperty(property: String) {
-        if (property == "track-list") { trackGen.incrementAndGet(); trackCache = null }
+        if (property == "track-list") trackCache.invalidate()
     }
     override fun eventProperty(property: String, value: Long) {}
     override fun eventProperty(property: String, value: Double) {}
@@ -809,7 +828,7 @@ class MpvPlayer(
                 queuedLoads.updateAndGet { (it - 1).coerceAtLeast(0) }
                 loading = true
                 ended = false
-                post { leaveNativeHdr() }
+                post { frameRateGate.fileStarted(); leaveNativeHdr() }
             }
             MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> post { frameRateGate.firstFrame()?.let { frameRate = it; applyFrameRate() } }
             MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
@@ -823,7 +842,7 @@ class MpvPlayer(
                     // An older server: it only takes the token in the URL.
                     Timber.w("open with the token header failed; retrying with it in the URL")
                     tokenInHeader = false
-                    post { if (pendingUrl == null) { pendingUrl = lastUrl; if (surfaceReady) loadPending() } }
+                    post { if (pendingUrl == null) { pendingUrl = lastUrl; pendingSid = lastLoadSid; pendingAid = lastLoadAid; if (surfaceReady) loadPending() } }
                 } else if (failed) {
                     Timber.w("the file failed to open: %s", lastUrl?.substringBefore("?"))
                     post { listener?.onLoadFailed() }
@@ -849,6 +868,14 @@ class MpvPlayer(
     }
 
     private var watchdog: Runnable? = null
+    private var passthroughWatch: PassthroughWatch? = null
+
+    private fun stopPassthroughWatch() {
+        watchdog?.let { main.removeCallbacks(it) }
+        watchdog = null
+        passthroughWatch?.cancel()
+        passthroughWatch = null
+    }
 
     /**
      * Safety net: some TVs never finish opening a passthrough audio output for a format
@@ -858,33 +885,39 @@ class MpvPlayer(
      * is decoded here from then on, for this sound output, and the file reopens where it was.
      */
     private fun watchPassthrough() {
-        watchdog?.let { main.removeCallbacks(it) }
+        stopPassthroughWatch()
         val codec = str("current-tracks/audio/codec")?.lowercase()
         if (codec == null || codec !in spdif) return
-        val startPos = dbl("time-pos") ?: 0.0
-        var tryingMs = 0L
-        var polls = 0
+        val url = lastUrl ?: return
+        val w = PassthroughWatch(url, lastTranscoded, dbl("time-pos") ?: 0.0)
+        passthroughWatch = w
         val r = object : Runnable {
             override fun run() {
-                if (destroyed) return
-                polls++
-                val pos = dbl("time-pos")
-                if (pos != null && pos > startPos + 0.5) return // the audio clock runs
-                val held = pausedFlag || cacheFlag || seekingFlag
-                if (!held) tryingMs += 1500
-                if (tryingMs < 6000) { if (polls < 400) main.postDelayed(this, 1500); return }
-                Timber.w("passthrough of %s did not start (pos %s); decoding it on the TV instead", codec, pos)
-                brokenSpdif += "${options.outputKey}|$codec"
-                // Remembered for this sound output, so later plays decode it at once.
-                audioPrefs.edit().putStringSet(brokenKey, (audioPrefs.getStringSet(brokenKey, emptySet()).orEmpty() + codec)).apply()
-                spdif = spdif - codec
-                mpv.setPropertyString("audio-spdif", spdif.joinToString(","))
-                val url = lastUrl ?: return
-                play(url, (pos ?: startPos).toInt(), lastTranscoded)
+                if (destroyed || passthroughWatch !== w) return
+                when (val v = w.poll(dbl("time-pos"), pausedFlag || cacheFlag || seekingFlag)) {
+                    PassthroughWatch.Verdict.Wait -> main.postDelayed(this, PassthroughWatch.POLL_MS)
+                    PassthroughWatch.Verdict.Done -> {}
+                    is PassthroughWatch.Verdict.Failed -> passthroughFailed(w, codec, v.at)
+                }
             }
         }
         watchdog = r
-        main.postDelayed(r, 1500)
+        main.postDelayed(r, PassthroughWatch.POLL_MS)
+    }
+
+    private fun passthroughFailed(w: PassthroughWatch, codec: String, at: Double) {
+        Timber.w("passthrough of %s did not start (pos %.1f); decoding it on the TV instead", codec, at)
+        passthroughWatch = null; watchdog = null
+        brokenSpdif += "${options.outputKey}|$codec"
+        // Remembered for this sound output, so later plays decode it at once.
+        audioPrefs.edit().putStringSet(brokenKey, (audioPrefs.getStringSet(brokenKey, emptySet()).orEmpty() + codec)).apply()
+        spdif = spdif - codec
+        mpv.setPropertyString("audio-spdif", spdif.joinToString(","))
+        // The session reopens it as one of its reloads; replaced behind its back, the old
+        // file's END_FILE looked like a dropped stream (a false "Lost connection" and a
+        // reconnect) or, with no length known, the end of the episode.
+        if (listener?.onPassthroughFailed(at) == true) return
+        play(w.url, at.toInt(), w.transcoded, sid = currentTrackId("sub"), aid = currentTrackId("audio").takeIf { it > 0 })
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {
@@ -920,7 +953,7 @@ class MpvPlayer(
      */
     fun destroy() {
         if (destroyed) return
-        watchdog?.let { main.removeCallbacks(it) }
+        stopPassthroughWatch()
         if (surfaceReady) runCatching {
             if (frameRate != 0f) { frameRate = 0f; applyFrameRate() }
             releaseSurface()

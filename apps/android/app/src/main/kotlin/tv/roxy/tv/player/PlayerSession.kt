@@ -316,7 +316,6 @@ class PlayerSession(
      * The viewer's own track picks, carried to the next episode by language and kind (the
      * same mpv id can be a different track there). Null = the policy decides.
      */
-    private data class TrackPick(val off: Boolean, val lang: String, val kind: String, val title: String)
     private var subPick: TrackPick? = null
     private var audioPick: TrackPick? = null
     /** The current item was last watched with subtitles off; applies until the viewer picks a track. */
@@ -325,6 +324,10 @@ class PlayerSession(
     private var savedSubIndex = params.subtitleIndex
     /** The item's saved audio stream: started on unless the viewer picked one in this session. */
     private var savedAudioIndex = params.audioIndex
+    /** The tracks this item's file was opened on (chosen before the load), for reloads before it played. */
+    private var itemPreload = TrackIds(null, null)
+    /** The tracks this item's file is playing on (not a transcode's): a reload of the item reopens on them. */
+    private var itemTracks: TrackIds? = null
 
     private val glue: PlaybackGlue
     private var lastGlueUpdate = 0L
@@ -424,6 +427,14 @@ class PlayerSession(
 
             override fun onHdrNative(active: Boolean) {
                 if (active) flashOsd("Native HDR: styled subtitles are off for this video", 5000)
+            }
+
+            override fun onPassthroughFailed(atSec: Double): Boolean {
+                // Reopened as a reload of this item: done by the player behind the session's
+                // back, the old file's end looked like a dropped stream ("Lost connection",
+                // reconnects spent) or, with no length known, the end of the episode.
+                if (life.audioOutputReload()) { Timber.i("passthrough failed: reopening at %.1f s", atSec); reopenSameItem(atSec) }
+                return true
             }
         }
         glue = PlaybackGlue(context, object : PlaybackGlue.Controls {
@@ -630,6 +641,8 @@ class PlayerSession(
         // The previous file's sniffed languages name its own track ids; when this file's
         // lookup fails they must not relabel its tracks (and steer the language policy).
         player.subtitleLanguageOverrides = emptyMap()
+        itemTracks = null
+        itemPreload = TrackIds(null, null)
         val wantTranscode = !local && sourceId != null && !quality.isOriginal && app.prefs.session.value.isLoggedIn
         val snapshot = if (local) itemId?.let { app.downloads.entry(it)?.item } else null
         if (snapshot != null) {
@@ -642,7 +655,8 @@ class PlayerSession(
             // A download as the next episode: without this its load was taken for the old
             // file's and ignored, and the player stayed mid-switch (no progress, Next blocked).
             life.fileRequested()
-            player.play(url, start, sid = preloadSid(subtitleStart(subPick != null, savedSubsOff, savedSubIndex), subtitleInfos(src?.streams.orEmpty())))
+            itemPreload = preloadTracks(src?.streams.orEmpty())
+            player.play(url, start, sid = itemPreload.sid, aid = itemPreload.aid)
             // Seek previews are a bonus when the server happens to be reachable.
             if (sourceId != null && app.prefs.session.value.isLoggedIn) scope.launch {
                 val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
@@ -670,25 +684,28 @@ class PlayerSession(
                     delay(if (attempt == 0) 5_000 else 20_000)
                 }
             }
-            // Ask the server which language each subtitle track really is, then play.
+            // Ask the server which language each subtitle track really is (the same source
+            // lookup as above), then play.
             scope.launch {
-                var serverSubs = emptyList<SubtitleInfo>()
-                runCatching { app.api.subtitleStreams(sourceId) }
-                    .onSuccess { subs ->
-                        serverSubs = subs
-                        subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
-                        player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
-                    }
-                    .onFailure { Timber.w(it, "could not fetch subtitle languages for %s", sourceId) }
+                val streams = source.await()?.streams
+                if (streams != null) {
+                    val subs = subtitleInfos(streams)
+                    subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
+                    player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+                } else Timber.w("could not fetch subtitle languages for %s", sourceId)
                 // A quality from the settings is for saving data: a file already smaller
                 // than it plays as-is. One picked in the menu is always honoured.
                 val use = wantTranscode && (!qualityFromSettings || worthTranscoding(quality, source.await()))
                 if (wantTranscode && !use) Timber.i("preferred quality %s skipped: the file is already smaller", quality.key)
-                transcoding = use
                 val mt = if (use) runCatching { app.api.mediaToken(sourceId) }.getOrNull() else null
+                // Without a token the file itself plays: it is not a transcode (its track
+                // numbers are the file's own, see savedAudioStart / subtitleStart).
+                transcoding = use && mt != null
                 life.fileRequested()
+                // The original file's numbering; a transcode is opened on mpv's own choice.
+                itemPreload = preloadTracks(streams.orEmpty())
                 player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null,
-                    sid = preloadSid(subtitleStart(subPick != null, savedSubsOff, savedSubIndex), serverSubs))
+                    sid = itemPreload.sid, aid = itemPreload.aid)
             }
         } else {
             life.fileRequested()
@@ -699,6 +716,19 @@ class PlayerSession(
         val id = itemId ?: run { life.noLookup(); return }
         lookUpNext(id)
     }
+
+    /** The tracks to open this item's file on, from the server's stream list (see [preloadSid], [preloadAid]). */
+    private fun preloadTracks(streams: List<tv.roxy.tv.api.MediaStream>): TrackIds {
+        // The original file's numbering (a transcode is never preselected, see MpvPlayer.play).
+        val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex, transcoding = false)
+        return TrackIds(
+            sid = preloadSid(start, subtitleInfos(streams), subPick),
+            aid = preloadAid(savedAudioIndex, audioPick, streams),
+        ).also { Timber.i("tracks before the load: sid=%s aid=%s (%s)", it.sid ?: "auto", it.aid ?: "auto", start) }
+    }
+
+    /** A reload of this item (reconnect, quality, passthrough): the tracks it plays on, else those it was opened on. */
+    private fun reloadTracks(): TrackIds = itemTracks ?: itemPreload
 
     private fun lookUpNext(id: String) {
         life.lookupStarted()
@@ -855,6 +885,8 @@ class PlayerSession(
         reconnectJob = scope.launch {
             delay(wait)
             if (destroyed) return@launch
+            // Something else took over meanwhile (the stream came back, a reload): nothing to reopen.
+            if (life.phase !is PlaybackLifecycle.Phase.Reconnecting) { Timber.i("reconnect at %.1f s no longer needed", at); return@launch }
             Timber.i("reconnect %d at %.1f s", reconnects.used, at)
             if (transcoding) { restartTranscode(at); return@launch }
             // A fresh media token: a long session can outlive the one in the old URL, and a
@@ -862,8 +894,11 @@ class PlayerSession(
             val sid = sourceId
             val url = if (sid != null && !local) runCatching { app.api.streamUrl(sid, app.api.mediaToken(sid)) }.getOrNull() ?: directUrl else directUrl
             directUrl = url
-            life.reopening()
-            player.play(url, at.toInt())
+            if (!life.reopening()) return@launch
+            // On the tracks it played on: opened on mpv's choice, the session's picks then
+            // switched after the load, and each switch is one of mpv's refresh seeks.
+            val tracks = reloadTracks()
+            player.play(url, at.toInt(), sid = tracks.sid, aid = tracks.aid)
         }
     }
 
@@ -942,22 +977,28 @@ class PlayerSession(
     /** On a new file: the viewer's earlier picks, matched by language and kind (title first). */
     private fun applyTrackPicks() {
         val tracks = player.tracksWithOverrides()
-        // The item's saved audio (no pick in this session): before the subtitles, since
-        // switching audio re-runs the subtitle policy.
-        if (audioPick == null) savedAudioIndex?.let { idx ->
+        // A transcode numbers its streams its own way: the saved stream numbers are skipped there.
+        val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex, transcoding)
+        // Normally the file was opened on these tracks and nothing below switches. When it
+        // was not (no server list), the audio goes first; the subtitle policy follows it only
+        // when nothing below sets the subtitle itself (re-running it there was two switches).
+        val savedSid = (start as? SubtitleStart.Saved)?.let { player.trackIdForStreamIndex("sub", it.streamIndex) }
+        val follow = start == SubtitleStart.Policy || (start is SubtitleStart.Saved && savedSid == null)
+        // The item's saved audio (no pick in this session).
+        savedAudioStart(audioPick != null, savedAudioIndex, transcoding)?.let { idx ->
             player.trackIdForStreamIndex("audio", idx)?.takeIf { it != player.currentTrackId("audio") }?.let { id ->
-                Timber.i("audio saved for this item: stream %d -> %d", idx, id); player.setAudioTrack(id)
+                Timber.i("audio saved for this item: stream %d -> %d", idx, id); player.setAudioTrack(id, followSubtitles = follow)
             }
         }
         audioPick?.let { p ->
             val audio = tracks.filter { it.type == "audio" && it.lang == p.lang }
             val t = audio.firstOrNull { it.title == p.title } ?: audio.firstOrNull()
-            if (t != null && t.id != player.currentTrackId("audio")) { Timber.i("audio pick carried over -> %d", t.id); player.setAudioTrack(t.id) }
+            if (t != null && t.id != player.currentTrackId("audio")) { Timber.i("audio pick carried over -> %d", t.id); player.setAudioTrack(t.id, followSubtitles = follow) }
         }
-        when (val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex)) {
+        when (start) {
             SubtitleStart.Policy -> {}
             SubtitleStart.Off -> { Timber.i("subtitles off (saved for this item)"); player.setSubtitleTrack(0) }
-            is SubtitleStart.Saved -> player.trackIdForStreamIndex("sub", start.streamIndex)?.let { id ->
+            is SubtitleStart.Saved -> savedSid?.let { id ->
                 // Found on the TV: Alya resumed on "Signs & Songs" (the policy's pick for a
                 // dub) although "Dialogue" was saved for the episode: only a saved "off" was
                 // honoured. Now the saved track is, as the server stores it per item.
@@ -1048,6 +1089,11 @@ class PlayerSession(
             quality = runCatching { player.videoSummary() }.getOrDefault(""),
             fullscreen = host.fullscreen,
         )
+        // The tracks this item's own file plays on, for a reload of it (mpv's current-tracks
+        // are gone once a dropped stream has ended, so they are kept from while it played).
+        if (!transcoding && !changingItem && life.phase == PlaybackLifecycle.Phase.Playing && timePos != null) {
+            itemTracks = TrackIds(ui.currentSid, ui.currentAid.takeIf { it > 0 })
+        }
         if (wasPaused != ui.paused) host.playingChanged(!ui.paused)
         // The system's now-playing state: on changes, and every few seconds to keep it honest.
         val now = android.os.SystemClock.elapsedRealtime()
@@ -1166,6 +1212,16 @@ class PlayerSession(
         }
     }
 
+    /** This item's stream reopened at [at] (a reload: its old stream's end is not the end). */
+    private fun reopenSameItem(at: Double) {
+        if (transcoding) { restartTranscode(at); return }
+        reloadTarget = at
+        life.reloadStarted()
+        val tracks = reloadTracks()
+        player.play(directUrl, at.toInt(), transcoded = false, sid = tracks.sid, aid = tracks.aid)
+        watchReload(at)
+    }
+
     private fun changeQuality(q: QualityOption) {
         if (sourceId == null || !app.prefs.session.value.isLoggedIn) return
         val current = if (transcoding) quality else QualityOption.Original
@@ -1176,10 +1232,7 @@ class PlayerSession(
         Timber.i("quality -> %s at %.1f s", q.key, pos)
         if (q.isOriginal) {
             transcoding = false
-            reloadTarget = pos
-            life.reloadStarted()
-            player.play(directUrl, pos.toInt(), transcoded = false)
-            watchReload(pos)
+            reopenSameItem(pos)
         } else {
             restartTranscode(pos)
         }
@@ -1245,17 +1298,19 @@ class PlayerSession(
         // caller that names the position (a reconnect of the new file) may report.
         if (changingItem && atSec == null) return
         val pos = reportPosition(atSec, reloadTarget, pendingStart, runCatching { player.timePosSeconds() }.getOrNull()) ?: return
-        val audioIndex = runCatching { player.currentStreamIndex("audio") }.getOrNull()
         // Subtitles the viewer turned off (here or on an earlier watch) are reported as -1,
         // so the next start honours it. No track because the language policy chose none is
-        // not a choice: null leaves the saved one unchanged.
-        val subIndex = runCatching {
-            when {
-                player.currentTrackId("sub") > 0 -> player.currentStreamIndex("sub")
-                subPick?.off == true || (subPick == null && savedSubsOff) -> -1
-                else -> null
-            }
-        }.getOrNull()
+        // not a choice: null leaves the saved one unchanged. A transcode's stream numbers are
+        // its own, not the file's: none are reported from one.
+        val (audioIndex, subIndex) = runCatching {
+            reportedStreams(
+                transcoding = transcoding,
+                audioStream = player.currentStreamIndex("audio"),
+                subOn = player.currentTrackId("sub") > 0,
+                subStream = player.currentStreamIndex("sub"),
+                subOffChosen = subPick?.off == true || (subPick == null && savedSubsOff),
+            )
+        }.getOrDefault(null to null)
         // The version playing and its length: the server decides "watched" by them, and finds
         // the version by its length when an offline copy is sent after the item was recreated.
         val r = reporter.report(reason, id, pos, audioIndex, subIndex, sourceId, knownDuration()?.let { (it * 1000).toLong() }) ?: return
@@ -1316,6 +1371,12 @@ class PlayerSession(
     }
 }
 
+/** A viewer's track pick, carried to the next episode by language, kind (subtitles) and title. */
+internal data class TrackPick(val off: Boolean, val lang: String, val kind: String, val title: String)
+
+/** mpv track ids to open a file on: null = mpv's own (alang/slang) choice; sid 0 = none. */
+internal data class TrackIds(val sid: Int?, val aid: Int?)
+
 /** Which subtitle track a file starts on. */
 sealed interface SubtitleStart {
     /** The viewer's pick earlier in this session (carried from episode to episode). */
@@ -1328,12 +1389,37 @@ sealed interface SubtitleStart {
     data object Policy : SubtitleStart
 }
 
-/** The viewer's pick in this session wins; then the item's saved choice ("off" or a track); then the policy. */
-internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: Int?): SubtitleStart = when {
+/**
+ * The viewer's pick in this session wins; then the item's saved choice ("off" or a track); then the policy.
+ * [transcoding]: a server transcode maps the video, then every audio, subtitle and
+ * attachment stream, so its stream numbers match the file's only when the file is in that
+ * order. A saved track number is not used there (a saved "off" still is).
+ */
+internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: Int?, transcoding: Boolean = false): SubtitleStart = when {
     sessionPick -> SubtitleStart.CarryPick
     savedOff -> SubtitleStart.Off
-    savedIndex != null && savedIndex > 0 -> SubtitleStart.Saved(savedIndex)
+    savedIndex != null && savedIndex > 0 && !transcoding -> SubtitleStart.Saved(savedIndex)
     else -> SubtitleStart.Policy
+}
+
+/** The item's saved audio stream to switch to after the load, or null: a pick in this session, or a transcode (see [subtitleStart]). */
+internal fun savedAudioStart(sessionPick: Boolean, savedIndex: Int?, transcoding: Boolean): Int? =
+    if (sessionPick || transcoding) null else savedIndex
+
+/**
+ * The (audio, subtitle) stream numbers a progress report saves for the item: the file's
+ * own numbering (what the server stores and the next start opens on), -1 for subtitles the
+ * viewer turned off, null to leave the saved one alone. On a transcode the numbers are the
+ * transcode's, which can name another track of the file: none are sent.
+ */
+internal fun reportedStreams(transcoding: Boolean, audioStream: Int?, subOn: Boolean, subStream: Int?, subOffChosen: Boolean): Pair<Int?, Int?> {
+    val audio = if (transcoding) null else audioStream
+    val sub = when {
+        subOn -> if (transcoding) null else subStream
+        subOffChosen -> -1
+        else -> null
+    }
+    return audio to sub
 }
 
 /**
@@ -1344,8 +1430,34 @@ internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: 
  * the server's list, there is nothing to switch. The file's own tracks only: an added
  * (external) file's number is not known before the load.
  */
-internal fun preloadSid(start: SubtitleStart, subs: List<SubtitleInfo>): Int? = when (start) {
+internal fun preloadSid(start: SubtitleStart, subs: List<SubtitleInfo>, pick: TrackPick? = null): Int? = when (start) {
     SubtitleStart.Off -> 0
     is SubtitleStart.Saved -> subs.firstOrNull { !it.isExternal && it.index == start.streamIndex }?.mpvId
-    else -> null
+    // This session's pick, matched as after the load (language, kind, then title) on the
+    // server's list; no match leaves it to after the load, which still has the last word.
+    SubtitleStart.CarryPick -> pick?.let { p ->
+        if (p.off) 0 else {
+            val same = subs.filter { !it.isExternal && it.effectiveLanguage == p.lang && MpvTracks.subtitleKind(it.title, it.isForced) == p.kind }
+            (same.firstOrNull { it.title == p.title } ?: same.firstOrNull())?.mpvId
+        }
+    }
+    SubtitleStart.Policy -> null
+}
+
+/**
+ * The mpv audio id to open the file on, or null for mpv's alang choice: this session's
+ * pick (by language, then title, as after the load), else the item's saved stream. mpv
+ * numbers audio tracks 1..N in the order the server lists the audio streams. Opened on the
+ * right track there is no switch after the load, which re-ran the subtitle policy and moved
+ * the subtitle off the track the file was opened on.
+ */
+internal fun preloadAid(savedIndex: Int?, pick: TrackPick?, streams: List<tv.roxy.tv.api.MediaStream>): Int? {
+    val audio = streams.filter { it.type == "audio" }
+    fun idOf(i: Int) = if (i < 0 || audio[i].isExternal) null else i + 1
+    if (pick != null) {
+        val lang = audio.indices.filter { audio[it].language.orEmpty().lowercase() == pick.lang }
+        return (lang.firstOrNull { audio[it].title.orEmpty() == pick.title } ?: lang.firstOrNull())?.let { idOf(it) }
+    }
+    if (savedIndex == null) return null
+    return idOf(audio.indexOfFirst { it.index == savedIndex })
 }
