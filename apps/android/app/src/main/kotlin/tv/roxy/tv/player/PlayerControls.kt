@@ -461,7 +461,8 @@ private fun TvTopBar(state: PlayerUiState, onDetails: () -> Unit, onSettings: ()
         ) {
             if (series.isNotEmpty()) Text(series, color = Color.White, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOfNotNull(code, state.title.takeIf { it.isNotEmpty() }).joinToString(" - "), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (focused) Text("Go to Details", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+            // Always there (hidden until focused, nobody knew the title box could be selected); brighter when it is.
+            Text("Go to Details", color = if (focused) Color.White else Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
         }
         Spacer(Modifier.weight(1f))
         IconButton(Icons.Filled.Settings, "Settings", onClick = onSettings, onFocus = onFocus, large = true)
