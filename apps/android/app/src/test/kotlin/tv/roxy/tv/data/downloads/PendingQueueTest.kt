@@ -77,6 +77,21 @@ class PendingQueueTest {
         assertEquals(emptyList<String>(), sent3); assertTrue(r3 is ApiException)
     }
 
+    // Found in review: a 429 (the server's rate limit, which a long queue can reach by itself)
+    // and a 408 were dropped like a 404, so a burst of reports lost watch progress for good.
+    // Both mean "later": the entry stays, and nothing after it is tried in this drain.
+    @Test fun rateLimitedOrTimedOutIsKeptAndStopsTheDrain() {
+        for (code in listOf(429, 408)) {
+            val (r, sent, removed) = drain(listOf(p("e1", 1), p("slow", 2), p("e3", 3)), answers = mapOf("slow" to ApiException(code, "later")))
+            assertEquals("$code: sent up to the refusal only", listOf("e1"), sent)
+            assertEquals("$code: the refused entry and the rest stay queued", listOf("e1"), removed)
+            assertEquals("$code: the caller is told", code, (r as? ApiException)?.code)
+        }
+        // However old the entry is: being asked to wait is not a refusal of the entry.
+        val (_, _, removedOld) = drain(listOf(p("old", 1, at = 0)), now = PENDING_REFUSED_KEEP_MS + 1, answers = mapOf("old" to ApiException(429, "later")))
+        assertEquals(emptyList<String>(), removedOld)
+    }
+
     // Found in review: the queue rode in downloads.json, saved 400 ms after a change, so a mark
     // recorded just before Android killed the app could be lost. Its own journal is written at
     // once: what a new owner (the restarted app) reads is what was last written.

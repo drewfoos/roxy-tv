@@ -121,6 +121,8 @@ const val PENDING_REFUSED_KEEP_MS = 24 * 60 * 60 * 1000L
  * rest waits for the next one. An answer refusing one entry does not hold up the others
  * (every report goes through this queue; one stuck entry stopped all watch progress): a
  * 4xx that will never succeed is dropped, another refusal is kept and retried, for a day.
+ * "Slow down" (429, the server's rate limit) and "took too long" (408) say nothing about
+ * the entry: it is kept and the drain stops, as when the server is away.
  * Returns null when all were sent, else the failure that stopped it or the last refusal.
  */
 suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspend (PendingProgress) -> Unit, remove: (PendingProgress) -> Unit): Throwable? {
@@ -132,6 +134,7 @@ suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspen
             failure == null -> remove(p)
             failure !is tv.roxy.tv.api.ApiException -> return failure // the server away: stop here
             failure.isUnauthorized -> return failure // signed out: nothing else will go either
+            failure.code == 408 || failure.code == 429 -> return failure // asked to wait: the rest would be refused too
             failure.code in 400..499 -> remove(p) // will never succeed (the title was deleted meanwhile)
             now - p.at > PENDING_REFUSED_KEEP_MS -> { remove(p); refused = failure }
             else -> refused = failure
