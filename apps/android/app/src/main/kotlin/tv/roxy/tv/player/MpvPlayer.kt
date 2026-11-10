@@ -451,13 +451,14 @@ class MpvPlayer(
 
     // track-list is observed with no value: a change only drops the cache, and the next
     // read builds it again (about seven JNI reads per track, so not twice a second).
-    @Volatile private var trackCache: List<Track>? = null
-    private val trackGen = java.util.concurrent.atomic.AtomicInteger(0)
+    // The list is kept with the generation it was read at (see GenerationCache): checking the
+    // counter and then writing the cache let a change land in between and stay unseen.
+    private val trackCache = GenerationCache<List<Track>>()
 
     fun tracks(): List<Track> {
         if (destroyed) return emptyList()
-        trackCache?.let { return it }
-        val gen = trackGen.get()
+        trackCache.get()?.let { return it }
+        val gen = trackCache.generation()
         val n = mpv.getPropertyInt("track-list/count") ?: 0
         val list = (0 until n).mapNotNull { i ->
             val p = "track-list/$i"
@@ -472,7 +473,7 @@ class MpvPlayer(
                 isForced = bool("$p/forced") ?: false,
             )
         }
-        if (trackGen.get() == gen) trackCache = list
+        trackCache.put(gen, list)
         return list
     }
 
@@ -777,7 +778,7 @@ class MpvPlayer(
     // ---- events (libmpv's event thread: record, then post) ----
 
     override fun eventProperty(property: String) {
-        if (property == "track-list") { trackGen.incrementAndGet(); trackCache = null }
+        if (property == "track-list") trackCache.invalidate()
     }
     override fun eventProperty(property: String, value: Long) {}
     override fun eventProperty(property: String, value: Double) {}
