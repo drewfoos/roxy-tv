@@ -5,10 +5,10 @@ import org.junit.Test
 import java.io.File
 
 /**
- * mpv calls the player back on its own thread as soon as it is observed. If a field the
- * callbacks use is declared below that point, it is still null when the first callback
- * comes: on the TV a NullPointerException on trackGen in eventProperty aborted the app
- * (November 2026). mpv cannot run here, so this checks the source: observing is the last
+ * mpv calls the player back on its own thread, which is only guaranteed to see fields
+ * written before the observer was added (MPVLib adds and dispatches under one lock). A
+ * field declared below that point may stay null to it: on the TV a NullPointerException
+ * on trackGen in eventProperty aborted the app at a teardown (November 2026). mpv cannot run here, so this checks the source: observing is the last
  * thing the class does, with no field declared after it.
  */
 class MpvInitOrderTest {

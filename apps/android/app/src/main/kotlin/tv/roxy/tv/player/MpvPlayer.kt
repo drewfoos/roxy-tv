@@ -984,11 +984,13 @@ class MpvPlayer(
         return conf
     }
 
-    // Last in the class, on purpose: mpv calls back on its own thread as soon as it is
-    // observed (the first "track-list" comes at once), and fields declared below the old
-    // place of this (trackGen, queuedLoads, ...) were still null then. Found on the TV: a
-    // NullPointerException on trackGen in eventProperty aborted the app (it came back at
-    // Home). Kotlin runs initialisers in order: here, every field is set. Keep no field below.
+    // Last in the class, on purpose: mpv calls back on its own thread, and MPVLib adds the
+    // observer and dispatches to it under one lock, so that thread is only guaranteed to see
+    // the fields written BEFORE addObserver. Fields declared below the old place of this
+    // (trackGen, queuedLoads, ...) were written after it: on the TV (ARM) the event thread
+    // still saw trackGen as null 20 minutes in, at the first track-list change of a teardown
+    // ("Go to Details"), and the NullPointerException aborted the app (it came back at Home).
+    // Kotlin runs initialisers in order: here, every field is set. Keep no field below.
     init {
         mpv.addObserver(this)
         mpv.addLogObserver(this)
