@@ -81,7 +81,7 @@ func (s *Server) discoverEpisodes(w http.ResponseWriter, r *http.Request) {
 // GET /v1/items/{id}/similar -> {items: [Discover Item]}: "More like this" for a library
 // title, from TMDB by the title's TMDB id; empty for titles TMDB does not know.
 func (s *Server) itemSimilar(w http.ResponseWriter, r *http.Request) {
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

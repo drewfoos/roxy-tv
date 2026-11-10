@@ -21,6 +21,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/safefs"
 	"github.com/roxy-media/roxy/server/internal/store"
+	"github.com/roxy-media/roxy/server/internal/trickplay"
 )
 
 // locks serialises grabs per item, so a page of cards asking at once runs ffmpeg once.
@@ -66,6 +67,21 @@ func markFailed(id string) {
 	failures[id] = time.Now()
 }
 
+// seekPoint is where in a file of this length the frame is taken, in seconds: a fifth of
+// the way in and at least five seconds (past the logos and a black first frame), but
+// never past the end. A clip too short for that gives its middle; a seek beyond the end
+// gives no frame at all.
+func seekPoint(durationMs int64) float64 {
+	at := float64(durationMs) / 5 / 1000
+	if at < 5 {
+		at = 5
+	}
+	if durationMs > 0 && at*1000 >= float64(durationMs) {
+		at = float64(durationMs) / 2 / 1000
+	}
+	return at
+}
+
 // Grab makes and records the thumb for id when it is an episode or movie with a file and
 // no thumb yet; it returns the thumb either way, or nil when there is nothing to grab from.
 func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.Config, id string) (*store.ItemImage, error) {
@@ -99,10 +115,7 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	at := src.DurationMs / 5 / 1000
-	if at < 5 {
-		at = 5
-	}
+	at := seekPoint(src.DurationMs)
 	dir := filepath.Join(cfg.ImagesDir(), id)
 	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -112,8 +125,8 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := ff.Run(ctx, dir, "-y", "-v", "error", "-ss", strconv.FormatInt(at, 10), "-i", video, "-an", "-sn", "-dn",
-		"-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", "-f", "image2", tmp); err != nil {
+	if _, err := ff.Run(ctx, dir, "-y", "-v", "error", "-ss", strconv.FormatFloat(at, 'f', 3, 64), "-i", video, "-an", "-sn", "-dn",
+		"-frames:v", "1", "-vf", "scale="+trickplay.ScaleToWidth(640)+",setsar=1", "-q:v", "4", "-f", "image2", tmp); err != nil {
 		safefs.Remove(tmp)
 		if parent.Err() == nil { // the viewer leaving is not the file's fault
 			markFailed(id)
@@ -122,6 +135,10 @@ func Grab(ctx context.Context, ff *ffmpeg.FFmpeg, st *store.Store, cfg *config.C
 	}
 	data, err := os.ReadFile(tmp)
 	if err != nil {
+		// ffmpeg ended well and wrote nothing (no frame at that point): the next page view
+		// would decode the file again for the same nothing.
+		safefs.Remove(tmp)
+		markFailed(id)
 		return nil, err
 	}
 	imgCfg, _, err := image.DecodeConfig(bytes.NewReader(data))

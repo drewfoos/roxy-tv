@@ -17,6 +17,13 @@ internal class ReconnectBudget(private val recoveredAfterSec: Double = RECOVERED
         private set
     private var from = 0.0
 
+    /**
+     * Rounds of reconnects in a row that were used up while the server answered, with no
+     * real playback in between: the stream itself is what fails (see afterAttemptsUsedUp).
+     */
+    var failedRounds = 0
+        private set
+
     /** A reconnect at [at] seconds. */
     fun reconnected(at: Double) {
         used++
@@ -25,13 +32,34 @@ internal class ReconnectBudget(private val recoveredAfterSec: Double = RECOVERED
 
     /** Real playback reached [pos] seconds: far enough past the reconnect, it recovered. */
     fun progress(pos: Double) {
-        if (used > 0 && pos >= from + recoveredAfterSec) used = 0
+        if ((used > 0 || failedRounds > 0) && pos >= from + recoveredAfterSec) {
+            used = 0
+            failedRounds = 0
+        }
     }
 
-    /** A new item, or the wait for the server begins: a fresh start. */
+    /**
+     * Every attempt of this round failed and the wait begins: the next round starts at the
+     * first attempt. Unlike [reset] it is not a fresh start: [roundFailed] keeps count.
+     */
+    fun attemptsUsedUp() {
+        used = 0
+    }
+
+    /**
+     * The round that was just used up, once the server has been asked: with it answering
+     * ([serverUp]) the round counts against the stream; with it away the failures were the
+     * connection's, and the count starts again.
+     */
+    fun roundFailed(serverUp: Boolean) {
+        failedRounds = if (serverUp) failedRounds + 1 else 0
+    }
+
+    /** A new item: a fresh start. */
     fun reset() {
         used = 0
         from = 0.0
+        failedRounds = 0
     }
 
     companion object {

@@ -2,6 +2,7 @@ package tv.roxy.tv.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -10,11 +11,13 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /** Where the app is logged in. Persisted; `token == null` means the login screen. */
 data class Session(
@@ -178,7 +181,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val u = url.trim().trimEnd('/').lowercase()
         val next = (_serverPins.value.filterNot { it.url == u || it.id == id } + ServerPin(id.replace(PIN_SEP, ""), name.trim().replace(PIN_SEP, " "), u.replace(PIN_SEP, ""))).takeLast(MAX_PINS)
         _serverPins.value = next
-        ds.edit { it[KEY_SERVER_PINS] = next.map { p -> listOf(p.id, p.name, p.url).joinToString(PIN_SEP) }.toSet() }
+        write { it[KEY_SERVER_PINS] = next.map { p -> listOf(p.id, p.name, p.url).joinToString(PIN_SEP) }.toSet() }
     }
 
     /**
@@ -197,7 +200,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
 
     suspend fun setDismissedUpdate(code: Int) {
         _dismissedUpdate.value = code
-        ds.edit { it[KEY_DISMISSED_UPDATE] = code }
+        write { it[KEY_DISMISSED_UPDATE] = code }
     }
 
     init {
@@ -221,6 +224,18 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    /**
+     * Writes to the preferences file, and is not given up when the caller is cancelled. The
+     * writers change what is in memory first, and many callers are screens that the change
+     * itself takes away (choosing a profile, switching, signing out), which cancels them in
+     * the middle of the write. A write dropped that way left the file with the old state:
+     * the next start came back signed in (or on the old profile), and before that the mirror
+     * above put the old state back into memory at the next write of anything.
+     */
+    private suspend fun write(change: (MutablePreferences) -> Unit) {
+        withContext(NonCancellable) { ds.edit { change(it) } }
+    }
+
     suspend fun setSetupInProgress(on: Boolean) {
         val cur = _session.value
         if (cur.setupInProgress != on) saveSession(cur.copy(setupInProgress = on))
@@ -239,17 +254,17 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
 
     suspend fun setDownloadsWifiOnly(on: Boolean) {
         _downloadsWifiOnly.value = on
-        ds.edit { it[KEY_DL_WIFI] = on }
+        write { it[KEY_DL_WIFI] = on }
     }
 
     suspend fun cacheProfiles(json: String) {
         _cachedProfiles.value = json
-        ds.edit { it[KEY_PROFILES_CACHE] = json }
+        write { it[KEY_PROFILES_CACHE] = json }
     }
 
     suspend fun saveSession(s: Session) {
         _session.value = s
-        ds.edit {
+        write {
             it[KEY_SERVER] = s.serverUrl
             if (s.token == null) it.remove(KEY_TOKEN) else it[KEY_TOKEN] = s.token
             it[KEY_USER] = s.userName
@@ -281,21 +296,29 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
     suspend fun clearSession() {
         val keepUrl = _session.value.serverUrl
         _session.value = Session(serverUrl = keepUrl)
-        ds.edit {
+        _cachedProfiles.value = null
+        // Everything of the session but the address, so the file says what memory says: keys
+        // left behind (admin, the avatar's version and key, setup) came back into memory with
+        // the mirror, on a session with no login.
+        write {
             it.remove(KEY_TOKEN)
             it.remove(KEY_USER)
+            it.remove(KEY_ADMIN)
             it.remove(KEY_PROFILE_ID)
             it.remove(KEY_PROFILE_NAME)
             it.remove(KEY_PROFILE_AVATAR)
+            it.remove(KEY_PROFILE_AVATAR_V)
+            it.remove(KEY_PROFILE_AVATAR_KEY)
             it.remove(KEY_LAST_PROFILE)
             it.remove(KEY_PROFILES_CACHE)
             it.remove(KEY_TERMS)
+            it.remove(KEY_SETUP)
         }
     }
 
     suspend fun saveSettings(s: PlayerSettings) {
         _settings.value = s
-        ds.edit {
+        write {
             it[KEY_HWDEC] = s.hwdec
             it[KEY_VO] = s.vo
             it[KEY_SMOOTH] = s.smoothMotion

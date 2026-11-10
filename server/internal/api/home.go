@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/roxy-media/roxy/server/internal/auth"
@@ -143,6 +144,8 @@ func (s *Server) attachUserData(ctx context.Context, items []model.Item) {
 	}
 	data, err := s.store.UserDataForItems(ctx, p.ScopeID, guids)
 	if err != nil {
+		// The list still goes out, without watch state; say so rather than nothing.
+		slog.Warn("reading watch state for a list", "items", len(items), "err", err)
 		return
 	}
 	for i := range items {

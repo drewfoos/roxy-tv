@@ -8,10 +8,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import tv.roxy.tv.tv.WatchNext
 import tv.roxy.tv.RoxyApp
@@ -324,6 +326,13 @@ class PlayerSession(
     private var savedSubIndex = params.subtitleIndex
     /** The item's saved audio stream: started on unless the viewer picked one in this session. */
     private var savedAudioIndex = params.audioIndex
+    /** This item's subtitle streams and container as the server (or the download's snapshot) lists them; empty when unknown. */
+    private var itemSubs: List<SubtitleInfo> = emptyList()
+    private var itemContainer: String? = null
+    /** The subtitle files beside this item's video: added to every load of it (see [addSidecars]). */
+    private var itemSidecars: List<Sidecar> = emptyList()
+    /** Counts the viewer's own track choices: one made while subtitle files are still being added stands. */
+    private var trackChoices = 0
     /** The tracks this item's file was opened on (chosen before the load), for reloads before it played. */
     private var itemPreload = TrackIds(null, null)
     /** The tracks this item's file is playing on (not a transcode's): a reload of the item reopens on them. */
@@ -380,6 +389,7 @@ class PlayerSession(
                 if (wasReconnecting) flashOsd(null)
                 stallTicks = 0; stallShown = false
                 applyTrackPicks()
+                addSidecars()
                 // Ask the display for the film's rate (24p on a TV that has it).
                 player.containerFps()?.let { player.hintFrameRate(it.toFloat()) }
                 itemId?.let { app.remote.reportState(it, title, 0, false) } // the remote bar shows it at once
@@ -407,7 +417,7 @@ class PlayerSession(
                 if (startState.value == StartState.Loading) startState.value = StartState.Failed
                 if (fromDisk) { life.localFileFailed(); reloadTarget = null; flashOsd("This download could not be played", 6000); showControls(); return }
                 val at = reloadTarget ?: pendingStart ?: player.timePosSeconds() ?: 0.0
-                reconnect(at)
+                reconnect(at, failedHttp = player.lastOpenHttpStatus)
             }
 
             override fun onEofReached() {
@@ -469,12 +479,14 @@ class PlayerSession(
             override fun setQuality(key: String) { changeQuality(QualityOption.byKey(key)) }
             override fun selectSubtitle(id: Int) {
                 if (id > 0) lastSid = id
+                trackChoices++
                 player.setSubtitleTrack(id)
                 subPick = pickOf(id, "sub")
                 savedSubsOff = false; savedSubIndex = null // the viewer chose: the saved "off" no longer applies
                 refreshUi()
             }
             override fun selectAudio(id: Int) {
+                trackChoices++
                 player.setAudioTrack(id)
                 audioPick = pickOf(id, "audio")
                 subPick = null // the subtitles follow the audio again (the policy just re-ran)
@@ -487,6 +499,7 @@ class PlayerSession(
                 // CC button: off <-> the last chosen track (or the first one).
                 val current = player.currentTrackId("sub")
                 val target = if (current > 0) { lastSid = current; 0 } else lastSid.takeIf { it > 0 } ?: ui.subtitleTracks.firstOrNull()?.id ?: 0
+                trackChoices++
                 player.setSubtitleTrack(target)
                 subPick = pickOf(target, "sub")
                 savedSubsOff = false; savedSubIndex = null
@@ -640,6 +653,9 @@ class PlayerSession(
         transcoding = false
         // The previous file's sniffed languages name its own track ids; when this file's
         // lookup fails they must not relabel its tracks (and steer the language policy).
+        itemSubs = emptyList()
+        itemContainer = null
+        itemSidecars = emptyList()
         player.subtitleLanguageOverrides = emptyMap()
         itemTracks = null
         itemPreload = TrackIds(null, null)
@@ -651,7 +667,11 @@ class PlayerSession(
             // The Quality menu names the file by its resolution ("1080p", "4K") offline too.
             sourceHeight = src?.streams?.firstOrNull { it.type == "video" }?.height ?: 0
             sourceDurationSec = src?.durationMs?.let { it / 1000.0 }
-            player.subtitleLanguageOverrides = subtitleInfos(src?.streams.orEmpty()).filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+            itemSubs = subtitleInfos(src?.streams.orEmpty())
+            itemContainer = src?.container
+            // The subtitle files saved with the download: mpv does not find them by their names.
+            itemSidecars = localSidecars(url, java.io.File(url).parentFile?.list()?.toList().orEmpty(), itemSubs)
+            applyLanguageOverrides()
             // A download as the next episode: without this its load was taken for the old
             // file's and ignored, and the player stayed mid-switch (no progress, Next blocked).
             life.fileRequested()
@@ -691,7 +711,9 @@ class PlayerSession(
                 if (streams != null) {
                     val subs = subtitleInfos(streams)
                     subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
-                    player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+                    itemSubs = subs
+                    itemContainer = source.await()?.container
+                    itemSidecars = streamSidecars(app.api.baseUrl, sourceId, subs)
                 } else Timber.w("could not fetch subtitle languages for %s", sourceId)
                 // A quality from the settings is for saving data: a file already smaller
                 // than it plays as-is. One picked in the menu is always honoured.
@@ -701,6 +723,7 @@ class PlayerSession(
                 // Without a token the file itself plays: it is not a transcode (its track
                 // numbers are the file's own, see savedAudioStart / subtitleStart).
                 transcoding = use && mt != null
+                applyLanguageOverrides() // numbered as what is about to be opened numbers them
                 life.fileRequested()
                 // The original file's numbering; a transcode is opened on mpv's own choice.
                 itemPreload = preloadTracks(streams.orEmpty())
@@ -717,12 +740,21 @@ class PlayerSession(
         lookUpNext(id)
     }
 
+    /**
+     * The sniffed subtitle languages, keyed as the stream about to be opened numbers its
+     * tracks: the file, or a transcode of it, which can leave a track out (see [languageOverrides]).
+     */
+    private fun applyLanguageOverrides() {
+        player.subtitleLanguageOverrides = languageOverrides(itemSubs, transcoding, itemContainer)
+    }
+
     /** The tracks to open this item's file on, from the server's stream list (see [preloadSid], [preloadAid]). */
     private fun preloadTracks(streams: List<tv.roxy.tv.api.MediaStream>): TrackIds {
         // The original file's numbering (a transcode is never preselected, see MpvPlayer.play).
         val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex, transcoding = false)
+        val plan = sidecarPlan(itemSubs, itemSidecars, subPick, savedSubsOff, savedSubIndex)
         return TrackIds(
-            sid = preloadSid(start, subtitleInfos(streams), subPick),
+            sid = sidForLoad(plan, preloadSid(start, subtitleInfos(streams), subPick)),
             aid = preloadAid(savedAudioIndex, audioPick, streams),
         ).also { Timber.i("tracks before the load: sid=%s aid=%s (%s)", it.sid ?: "auto", it.aid ?: "auto", start) }
     }
@@ -862,15 +894,21 @@ class PlayerSession(
      * for a server restart). Then pause, say so, and wait for the server to answer again,
      * however long that takes; it picks up at [at] by itself, or at once on play.
      */
-    private fun reconnect(at: Double) {
+    /**
+     * Reopen the stream at [at] after it dropped or would not open. [failedHttp]: the HTTP
+     * error the server answered the failed open with, when that is what happened.
+     */
+    private fun reconnect(at: Double, failedHttp: Int? = null) {
         if (destroyed) return
         reconnectJob?.cancel()
         waitJob?.cancel()
+        // The server did not take the media token: the next open asks for a new one (see tokenRefused).
+        if (tokenRefused(failedHttp)) sourceId?.let { app.api.forgetMediaToken(it) }
         if (reconnects.used >= RECONNECT_DELAYS_MS.size) {
             Timber.w("reconnects used up at %.1f s; waiting for the server", at)
             reloadTarget = null
-            reconnects.reset()
-            waitForServer(at)
+            reconnects.attemptsUsedUp()
+            waitForServer(at, usedUp = true, failedHttp = failedHttp)
             return
         }
         val wait = RECONNECT_DELAYS_MS[reconnects.used]
@@ -902,14 +940,32 @@ class PlayerSession(
         }
     }
 
-    /** Paused on [at] until the server answers (checked every 5 s), then reopened there. */
-    private fun waitForServer(at: Double) {
+    /**
+     * Paused on [at] until the server answers (checked every 5 s), then reopened there.
+     * After a used-up round of reconnects ([usedUp]) the server is asked first: if it is
+     * there and it is this stream that fails ([failedHttp], or a second round in a row), the
+     * player stops and says so instead of reopening it for ever (see afterAttemptsUsedUp).
+     * Play still tries again by hand.
+     */
+    private fun waitForServer(at: Double, usedUp: Boolean = false, failedHttp: Int? = null) {
         waitJob?.cancel()
         life.waitForServer(at)
         player.setPaused(true)
-        flashOsd(WAITING_FOR_SERVER, 0)
+        // After a used-up round the "reconnecting" line stays until the server has been asked.
+        if (!usedUp) flashOsd(WAITING_FOR_SERVER, 0)
         showControls()
         waitJob = scope.launch {
+            if (usedUp) {
+                val up = app.api.reachable()
+                if (destroyed || waitingAt != at) return@launch
+                reconnects.roundFailed(up)
+                if (afterAttemptsUsedUp(up, failedHttp, reconnects.failedRounds) == AfterAttempts.GiveUp) {
+                    Timber.w("the server answers but the stream does not open (http %s, round %d): giving up at %.1f s", failedHttp, reconnects.failedRounds, at)
+                    flashOsd(cannotOpenMessage(failedHttp), 0)
+                    return@launch
+                }
+                flashOsd(WAITING_FOR_SERVER, 0)
+            }
             while (!destroyed) {
                 delay(5_000)
                 if (app.api.reachable()) {
@@ -971,7 +1027,54 @@ class PlayerSession(
     private fun pickOf(id: Int, type: String): TrackPick? {
         if (id <= 0) return if (type == "sub") TrackPick(off = true, lang = "", kind = "", title = "") else null
         val t = player.tracksWithOverrides().firstOrNull { it.type == type && it.id == id } ?: return null
-        return TrackPick(off = false, lang = t.lang, kind = if (type == "sub") player.subtitleClass(t) else "", title = t.title)
+        return TrackPick(off = false, lang = t.lang, kind = if (type == "sub") player.subtitleClass(t) else "", title = t.title,
+            sidecar = if (type == "sub") player.sidecarIndex(id) else null)
+    }
+
+    /** The viewer's subtitle pick, on this file's track of the same language and kind (the same title first); false when it has none. */
+    private fun carrySubtitlePick(p: TrackPick, tracks: List<MpvPlayer.Track>): Boolean {
+        val subs = tracks.filter { it.type == "sub" && it.lang == p.lang && player.subtitleClass(it) == p.kind }
+        val t = subs.firstOrNull { it.title == p.title } ?: subs.firstOrNull() ?: return false
+        Timber.i("subtitle pick carried over -> %d", t.id)
+        player.setSubtitleTrack(t.id)
+        lastSid = t.id
+        return true
+    }
+
+    /**
+     * The subtitle files beside the video are not in the stream: mpv is given them once the
+     * file has loaded (on every load: it drops them with the file), off the main thread,
+     * and then the one the viewer's pick, the item's saved choice or the policy asks for is shown.
+     */
+    private fun addSidecars() {
+        val files = itemSidecars
+        if (files.isEmpty()) return
+        val plan = sidecarPlan(itemSubs, files, subPick, savedSubsOff, savedSubIndex)
+        val add = player.sidecarAdder(files)
+        val choices = trackChoices
+        scope.launch {
+            val added = withContext(Dispatchers.IO) { add() }
+            if (destroyed || player.destroyed || !added) return@launch
+            // A track the viewer chose while they were being added stands.
+            if (choices == trackChoices) when (plan) {
+                is SidecarPlan.Select -> {
+                    val id = player.sidecarTrackId(plan.streamIndex)
+                    if (id != null) {
+                        Timber.i("subtitle file %d -> %d (%s)", plan.streamIndex, id, if (subPick != null) "picked" else "saved for this item")
+                        player.setSubtitleTrack(id)
+                        lastSid = id
+                    } else {
+                        // The file was opened on no subtitles, for this one: what it has without it.
+                        Timber.w("subtitle file %d could not be added", plan.streamIndex)
+                        val carried = subPick?.let { carrySubtitlePick(it, player.tracksWithOverrides()) } ?: false
+                        if (!carried) player.subtitlePolicyAfterAdds(sidecarOnly = false)
+                    }
+                }
+                SidecarPlan.Policy -> player.subtitlePolicyAfterAdds(sidecarOnly = true)
+                SidecarPlan.Leave -> {}
+            }
+            refreshUi() // the menu lists them
+        }
     }
 
     /** On a new file: the viewer's earlier picks, matched by language and kind (title first). */
@@ -983,7 +1086,9 @@ class PlayerSession(
         // was not (no server list), the audio goes first; the subtitle policy follows it only
         // when nothing below sets the subtitle itself (re-running it there was two switches).
         val savedSid = (start as? SubtitleStart.Saved)?.let { player.trackIdForStreamIndex("sub", it.streamIndex) }
-        val follow = start == SubtitleStart.Policy || (start is SubtitleStart.Saved && savedSid == null)
+        // Subtitles that come from a file beside the video are shown once it is added (see addSidecars).
+        val fromSidecar = sidecarPlan(itemSubs, itemSidecars, subPick, savedSubsOff, savedSubIndex) is SidecarPlan.Select
+        val follow = !fromSidecar && (start == SubtitleStart.Policy || (start is SubtitleStart.Saved && savedSid == null))
         // The item's saved audio (no pick in this session).
         savedAudioStart(audioPick != null, savedAudioIndex, transcoding)?.let { idx ->
             player.trackIdForStreamIndex("audio", idx)?.takeIf { it != player.currentTrackId("audio") }?.let { id ->
@@ -995,6 +1100,7 @@ class PlayerSession(
             val t = audio.firstOrNull { it.title == p.title } ?: audio.firstOrNull()
             if (t != null && t.id != player.currentTrackId("audio")) { Timber.i("audio pick carried over -> %d", t.id); player.setAudioTrack(t.id, followSubtitles = follow) }
         }
+        if (fromSidecar) return
         when (start) {
             SubtitleStart.Policy -> {}
             SubtitleStart.Off -> { Timber.i("subtitles off (saved for this item)"); player.setSubtitleTrack(0) }
@@ -1006,14 +1112,7 @@ class PlayerSession(
                 player.setSubtitleTrack(id)
                 lastSid = id
             }
-            SubtitleStart.CarryPick -> subPick?.let { p ->
-                if (p.off) { player.setSubtitleTrack(0); return }
-                val subs = tracks.filter { it.type == "sub" && it.lang == p.lang && player.subtitleClass(it) == p.kind }
-                val t = subs.firstOrNull { it.title == p.title } ?: subs.firstOrNull() ?: return
-                Timber.i("subtitle pick carried over -> %d", t.id)
-                player.setSubtitleTrack(t.id)
-                lastSid = t.id
-            }
+            SubtitleStart.CarryPick -> subPick?.let { p -> if (p.off) player.setSubtitleTrack(0) else carrySubtitlePick(p, tracks) }
         }
     }
 
@@ -1092,7 +1191,8 @@ class PlayerSession(
         // The tracks this item's own file plays on, for a reload of it (mpv's current-tracks
         // are gone once a dropped stream has ended, so they are kept from while it played).
         if (!transcoding && !changingItem && life.phase == PlaybackLifecycle.Phase.Playing && timePos != null) {
-            itemTracks = TrackIds(ui.currentSid, ui.currentAid.takeIf { it > 0 })
+            // An added subtitle file has no id before the load: a reload opens on none and is given it again.
+            itemTracks = TrackIds(if (player.sidecarIndex(ui.currentSid) != null) 0 else ui.currentSid, ui.currentAid.takeIf { it > 0 })
         }
         if (wasPaused != ui.paused) host.playingChanged(!ui.paused)
         // The system's now-playing state: on changes, and every few seconds to keep it honest.
@@ -1120,16 +1220,17 @@ class PlayerSession(
         // An auto-skipped outro that ends the file simply reaches EOF and onEofReached moves on.
         // The card is opt-in (settings): without it, autoplay still moves on at the end of the file.
         val n = next
-        if (nextCardEnabled && n != null && nextCard == null && !nextCardDismissed && !switching && !ui.paused && ui.durationSec > 0 && !host.inPip) {
+        if (!switching && ui.durationSec > 0) {
             val outro = segments.firstOrNull { it.type == "outro" }
-            val preview = segments.firstOrNull { it.type == "preview" }
-            val outroEndsFile = outro != null && outro.endSec >= ui.durationSec - 5.0
-            val triggerAt = when {
-                outroEndsFile -> if (autoSkip) Double.MAX_VALUE else outro!!.startSec
-                preview != null -> preview.startSec
-                else -> ui.durationSec - 15.0
+            val triggerAt = nextCardTrigger(outro?.startSec, outro?.endSec, segments.firstOrNull { it.type == "preview" }?.startSec, ui.durationSec, autoSkip)
+            // A card that is up: gone again after a seek back to before it, and no countdown
+            // once autoplay is off (only with a position mpv really reported).
+            if (timePos != null) when (nextCardStep(nextCard != null, nextCard?.secondsLeft != null, autoplay, ui.positionSec, triggerAt)) {
+                NextCardStep.Hide -> { countdownJob?.cancel(); nextCard = null }
+                NextCardStep.StopCountdown -> { countdownJob?.cancel(); nextCard = nextCard?.copy(secondsLeft = null) }
+                NextCardStep.Keep -> {}
             }
-            if (ui.positionSec >= triggerAt) showNextCard(n)
+            if (nextCardEnabled && n != null && nextCard == null && !nextCardDismissed && !ui.paused && !host.inPip && ui.positionSec >= triggerAt) showNextCard(n)
         }
     }
 
@@ -1178,6 +1279,7 @@ class PlayerSession(
         val sid = sourceId ?: return
         Timber.i("transcode %s from %.1f s", quality.key, at)
         transcoding = true
+        applyLanguageOverrides()
         reloadTarget = at
         life.reloadStarted() // the replaced stream's end is not the end of the episode
         val cached = app.api.cachedMediaToken(sid)
@@ -1232,6 +1334,7 @@ class PlayerSession(
         Timber.i("quality -> %s at %.1f s", q.key, pos)
         if (q.isOriginal) {
             transcoding = false
+            applyLanguageOverrides()
             reopenSameItem(pos)
         } else {
             restartTranscode(pos)
@@ -1301,7 +1404,7 @@ class PlayerSession(
         // Subtitles the viewer turned off (here or on an earlier watch) are reported as -1,
         // so the next start honours it. No track because the language policy chose none is
         // not a choice: null leaves the saved one unchanged. A transcode's stream numbers are
-        // its own, not the file's: none are reported from one.
+        // its own, not the file's: none are reported from one (but an added subtitle file's).
         val (audioIndex, subIndex) = runCatching {
             reportedStreams(
                 transcoding = transcoding,
@@ -1309,6 +1412,8 @@ class PlayerSession(
                 subOn = player.currentTrackId("sub") > 0,
                 subStream = player.currentStreamIndex("sub"),
                 subOffChosen = subPick?.off == true || (subPick == null && savedSubsOff),
+                subSidecar = player.sidecarIndex(player.currentTrackId("sub")),
+                savedSub = savedSubIndex.takeIf { subPick == null },
             )
         }.getOrDefault(null to null)
         // The version playing and its length: the server decides "watched" by them, and finds
@@ -1376,8 +1481,12 @@ class PlayerSession(
     }
 }
 
-/** A viewer's track pick, carried to the next episode by language, kind (subtitles) and title. */
-internal data class TrackPick(val off: Boolean, val lang: String, val kind: String, val title: String)
+/**
+ * A viewer's track pick, carried to the next episode by language, kind (subtitles) and title.
+ * [sidecar]: it was a subtitle file beside the video (the server's stream number of it), so
+ * it is carried to such a file again (see [sidecarPlan]).
+ */
+internal data class TrackPick(val off: Boolean, val lang: String, val kind: String, val title: String, val sidecar: Int? = null)
 
 /** mpv track ids to open a file on: null = mpv's own (alang/slang) choice; sid 0 = none. */
 internal data class TrackIds(val sid: Int?, val aid: Int?)
@@ -1416,11 +1525,21 @@ internal fun savedAudioStart(sessionPick: Boolean, savedIndex: Int?, transcoding
  * own numbering (what the server stores and the next start opens on), -1 for subtitles the
  * viewer turned off, null to leave the saved one alone. On a transcode the numbers are the
  * transcode's, which can name another track of the file: none are sent.
+ *
+ * [subSidecar]: the subtitle showing is a file beside the video, with this number at the
+ * server. That number is sent, from a transcode too (the file is not part of the stream;
+ * mpv's own number for it is its place in that file, 0). [savedSub]: the item's saved
+ * subtitle, where the viewer chose nothing since. A track that is showing only because
+ * the saved one was not found (the policy's) is not sent over it.
  */
-internal fun reportedStreams(transcoding: Boolean, audioStream: Int?, subOn: Boolean, subStream: Int?, subOffChosen: Boolean): Pair<Int?, Int?> {
+internal fun reportedStreams(
+    transcoding: Boolean, audioStream: Int?, subOn: Boolean, subStream: Int?, subOffChosen: Boolean,
+    subSidecar: Int? = null, savedSub: Int? = null,
+): Pair<Int?, Int?> {
     val audio = if (transcoding) null else audioStream
+    val showing = subSidecar ?: if (transcoding) null else subStream
     val sub = when {
-        subOn -> if (transcoding) null else subStream
+        subOn -> showing?.takeIf { savedSub == null || it == savedSub }
         subOffChosen -> -1
         else -> null
     }

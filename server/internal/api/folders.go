@@ -160,8 +160,12 @@ func (s *Server) removeFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	// Its files are noted as departed first: added again at another path (the drive
 	// mounted elsewhere, the folder moved), their watch history follows them.
+	// When that fails nothing is removed: going on would drop the library with no way
+	// for its history to follow the files.
 	if err := s.store.RecordDeparturesUnder(r.Context(), lib.Root); err != nil {
 		slog.Warn("noting a removed library's files", "root", lib.Root, "err", err)
+		writeError(w, 500, "could not note this library's files, so nothing was removed: "+err.Error())
+		return
 	}
 	if err := s.store.DeleteLibrary(r.Context(), lib.ID); err != nil {
 		writeError(w, 500, err.Error())
@@ -311,9 +315,12 @@ func (s *Server) checkNewRoot(ctx context.Context, path string) (string, error) 
 
 var systemDirs = map[string]bool{"proc": true, "sys": true, "dev": true, "run": true, "boot": true, "etc": true, "bin": true, "sbin": true, "lib": true, "lib64": true, "usr": true, "var": true, "tmp": true, "lost+found": true}
 
+// within reports whether child is a folder below parent. A relative path that leaves the
+// parent is ".." or starts with "../"; a folder whose own name starts with two dots
+// ("..extras") does neither.
 func within(child, parent string) bool {
 	rel, err := filepath.Rel(parent, child)
-	return err == nil && rel != "." && !strings.HasPrefix(rel, "..")
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func isDir(p string) bool {

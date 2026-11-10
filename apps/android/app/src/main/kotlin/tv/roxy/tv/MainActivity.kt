@@ -254,6 +254,8 @@ private fun AppRoot(tv: Boolean) {
                     app.downloads.syncProgress(app.api)
                     app.downloads.kick()
                     app.updates.check()
+                    // Subtitle files a download could not get are asked for again (last: nothing waits on it).
+                    app.downloads.retryMissingSidecars(app.api)
                 }
                 .onFailure { t ->
                     if (t is ApiException && t.isUnauthorized) {
@@ -261,7 +263,7 @@ private fun AppRoot(tv: Boolean) {
                         app.prefs.clearSession()
                     } else Timber.w("auth/me check failed (%s); keeping session", t.message)
                 }
-            Timber.d("token check done for %s", token.take(6))
+            Timber.d("token check done")
         }
         // At least a beat of the hat, so a warm start never flashes from the icon into Home.
         val remaining = 1200 - (System.currentTimeMillis() - started)

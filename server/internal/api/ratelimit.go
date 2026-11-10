@@ -34,13 +34,33 @@ func newRateLimiter(perSecond, burst float64) *rateLimiter {
 	return rl
 }
 
-func (rl *rateLimiter) allow(key string) bool { return rl.allowN(key, 1) }
-
-// allowN is allow with a bucket scale times larger (rate and burst).
-func (rl *rateLimiter) allowN(key string, scale float64) bool {
-	now := time.Now()
+// allowBoth takes one token from the client's own bucket and one from its address's
+// (three times the size), or none at all: a request refused by one bucket costs nothing
+// in the other. Taking them one after the other drained a well-behaved client's own
+// bucket while its address was over the limit (and the other way round).
+func (rl *rateLimiter) allowBoth(key, ipKey string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+	now := time.Now()
+	own := rl.refill(key, 1, now)
+	if ipKey == key { // cannot happen with the "ip|" prefix; one bucket is not charged twice
+		if own.tokens < 1 {
+			return false
+		}
+		own.tokens--
+		return true
+	}
+	addr := rl.refill(ipKey, 3, now)
+	if own.tokens < 1 || addr.tokens < 1 {
+		return false
+	}
+	own.tokens--
+	addr.tokens--
+	return true
+}
+
+// refill returns key's bucket topped up to now. Call with the lock held.
+func (rl *rateLimiter) refill(key string, scale float64, now time.Time) *bucket {
 	b := rl.buckets[key]
 	if b == nil {
 		b = &bucket{tokens: rl.burst * scale, last: now}
@@ -51,11 +71,7 @@ func (rl *rateLimiter) allowN(key string, scale float64) bool {
 		b.tokens = rl.burst * scale
 	}
 	b.last = now
-	if b.tokens < 1 {
-		return false
-	}
-	b.tokens--
-	return true
+	return b
 }
 
 // sweep drops buckets idle for a few minutes so the map does not grow forever.
@@ -105,7 +121,7 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		// Each token has its own bucket (two people behind one router don't share), and
 		// the address as a whole is capped at three times that, so inventing a new token
 		// per request doesn't escape the limit.
-		if !rl.allow(key) || !rl.allowN("ip|"+ip, 3) {
+		if !rl.allowBoth(key, "ip|"+ip) {
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, "too many requests; slow down")
 			return

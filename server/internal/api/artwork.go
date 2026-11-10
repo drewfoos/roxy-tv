@@ -80,7 +80,7 @@ func (s *Server) imageCandidates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "type must be backdrop, poster, logo or hero")
 		return
 	}
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

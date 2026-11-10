@@ -168,6 +168,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 			}
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
+			sweepCaches(ctx, lib)
 		}()
 	} else {
 		// No scan: still sweep for missing/stale metadata and thumbnails.
@@ -179,6 +180,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 			}
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
+			sweepCaches(ctx, lib)
 		}()
 	}
 
@@ -204,6 +206,21 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	return serveHTTP(ctx, ln, api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs))
 }
 
+// sweepCaches clears the caches of what removed titles and files left there: once now
+// (after the first scan, when the library is known) and then daily.
+func sweepCaches(ctx context.Context, lib *library.Library) {
+	for {
+		if _, err := lib.SweepCaches(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("cache sweep failed", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(24 * time.Hour):
+		}
+	}
+}
+
 // serveHTTP answers HTTP on ln until ctx ends. Requests end with the server: their contexts
 // are cancelled with ctx (on SIGTERM), which stops the ffmpeg each stream runs; Shutdown
 // alone waits for them (a stream is never idle) and gave up after 5 s, leaving them
@@ -218,14 +235,22 @@ func serveHTTP(ctx context.Context, ln net.Listener, h http.Handler) error {
 		IdleTimeout: 2 * time.Minute,
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
+	// Serve returns the moment Shutdown is called, not when it is done: without waiting
+	// here the caller closed the database under requests that were still finishing.
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
+	<-stopped
 	return nil
 }
+
+// shutdownGrace is how long requests in flight get to finish once the server is told to stop.
+var shutdownGrace = 5 * time.Second

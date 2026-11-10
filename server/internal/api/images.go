@@ -61,7 +61,7 @@ func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, img *store.I
 				ext = "png"
 			}
 			variant := filepath.Join(filepath.Dir(img.Path), fmt.Sprintf("%s.w%d.%s", typ, width, ext))
-			if _, err := os.Stat(variant); err != nil {
+			if !variantFresh(variant, img.Path) {
 				if err := resizeToFile(img.Path, variant, width); err != nil {
 					writeError(w, 500, "resize failed: "+err.Error())
 					return
@@ -97,6 +97,19 @@ func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, img *store.I
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "private, max-age=86400") // signed-in only: no shared cache
 	http.ServeContent(w, r, "", fi.ModTime(), f)
+}
+
+// variantFresh says whether a resized copy exists and was made from the original as it is
+// now. Whatever replaces an image (a refresh, a hand-picked one, a frame from the file
+// after a wrong match is undone) writes the original again, and a copy made from the one
+// before would go on showing the old picture at that size.
+func variantFresh(variant, original string) bool {
+	v, err := os.Stat(variant)
+	if err != nil {
+		return false
+	}
+	o, err := os.Stat(original)
+	return err != nil || !v.ModTime().Before(o.ModTime())
 }
 
 // imageWidths are the only resized variants made: a request snaps up to the next one.
@@ -189,7 +202,7 @@ func (s *Server) refreshItem(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	it, err := s.store.GetItem(r.Context(), chi.URLParam(r, "id"))
+	it, err := s.store.GetItemOrMoved(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

@@ -328,6 +328,15 @@ class MpvPlayer(
     @Volatile private var loading = false
 
     /**
+     * The subtitle files added to the file that is loaded (see [sidecarAdder]): mpv track
+     * id → the server's stream number. Each load starts a new map: mpv drops added tracks
+     * with the file they were added to.
+     */
+    @Volatile private var addedSubs = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+    /** One `sub-add` at a time, and none while mpv is being destroyed. */
+    private val subAddLock = Any()
+
+    /**
      * The media token travels as a header (X-Roxy-Media-Token), not in the URL: libmpv's
      * binding writes every URL it opens to the device log. A server from before 2026-10-31
      * only reads ?mt=, so one failed open falls back to the URL form for this player.
@@ -340,6 +349,13 @@ class MpvPlayer(
      * broken file must not push the token into the URL (and so into the device log).
      */
     @Volatile private var lastOpenHttp4xx = false
+    /**
+     * The HTTP error the server answered the open that is under way with (404, 503...), from
+     * mpv's log; null when it failed some other way or has not failed. The session reads it
+     * when the open fails, to tell a server that refuses this stream from one that is away.
+     */
+    @Volatile var lastOpenHttpStatus: Int? = null
+        private set
 
     private fun loadPending() {
         // A surface coming back with nothing to load must not touch the frame-rate gate:
@@ -361,6 +377,8 @@ class MpvPlayer(
         }
         lastLoadUsedHeader = token != null
         lastOpenHttp4xx = false
+        lastOpenHttpStatus = null
+        addedSubs = java.util.concurrent.ConcurrentHashMap()
         mpv.setPropertyString("http-header-fields", if (token != null) "X-Roxy-Media-Token: $token" else "")
         // `start` is a file-local option: set it as a property right before the load.
         mpv.setPropertyString("start", if (startSeconds > 0) startSeconds.toString() else "none")
@@ -420,7 +438,7 @@ class MpvPlayer(
         if (followSubtitles && options.subMode != "none") {
             val all = tracksWithOverrides()
             val lang = all.firstOrNull { it.type == "audio" && it.id == id }?.let { audioLangOf(it) }.orEmpty()
-            val sub = chooseSubtitle(all, options.subMode, options.subLangs, lang, options.anime)
+            val sub = policySubtitle(all, lang)
             setSubtitleTrack(sub?.id ?: 0)
             Timber.i("subtitle policy after audio change (%s) -> %s", lang, sub?.id ?: "off")
         }
@@ -596,6 +614,73 @@ class MpvPlayer(
         val audioLang = currentAudioLang()
         val sub = chooseSubtitle(all, options.subMode, options.subLangs, audioLang, options.anime)
         Timber.i("subtitle policy %s: audio=%s anime=%s -> %s", options.subMode, audioLang.ifEmpty { "?" }, options.anime, sub?.let { "sid=${it.id} '${it.title}' (${it.lang}/${it.codec})" } ?: "off")
+        setSubtitleTrack(sub?.id ?: 0)
+    }
+
+    // ---- subtitle files beside the video ----
+
+    /**
+     * The work that adds [files] to the file that has just loaded, for a thread that may
+     * wait: `sub-add` returns once mpv has read the file (over the network when streaming).
+     * Asked for on the main thread when a file has loaded, on every load: mpv drops added
+     * tracks with the file they were added to. The "auto" flag lists a track without
+     * showing it: the caller chooses what is shown (see [sidecarPlan]). The work answers
+     * false when another file was loaded meanwhile, or the player is gone.
+     */
+    internal fun sidecarAdder(files: List<Sidecar>): () -> Boolean {
+        val mine = addedSubs
+        val streamUrl = lastUrl
+        val inHeader = lastLoadUsedHeader
+        return work@{
+            for (f in files) {
+                synchronized(subAddLock) {
+                    if (destroyed || addedSubs !== mine) return@work false
+                    if (mine.containsValue(f.streamIndex)) return@synchronized // not twice
+                    val before = subtitleIds()
+                    runCatching { mpv.command(arrayOf("sub-add", sidecarSource(f.source, streamUrl, inHeader), sidecarFlags(f.forced), f.title, f.lang)) }
+                    val ids = subtitleIds() - before
+                    if (addedSubs === mine) for (id in ids) mine[id] = f.streamIndex
+                    trackCache.invalidate()
+                    Timber.i("subtitle file %d (%s) -> %s", f.streamIndex, f.lang.ifEmpty { "?" }, if (ids.isEmpty()) "not added" else "sid=" + ids.joinToString())
+                }
+            }
+            !destroyed && addedSubs === mine
+        }
+    }
+
+    private fun subtitleIds(): Set<Int> {
+        val n = int("track-list/count") ?: return emptySet()
+        return (0 until n).mapNotNull { i -> if (str("track-list/$i/type") == "sub") int("track-list/$i/id") else null }.toSet()
+    }
+
+    /** The mpv id of the added subtitle file the server numbers [streamIndex]; null when it is not added (yet, or it could not be read). */
+    fun sidecarTrackId(streamIndex: Int): Int? = addedSubs.entries.firstOrNull { it.value == streamIndex }?.key
+
+    /** The server's stream number of subtitle track [id] when that is an added file, else null. */
+    fun sidecarIndex(id: Int): Int? = addedSubs[id]
+
+    /**
+     * The policy's subtitle with the added files among the choices: one of them only where
+     * the file itself has nothing for the viewer (see [policyTakesSidecar]).
+     */
+    private fun policySubtitle(all: List<Track>, audioLang: String): Track? {
+        val added = addedSubs
+        val own = chooseSubtitle(all.filter { it.type != "sub" || !added.containsKey(it.id) }, options.subMode, options.subLangs, audioLang, options.anime)
+        if (added.isEmpty()) return own
+        val any = chooseSubtitle(all, options.subMode, options.subLangs, audioLang, options.anime)
+        return if (any != null && added.containsKey(any.id) && policyTakesSidecar(own?.lang, options.subLangs.firstOrNull().orEmpty())) any else own
+    }
+
+    /**
+     * The policy again, once the subtitle files have been added. [sidecarOnly]: switch only
+     * when it now picks one of them (the file's own track was settled when it loaded);
+     * false when the file was opened on none, for a file that then could not be added.
+     */
+    fun subtitlePolicyAfterAdds(sidecarOnly: Boolean) {
+        if (destroyed) return
+        val sub = policySubtitle(tracksWithOverrides(), currentAudioLang())
+        if (sidecarOnly && (sub == null || !addedSubs.containsKey(sub.id))) return
+        Timber.i("subtitle policy with the added files -> %s", sub?.id ?: "off")
         setSubtitleTrack(sub?.id ?: 0)
     }
 
@@ -925,6 +1010,8 @@ class MpvPlayer(
         val line = redactSecrets(text.trimEnd())
         if (line.isEmpty()) return
         if (HTTP_4XX.containsMatchIn(line)) lastOpenHttp4xx = true
+        // Only while a file is opening: a subtitle file that would not load is not the stream.
+        if (loading) httpErrorStatus(line)?.let { lastOpenHttpStatus = it }
         val interesting = prefix.contains("libass") || prefix.contains("sub") ||
             line.contains("fontselect") || line.contains("font provider") ||
             line.contains("Glyph") || line.contains("attachment", ignoreCase = true) ||
@@ -967,7 +1054,9 @@ class MpvPlayer(
             runCatching { m.removeLogObserver(self) }
             runCatching { m.removeObserver(self) }
             runCatching { m.command(arrayOf("stop")) }
-            runCatching { m.destroy() }.onFailure { Timber.w(it, "mpv destroy") }
+            // The stop cuts short a subtitle file that is still being added (see
+            // sidecarAdder); mpv is not destroyed under that command.
+            synchronized(subAddLock) { runCatching { m.destroy() }.onFailure { Timber.w(it, "mpv destroy") } }
             Timber.i("mpv destroyed")
         }, "mpv-destroy").start()
     }

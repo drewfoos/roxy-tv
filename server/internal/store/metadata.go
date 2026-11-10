@@ -149,6 +149,54 @@ func (s *Store) SetItemImage(ctx context.Context, img ItemImage) error {
 	return err
 }
 
+// CacheOwnerIDs returns the ids the caches are kept under: every item (images) and every
+// media source (subtitles, fonts, seek previews).
+func (s *Store) CacheOwnerIDs(ctx context.Context) (items, sources map[string]bool, err error) {
+	read := func(query string) (map[string]bool, error) {
+		rows, err := s.db.QueryContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		ids := map[string]bool{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids[id] = true
+		}
+		return ids, rows.Err()
+	}
+	if items, err = read(`SELECT id FROM items`); err != nil {
+		return nil, nil, err
+	}
+	if sources, err = read(`SELECT id FROM media_sources`); err != nil {
+		return nil, nil, err
+	}
+	return items, sources, nil
+}
+
+// DropFrameThumbs forgets the thumbs that are a frame taken from this source's file (see
+// stills.Grab) and returns their files. Called when the file was replaced: the frame is
+// the old file's.
+func (s *Store) DropFrameThumbs(ctx context.Context, sourceID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `DELETE FROM item_images WHERE type = 'thumb' AND locked = 0 AND source_url = ? RETURNING path`, "frame://"+sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
 func (s *Store) GetItemImage(ctx context.Context, itemID, imageType string) (*ItemImage, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT item_id, type, path, width, height, source_url, fetched_at, locked FROM item_images WHERE item_id = ? AND type = ?`, itemID, imageType)
 	img, err := scanImage(row)

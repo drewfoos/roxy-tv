@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
-import { ageLabel, pickSubtitle, primarySource } from '../api/items'
+import { ageLabel, pickSignsSubtitle, pickSubtitle, primarySource } from '../api/items'
 import { lang3, prefs } from '../api/prefs'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
-import { chooseStream, MOVED_SEC, ReopenBudget, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, MOVED_SEC, ReopenBudget, startQuality, StreamClock, streamEnded, type Mode } from './stream'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -30,8 +30,8 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 /**
  * The audio and subtitle tracks an item starts with: the choice saved on this title, else
- * the profile's preferences (audio language; subtitles off, only with foreign audio, or
- * always). A saved SUBTITLES_OFF means the viewer turned them off on this title: they stay
+ * the profile's preferences (audio language; subtitles off, only with foreign audio, signs
+ * and songs only with a dub, or always). A saved SUBTITLES_OFF means the viewer turned them off on this title: they stay
  * off, and the track C would turn on is the preferred one. Worked out again for every
  * item: the Watch page keeps one Player across episodes (so fullscreen survives Autoplay
  * Next), and the next episode must not inherit the last one's tracks.
@@ -46,18 +46,44 @@ function initialTracks(item: Item, source: ReturnType<typeof primarySource>, aud
   const audio = savedAudio ?? audioTracks.find((t) => lang3(t.language) === p.audioLang)?.index ?? audioTracks[0]?.index ?? null
   const rawSub = item.userData?.subtitleIndex
   const savedSub = rawSub === SUBTITLES_OFF || (rawSub != null && subTracks.some((t) => t.index === rawSub)) ? rawSub : null
-  const sub = savedSub != null && savedSub !== SUBTITLES_OFF ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
+  let sub = savedSub != null && savedSub !== SUBTITLES_OFF ? savedSub : (pickSubtitle(source, p.subLang)?.index ?? null)
   let subsOn = true
   if (savedSub === SUBTITLES_OFF) subsOn = false
   else if (savedSub == null) {
+    const a = audioTracks.find((t) => t.index === audio)
+    const heard = lang3(a?.language)
     if (p.subMode === 'none') subsOn = false
-    else if (p.subMode === 'foreign') {
-      const a = audioTracks.find((t) => t.index === (savedAudio ?? -1)) ?? audioTracks.find((t) => lang3(t.language) === p.audioLang) ?? audioTracks[0]
-      subsOn = !!a && lang3(a.language) !== p.audioLang
+    else if (p.subMode === 'foreign') subsOn = !!a && heard !== p.audioLang
+    else if (p.subMode === 'signs' && heard && heard === lang3(p.subLang)) {
+      // A dub: the audio is in the language the viewer reads (as the Android app tells
+      // one). Its signs & songs track, or nothing; the dialogue track stays the one C
+      // turns on. This mode used to play like 'full'.
+      const signs = pickSignsSubtitle(source, p.subLang)
+      if (signs) sub = signs.index
+      else subsOn = false
     }
   }
   return { audio, sub, subsOn, ownAudio: savedAudio != null, ownSub: savedSub != null }
 }
+
+/**
+ * The volume saved in this browser, 0..1; full when there is none or it cannot be read.
+ * Storage can be blocked (the read itself throws) and can hold anything: read in the first
+ * render, a throw here took the whole player down, and so did a value the element refuses
+ * (outside 0..1, or not a number).
+ */
+function savedVolume(): number {
+  try {
+    const raw = localStorage.getItem('roxy.volume')
+    const n = raw == null || raw.trim() === '' ? 1 : Number(raw)
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1
+  } catch {
+    return 1
+  }
+}
+
+/** Names a segment within its source, for remembering that auto-skip has jumped over it. */
+const segKey = (s: MediaSegment) => `${s.type}:${s.startMs}`
 
 const SUBS_FAILED = "Subtitles couldn't be loaded."
 
@@ -122,6 +148,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // effects' cleanups run, so the final report (and the pause the removal fires) would
   // read 0 and wipe the saved position; they use this instead.
   const lastAbs = useRef(0)
+  // The intros and outros auto-skip has jumped over in this source (see segKey). A remux
+  // opens at the keyframe before the point asked for, so the stream a skip opens starts a
+  // few seconds inside the segment: without this it was skipped again, stream after stream.
+  const skipped = useRef(new Set<string>())
   const seekReport = useRef<number | null>(null)
   useEffect(() => () => { if (seekReport.current) window.clearTimeout(seekReport.current) }, [])
   // When the position last moved, or the tracks were changed (performance.now): a report's
@@ -158,16 +188,17 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [waiting, setWaiting] = useState(false)
   const [current, setCurrent] = useState(0)
   const [buffered, setBuffered] = useState(0)
-  const [volume, setVolume] = useState(() => Number(localStorage.getItem('roxy.volume') ?? 1))
+  const [volume, setVolume] = useState(savedVolume)
   const [muted, setMuted] = useState(false)
   const [rate, setRate] = useState(1)
   const [visible, setVisible] = useState(true)
   const [menu, setMenu] = useState<'none' | 'tracks' | 'quality' | 'speed'>('none')
-  // Account > Preferences sets the defaults; the gear menu overrides them for this episode.
-  const [quality, setQuality] = useState<Quality>(() => {
-    const q = prefs.get().quality
-    return q === 1080 || q === 720 || q === 480 ? q : 'original'
-  })
+  // Account > Preferences sets the defaults; the gear menu overrides them. The saved
+  // quality is weighed against each file (startQuality; again in the start effect, since
+  // the next episode may be another size); one picked in the menu is kept as picked.
+  const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
+  const [quality, setQuality] = useState<Quality>(() => startQuality(prefs.get().quality, srcHeight))
+  const qualityFromPrefs = useRef(true)
   const [autoplay, setAutoplay] = useState(() => prefs.get().autoplay)
   useEffect(() => {
     autoplayRef.current = autoplay
@@ -373,10 +404,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   )
 
   const seekTo = useCallback(
-    (t: number) => {
+    (t: number, auto = false) => {
       const v = videoRef.current
       if (!v) return
       t = Math.max(0, Math.min(duration || Infinity, t))
+      // The viewer going back to before a segment gets it skipped again; back into it, they
+      // asked to see it (the Skip button is there).
+      if (!auto) for (const s of source?.segments ?? []) if (t * 1000 < s.startMs) skipped.current.delete(segKey(s))
       // Where the viewer is now, even before the stream gets there: leaving right after a
       // seek out of the buffer (the element still empty) saved the position before it.
       lastAbs.current = t
@@ -401,7 +435,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         reload(t, m.audio)
       }
     },
-    [duration, reload],
+    [duration, reload, source],
   )
 
   // ---- start: token, stream, subtitles, trickplay ----
@@ -436,6 +470,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setSubsOn(tracks.subsOn)
     setTracksOf(item.id)
     ownTracks.current = { audio: tracks.ownAudio, sub: tracks.ownSub }
+    skipped.current.clear()
+    if (qualityFromPrefs.current) {
+      qualityRef.current = startQuality(prefs.get().quality, srcHeight)
+      setQuality(qualityRef.current)
+    }
     setSkip(null)
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
@@ -474,10 +513,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const ms = t * 1000
       const seg = (source.segments ?? []).find((s) => (s.type === 'intro' || s.type === 'outro') && ms >= s.startMs && ms < s.endMs - 1000) ?? null
       const p = prefs.get()
-      if (seg && p.autoSkip && !v.paused && !v.seeking) {
-        // Jump once per segment: the end is past the window, so this does not fire again.
+      if (seg && p.autoSkip && !v.paused && !v.seeking && !skipped.current.has(segKey(seg))) {
+        // Jump once per segment: where the jump lands can still be inside it (see skipped).
+        skipped.current.add(segKey(seg))
         setSkip(null)
-        seekTo(seg.endMs / 1000)
+        seekTo(seg.endMs / 1000, true)
         return
       }
       // The button stays for the window, or the whole segment when the window is 0.
@@ -569,7 +609,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     if (!v) return
     v.volume = volume
     v.muted = muted
-    localStorage.setItem('roxy.volume', String(volume))
+    try {
+      localStorage.setItem('roxy.volume', String(volume))
+    } catch {
+      /* storage blocked or full: the volume lasts for this page */
+    }
   }, [volume, muted])
   useEffect(() => {
     const v = videoRef.current
@@ -637,13 +681,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     lastReport.current = 0
   }
   const changeQuality = (q: Quality) => {
+    qualityFromPrefs.current = false
     qualityRef.current = q
     setQuality(q)
     setMenu('none')
     reopens.current.reset() // a new stream the viewer asked for: a fresh start
     reload(absTime(), audioIndex)
   }
-  const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
   const qualities: Quality[] = ['original', ...([1080, 720, 480] as const).filter((h) => srcHeight === 0 || h < srcHeight)]
   const changeSub = (idx: number | null) => {
     ownTracks.current.sub = true

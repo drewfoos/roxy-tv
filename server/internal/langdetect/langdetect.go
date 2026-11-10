@@ -7,6 +7,7 @@ package langdetect
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -26,6 +27,49 @@ var stopWords = map[string][]string{
 	"ita": {"che", "non", "una", "per", "con", "sono", "questo", "come", "anche", "della", "del", "più", "cosa", "bene", "hai", "sei", "noi", "quello", "ora", "molto"},
 	"rus": {"что", "это", "как", "так", "они", "мне", "тебя", "все", "его", "нет", "вот", "был", "она", "еще", "уже", "если", "только", "меня", "тоже", "ничего"},
 	"ind": {"yang", "dan", "tidak", "ini", "itu", "aku", "kamu", "untuk", "dengan", "ada", "akan", "saya", "bisa", "dari", "sudah", "apa", "kau", "mereka", "kita", "juga"},
+}
+
+// stopWordLangs is stopWords' languages in a fixed order, so equal scores always resolve
+// the same way.
+var stopWordLangs = func() []string {
+	langs := make([]string, 0, len(stopWords))
+	for lang := range stopWords {
+		langs = append(langs, lang)
+	}
+	sort.Strings(langs)
+	return langs
+}()
+
+// minMargin is how far ahead of the runner-up (as a share of its own score) the best
+// language must be to count as detected.
+const minMargin = 0.1
+
+// scriptLangs are the languages Detect tells by their script.
+var scriptLangs = map[string]bool{"jpn": true, "zho": true, "kor": true, "ara": true, "tha": true}
+
+// Knows reports whether Detect can return the language a tag names. For any other
+// language its answer is only the nearest one it has words for: Malay reads as
+// Indonesian, Catalan as Spanish, Ukrainian as Russian.
+func Knows(tag string) bool {
+	c := Normalize(tag)
+	_, ok := stopWords[c]
+	return ok || scriptLangs[c]
+}
+
+// DetectTagged is Detect for a track that carries a language tag. A tag naming a
+// language Detect has no words for is left to stand: the text would be given to the
+// nearest language Detect does know, at full confidence, and a correctly tagged Malay
+// track became Indonesian. A missing tag, "und", or a tag for a language Detect knows
+// (the mislabelled "eng" track that is Spanish) is checked against the text as before.
+func DetectTagged(tag, subtitle string) Result {
+	switch c := Normalize(tag); c {
+	case "", "und", "mis", "mul", "zxx":
+	default:
+		if !Knows(c) {
+			return Result{}
+		}
+	}
+	return Detect(subtitle)
 }
 
 var (
@@ -95,7 +139,8 @@ func Detect(subtitle string) Result {
 	}
 	best, second := "", 0.0
 	bestScore := 0.0
-	for lang, sw := range stopWords {
+	for _, lang := range stopWordLangs {
+		sw := stopWords[lang]
 		hits := 0
 		for _, w := range sw {
 			hits += counts[w]
@@ -111,9 +156,12 @@ func Detect(subtitle string) Result {
 		return Result{}
 	}
 	// Confidence: how far ahead the winner is, scaled by how much stop-word mass it has.
-	margin := 1.0
-	if bestScore > 0 {
-		margin = (bestScore - second) / bestScore
+	margin := (bestScore - second) / bestScore
+	if margin < minMargin {
+		// Two languages explain the text about equally (Spanish and Portuguese share
+		// "que", "por", "para", "está"): that is no finding, and which of them came first
+		// used to depend on the order a map happened to be walked in.
+		return Result{}
 	}
 	return Result{best, min1(0.5*margin + 0.5*min1(bestScore/0.12))}
 }

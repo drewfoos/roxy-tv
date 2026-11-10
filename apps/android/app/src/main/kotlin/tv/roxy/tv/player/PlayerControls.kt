@@ -454,7 +454,7 @@ private fun TvTopBar(state: PlayerUiState, onDetails: () -> Unit, onSettings: ()
                 .fillMaxWidth(0.5f)
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .focusable()
-                .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onDetails(); true } else false }
+                .onOkPress { onDetails() }
                 .border(BorderStroke(2.dp, if (focused) Bar else Color.Transparent), RoundedCornerShape(4.dp))
                 .tapClick(onDetails)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -519,7 +519,7 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, c
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .onFocusChanged { focused = it.isFocused }
                 .focusable()
-                .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
+                .onOkPress { onClick() }
                 .clip(RoundedCornerShape(4.dp))
                 .background(if (focused) Color.White else Color(0xE6202020))
                 .border(BorderStroke(1.dp, Color(0x99FFFFFF)), RoundedCornerShape(4.dp))
@@ -657,7 +657,7 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
-            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
+            .onOkPress { onClick() }
             .clip(CircleShape)
             .background(if (focused) Color(0x33FFFFFF) else Color.Transparent)
             .tapClick(onClick),
@@ -692,7 +692,7 @@ private fun RoundButton(icon: ImageVector, label: String, size: Dp, iconSize: Dp
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .focusable()
-            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
+            .onOkPress { onClick() }
             .clip(CircleShape)
             // Plain translucent dark discs like YouTube's, no outline; a remote's focus adds a white ring.
             .background(if (showFocus) Color(0x55FFFFFF) else if (disc) Color(0x59000000) else Color.Transparent)
@@ -820,7 +820,7 @@ private fun TvMenuPanel(title: String, rows: List<MenuRow>, onPick: (String) -> 
                     .then(if (row.key == focusKey) Modifier.focusRequester(first) else Modifier)
                     .onFocusChanged { focused = it.isFocused; if (it.isFocused) onInteraction() }
                     .focusable()
-                    .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onPick(row.key); true } else false }
+                    .onOkPress { onPick(row.key) }
                     .background(if (focused) Bar else Color.Transparent)
                     .tapClick { onPick(row.key) }
                     .padding(horizontal = 16.dp),
@@ -847,7 +847,7 @@ private fun MenuRowView(row: MenuRow, isBack: Boolean, focusRequester: FocusRequ
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onInteraction() }
             .focusable()
-            .onKeyEvent { ev -> if (ev.type == KeyEventType.KeyDown && (ev.key == Key.DirectionCenter || ev.key == Key.Enter)) { onClick(); true } else false }
+            .onOkPress { onClick() }
             .background(if (focused) Color(0x33FFFFFF) else Color.Transparent)
             .tapClick(onClick)
             .padding(horizontal = if (compact) 10.dp else 16.dp, vertical = if (compact) 6.dp else 11.dp),

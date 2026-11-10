@@ -51,6 +51,19 @@ class PendingQueueTest {
         Triple(r, sent, removed)
     }
 
+    // Found in review: "refused for more than a day" was counted by the date, so a date set
+    // ahead let go of a report the server had refused once, a minute ago. The age comes from
+    // the caller (the time since boot when it can be used: see pendingAgeMs).
+    @Test fun aRefusedEntryIsLetGoByItsAgeNotByTheDate() = runBlocking {
+        val removed = mutableListOf<String>()
+        val entry = p("e1", 1, at = 0)
+        val dayLater = PENDING_REFUSED_KEEP_MS + 1 // what the date says
+        drainPending(listOf(entry), dayLater, send = { throw ApiException(500, "boom") }, remove = { removed += it.itemId }, age = { 60_000 })
+        assertEquals("a minute old: kept", emptyList<String>(), removed)
+        drainPending(listOf(entry), 0, send = { throw ApiException(500, "boom") }, remove = { removed += it.itemId }, age = { PENDING_REFUSED_KEEP_MS + 1 })
+        assertEquals("a day old, whatever the date says: let go", listOf("e1"), removed)
+    }
+
     // Found in review: every report goes through this queue, so one entry the server keeps
     // refusing (a 500) stopped all watch progress. A refusal skips that entry; the rest goes.
     @Test fun aRefusedEntryDoesNotHoldUpTheRest() {
@@ -75,6 +88,21 @@ class PendingQueueTest {
         assertEquals(listOf("old"), removed2)
         val (r3, sent3, _) = drain(listOf(p("e1", 1), p("e2", 2)), answers = mapOf("e1" to ApiException(401, "signed out")))
         assertEquals(emptyList<String>(), sent3); assertTrue(r3 is ApiException)
+    }
+
+    // Found in review: a 429 (the server's rate limit, which a long queue can reach by itself)
+    // and a 408 were dropped like a 404, so a burst of reports lost watch progress for good.
+    // Both mean "later": the entry stays, and nothing after it is tried in this drain.
+    @Test fun rateLimitedOrTimedOutIsKeptAndStopsTheDrain() {
+        for (code in listOf(429, 408)) {
+            val (r, sent, removed) = drain(listOf(p("e1", 1), p("slow", 2), p("e3", 3)), answers = mapOf("slow" to ApiException(code, "later")))
+            assertEquals("$code: sent up to the refusal only", listOf("e1"), sent)
+            assertEquals("$code: the refused entry and the rest stay queued", listOf("e1"), removed)
+            assertEquals("$code: the caller is told", code, (r as? ApiException)?.code)
+        }
+        // However old the entry is: being asked to wait is not a refusal of the entry.
+        val (_, _, removedOld) = drain(listOf(p("old", 1, at = 0)), now = PENDING_REFUSED_KEEP_MS + 1, answers = mapOf("old" to ApiException(429, "later")))
+        assertEquals(emptyList<String>(), removedOld)
     }
 
     // Found in review: the queue rode in downloads.json, saved 400 ms after a change, so a mark

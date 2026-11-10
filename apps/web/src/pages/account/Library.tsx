@@ -473,19 +473,26 @@ function EditDetails({ title, onDone, run }: { title: ManageTitle; onDone: () =>
           disabled={!item}
           onClick={() =>
             run(
-              () =>
-                api.putMetadata(title.id, {
+              async () => {
+                // Nothing is sent unless both can be read: "20x6" went out as no year at
+                // all (and erased the year), and the date went out as typed.
+                const year = f.year.trim()
+                const premiered = f.premiered.trim()
+                if (year && !/^\d{4}$/.test(year)) throw new Error('The year must be four digits, like 2019.')
+                if (premiered && !/^\d{4}-\d{2}-\d{2}$/.test(premiered)) throw new Error('The date must look like 2019-04-06 (year-month-day).')
+                await api.putMetadata(title.id, {
                   title: f.title.trim(),
-                  year: f.year.trim() ? Number(f.year) : null,
+                  year: year ? Number(year) : null,
                   overview: f.overview,
                   genres: f.genres
                     .split(',')
                     .map((g) => g.trim())
                     .filter(Boolean),
                   studio: f.studio.trim(),
-                  premiered: f.premiered.trim(),
+                  premiered,
                   locked: f.locked,
-                }),
+                })
+              },
               () => {
                 // The title's own page asks the server again instead of trusting its copy.
                 markStale(`item:${title.id}`)
