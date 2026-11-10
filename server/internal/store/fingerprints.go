@@ -202,3 +202,43 @@ func (s *Store) MarkAniSkipAsked(ctx context.Context, sourceID, mal string) erro
 		ON CONFLICT(source_id) DO UPDATE SET aniskip_mal = excluded.aniskip_mal`, sourceID, Now(), mal)
 	return err
 }
+
+// SegmentSource is a media source's file with the segments known for it.
+type SegmentSource struct {
+	SourceID   string
+	Path       string
+	DurationMs int64
+	Segments   []model.MediaSegment
+}
+
+// SourcesWithSegments lists every media source that has a file, with the file's path and
+// the source's segments of every origin (often none).
+func (s *Store) SourcesWithSegments(ctx context.Context) ([]SegmentSource, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ms.id, mp.path, ms.duration_ms, sg.type, sg.start_ms, sg.end_ms, sg.origin
+		FROM media_sources ms
+		JOIN media_parts mp ON mp.source_id = ms.id AND mp.part_index = 0
+		LEFT JOIN media_segments sg ON sg.source_id = ms.id
+		ORDER BY mp.path, ms.id, sg.start_ms, sg.type`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SegmentSource
+	for rows.Next() {
+		var src SegmentSource
+		var kind, origin sql.NullString
+		var start, end sql.NullInt64
+		if err := rows.Scan(&src.SourceID, &src.Path, &src.DurationMs, &kind, &start, &end, &origin); err != nil {
+			return nil, err
+		}
+		if n := len(out); n == 0 || out[n-1].SourceID != src.SourceID {
+			out = append(out, src)
+		}
+		if kind.Valid {
+			out[len(out)-1].Segments = append(out[len(out)-1].Segments,
+				model.MediaSegment{Type: kind.String, StartMs: start.Int64, EndMs: end.Int64, Origin: origin.String})
+		}
+	}
+	return out, rows.Err()
+}

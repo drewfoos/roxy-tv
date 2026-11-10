@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,6 +38,10 @@ type Chapter struct {
 	StartMs int64  `json:"startMs"`
 	EndMs   int64  `json:"endMs"`
 	Title   string `json:"title,omitempty"`
+	// Linked: what the chapter plays is in another file (Matroska segment linking: an
+	// opening or ending kept once for a whole season). StartMs and EndMs are then both
+	// the place in this file where that part would play. See matroska.go.
+	Linked bool `json:"linked,omitempty"`
 }
 
 // ffprobe JSON shapes (only the fields we read).
@@ -49,6 +54,7 @@ type ffprobeOut struct {
 	} `json:"format"`
 	Streams  []ffStream `json:"streams"`
 	Chapters []struct {
+		ID        int64             `json:"id"`
 		StartTime string            `json:"start_time"`
 		EndTime   string            `json:"end_time"`
 		Tags      map[string]string `json:"tags"`
@@ -130,12 +136,43 @@ func File(ctx context.Context, ff *ffmpeg.FFmpeg, path string) (*Result, error) 
 			})
 		}
 	}
+	var uids []uint64 // ffprobe's chapter id is the Matroska chapter UID, printed signed
 	for _, c := range raw.Chapters {
 		st, _ := strconv.ParseFloat(c.StartTime, 64)
 		en, _ := strconv.ParseFloat(c.EndTime, 64)
 		res.Chapters = append(res.Chapters, Chapter{StartMs: int64(st * 1000), EndMs: int64(en * 1000), Title: c.Tags["title"]})
+		uids = append(uids, uint64(c.ID))
+	}
+	if strings.Contains(raw.Format.FormatName, "matroska") {
+		eds, err := matroskaEditionsOfFile(path)
+		if err != nil {
+			// ffprobe's list stands. It is wrong only for a file with linked chapters,
+			// which this could not find out.
+			slog.Warn("probe: could not read the file's own chapter list", "file", filepath.Base(path), "err", err)
+		}
+		res.Chapters = ownChapters(eds, res.Chapters, uids)
 	}
 	return res, nil
+}
+
+// ownChapters corrects the chapters ffprobe listed for a Matroska file (uids: each one's
+// chapter UID) by the file's editions: no chapter that plays another file is left as one
+// of this file's own. A file without linked chapters keeps ffprobe's list as it is.
+func ownChapters(eds []mkvEdition, listed []Chapter, uids []uint64) []Chapter {
+	if chapters, ok := chaptersOfEditions(eds); ok {
+		return chapters
+	}
+	linked := linkedChapterUIDs(eds) // of an edition that is not the one played
+	if len(linked) == 0 {
+		return listed
+	}
+	var own []Chapter
+	for i, c := range listed {
+		if !linked[uids[i]] {
+			own = append(own, c)
+		}
+	}
+	return own
 }
 
 func common(s ffStream, t model.StreamType) model.MediaStream {

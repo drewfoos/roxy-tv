@@ -166,6 +166,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 			if err := lib.ScanAll(ctx, false); err != nil {
 				slog.Error("initial scan failed", "err", err)
 			}
+			recheckChapterSegments(ctx, lib)
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
 			sweepCaches(ctx, lib)
@@ -178,6 +179,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 					meta.Enqueue(id)
 				}
 			}
+			recheckChapterSegments(ctx, lib)
 			trick.SweepMissing(ctx)
 			segs.SweepAll(ctx)
 			sweepCaches(ctx, lib)
@@ -204,6 +206,15 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 	}
 	slog.Info("roxy server listening", "addr", cfg.Listen, "data", cfg.DataDir)
 	return serveHTTP(ctx, ln, api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs))
+}
+
+// recheckChapterSegments corrects skip markers an older build took from chapters, once
+// (see library.RecheckChapterSegments). It runs after the scan, which has by then dropped
+// the files that are gone, and before the detector looks for what the chapters left open.
+func recheckChapterSegments(ctx context.Context, lib *library.Library) {
+	if _, err := lib.RecheckChapterSegments(ctx); err != nil && ctx.Err() == nil {
+		slog.Warn("chapter segment recheck failed", "err", err)
+	}
 }
 
 // sweepCaches clears the caches of what removed titles and files left there: once now

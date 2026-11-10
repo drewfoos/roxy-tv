@@ -39,7 +39,7 @@ that were never built.
 - SyncPlay / watch together.
 - Jellyfin- or Plex-compatible APIs.
 - Roku, webOS and Tizen apps.
-- Ordered chapters / segment linking (FFmpeg cannot demux them; remux such releases).
+- Ordered chapters / segment linking (FFmpeg cannot demux them; remux such releases). A file that links to others plays without those parts; the server reads its chapter editions itself (`probe/matroska.go`) so that a linked OP or ED is never taken for a part of the file and given a skip marker.
 
 ## 2. System context
 

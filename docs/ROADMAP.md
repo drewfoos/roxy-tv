@@ -337,4 +337,4 @@ Exit: Jellyfin can be turned off.
 ## Explicitly deferred
 
 - Plex API compatibility, live TV, DLNA, SyncPlay, music.
-- Ordered chapters (FFmpeg limitation; remux releases instead).
+- Ordered chapters (FFmpeg limitation; remux releases instead). Such a file plays without the parts it keeps in other files (usually the OP and ED), and gets no skip marker for them.
