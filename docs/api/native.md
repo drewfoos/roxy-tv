@@ -233,7 +233,7 @@ season for files without chapters) and `manual`.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/sources/{id}/trickplay` | `200` manifest `{intervalMs, width, height, columns, rows, count, sheets, generatedAt}`; `202 {"status":"generating"}` after queueing (retry later); `404` unknown source |
+| GET | `/v1/sources/{id}/trickplay` | `200` manifest `{version, intervalMs, width, height, columns, rows, count, sheets, generatedAt}`; `202 {"status":"generating"}` after queueing (retry later); `404` unknown source. Sheets made by an older generator (a lower `version`, or none) are served as they are and remade in the background, under the same URLs |
 | GET | `/v1/sources/{id}/trickplay/{n}` | sheet `n` (0-based), JPEG, immutable cache headers |
 
 Generated server-side after ingest (one keyframe every 10 s, 320 px wide, 10×10 tiles

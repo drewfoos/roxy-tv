@@ -474,3 +474,156 @@ func TestPreviewsKeepTheShapeTheVideoIsShownIn(t *testing.T) {
 		t.Fatalf("manifest: %+v, want two 320x180 tiles (16:9)", m)
 	}
 }
+
+// oldManifest writes sheets as a generator from before manifests had a version left them.
+func oldManifest(t *testing.T, cfg *config.Config, id string) {
+	t.Helper()
+	dir := filepath.Join(cfg.TrickplayDir(), id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeColour(t, filepath.Join(dir, "sheet_001.jpg"), color.White, TileWidth*Columns, 180*Rows)
+	old := `{"intervalMs":10000,"width":320,"height":180,"columns":10,"rows":10,"count":3,"sheets":1,"generatedAt":"2026-10-27T08:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Sheets an older generator made (tiles of HEVC a keyframe off, squeezed pictures of
+// videos with pixels that are not square) stayed for good: nothing but Library > Refresh
+// > Trickplay, one title at a time, made them again. They are queued again now, behind
+// the files that have none, and served as they are until then.
+func TestSheetsOfAnOlderGeneratorAreQueuedBehindFilesWithNone(t *testing.T) {
+	cfg, media := setup(t)
+	video := filepath.Join(media, "Film.mkv")
+	if err := os.WriteFile(video, []byte("a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, old := service(t, cfg, fakeFFmpeg(t, "exit 1"), video, 30_000)
+	ctx := context.Background()
+	const missing = "new"
+	if err := s.store.ReplaceSource(ctx, &model.MediaSource{ID: missing, ItemID: "film", DurationMs: 30_000,
+		Parts: []model.MediaPart{{ID: "part2", Path: filepath.Join(media, "Film - 4K.mkv")}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	oldManifest(t, cfg, old)
+
+	if m := s.Manifest(old); m == nil || m.Count != 3 {
+		t.Fatalf("the old sheets are not served while they wait: %+v", m)
+	}
+	if !s.Enqueue(old) { // first, so that plain first-come order would hand it out first
+		t.Fatal("sheets of an older generator were not queued to be made again")
+	}
+	if !s.Enqueue(missing) {
+		t.Fatal("the file with no sheets was not queued")
+	}
+	if s.Enqueue(old) || s.Enqueue(missing) {
+		t.Error("queued twice")
+	}
+	var order []string
+	for range 2 {
+		id, ok := s.next(ctx)
+		if !ok {
+			t.Fatal("nothing to work on")
+		}
+		order = append(order, id)
+	}
+	if want := []string{missing, old}; !reflect.DeepEqual(order, want) {
+		t.Errorf("worked on in the order %v, want %v: a file with no sheets goes first", order, want)
+	}
+
+	// A remake that fails leaves the old sheets where they are.
+	s.attempt(ctx, old)
+	if m := s.Manifest(old); m == nil || m.Count != 3 {
+		t.Errorf("a failed remake took the old sheets away: %+v", m)
+	}
+	if _, err := os.Stat(s.SheetPath(old, 0)); err != nil {
+		t.Errorf("a failed remake took the old sheet away: %v", err)
+	}
+
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	if id, ok := s.next(stopped); ok {
+		t.Errorf("next handed out %q after the server was stopped", id)
+	}
+}
+
+// The sweep at startup counts both kinds, and sheets this generator made are left alone.
+func TestTheSweepRemakesOnlySheetsOfAnOlderGenerator(t *testing.T) {
+	cfg, media := setup(t)
+	video := filepath.Join(media, "Film.mkv")
+	if err := os.WriteFile(video, []byte("a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, id := service(t, cfg, fakeFFmpeg(t, "exit 1"), video, 30_000)
+	ctx := context.Background()
+	oldManifest(t, cfg, id)
+	s.SweepMissing(ctx)
+	if len(s.redo) != 1 || len(s.queue) != 0 {
+		t.Fatalf("after the sweep: %d to remake, %d with none; want 1 and 0", len(s.redo), len(s.queue))
+	}
+	<-s.redo
+	s.mu.Lock()
+	delete(s.pending, id)
+	s.mu.Unlock()
+
+	// The same sheets, marked as this generator's.
+	b, err := os.ReadFile(s.manifestPath(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.Version = manifestVersion
+	b, _ = json.Marshal(m)
+	if err := os.WriteFile(s.manifestPath(id), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.SweepMissing(ctx)
+	if s.Enqueue(id) || len(s.redo) != 0 || len(s.queue) != 0 {
+		t.Errorf("sheets this generator made were queued again (%d to remake, %d with none)", len(s.redo), len(s.queue))
+	}
+	// Asked for twice and made in between: the second turn does nothing (here ffmpeg
+	// would fail, and the failure would be noted).
+	s.attempt(ctx, id)
+	if s.Failed(id) {
+		t.Error("a file that has this generator's sheets was generated again")
+	}
+}
+
+// Sheets made by this generator say so, and making them again replaces an older
+// generator's sheets (real ffmpeg).
+func TestARemakeReplacesTheOldSheets(t *testing.T) {
+	ff := needFFmpeg(t)
+	cfg, media := setup(t)
+	video := filepath.Join(media, "Clip.mkv")
+	if out, err := exec.Command(ff.FFmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=320x240:d=25:r=10",
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "10", "-f", "matroska", video).CombinedOutput(); err != nil {
+		t.Fatalf("making the video: %v %s", err, out)
+	}
+	s, id := service(t, cfg, ff, video, 25_000)
+	oldManifest(t, cfg, id)
+	if !s.Enqueue(id) {
+		t.Fatal("the old sheets were not queued")
+	}
+	got, ok := s.next(context.Background())
+	if !ok || got != id {
+		t.Fatalf("next = %q, %v", got, ok)
+	}
+	s.mu.Lock()
+	delete(s.pending, id)
+	s.mu.Unlock()
+	s.attempt(context.Background(), id)
+	m := s.Manifest(id)
+	if m == nil || m.Version != manifestVersion || m.Height != 240 || m.Generated == "2026-10-27T08:00:00Z" {
+		t.Fatalf("after the remake the manifest is %+v", m)
+	}
+	if c := tileColour(t, s.SheetPath(id, 0), 0, m.Width, m.Height); c != "red" {
+		t.Errorf("the sheet is still the old one: its first tile is %s", c)
+	}
+	if s.Enqueue(id) {
+		t.Error("queued again after the remake")
+	}
+}

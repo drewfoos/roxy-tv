@@ -43,11 +43,17 @@ const (
 	Columns    = 10
 	Rows       = 10
 	queueSize  = 4096
+	redoSize   = 16384
 
 	// generatorVersion goes into the note left for a file whose previews could not be
 	// made. Raise it when generation changes in a way that could make such a file work:
 	// notes from another version are ignored, so every one of them is tried again.
 	generatorVersion = 2
+	// manifestVersion goes into each manifest. Raise it when generation changes in a way
+	// that makes better sheets from the same file: sheets from an older version (or from
+	// before there was one) are still served, and are made again in the background,
+	// behind the files that have none.
+	manifestVersion = 1
 	// failureAttempts is how many failed tries (an hour or a restart apart) it takes
 	// before a file is left alone: one failure may be this machine's (a full disk).
 	failureAttempts = 3
@@ -61,6 +67,7 @@ const (
 
 // Manifest describes the sheets of one source. Served as JSON.
 type Manifest struct {
+	Version    int    `json:"version,omitempty"` // manifestVersion of the generator that made the sheets
 	IntervalMs int    `json:"intervalMs"`
 	Width      int    `json:"width"`  // tile width
 	Height     int    `json:"height"` // tile height
@@ -76,14 +83,15 @@ type Service struct {
 	ff    *ffmpeg.FFmpeg
 	cfg   *config.Config
 
-	queue   chan string
+	queue   chan string // sources with no sheets
+	redo    chan string // sources whose sheets an older generator made: after the queue
 	mu      sync.Mutex
 	pending map[string]bool
 	failed  map[string]time.Time
 }
 
 func New(st *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Service {
-	return &Service{store: st, ff: ff, cfg: cfg, queue: make(chan string, queueSize), pending: map[string]bool{}, failed: map[string]time.Time{}}
+	return &Service{store: st, ff: ff, cfg: cfg, queue: make(chan string, queueSize), redo: make(chan string, redoSize), pending: map[string]bool{}, failed: map[string]time.Time{}}
 }
 
 func (s *Service) dir(sourceID string) string {
@@ -115,22 +123,47 @@ func (s *Service) Manifest(sourceID string) *Manifest {
 func (s *Service) Start(ctx context.Context) {
 	go func() {
 		for {
-			select {
-			case <-ctx.Done():
+			id, ok := s.next(ctx)
+			if !ok {
 				return
-			case id := <-s.queue:
-				s.mu.Lock()
-				delete(s.pending, id)
-				s.mu.Unlock()
-				s.attempt(ctx, id)
 			}
+			s.mu.Lock()
+			delete(s.pending, id)
+			s.mu.Unlock()
+			s.attempt(ctx, id)
 		}
 	}()
 }
 
+// next waits for the next source to work on: one with no sheets at all before one whose
+// sheets are only old. It reports false when the server is stopping.
+func (s *Service) next(ctx context.Context) (string, bool) {
+	select {
+	case <-ctx.Done():
+		return "", false
+	case id := <-s.queue:
+		return id, true
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return "", false
+	case id := <-s.queue:
+		return id, true
+	case id := <-s.redo:
+		return id, true
+	}
+}
+
+// current reports whether a manifest's sheets are this generator's.
+func current(m *Manifest) bool { return m != nil && m.Version >= manifestVersion }
+
 // attempt generates one source's thumbnails and remembers a failure: for an hour in
 // memory whatever it was, and in a note on disk when it was the file's own.
 func (s *Service) attempt(ctx context.Context, id string) {
+	if current(s.Manifest(id)) {
+		return // made while this waited in the queue (asked for twice)
+	}
 	err := s.generate(ctx, id)
 	if err == nil || ctx.Err() != nil { // stopping the server is not the file's fault
 		return
@@ -239,12 +272,22 @@ func (s *Service) Failed(sourceID string) bool {
 	return (ok && time.Since(t) < time.Hour) || s.failedBefore(sourceID)
 }
 
-// Enqueue schedules generation for a source unless it already has a manifest, is
-// queued, or failed (within the last hour, or before as the same file). It reports
-// whether the source was queued.
+// Enqueue schedules generation for a source unless it already has this generator's
+// sheets, is queued, or failed (within the last hour, or before as the same file). A
+// source with an older generator's sheets waits behind those with none, and its old
+// sheets are served until the new ones replace them. It reports whether the source was
+// queued.
 func (s *Service) Enqueue(sourceID string) bool {
-	if sourceID == "" || s.Manifest(sourceID) != nil || s.failedBefore(sourceID) {
+	if sourceID == "" {
 		return false
+	}
+	m := s.Manifest(sourceID)
+	if current(m) || s.failedBefore(sourceID) {
+		return false
+	}
+	queue := s.queue
+	if m != nil {
+		queue = s.redo
 	}
 	s.mu.Lock()
 	if s.pending[sourceID] {
@@ -258,7 +301,7 @@ func (s *Service) Enqueue(sourceID string) bool {
 	s.pending[sourceID] = true
 	s.mu.Unlock()
 	select {
-	case s.queue <- sourceID:
+	case queue <- sourceID:
 		return true
 	default:
 		s.mu.Lock()
@@ -293,21 +336,27 @@ func (s *Service) Pending(sourceID string) bool {
 	return s.pending[sourceID]
 }
 
-// SweepMissing enqueues every source without a manifest (startup, after scans). Sources
-// that are not tried again (they failed as the file they still are) are not counted.
+// SweepMissing enqueues every source without a manifest, and every one whose sheets an
+// older generator made (startup, after scans). Sources that are not tried again (they
+// failed as the file they still are) are not counted.
 func (s *Service) SweepMissing(ctx context.Context) {
 	ids, err := s.store.AllSourceIDs(ctx)
 	if err != nil {
 		return
 	}
-	n := 0
+	n, old := 0, 0
 	for _, id := range ids {
+		had := s.Manifest(id) != nil
 		if s.Enqueue(id) {
-			n++
+			if had {
+				old++
+			} else {
+				n++
+			}
 		}
 	}
-	if n > 0 {
-		slog.Info("trickplay: queued", "sources", n)
+	if n > 0 || old > 0 {
+		slog.Info("trickplay: queued", "sources", n, "remakes", old)
 	}
 }
 
@@ -374,6 +423,7 @@ func (s *Service) generate(ctx context.Context, sourceID string) (err error) {
 		return err
 	}
 	m := Manifest{
+		Version:    manifestVersion,
 		IntervalMs: IntervalMs,
 		Width:      width,
 		Height:     height,
