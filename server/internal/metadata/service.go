@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -61,8 +62,9 @@ type Service struct {
 	queue chan job
 	force bool // the job being processed was a forced refresh (worker-local)
 	// replaceImages: the job re-downloads art even when the provider's URL is unchanged
-	// (worker-local; locked images are still kept).
-	replaceImages bool
+	// (locked images are still kept). Set by the worker, also read by SetImage on a
+	// request's goroutine: atomic.
+	replaceImages atomic.Bool
 	mu            sync.Mutex
 	pending       map[string]bool      // queued but not yet picked up (dedupe)
 	failed        map[string]time.Time // top-level item id -> last unmatched attempt
@@ -200,6 +202,9 @@ type job struct {
 	itemID string
 	force  bool
 	images bool // also re-download images whose URL did not change
+	// retry: re-queued by retryLater after a provider did not answer. It is not held
+	// back by s.failed (which the failure itself set), or the retry would do nothing.
+	retry bool
 }
 
 // TMDB exposes the TMDB client when it has a key (Discover), else nil.
@@ -339,7 +344,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 		}
 	}()
 	s.force = j.force
-	s.replaceImages = j.images
+	s.replaceImages.Store(j.images)
 	// Details set by hand (or a custom show no provider knows) stay as they are.
 	if locked, err := s.store.MetadataLocked(ctx, it.ID); err == nil && locked {
 		return nil
@@ -374,7 +379,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 		s.mu.Lock()
 		last, tried := s.failed[it.ID]
 		s.mu.Unlock()
-		if tried && time.Since(last) < retryFailed {
+		if tried && !j.retry && time.Since(last) < retryFailed {
 			return nil
 		}
 		// A title no provider matched is not asked again on every restart either.
@@ -403,11 +408,9 @@ func (s *Service) process(ctx context.Context, j job) error {
 		s.retryLater(j)
 		return err
 	}
-	s.mu.Lock()
-	delete(s.retries, it.ID)
-	s.mu.Unlock()
 	if primary == nil {
 		s.mu.Lock()
+		delete(s.retries, j.itemID)
 		s.failed[it.ID] = time.Now()
 		s.mu.Unlock()
 		if len(failed) == 0 {
@@ -482,7 +485,17 @@ func (s *Service) process(ctx context.Context, j job) error {
 		}
 	}
 	if it.Type == model.TypeSeries {
-		n := s.applySeries(ctx, it, primary, secondary, onlyNewEpisodes, sonarr)
+		n, unanswered := s.applySeries(ctx, it, primary, secondary, onlyNewEpisodes, sonarr)
+		if unanswered {
+			// A provider did not answer for a season (a timeout, a 429 mid-series): its
+			// episodes were left as they are. Not a finished attempt, or they would stay
+			// "Episode N" until the weekly refresh: ask again shortly.
+			s.mu.Lock()
+			s.failed[it.ID] = time.Now()
+			s.mu.Unlock()
+			s.retryLater(j)
+			return nil
+		}
 		if onlyNewEpisodes && n == 0 {
 			// Nothing the providers know about yet; back off instead of retrying every scan.
 			s.mu.Lock()
@@ -490,6 +503,9 @@ func (s *Service) process(ctx context.Context, j job) error {
 			s.mu.Unlock()
 		}
 	}
+	s.mu.Lock()
+	delete(s.retries, j.itemID)
+	s.mu.Unlock()
 	if len(failed) == 0 {
 		_ = s.store.SetMetadataAttempted(ctx, it.ID, startedAt)
 	}
@@ -511,6 +527,7 @@ func (s *Service) retryLater(j job) {
 	s.retries[j.itemID] = n + 1
 	delay := s.retryDelay << n
 	s.mu.Unlock()
+	j.retry = true
 	time.AfterFunc(delay, func() { s.enqueueJob(j) })
 }
 
@@ -708,7 +725,8 @@ func itemMetadata(r *Result, t model.ItemType) store.ItemMetadata {
 }
 
 // applySeries fills season posters and episode titles/overviews/air dates/stills.
-// Returns the number of episodes updated.
+// Returns the number of episodes updated, and whether a provider failed to answer for a
+// season (its episodes are left alone; the caller asks again).
 //
 // Episode data comes from TMDB first whichever provider matched first: its seasons
 // follow the TVDB-style numbering Sonarr files by, while AniList's Crunchyroll lists are
@@ -716,14 +734,15 @@ func itemMetadata(r *Result, t model.ItemType) store.ItemMetadata {
 // title (Sonarr's "Show - S00E03 - Title") is matched by that title within the season
 // before its number: TVDB and TMDB number specials (and some shows' episodes)
 // differently, so the number alone can name another episode.
-func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, secondary *Result, onlyNew bool, sonarr map[[2]int]string) int {
+func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, secondary *Result, onlyNew bool, sonarr map[[2]int]string) (updated int, unanswered bool) {
 	seasons, err := s.store.Children(ctx, series.ID, model.TypeSeason)
 	if err != nil {
 		slog.Warn("metadata: listing seasons", "series", series.Title, "err", err)
-		return 0
+		return 0, false
 	}
 	fileTitles, withFile := s.episodeFiles(ctx, series)
 	cache := map[string]*Season{} // "<provider>:<season>" -> fetched season (nil = unknown)
+	errored := map[string]bool{}  // the lookups a provider did not answer
 	fetch := func(r *Result, n int) *Season {
 		if r == nil {
 			return nil
@@ -741,6 +760,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 			se, err = p.Episodes(ctx, r, n)
 			if err != nil {
 				slog.Warn("metadata: season lookup failed", "provider", p.Name(), "series", series.Title, "season", n, "err", err)
+				errored[key], unanswered = true, true
 			}
 		}
 		cache[key] = se
@@ -751,7 +771,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	if n := s.matchDatedEpisodes(ctx, series, tmdbFirst(primary, secondary), fetch); n > 0 {
 		slog.Info("metadata: episodes found by air date", "series", series.Title, "count", n)
 		if seasons, err = s.store.Children(ctx, series.ID, model.TypeSeason); err != nil {
-			return 0
+			return 0, unanswered
 		}
 	}
 	// How the library's seasons line up with each provider's (see layout.go).
@@ -783,7 +803,6 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	// Provider episodes (in src's numbering, per library season) a file claimed by its
 	// title although it carries another number: no "missing" placeholder for them.
 	claimed := map[int]map[int]bool{}
-	updated := 0
 	for i := range seasons {
 		season := &seasons[i]
 		num := 1
@@ -808,7 +827,9 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 		// A forced refresh on a season whose provider data turned out to be wrong
 		// (see SeasonInfo.NoEpisodeData) clears what an earlier run wrote so the
 		// episodes fall back to "Episode N" until a provider with real data fills them.
-		if s.force && num >= 1 && num-1 < len(primary.Seasons) && primary.Seasons[num-1].NoEpisodeData && fetch(secondary, num) == nil {
+		// "No answer" from the other provider is not "it has none": nothing is cleared then.
+		if s.force && num >= 1 && num-1 < len(primary.Seasons) && primary.Seasons[num-1].NoEpisodeData && fetch(secondary, num) == nil &&
+			(secondary == nil || !errored[fmt.Sprintf("%s:%d", secondary.Provider, num)]) {
 			if err := s.store.ResetEpisodeMetadata(ctx, season.ID); err == nil {
 				slog.Info("metadata: season episode data untrusted, reset", "series", series.Title, "season", num, "provider", primary.Provider)
 			}
@@ -953,7 +974,7 @@ func (s *Service) applySeries(ctx context.Context, series *model.Item, primary, 
 	}
 	s.createPlaceholders(ctx, series, seasons, src, otherResult(src, primary, secondary), fetch, layouts, lengths, claimed)
 	s.storeSeasonIDs(ctx, series, primary, secondary, layouts, lengths)
-	return updated
+	return updated, unanswered
 }
 
 // matchDatedEpisodes files each real episode of the series that has an air date but no
@@ -1702,8 +1723,16 @@ func (s *Service) fetchImageOpt(ctx context.Context, itemID, typ, srcURL string,
 		if existing.Locked && !force {
 			return
 		}
-		if existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext && !s.replaceImages {
+		if existing.SourceURL == srcURL && filepath.Ext(existing.Path) == ext && !s.replaceImages.Load() {
 			if _, err := os.Stat(existing.Path); err == nil {
+				// The admin picked the image already in use: nothing to download, but
+				// it is their choice now, so the next refresh must not replace it.
+				if force && !existing.Locked {
+					existing.Locked = true
+					if err := s.store.SetItemImage(ctx, *existing); err != nil {
+						slog.Warn("metadata: keeping the chosen image", "item", itemID, "type", typ, "err", err)
+					}
+				}
 				return
 			}
 		}

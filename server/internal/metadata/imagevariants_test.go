@@ -54,3 +54,42 @@ func TestNewImageDropsPNGAndJPEGVariants(t *testing.T) {
 		}
 	}
 }
+
+// Picking, by hand, the image a title already has pins it: nothing needs downloading,
+// but the next refresh must not swap it for the provider's new favourite. It used to
+// report success and leave the image unpinned.
+func TestPickingTheCurrentImagePinsIt(t *testing.T) {
+	f := newFixture(t, false)
+	data := t.TempDir()
+	safefs.Init(data)
+	f.svc.cfg = &config.Config{DataDir: data}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 8, 4))); err != nil {
+		t.Fatal(err)
+	}
+	art := t.TempDir()
+	first, second := filepath.Join(art, "a.png"), filepath.Join(art, "b.png")
+	for _, p := range []string{first, second} {
+		if err := os.WriteFile(p, buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A refresh saved the provider's poster.
+	f.svc.fetchImage(f.ctx, f.series.ID, "poster", "file://"+first)
+	if img, _ := f.st.GetItemImage(f.ctx, f.series.ID, "poster"); img == nil || img.Locked {
+		t.Fatalf("after a refresh: %+v, want the poster saved and not pinned", img)
+	}
+	// The admin picks that same poster.
+	if err := f.svc.SetImage(f.ctx, f.series.ID, "poster", "file://"+first); err != nil {
+		t.Fatal(err)
+	}
+	if img, _ := f.st.GetItemImage(f.ctx, f.series.ID, "poster"); img == nil || !img.Locked {
+		t.Fatalf("after picking it by hand: %+v, want it pinned", img)
+	}
+	// A later refresh offers another poster: the pick stays.
+	f.svc.fetchImage(f.ctx, f.series.ID, "poster", "file://"+second)
+	if img, _ := f.st.GetItemImage(f.ctx, f.series.ID, "poster"); img == nil || img.SourceURL != "file://"+first {
+		t.Errorf("a refresh replaced the picked poster: %+v", img)
+	}
+}
