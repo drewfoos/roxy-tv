@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
@@ -19,30 +18,104 @@ import (
 // (ADR: eager extraction) so burn-in and clients always find the fonts.
 //
 // ffmpeg writes each attachment to its "filename" tag relative to the working directory,
-// so we run with cmd.Dir = dir. Names are sanitized to a single path component.
+// so it runs with a working directory of its own. Names are sanitized to a single path
+// component.
+//
+// One extraction per folder at a time, and ffmpeg writes into a temporary folder: a font
+// is moved into dir only once ffmpeg has finished, so a request never reads one that is
+// still being written (or was left half written by a stopped ffmpeg).
 func ExtractAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string, atts []model.Attachment) error {
 	if len(atts) == 0 {
 		return nil
 	}
+	defer attachmentLocks.lock(dir)()
+	return extractAttachments(ctx, ff, path, dir, atts)
+}
+
+// EnsureAttachments is ExtractAttachments for a request that found a font not extracted
+// yet: fonts already in dir are used as they are. A subtitle track asks for all its fonts
+// at once, and each of those requests used to run its own ffmpeg over the whole file,
+// all writing the same files.
+func EnsureAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string, atts []model.Attachment) error {
+	if len(atts) == 0 {
+		return nil
+	}
+	defer attachmentLocks.lock(dir)()
+	if attachmentsPresent(dir, atts) {
+		return nil
+	}
+	return extractAttachments(ctx, ff, path, dir, atts)
+}
+
+var attachmentLocks keyLocks
+
+// attachmentsPresent fills in the attachments from dir when every one of them is there.
+func attachmentsPresent(dir string, atts []model.Attachment) bool {
+	var at []time.Time
+	for _, a := range atts {
+		fi, err := os.Stat(filepath.Join(dir, safeName(a.Filename)))
+		if err != nil || fi.IsDir() {
+			return false
+		}
+		at = append(at, fi.ModTime().UTC())
+	}
+	for i := range atts {
+		atts[i].ExtractedPath = filepath.Join(dir, safeName(atts[i].Filename))
+		t := at[i]
+		atts[i].ExtractedAt = &t
+	}
+	return true
+}
+
+// extractTemp names the temporary folders extractAttachments works in.
+const extractTemp = ".extract-"
+
+func extractAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string, atts []model.Attachment) error {
 	if err := safefs.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	// Left by a run that was killed; nobody else is in this folder while its lock is held.
+	if old, err := os.ReadDir(dir); err == nil {
+		for _, e := range old {
+			if e.IsDir() && strings.HasPrefix(e.Name(), extractTemp) {
+				_ = safefs.RemoveAll(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	tmp, err := os.MkdirTemp(dir, extractTemp+"*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = safefs.RemoveAll(tmp) }()
 	// jellyfin-ffmpeg: -dump_attachment:t "" dumps all attachments using their filename tags.
-	_, err := ff.Run(ctx, dir, "-y", "-v", "error", "-dump_attachment:t", "", "-i", path, "-t", "0", "-f", "null", "-")
+	_, err = ff.Run(ctx, tmp, "-y", "-v", "error", "-dump_attachment:t", "", "-i", path, "-t", "0", "-f", "null", "-")
 	if err != nil && !strings.Contains(err.Error(), "At least one output file") {
+		// A stopped ffmpeg leaves whatever it was writing; none of it is kept.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		// ffmpeg may still have written the files before complaining; verify below.
-		if _, statErr := os.Stat(filepath.Join(dir, safeName(atts[0].Filename))); statErr != nil {
+		if _, statErr := os.Stat(filepath.Join(tmp, safeName(atts[0].Filename))); statErr != nil {
 			return fmt.Errorf("extracting attachments from %s: %w", filepath.Base(path), err)
 		}
 	}
 	now := time.Now().UTC()
+	moved := map[string]bool{} // two attachments may carry one name
 	for i := range atts {
-		p := filepath.Join(dir, safeName(atts[i].Filename))
-		if _, err := os.Stat(p); err == nil {
-			atts[i].ExtractedPath = p
-			t := now
-			atts[i].ExtractedAt = &t
+		name := safeName(atts[i].Filename)
+		p := filepath.Join(dir, name)
+		if !moved[name] {
+			if fi, err := os.Stat(filepath.Join(tmp, name)); err != nil || fi.IsDir() {
+				continue
+			}
+			if err := safefs.Rename(filepath.Join(tmp, name), p); err != nil {
+				return err
+			}
+			moved[name] = true
 		}
+		atts[i].ExtractedPath = p
+		t := now
+		atts[i].ExtractedAt = &t
 	}
 	return nil
 }
@@ -50,15 +123,12 @@ func ExtractAttachments(ctx context.Context, ff *ffmpeg.FFmpeg, path, dir string
 // subtitleLocks serialises extraction per cache file, so a burst of requests for the same
 // track (a player retrying, ingest warming the cache while someone presses play) runs
 // ffmpeg once instead of several times over the same file.
-var subtitleLocks sync.Map
+var subtitleLocks keyLocks
 
 // EnsureTextSubtitle extracts the track to dst unless a copy is already there. A copy at
 // dst is always complete: extraction writes a temporary file and renames it into place.
 func EnsureTextSubtitle(ctx context.Context, ff *ffmpeg.FFmpeg, path string, streamIndex int, codec, dst string) error {
-	mu, _ := subtitleLocks.LoadOrStore(dst, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
-	defer subtitleLocks.Delete(dst)
+	defer subtitleLocks.lock(dst)()
 	if _, err := os.Stat(dst); err == nil {
 		return nil
 	}

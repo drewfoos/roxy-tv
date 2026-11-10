@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -113,9 +114,13 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 			}
 			dir := filepath.Join(s.cfg.AttachmentsDir(), src.ID)
 			atts := src.Attachments
-			if err := probe.ExtractAttachments(r.Context(), s.ff, video, dir, atts); err != nil {
+			if err := probe.EnsureAttachments(r.Context(), s.ff, video, dir, atts); err != nil {
 				writeError(w, 500, err.Error())
 				return
+			}
+			// Recorded, so the next request finds the fonts without coming through here.
+			if err := s.store.SetAttachmentsExtracted(r.Context(), src.ID, atts); err != nil {
+				slog.Warn("recording extracted attachments", "source", src.ID, "err", err)
 			}
 			for _, b := range atts {
 				if b.Index == idx {
