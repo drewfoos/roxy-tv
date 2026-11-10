@@ -21,7 +21,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -61,12 +60,14 @@ fun TvItemMenu(
     onGoTo: (() -> Unit)? = null,
 ) {
     val app = RoxyApp.get(LocalContext.current)
-    val scope = rememberCoroutineScope()
     var info by remember { mutableStateOf(false) }
     val watched = item.isWatched // a rewatch under way is in progress, not watched
     val started = (item.userData?.positionMs ?: 0L) > 0 || item.userData?.played == true
+    // The menu closes as it acts, and closing it cancels its own scope: the request went
+    // out, but the lists' reload after it never ran (the season stayed unwatched on screen,
+    // Home's hero kept "Continue: E6"). Actions run on the app's scope instead.
     fun then(action: () -> Unit) { onDismiss(); action() }
-    fun mark(id: String, on: Boolean) = then { scope.launch { app.markWatched(id, on) } }
+    fun mark(id: String, on: Boolean) = then { app.scope.launch { app.markWatched(id, on) } }
     Dialog(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.width(520.dp).background(RoxyColors.surfaceHigh).padding(vertical = 18.dp)) {
             val code = if (item.isEpisode) episodeShort(item) else ""
@@ -113,13 +114,15 @@ fun TvItemMenu(
 fun TvTitleMenu(item: Item, onDismiss: () -> Unit, onOpen: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var fresh by remember(item.id) { mutableStateOf(item) }
     LaunchedEffect(item.id) { runCatching { app.api.item(item.id) }.onSuccess { fresh = it } }
     var info by remember { mutableStateOf(false) }
     val saved = fresh.userData?.isFavorite == true
     val watched = fresh.userData?.played == true
     val name = item.title.ifBlank { "This title" }
+    // The menu closes as it acts, and closing it cancels its own scope: the request went
+    // out, but the lists' reload after it never ran (the season stayed unwatched on screen,
+    // Home's hero kept "Continue: E6"). Actions run on the app's scope instead.
     fun then(action: () -> Unit) { onDismiss(); action() }
     fun toast(text: String) = android.widget.Toast.makeText(context.applicationContext, text, android.widget.Toast.LENGTH_SHORT).show()
     Dialog(onDismissRequest = onDismiss) {
@@ -136,7 +139,7 @@ fun TvTitleMenu(item: Item, onDismiss: () -> Unit, onOpen: () -> Unit) {
                         icon = if (saved) Icons.Outlined.BookmarkRemove else Icons.Outlined.BookmarkAdd, selected = true,
                         onClick = {
                             then {
-                                scope.launch {
+                                app.scope.launch {
                                     app.setWatchlist(item.id, !saved)
                                         .onSuccess { toast(if (saved) "Removed $name from your Watchlist" else "Added $name to your Watchlist") }
                                         .onFailure { toast("Couldn't update your Watchlist") }
@@ -149,12 +152,12 @@ fun TvTitleMenu(item: Item, onDismiss: () -> Unit, onOpen: () -> Unit) {
                         TvListRow(
                             label = if (watched) "Mark as unwatched" else "Mark as watched",
                             icon = if (watched) Icons.Filled.Replay else Icons.Outlined.Check, selected = true,
-                            onClick = { then { scope.launch { app.markWatched(item.id, !watched) } } }, modifier = Modifier.fillMaxWidth(),
+                            onClick = { then { app.scope.launch { app.markWatched(item.id, !watched) } } }, modifier = Modifier.fillMaxWidth(),
                         )
                         TvListRow(label = "File info", icon = Icons.Outlined.Info, selected = true, onClick = { info = true }, modifier = Modifier.fillMaxWidth())
                     } else {
-                        TvListRow(label = "Mark all episodes as watched", icon = Icons.Outlined.Check, selected = true, onClick = { then { scope.launch { app.markWatched(item.id, true) } } }, modifier = Modifier.fillMaxWidth())
-                        TvListRow(label = "Mark all episodes as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { then { scope.launch { app.markWatched(item.id, false) } } }, modifier = Modifier.fillMaxWidth())
+                        TvListRow(label = "Mark all episodes as watched", icon = Icons.Outlined.Check, selected = true, onClick = { then { app.scope.launch { app.markWatched(item.id, true) } } }, modifier = Modifier.fillMaxWidth())
+                        TvListRow(label = "Mark all episodes as unwatched", icon = Icons.Filled.Replay, selected = true, onClick = { then { app.scope.launch { app.markWatched(item.id, false) } } }, modifier = Modifier.fillMaxWidth())
                     }
                     LaunchedEffect(Unit) { retryEachFrame("title menu: first option") { first.tryFocus() } }
                 }
