@@ -6,7 +6,7 @@ import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
-import { Art, ProgressBar, SaveButton } from '../components/Cards'
+import { Art, formatAirDate, ProgressBar, SaveButton } from '../components/Cards'
 import { IconPlay, IconReplay } from '../components/Icons'
 import { Spinner } from '../components/Skeleton'
 import { Player } from '../player/Player'
@@ -82,7 +82,7 @@ export function Watch() {
                 {rating && <span className="age">{ageLabel(rating)}</span>}
                 {audioBadge(item) && <span>• {audioBadge(item)}</span>}
               </div>
-              {item.airDate && <div className="watch__date">Released on {formatDate(item.airDate)}</div>}
+              {item.airDate && <div className="watch__date">Released on {formatAirDate(item.airDate) ?? item.airDate}</div>}
             </div>
             {series && <SaveButton item={series} />}
           </div>
@@ -167,9 +167,4 @@ function SideEpisode({ label, ep }: { label: string; ep: Item }) {
       </Link>
     </div>
   )
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }

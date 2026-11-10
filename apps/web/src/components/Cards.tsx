@@ -311,7 +311,7 @@ export function useHoverPanel() {
 }
 
 /** "Oct 30, 2026"; a bare "2026-10-30" is that calendar day, not UTC midnight (a day early here). */
-function formatAirDate(v?: string | null): string | null {
+export function formatAirDate(v?: string | null): string | null {
   if (!v) return null
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v)
   const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(v)
