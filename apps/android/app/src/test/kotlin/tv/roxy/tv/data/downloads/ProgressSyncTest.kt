@@ -31,7 +31,9 @@ import tv.roxy.tv.data.Session
 class ProgressSyncTest {
     private val context = ApplicationProvider.getApplicationContext<android.app.Application>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-    private val server = RecordingServer()
+    /** Run when the server gets its next request (once), before it answers. */
+    @Volatile private var onNextRequest: (() -> Unit)? = null
+    private val server = RecordingServer { onNextRequest?.also { onNextRequest = null }?.invoke(); 200 to "{}" }
     private val prefs = Prefs(context, scope)
 
     @After fun stop() { server.close(); scope.cancel() }
@@ -61,6 +63,34 @@ class ProgressSyncTest {
         sinceBoot += 20_000
         assertNull(runBlocking { d.syncProgress(RoxyApi(prefs)) })
         assertEquals("twenty seconds old, not 'just now'", 20_000L, ageOf(server.seen.last()))
+    }
+
+    // Found in review: the drain picked the active profile's entries, but each request took
+    // its profile header from whichever profile was active when it left. Switch profile while
+    // the queue was being sent, and the rest of one person's watch progress was written to the
+    // other's. Each entry names its own profile now.
+    @Test fun aReportGoesToTheProfileThatMadeIt() {
+        val d = Downloads(context, prefs, scope)
+        signIn("pA")
+        d.recordProgress("e1", 60_000, reportedToServer = false)
+        d.recordProgress("e2", 0, reportedToServer = false, played = true)
+        d.recordProgress("e3", 90_000, reportedToServer = false)
+        // While the first report is on its way, someone picks the other profile.
+        onNextRequest = { signIn("pB") }
+        assertNull(runBlocking { d.syncProgress(RoxyApi(prefs)) })
+        assertEquals(listOf("/v1/me/progress", "/v1/me/played/e2", "/v1/me/progress"), server.seen.map { it.path })
+        assertEquals("all three are profile A's", listOf("pA", "pA", "pA"), server.seen.map { it.header("X-Roxy-Profile") })
+        assertEquals("with the login's token as ever", listOf("Bearer account-token"), server.seen.map { it.header("Authorization") }.distinct())
+
+        // A report made with no profile chosen goes as before: the client's header (none here).
+        signIn(null)
+        d.recordProgress("e4", 5_000, reportedToServer = false)
+        assertNull(runBlocking { d.syncProgress(RoxyApi(prefs)) })
+        assertNull(server.seen.last().header("X-Roxy-Profile"))
+        // And any other call still carries the active profile.
+        signIn("pB")
+        runBlocking { RoxyApi(prefs).progress("e5", 1_000) }
+        assertEquals("pB", server.seen.last().header("X-Roxy-Profile"))
     }
 
     // After a restart the time since boot starts again: only the dates are left, as before.

@@ -48,7 +48,9 @@ class RoxyApi(private val prefs: Prefs) {
             val b = req.newBuilder()
             if (s.token != null && req.header("Authorization") == null) b.header("Authorization", "Bearer ${s.token}")
             // Watch state, favourites and Home are per profile (docs/api/native.md "Profiles").
-            s.profileId?.let { b.header("X-Roxy-Profile", it) }
+            // A request that names its profile keeps it: a queued report belongs to the profile
+            // that made it, whichever is active by the time it is sent.
+            if (req.header(PROFILE_HEADER) == null) s.profileId?.let { b.header(PROFILE_HEADER, it) }
             // Any answer means the server is there; a failed connection (not one we cancelled)
             // tells ServerStatus to check, which drives the "Can't reach Roxy" banner.
             val resp = try { chain.proceed(b.build()) } catch (e: IOException) {
@@ -175,10 +177,13 @@ class RoxyApi(private val prefs: Prefs) {
         if (on) postNoBody("/v1/me/favorite/$itemId", "") else delete("/v1/me/favorite/$itemId")
     }
 
-    /** [at]: when an offline watched mark was made (Unix ms), so the server can drop it if the item was played since. */
-    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null, ageMs: Long? = null) {
+    /**
+     * [at]: when an offline watched mark was made (Unix ms), so the server can drop it if the item was played since.
+     * [profileId]: the profile the mark is for, when not the active one's request (a queued mark).
+     */
+    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null, ageMs: Long? = null, profileId: String? = null) {
         val q = listOfNotNull(at?.let { "at=$it" }, ageMs?.let { "age=$it" }).joinToString("&")
-        if (on) postNoBody("/v1/me/played/$itemId" + (if (q.isEmpty()) "" else "?$q"), "") else delete("/v1/me/played/$itemId")
+        if (on) postNoBody("/v1/me/played/$itemId" + (if (q.isEmpty()) "" else "?$q"), "", profileId) else delete("/v1/me/played/$itemId")
     }
 
     // ---- profiles ----
@@ -475,10 +480,12 @@ class RoxyApi(private val prefs: Prefs) {
      * [ageMs]: how long ago, by this device's clock, the position was reached (a player left
      * paused, a report sent from the offline queue). The server orders reports by it, so a
      * stale one cannot undo what another device did since; [at] is for older servers.
+     * [profileId]: the profile that watched, sent with this request whichever profile is
+     * active now (a queued report); null = the active one, as every other call.
      */
-    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null, sourceId: String? = null, durationMs: Long? = null) {
+    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null, sourceId: String? = null, durationMs: Long? = null, profileId: String? = null) {
         val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at, ageMs, sourceId, durationMs)
-        postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body))
+        postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body), profileId)
     }
 
     // ---- urls the player and image loader fetch on their own ----
@@ -566,8 +573,8 @@ class RoxyApi(private val prefs: Prefs) {
         execute<T>(request(path).get().build())
     }
 
-    private suspend fun postNoBody(path: String, body: String) = withContext(Dispatchers.IO) {
-        val req = request(path).post(body.toRequestBody(JSON_TYPE)).build()
+    private suspend fun postNoBody(path: String, body: String, profileId: String? = null) = withContext(Dispatchers.IO) {
+        val req = request(path).post(body.toRequestBody(JSON_TYPE)).apply { if (profileId != null) header(PROFILE_HEADER, profileId) }.build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw ApiException(resp.code, "HTTP ${resp.code} POST ${req.url.encodedPath}: ${resp.body.string().take(200)}")
         }
@@ -617,6 +624,7 @@ class RoxyApi(private val prefs: Prefs) {
 
     private companion object {
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
+        const val PROFILE_HEADER = "X-Roxy-Profile"
     }
 }
 

@@ -480,9 +480,12 @@ class Downloads(
 
     /**
      * Send the queued positions and "watched" marks, oldest first (every report goes through
-     * here: see ProgressReporter). Only the active profile's are sent (the header is per
-     * request). Returns null when the queue was sent, or the failure that stopped it (the
-     * rest stays queued).
+     * here: see ProgressReporter). Only the active profile's are sent, each naming that
+     * profile itself: the client's own header is the profile active when the request leaves,
+     * which may be another by then (Switch profile during a drain), and the report would be
+     * written to that one. An entry with no profile goes as before, with the client's header.
+     * Returns null when the queue was sent, or the failure that stopped it (the rest stays
+     * queued).
      */
     suspend fun syncProgress(api: RoxyApi): Throwable? = syncLock.withLock {
         val profile = prefs.session.value.profileId
@@ -494,8 +497,8 @@ class Downloads(
                 // from this boot (the date may have been set meanwhile), else the difference
                 // of two dates; at stays for an older server.
                 val age = ageOf(p)
-                if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age)
-                else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs)
+                if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age, profileId = p.profileId)
+                else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs, profileId = p.profileId)
             },
             remove = { p ->
                 _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
