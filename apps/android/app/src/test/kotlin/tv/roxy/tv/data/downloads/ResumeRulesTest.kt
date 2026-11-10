@@ -46,4 +46,22 @@ class ResumeRulesTest {
         assertFalse(partialFits("bytes 1000-999/5000", 1000, 5000))
         assertFalse(partialFits("bytes 1000-5000/5000", 1000, 5000)) // end past the size
     }
+
+    // Found in review: a part that had every byte but was not renamed (the app was stopped
+    // between the last byte and the rename) was resumed with "the rest from <its length>".
+    // The server answers 416 to that, and the whole part was thrown away and fetched again.
+    @Test fun aPartThatIsAlreadyTheWholeFileIsKept() {
+        assertTrue(partIsWhole(5000, 5000, "\"abc\"", "bytes */5000"))
+        assertTrue("the answer names no size", partIsWhole(5000, 5000, "\"abc\"", null))
+        assertTrue("no total was recorded", partIsWhole(5000, 0, "\"abc\"", "bytes */5000"))
+    }
+
+    @Test fun aRejectedRangeOfAnotherFileStartsOver() {
+        assertFalse("the file is shorter than the part", partIsWhole(5000, 5000, "\"abc\"", "bytes */4000"))
+        assertFalse("the file is longer than the part", partIsWhole(5000, 5000, "\"abc\"", "bytes */6000"))
+        assertFalse("not the total recorded", partIsWhole(5000, 6000, "\"abc\"", "bytes */5000"))
+        assertFalse("no size known at all", partIsWhole(5000, 0, "\"abc\"", null))
+        assertFalse("sent without If-Range: the file may be another", partIsWhole(5000, 5000, null, "bytes */5000"))
+        assertFalse("an empty part", partIsWhole(0, 0, "\"abc\"", "bytes */0"))
+    }
 }

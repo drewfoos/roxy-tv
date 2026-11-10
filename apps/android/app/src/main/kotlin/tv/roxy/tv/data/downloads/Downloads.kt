@@ -66,6 +66,11 @@ data class DownloadEntry(
      * on resume so a file that changed on the server restarts instead of being appended to.
      */
     val validator: String? = null,
+    /**
+     * External subtitle files (their stream numbers) the server did not give when they were
+     * asked for; [Downloads.retryMissingSidecars] asks again, also once the video is done.
+     */
+    val missingSidecars: List<Int> = emptyList(),
 ) {
     val isDone: Boolean get() = state == DownloadState.Done
     val fraction: Float get() = if (bytesTotal > 0) (bytesDone.toFloat() / bytesTotal).coerceIn(0f, 1f) else 0f
@@ -539,6 +544,83 @@ class Downloads(
 
     /** Where the service writes while fetching; the length is the resume offset. */
     fun partFileFor(e: DownloadEntry): File = partFile(e)
+
+    /**
+     * Remove what was written for [e] after it was deleted. [delete] clears the folders once,
+     * right away; a fetch that was running (images, subtitles, the first bytes of the video)
+     * may write after that and bring them back, with nothing left that would ever remove
+     * them. Does nothing for an item that is listed (again): only folders no entry and no
+     * title stands for are removed.
+     */
+    fun removeLeftovers(e: DownloadEntry) {
+        val idx = _index.value
+        for (id in setOf(e.itemId, e.titleId)) {
+            if (id !in idx.entries && id !in idx.titles) dir(id).deleteRecursively()
+        }
+    }
+
+    /** One sidecar fetch at a time (the service's and a retry may meet on the same file). */
+    private val sidecarLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Fetch the external subtitle files of [itemId] that are not beside its video yet, and
+     * note on the entry the ones the server did not give ([DownloadEntry.missingSidecars]),
+     * so they are asked for again instead of the download ending without them for good.
+     * Returns false when the server did not answer (the rest was not tried).
+     */
+    suspend fun fetchSidecars(api: RoxyApi, itemId: String): Boolean = sidecarLock.withLock {
+        withContext(Dispatchers.IO) {
+            val e = entry(itemId) ?: return@withContext true
+            val src = e.item.primarySource ?: return@withContext true
+            val dir = dir(itemId)
+            val missing = ArrayList<Int>()
+            var answered = true
+            for (s in sidecarsOf(e.item)) {
+                val f = File(dir, s.fileName)
+                if (f.exists()) continue
+                if (!answered) { missing += s.index; continue }
+                when (fetchSidecar(api, "${api.baseUrl}/v1/sources/${src.id}/subtitles/${s.index}", f)) {
+                    SidecarFetch.Saved, SidecarFetch.Gone -> Unit
+                    SidecarFetch.Refused -> missing += s.index
+                    SidecarFetch.NoAnswer -> { missing += s.index; answered = false }
+                }
+            }
+            update(itemId) { if (it.missingSidecars == missing) it else it.copy(missingSidecars = missing) }
+            if (entry(itemId) == null) removeLeftovers(e) // deleted meanwhile: do not leave the files behind
+            answered
+        }
+    }
+
+    /** One sidecar, written under another name first so a stopped write is never taken for the file. */
+    private fun fetchSidecar(api: RoxyApi, url: String, target: File): SidecarFetch = try {
+        api.http.newCall(okhttp3.Request.Builder().url(url).get().build()).execute().use { resp ->
+            val bytes = if (resp.isSuccessful) resp.body.bytes() else ByteArray(0)
+            val result = sidecarAnswer(resp.code, bytes.size)
+            if (result == SidecarFetch.Saved) {
+                target.parentFile?.mkdirs()
+                val tmp = File(target.parentFile, "sidecar.tmp")
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) { tmp.delete(); throw java.io.IOException("could not move ${target.name} into place") }
+            } else Timber.d("sidecar %s: HTTP %d", target.name, resp.code)
+            result
+        }
+    } catch (t: Exception) {
+        Timber.d("sidecar %s: %s", target.name, t.message)
+        SidecarFetch.NoAnswer
+    }
+
+    /**
+     * Ask again for the subtitle files earlier fetches did not get ([DownloadEntry.missingSidecars]),
+     * finished downloads included: the service only looks at an item while it fetches its
+     * video. Called when the server is known to answer (the app signed in, the queue ran
+     * dry); stops at the first try without an answer, and keeps to the Wi-Fi-only setting.
+     */
+    suspend fun retryMissingSidecars(api: RoxyApi) {
+        if (prefs.downloadsWifiOnly.value && !isUnmetered()) return
+        // A download that is being fetched right now gets its sidecars from the service.
+        val waiting = _index.value.entries.values.filter { it.missingSidecars.isNotEmpty() && it.state != DownloadState.Downloading }
+        for (e in waiting) if (!fetchSidecars(api, e.itemId)) return
+    }
 
     // ---- persistence ----
 
