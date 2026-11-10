@@ -329,9 +329,11 @@ class MpvPlayer(
     @Volatile private var lastOpenHttp4xx = false
 
     private fun loadPending() {
-        frameRateGate.newFile()
+        // A surface coming back with nothing to load must not touch the frame-rate gate:
+        // the gate is reset on the new file's START_FILE (in event order, see FrameRateGate).
         val url = pendingUrl ?: return
         pendingUrl = null
+        frameRateGate.loadRequested()
         lastUrl = url
         lastTranscoded = pendingTranscode
         Timber.i("loadfile %s start=%ds transcoded=%s", url.substringBefore("?"), startSeconds, pendingTranscode)
@@ -810,7 +812,7 @@ class MpvPlayer(
                 queuedLoads.updateAndGet { (it - 1).coerceAtLeast(0) }
                 loading = true
                 ended = false
-                post { leaveNativeHdr() }
+                post { frameRateGate.fileStarted(); leaveNativeHdr() }
             }
             MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> post { frameRateGate.firstFrame()?.let { frameRate = it; applyFrameRate() } }
             MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {
