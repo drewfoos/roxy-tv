@@ -223,8 +223,9 @@ show a Skip button or skip automatically (a viewer preference).
 
 ### 4.8 Watch state
 
-- `POST /v1/me/progress` every ~10 s and on pause and stop. At 90 % of the runtime an item
-  is marked played and its position reset.
+- `POST /v1/me/progress` every ~10 s and on pause and stop. When the ending starts (the
+  version's outro segment: ED, credits) an item is marked played and its position reset;
+  without a known ending, at 90 % of the runtime.
 - Rewatching a played item past 30 s makes it "in progress" again at the new position
   (play count kept); a shorter peek leaves it played with no resume point. So an item is
   never both played and part-way.

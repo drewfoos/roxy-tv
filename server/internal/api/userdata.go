@@ -131,10 +131,11 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	if it.RuntimeMs != nil {
 		runtime = *it.RuntimeMs
 	}
-	if d, ok := s.playedLength(r.Context(), it.ID, body.SourceID, body.DurationMs); ok {
-		runtime = d
+	var segs []model.MediaSegment
+	if v := s.playedVersion(r.Context(), it.ID, body.SourceID, body.DurationMs); v != nil {
+		runtime, segs = v.DurationMs, v.Segments
 	}
-	played, minMs := playState(body.PositionMs, runtime)
+	played, minMs := playStateEnding(body.PositionMs, runtime, endingStart(runtime, segs))
 	// A replayed offline report (At set) from before the item's latest activity (finished
 	// or watched further on another device since) would wind it back, and on a watched
 	// episode leave it watched and part-way at once. The AsOf writes drop it, checking in
@@ -171,20 +172,31 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 // when that is one of the item's; else the item's version whose length matches the one
 // the player reported (within 5%, the closest); else none (the item's runtime decides).
 func (s *Server) playedLength(ctx context.Context, itemID, sourceID string, reportedMs int64) (int64, bool) {
+	if v := s.playedVersion(ctx, itemID, sourceID, reportedMs); v != nil {
+		return v.DurationMs, true
+	}
+	return 0, false
+}
+
+// playedVersion is the version a report was made from (see playedLength), with its
+// segments, or nil.
+func (s *Server) playedVersion(ctx context.Context, itemID, sourceID string, reportedMs int64) *model.MediaSource {
 	if sourceID != "" {
 		if src, err := s.store.GetSource(ctx, sourceID); err == nil && src != nil && src.ItemID == itemID && src.DurationMs > 0 {
-			return src.DurationMs, true
+			return src
 		}
 	}
 	if reportedMs <= 0 {
-		return 0, false
+		return nil
 	}
 	srcs, err := s.store.SourcesForItem(ctx, itemID)
 	if err != nil {
-		return 0, false
+		return nil
 	}
-	best, bestDiff := int64(0), int64(-1)
-	for _, src := range srcs {
+	var best *model.MediaSource
+	bestDiff := int64(-1)
+	for i := range srcs {
+		src := &srcs[i]
 		if src.DurationMs <= 0 {
 			continue
 		}
@@ -193,10 +205,47 @@ func (s *Server) playedLength(ctx context.Context, itemID, sourceID string, repo
 			diff = -diff
 		}
 		if diff*20 <= src.DurationMs && (bestDiff < 0 || diff < bestDiff) {
-			best, bestDiff = src.DurationMs, diff
+			best, bestDiff = src, diff
 		}
 	}
-	return best, best > 0
+	return best
+}
+
+// endingMinFraction: an outro segment starting before this fraction of the runtime is
+// not taken for the ending (an insert song, a mis-detection).
+const endingMinFraction = 0.60
+
+// endingStart is where the version's ending (its outro: the ED, the credits) starts, or
+// 0 when none is known: the earliest outro segment in the back 40% of [runtimeMs].
+func endingStart(runtimeMs int64, segs []model.MediaSegment) int64 {
+	if runtimeMs <= 0 {
+		return 0
+	}
+	start := int64(0)
+	for _, sg := range segs {
+		if sg.Type != "outro" || sg.StartMs >= runtimeMs || float64(sg.StartMs) < float64(runtimeMs)*endingMinFraction {
+			continue
+		}
+		if start == 0 || sg.StartMs < start {
+			start = sg.StartMs
+		}
+	}
+	return start
+}
+
+// playStateEnding is playState with the version's ending known ([endMs] > 0): watched
+// once the ending starts, not at 90%. Found on Alya S1E9 (25:11): 90% is 22:40, a minute
+// before its ED at 23:40, so stopping in the last scene counted it watched and it reopened
+// from the start. Without a known ending, 90% as before.
+func playStateEnding(positionMs, runtimeMs, endMs int64) (played bool, minMs int64) {
+	if endMs <= 0 || runtimeMs <= 0 {
+		return playState(positionMs, runtimeMs)
+	}
+	played, minMs = playState(positionMs, runtimeMs)
+	if runtimeMs < store.ShortItemMs {
+		return played, minMs // a short item's own rule (no resume point) stands
+	}
+	return positionMs >= endMs || positionMs >= runtimeMs-1000, minMs
 }
 
 // playState is what a position means for an item [runtimeMs] long, after Jellyfin's
