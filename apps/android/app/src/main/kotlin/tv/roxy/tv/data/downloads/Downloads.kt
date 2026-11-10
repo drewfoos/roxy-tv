@@ -543,12 +543,11 @@ class Downloads(
     // ---- persistence ----
 
     private fun load(): DownloadIndex {
+        // An index that is missing or cannot be read is rebuilt from what can still be read of
+        // it and from the folders on disk (see readIndexFile), never taken for "no downloads".
         // The queue is read whatever else is there: without downloads, downloads.json may
-        // never be written, and returning early here lost the queue on every restart.
-        if (!indexFile.exists()) return DownloadIndex(pendingProgress = journal.read().orEmpty())
-        val idx = runCatching { json.decodeFromString<DownloadIndex>(indexFile.readText()) }
-            .onFailure { Timber.w(it, "downloads index unreadable; starting empty") }
-            .getOrDefault(DownloadIndex())
+        // never be written.
+        val idx = readIndexFile(indexFile, json, root, ::safeSegment)
         // Reconcile with disk after a process death: a download that was running is queued
         // again from the bytes on disk; a finished one whose file vanished is dropped.
         val entries = idx.entries.mapNotNull { (id, e) ->
@@ -563,11 +562,8 @@ class Downloads(
     }
 
     private suspend fun save(idx: DownloadIndex) = withContext(Dispatchers.IO) {
-        runCatching {
-            val tmp = File(indexFile.path + ".tmp")
-            tmp.writeText(json.encodeToString(DownloadIndex.serializer(), idx))
-            if (!tmp.renameTo(indexFile)) { indexFile.delete(); tmp.renameTo(indexFile) }
-        }.onFailure { Timber.w(it, "could not save the downloads index") }
+        runCatching { writeIndexFile(indexFile, json.encodeToString(DownloadIndex.serializer(), idx)) }
+            .onFailure { Timber.w(it, "could not save the downloads index") }
     }
 
     /** Resume waiting downloads when a usable network appears (Wi-Fi after cellular, or any network after none). */
