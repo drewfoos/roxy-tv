@@ -51,6 +51,14 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 	s.hooks = arrhook.New(st, lib)
 	s.hub = sessions.New()
 	s.links = newLinkStore()
+	s.links.abandoned = func(deviceID string) {
+		// Approved, and the device never came for its token: nobody can be using it.
+		if err := st.DeleteDevice(context.Background(), deviceID); err != nil {
+			slog.Warn("link: removing a device that never collected its token", "device", deviceID, "err", err)
+			return
+		}
+		slog.Info("link: approved code not collected, device signed out again", "device", deviceID)
+	}
 	s.transcoder = transcode.NewDetector(ff.FFmpeg, cfg.HWAccel, cfg.VAAPIDevice)
 	go func() { // probe the GPU now, not on the first play; a saved choice beats ROXY_HWACCEL
 		s.loadTranscodingSetting()

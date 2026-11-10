@@ -21,7 +21,8 @@ import (
 // (a link into the web app) and as text; whoever is signed in on the phone opens the
 // link, sees which device is asking and approves it; the TV, long-polling with the
 // code's secret, receives a device token of its own and is signed in. Codes live ten
-// minutes, in memory: a restart just makes the TV ask for a new one.
+// minutes, in memory: a restart just makes the TV ask for a new one. An approved code
+// then waits two more minutes for the TV to collect its token (see linkCollect).
 //
 //	POST /v1/link/start {client, device, deviceId, version}   (public)
 //	  -> {code, secret, url, expiresIn}
@@ -32,7 +33,13 @@ import (
 //	POST /v1/link/{code}/approve                              (signed in) sign that device in
 
 const (
-	linkTTL      = 10 * time.Minute
+	linkTTL = 10 * time.Minute
+	// linkCollect is how long an approved code waits for the device to collect its token.
+	// The device polls, so an approval can land between two polls; when that was also the
+	// code's last moment, the next poll found the code expired: the phone said "approved",
+	// the TV said "expired", and a signed-in device nobody held the token of stayed in
+	// the account's device list.
+	linkCollect  = 2 * time.Minute
 	linkWaitMax  = 25 * time.Second
 	linkCodeLen  = 6
 	linkAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O, 1/I
@@ -44,10 +51,11 @@ type linkEntry struct {
 	client    auth.ClientInfo
 	createdAt time.Time
 	// Set by approve: what the TV receives once.
-	token    string
-	user     *model.User
-	deviceID string
-	done     chan struct{}
+	token      string
+	user       *model.User
+	deviceID   string
+	approvedAt time.Time
+	done       chan struct{}
 	// claimed: an approval is under way (or done). Checked and set under the store's lock,
 	// so two approvals racing can't both issue a token and both close done (which panicked
 	// while holding the lock and left every later /link request hanging).
@@ -58,35 +66,101 @@ type linkEntry struct {
 	delivered bool
 }
 
+// expired: an unapproved code after linkTTL; an approved one once linkCollect has passed
+// since the approval (never while the approval is under way). Call with the store's lock.
+func (e *linkEntry) expired(now time.Time) bool {
+	if !e.claimed {
+		return now.Sub(e.createdAt) > linkTTL
+	}
+	return !e.approvedAt.IsZero() && now.Sub(e.approvedAt) > linkCollect
+}
+
 type linkStore struct {
 	mu      sync.Mutex
 	entries map[string]*linkEntry
+	now     func() time.Time
+	// abandoned is told of a device whose token was issued by an approval and never
+	// collected: nobody holds that token, so the device is signed out again.
+	abandoned func(deviceID string)
 }
 
 func newLinkStore() *linkStore {
-	ls := &linkStore{entries: map[string]*linkEntry{}}
+	ls := &linkStore{entries: map[string]*linkEntry{}, now: time.Now}
 	go func() {
 		for range time.Tick(time.Minute) {
-			ls.mu.Lock()
-			for k, e := range ls.entries {
-				if time.Since(e.createdAt) > linkTTL {
-					delete(ls.entries, k)
-				}
-			}
-			ls.mu.Unlock()
+			ls.sweep()
 		}
 	}()
 	return ls
 }
 
+// sweep drops the expired codes.
+func (ls *linkStore) sweep() {
+	var uncollected []string
+	ls.mu.Lock()
+	now := ls.now()
+	for k, e := range ls.entries {
+		if !e.expired(now) {
+			continue
+		}
+		delete(ls.entries, k)
+		if e.token != "" && !e.delivered {
+			e.delivered = true // a waiter still parked on it gets nothing either
+			uncollected = append(uncollected, e.deviceID)
+		}
+	}
+	abandoned := ls.abandoned
+	ls.mu.Unlock()
+	for _, id := range uncollected {
+		if abandoned != nil {
+			abandoned(id)
+		}
+	}
+}
+
+func linkKey(code string) string { return strings.ToUpper(strings.ReplaceAll(code, "-", "")) }
+
 func (ls *linkStore) get(code string) *linkEntry {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-	e := ls.entries[strings.ToUpper(strings.ReplaceAll(code, "-", ""))]
-	if e == nil || time.Since(e.createdAt) > linkTTL {
+	e := ls.entries[linkKey(code)]
+	if e == nil || e.expired(ls.now()) {
 		return nil
 	}
 	return e
+}
+
+// claim takes the code for one approval: nil and false when the code is unknown or
+// expired, the entry and false when an approval has it already. Looked up and claimed
+// under one lock, so a code cannot expire between the two.
+func (ls *linkStore) claim(code string) (e *linkEntry, ok bool) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	e = ls.entries[linkKey(code)]
+	if e == nil || e.expired(ls.now()) {
+		return nil, false
+	}
+	if e.claimed {
+		return e, false
+	}
+	e.claimed = true
+	return e, true
+}
+
+// unclaim gives the code back after an approval that failed.
+func (ls *linkStore) unclaim(e *linkEntry) {
+	ls.mu.Lock()
+	e.claimed = false
+	ls.mu.Unlock()
+}
+
+// approve hands the claimed code its token and wakes the waiters. From here the device
+// has linkCollect to collect it.
+func (ls *linkStore) approve(e *linkEntry, token string, user *model.User, deviceID string) {
+	ls.mu.Lock()
+	e.token, e.user, e.deviceID, e.approvedAt = token, user, deviceID, ls.now()
+	ls.mu.Unlock()
+	close(e.done) // once: only the one claim gets here
 }
 
 func randomString(alphabet string, n int) string {
@@ -135,7 +209,7 @@ func (s *Server) linkStart(w http.ResponseWriter, r *http.Request) {
 	e := &linkEntry{
 		secret:    randomString("abcdefghijklmnopqrstuvwxyz0123456789", 32),
 		client:    auth.ClientInfo{Client: body.Client, Device: body.Device, DeviceID: body.DeviceID, Version: body.Version, Address: auth.RemoteIP(r)},
-		createdAt: time.Now(),
+		createdAt: s.links.now(),
 		done:      make(chan struct{}),
 	}
 	s.links.mu.Lock()
@@ -223,7 +297,7 @@ func (s *Server) linkInfo(w http.ResponseWriter, r *http.Request) {
 		"code":      e.code,
 		"client":    e.client.Client,
 		"device":    e.client.Device,
-		"expiresIn": int((linkTTL - time.Since(e.createdAt)).Seconds()),
+		"expiresIn": int((linkTTL - s.links.now().Sub(e.createdAt)).Seconds()),
 		"approved":  approved,
 		// Where the device asking is (home / tailscale / internet): a code started from the
 		// internet and sent to someone as a link is the phishing case.
@@ -238,31 +312,22 @@ func (s *Server) linkApprove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "sign in as a user to approve a device")
 		return
 	}
-	e := s.links.get(chi.URLParam(r, "code"))
+	e, ok := s.links.claim(chi.URLParam(r, "code"))
 	if e == nil {
 		writeError(w, 404, "This code has expired. Ask the TV for a new one.")
 		return
 	}
-	s.links.mu.Lock()
-	if e.claimed {
-		s.links.mu.Unlock()
+	if !ok {
 		writeError(w, 409, "already approved")
 		return
 	}
-	e.claimed = true
-	s.links.mu.Unlock()
 	d, token, err := s.authSvc.IssueToken(r.Context(), p.User, e.client)
 	if err != nil {
-		s.links.mu.Lock()
-		e.claimed = false
-		s.links.mu.Unlock()
+		s.links.unclaim(e)
 		writeError(w, 500, err.Error())
 		return
 	}
-	s.links.mu.Lock()
-	e.token, e.user, e.deviceID = token, p.User, d.ID
-	s.links.mu.Unlock()
-	close(e.done) // once: only the one claim gets here
+	s.links.approve(e, token, p.User, d.ID)
 	slog.Info("device linked", "user", p.User.Name, "device", e.client.Device, "client", e.client.Client, "by", auth.RemoteIP(r))
 	w.WriteHeader(204)
 }
