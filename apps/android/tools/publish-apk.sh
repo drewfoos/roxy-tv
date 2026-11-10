@@ -16,20 +16,31 @@
 #   tools/publish-apk.sh                      # perf build into ~/roxy/config (pookiebox)
 #   tools/publish-apk.sh -n "Downloads fix"   # with release notes
 #   tools/publish-apk.sh -v release -d /path/to/roxy/config
+#   tools/publish-apk.sh -k 10                # keep the 10 newest builds (default 5; 0 = all)
+#
+# It refuses to publish when the APK on disk was not built from the version build.gradle.kts
+# now names (a version bump without a rebuild): devices would be offered "the new version"
+# and handed the old build, which they cannot install over itself. Files appear under
+# their final names only when complete, and latest.json is replaced last, so a device
+# never downloads half a file or is pointed at one that is not there yet. Older builds
+# than the newest few are removed (each is ~100 MB and nothing asks for them again).
 set -euo pipefail
 
 variant=perf
 notes=""
+keep=5
 data_dir="${ROXY_DATA_DIR:-$HOME/roxy/config}"
-while getopts "v:d:n:" o; do
+while getopts "v:d:n:k:" o; do
   case "$o" in
     v) variant="$OPTARG" ;;
     d) data_dir="$OPTARG" ;;
     n) notes="$OPTARG" ;;
-    *) echo "usage: $0 [-v perf|debug|release] [-d data dir] [-n notes]" >&2; exit 2 ;;
+    k) keep="$OPTARG" ;;
+    *) echo "usage: $0 [-v perf|debug|release] [-d data dir] [-n notes] [-k builds to keep]" >&2; exit 2 ;;
   esac
 done
 case "$variant" in perf|debug|release) ;; *) echo "variant must be perf, debug or release" >&2; exit 2 ;; esac
+case "$keep" in ''|*[!0-9]*) echo "-k takes a number" >&2; exit 2 ;; esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 gradle="$root/app/build.gradle.kts"
@@ -42,49 +53,102 @@ apk="$root/app/build/outputs/apk/$variant/app-$variant.apk"
 dir="$data_dir/apps/tv"
 mkdir -p "$dir"
 file="roxy-tv-$name-$variant.apk"
-cp "$apk" "$dir/$file"
 
-python3 - "$dir/latest.json" "$app_id" "$code" "$name" "$file" "$notes" "$(dirname "$apk")" "$variant" <<'EOF'
-import json, os, shutil, sys, datetime, hashlib
-path, app_id, code, name, file, notes, out_dir, variant = sys.argv[1:]
+python3 - "$dir" "$app_id" "$code" "$name" "$file" "$notes" "$apk" "$variant" "$keep" <<'EOF'
+import json, os, re, shutil, sys, datetime, hashlib
+dir, app_id, code, name, file, notes, apk, variant, keep = sys.argv[1:]
+out_dir = os.path.dirname(apk)
+path = os.path.join(dir, "latest.json")
+
 def sha(p):
+    h = hashlib.sha256()
     with open(p, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
-sha256 = sha(os.path.join(os.path.dirname(path), file))  # the app checks its download against this
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
-# Compilation profiles, from the build's output-metadata.json. A missing or stale one is
-# skipped (the app then installs the APK alone, as before).
-profiles = []
+# What the APK on disk really is, from the build's output-metadata.json. Without that
+# file there is nothing to check against (and no profiles): the APK goes out alone.
+meta = None
 meta_path = os.path.join(out_dir, "output-metadata.json")
 if os.path.exists(meta_path):
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
     built = [e.get("versionCode") for e in meta.get("elements", [])]
     if built != [int(code)]:
-        print(f"warning: output-metadata.json is for {built}, not {code}; publishing without profiles", file=sys.stderr)
-    else:
-        for group in meta.get("baselineProfiles", []):
-            for rel in group.get("baselineProfiles", []):
-                src = os.path.join(out_dir, rel)
-                if not os.path.isfile(src):
-                    continue
-                dm = f"roxy-tv-{name}-{variant}-api{group['minApi']}.dm"
-                shutil.copyfile(src, os.path.join(os.path.dirname(path), dm))
-                profiles.append({"minApi": group["minApi"], "maxApi": group["maxApi"], "file": dm, "sha256": sha(src)})
-latest = {}
-if os.path.exists(path):
-    with open(path, encoding="utf-8-sig") as f:  # the PowerShell version may have left a BOM
-        latest = json.load(f)
-latest[app_id] = {
-    "versionCode": int(code),
-    "versionName": name,
-    "file": file,
-    "notes": notes,
-    "sha256": sha256,
-    "profiles": profiles,
-    "publishedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-}
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(latest, f, indent=4)
+        sys.exit(f"refusing to publish: {apk} was built as versionCode {built}, but build.gradle.kts now says {code} ({name}). Build again, then publish.")
+else:
+    print("warning: no output-metadata.json beside the APK; cannot check its version, publishing without profiles", file=sys.stderr)
+
+temps = []
+def put(src, dest_name):
+    """Copy src into the folder under dest_name, appearing only when complete."""
+    tmp = os.path.join(dir, ".publishing-" + dest_name)
+    temps.append(tmp)
+    shutil.copyfile(src, tmp)
+    digest = sha(tmp)
+    os.replace(tmp, os.path.join(dir, dest_name))
+    return digest  # of what was written: the app checks its download against this
+
+try:
+    sha256 = put(apk, file)
+    profiles = []
+    for group in (meta or {}).get("baselineProfiles", []):
+        for rel in group.get("baselineProfiles", []):
+            src = os.path.join(out_dir, rel)
+            if not os.path.isfile(src):
+                continue
+            dm = f"roxy-tv-{name}-{variant}-api{group['minApi']}.dm"
+            profiles.append({"minApi": group["minApi"], "maxApi": group["maxApi"], "file": dm, "sha256": put(src, dm)})
+    latest = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8-sig") as f:  # the PowerShell version may have left a BOM
+            latest = json.load(f)
+    latest[app_id] = {
+        "versionCode": int(code),
+        "versionName": name,
+        "file": file,
+        "notes": notes,
+        "sha256": sha256,
+        "profiles": profiles,
+        "publishedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    # Last, and in one step: until now devices are still pointed at the previous build.
+    tmp = os.path.join(dir, ".publishing-latest.json")
+    temps.append(tmp)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(latest, f, indent=4)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+finally:
+    for t in temps:
+        if os.path.exists(t):
+            os.remove(t)
+
+# Older builds: keep what latest.json names (for every app id) and the newest few.
+keep = int(keep)
+if keep > 0:
+    built_file = re.compile(r"^(roxy-tv-.+-(?:perf|debug|release))(?:-api\d+\.dm|\.apk)$")
+    builds = {}
+    for entry in os.listdir(dir):
+        m = built_file.match(entry)
+        if m and os.path.isfile(os.path.join(dir, entry)):
+            builds.setdefault(m.group(1), []).append(entry)
+    named = set()
+    for v in latest.values():
+        if isinstance(v, dict):
+            named.add(v.get("file"))
+            named.update(p.get("file") for p in v.get("profiles") or [])
+    newest = sorted(builds, key=lambda b: max(os.path.getmtime(os.path.join(dir, e)) for e in builds[b]), reverse=True)
+    removed = 0
+    for build in newest[keep:]:
+        if named.intersection(builds[build]):
+            continue
+        for entry in builds[build]:
+            os.remove(os.path.join(dir, entry))
+        removed += 1
+    if removed:
+        print(f"Removed {removed} older build(s); the newest {keep} are kept (-k to change)")
 EOF
 echo "Published $app_id $name ($code) -> $dir/$file (+ $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))[sys.argv[2]]["profiles"]))' "$dir/latest.json" "$app_id") profiles)"

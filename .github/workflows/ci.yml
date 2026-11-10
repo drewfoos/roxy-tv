@@ -175,4 +175,7 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # The script that publishes a build to the server's update channel, against a
+      # made-up build tree (no Gradle needed).
+      - run: bash tools/publish-apk-test.sh
       - run: chmod +x gradlew && ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
