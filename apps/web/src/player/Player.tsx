@@ -345,7 +345,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       setBuffered(startSec)
       v.playbackRate = rate
       if (wasPlaying || resume || firstLoad.current) await v.play().catch(() => undefined)
-      meantToPlay.current = false
+      // play() settles only once playback starts (seconds on a slow link): a seek made
+      // meanwhile started a newer load, which still needs the intent. Only the newest
+      // load clears it.
+      if (!stale()) meantToPlay.current = false
       if (stale()) return
       firstLoad.current = false
       started.current = true

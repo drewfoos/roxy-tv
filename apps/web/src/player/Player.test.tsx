@@ -56,11 +56,13 @@ Object.defineProperties(proto, {
   // As in a browser, a new src stops what was playing.
   src: { configurable: true, get() { return st(this).src }, set(x: string) { const f = st(this); f.src = x; f.paused = true } },
 })
+/** How long play()'s promise takes to settle (a slow link: playback starts later). */
+let playSettlesMs = 0
 proto.play = function (this: HTMLMediaElement) {
   play(st(this).src)
   st(this).paused = false
   this.dispatchEvent(new Event('play'))
-  return Promise.resolve()
+  return playSettlesMs ? new Promise<void>((r) => setTimeout(r, playSettlesMs)) : Promise.resolve()
 }
 proto.pause = function (this: HTMLMediaElement) {
   st(this).paused = true
@@ -298,6 +300,31 @@ describe('Player', () => {
 
   // Found by the CI e2e: quick seeks while a remux's zero was slow. Each new src pauses the
   // element, so every seek after the first saw it paused, and the last stream sat at 0.
+  // And on CI: play() settles only when playback starts, so the load before a seek cleared
+  // the intent after the seek's load had begun waiting, and the next seek saw nothing.
+  it('quick seeks while play() is slow to settle leave it playing', async () => {
+    playSettlesMs = 250
+    try {
+      api.remuxStart.mockImplementation(() => new Promise<number>(() => undefined))
+      await mount(item('a', 'ac3', { positionMs: 300_000, played: false, isFavorite: false }))
+      await act(async () => { await new Promise((r) => setTimeout(r, REMUX_ZERO_WAIT_MS + 400)) })
+      // Seek 1; seek 2 while load 1's play() settles (load 1 is stale when it settles); seek 3
+      // after that, while load 2 still waits: it must still know load 2 means to play.
+      const seek = () => act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })
+      const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)) })
+      seek()
+      await wait(REMUX_ZERO_WAIT_MS + 100)
+      seek()
+      await wait(300)
+      seek()
+      await act(async () => { await new Promise((r) => setTimeout(r, REMUX_ZERO_WAIT_MS + 400)) })
+      expect(st(video()).src).toContain('start=330')
+      expect(st(video()).paused).toBe(false)
+    } finally {
+      playSettlesMs = 0
+    }
+  }, 20_000)
+
   it('quick seeks while a remux opens leave it playing', async () => {
     api.remuxStart.mockImplementation(() => new Promise<number>(() => undefined)) // never answers
     await mount(item('a', 'ac3', { positionMs: 300_000, played: false, isFavorite: false }))

@@ -45,6 +45,9 @@ try {
   await cdp.send('Network.enable')
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 10, downloadThroughput: 1_000_000, uploadThroughput: 1_000_000 })
   const remux = []
+  // The page's warnings and errors, printed when a check fails (CI cannot be watched).
+  const pageLog = []
+  page.on('console', (m) => { if (m.type() === 'warning' || m.type() === 'error') pageLog.push(`${m.type()}: ${m.text().slice(0, 200)}`) })
   page.on('request', (r) => {
     // One entry per stream: Chrome sometimes asks for the same stream twice, which counted
     // as a reopening, and the next cut found no new stream running.
@@ -121,7 +124,12 @@ try {
   const watched = (await api('/v1/items/' + item.id, {}, tok)).userData
   const cutStreams = remux.length - streamsBefore
   console.log(`cut streams: ${cutStreams}, error shown=${shown > 0}, marked watched=${watched?.played}, position ${watched?.positionMs} ms`)
-  if (!shown) fail(`the player never said the connection keeps dropping after ${cutStreams} cut streams`)
+  if (!shown) {
+    const v = await page.evaluate(() => { const e = document.querySelector('video'); return e && { t: e.currentTime, paused: e.paused, ended: e.ended, readyState: e.readyState, networkState: e.networkState, error: e.error?.code ?? null, src: e.currentSrc.replace(/[?&]mt=[^&]*/, '') } })
+    console.log('video:', JSON.stringify(v), 'stream starts:', remux.map((x) => x.toFixed(1)).join(' '))
+    pageLog.slice(-15).forEach((l) => console.log('page', l))
+    fail(`the player never said the connection keeps dropping after ${cutStreams} cut streams`)
+  }
   if (cutStreams < 2) fail(`the player gave up without reopening (${cutStreams} cut streams)`)
   if (watched?.played) fail('a stream cut too often in a row counted as the end: the film was marked watched')
   if (page.url() !== url) fail('the player moved on (autoplay) after a cut stream')
