@@ -49,6 +49,7 @@ jobs:
           set -o pipefail
           go test -race -count=1 -v -run 'TestLibraryLifecycle|TestMKSSidecarTracks|TestLegacyMergedFilmsSplitByScan' ./internal/library 2>&1 | tee "$RUNNER_TEMP/test.log"
           go test -race -count=1 -v -run 'TestPlaybackOverHTTP' ./internal/api 2>&1 | tee -a "$RUNNER_TEMP/test.log"
+          go test -race -count=1 -v ./internal/trickplay 2>&1 | tee -a "$RUNNER_TEMP/test.log"
         env:
           ROXY_REQUIRE_INTEGRATION: "1"
       - if: failure()

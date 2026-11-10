@@ -77,7 +77,7 @@ func TestPlaybackOverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("making the video: %v %s", err, out)
 	}
-	// A clip shorter than one preview interval: no thumbnails can be made of it.
+	// A clip shorter than one preview interval: it gets its one thumbnail.
 	short := filepath.Join(media, "Short (2021)", "Short (2021).mkv")
 	if err := os.MkdirAll(filepath.Dir(short), 0o755); err != nil {
 		t.Fatal(err)
@@ -315,19 +315,40 @@ func TestPlaybackOverHTTP(t *testing.T) {
 	if sheet.Code != 200 || !bytes.HasPrefix(sheet.Body.Bytes(), []byte{0xff, 0xd8}) {
 		t.Errorf("trickplay sheet: %d, %d bytes", sheet.Code, sheet.Body.Len())
 	}
-	// The short clip: "generating" until the attempt fails, then "none" (404), not
-	// "generating" for the hour before the next attempt.
+	// The short clip has one preview, of its start.
 	shortPart, err := st.GetPartByPath(ctx, short)
 	if err != nil || shortPart == nil {
 		t.Fatal(shortPart, err)
 	}
 	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(200 * time.Millisecond) {
 		rec := do(http.MethodGet, "/v1/sources/"+shortPart.SourceID+"/trickplay", nil)
+		if rec.Code == 200 {
+			var m struct{ Count, Sheets int }
+			if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil || m.Count != 1 || m.Sheets != 1 {
+				t.Fatalf("trickplay manifest of a clip shorter than one interval: %v %s", err, rec.Body.String())
+			}
+			break
+		}
+		if rec.Code != 202 || time.Now().After(deadline) {
+			t.Fatalf("trickplay of a short clip: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	// A file no picture can be made of: "generating" until the attempt fails, then
+	// "none" (404), not "generating" for the hour before the next attempt.
+	if err := os.WriteFile(video+".broken", []byte("not a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceSource(ctx, &model.MediaSource{ID: "broken", ItemID: src.ItemID, DurationMs: 60_000,
+		Parts: []model.MediaPart{{ID: "broken-part", Path: video + ".broken"}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		rec := do(http.MethodGet, "/v1/sources/broken/trickplay", nil)
 		if rec.Code == 404 {
 			break
 		}
 		if rec.Code != 202 || time.Now().After(deadline) {
-			t.Fatalf("trickplay of a clip too short for any: %d %s", rec.Code, rec.Body.String())
+			t.Fatalf("trickplay of a file that cannot be decoded: %d %s", rec.Code, rec.Body.String())
 		}
 	}
 
