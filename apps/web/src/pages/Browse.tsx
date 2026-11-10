@@ -10,6 +10,7 @@ import { IconSearch } from '../components/Icons'
 import { Footer } from '../components/Footer'
 import { TitleCard } from '../components/Cards'
 import { GridSkeleton } from '../components/Skeleton'
+import { matchesSearch } from './searchText'
 
 /** The library list is ~1000 titles; a visit within this long of the last one reuses it. */
 const LIBRARY_FRESH_MS = 5 * 60_000
@@ -50,7 +51,7 @@ const subLine = (it: Item) => [yearOf(it), isMovie(it) ? 'Movie' : 'Series'].fil
  */
 export function Browse() {
   const [params, setParams] = useSearchParams()
-  const q = (params.get('q') ?? '').trim().toLowerCase()
+  const q = (params.get('q') ?? '').trim()
   // ?type=movie is the old Movies link; old bookmarks still land on Movies.
   const selected = params.get('c') ?? (params.get('type') === 'movie' ? 'movies' : 'new')
   const { data, error, loading } = useAsync('library', () => api.allItems({ type: 'series,movie', recursive: true, sort: 'title' }), [], LIBRARY_FRESH_MS)
@@ -60,7 +61,7 @@ export function Browse() {
   const cat = cats.find((c) => c.key === selected) ?? cats[0]
 
   const shown = useMemo(() => {
-    if (q) return all.filter((it) => it.title.toLowerCase().includes(q) || (it.genres ?? []).some((g) => g.toLowerCase().includes(q))).sort(byTitle)
+    if (q) return all.filter((it) => matchesSearch(q, it.title, it.genres ?? [])).sort(byTitle)
     return cat.pick(all)
   }, [all, q, cat])
 

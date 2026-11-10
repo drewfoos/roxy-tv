@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
+import tv.roxy.tv.ui.searchFold
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /*
@@ -180,13 +181,13 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
         val k = lastCard[0]?.takeIf { it == gridTarget() }
         if (k != null) runCatching { memory.requester(k).requestFocus() }.getOrDefault(false) else memory.restore("search/field")
     }
-    // Lower-cased once per library load, not on every keystroke.
+    // Folded (lower case, accents off: see searchFold) once per library load, not on every keystroke.
     val index = remember(all) {
-        all.orEmpty().sortedByDescending { it.dateCreated.orEmpty() }.map { it to (it.title + "\n" + it.genres.joinToString("\n")).lowercase() }
+        all.orEmpty().sortedByDescending { it.dateCreated.orEmpty() }.map { it to searchFold(it.title + "\n" + it.genres.joinToString("\n")) }
     }
     val shown by remember(index) {
         derivedStateOf {
-            val q = query.trim().lowercase()
+            val q = searchFold(query.trim())
             if (q.isEmpty()) index.map { it.first } else index.filter { it.second.contains(q) }.map { it.first }
         }
     }

@@ -89,6 +89,7 @@ import tv.roxy.tv.api.LibraryTitle
 import tv.roxy.tv.api.MatchCandidate
 import tv.roxy.tv.api.MetadataEdit
 import tv.roxy.tv.ui.components.RoxyTextField
+import tv.roxy.tv.ui.matchesSearch
 import tv.roxy.tv.ui.theme.RoxyColors
 import java.time.Instant
 import java.time.ZoneId
@@ -268,7 +269,7 @@ fun PhoneRefreshPicker(onBack: () -> Unit) {
             }
             error?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
         }
-        val list = titles?.filter { (kind == "all" || it.type == kind) && (query.isBlank() || it.title.contains(query.trim(), ignoreCase = true)) }
+        val list = titles?.filter { (kind == "all" || it.type == kind) && (query.isBlank() || matchesSearch(query, it.title)) }
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(start = PhonePad, end = PhonePad, top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when {
                 list == null -> if (error == null) items(6) { Bone(Modifier.fillMaxWidth().height(72.dp)) }

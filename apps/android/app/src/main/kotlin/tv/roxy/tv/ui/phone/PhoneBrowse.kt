@@ -84,6 +84,7 @@ import timber.log.Timber
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
+import tv.roxy.tv.ui.matchesSearch
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
@@ -316,7 +317,7 @@ fun PhoneSearch(onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (
 
     val q = query.trim()
     val results = state.items?.let { all ->
-        if (q.isEmpty()) emptyList() else all.filter { it.title.contains(q, ignoreCase = true) || it.genres.any { g -> g.contains(q, ignoreCase = true) } }
+        if (q.isEmpty()) emptyList() else all.filter { matchesSearch(q, it.title, it.genres) }
     }
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
