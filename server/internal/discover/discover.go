@@ -1378,7 +1378,16 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 	lib, err := s.store.ItemsByProviderIDs(ctx, "tmdb", []string{strconv.Itoa(tmdbID)})
 	if err == nil {
 		if li, ok := lib["tmdb:"+strconv.Itoa(tmdbID)]; ok && li.Type == model.TypeSeries {
-			if files, err := s.store.EpisodeFiles(ctx, li.ID); err == nil {
+			if season == 0 {
+				// The library numbers its specials as their files do (Sonarr's count),
+				// which is not this list's (TMDB's).
+				if lib, err := s.store.SpecialFiles(ctx, li.ID); err == nil {
+					held := heldSpecials(out, lib)
+					for i := range out {
+						out[i].Have = held[out[i].Number]
+					}
+				}
+			} else if files, err := s.store.EpisodeFiles(ctx, li.ID); err == nil {
 				for i := range out {
 					out[i].Have = files[season][out[i].Number]
 				}
@@ -1386,6 +1395,38 @@ func (s *Service) Episodes(ctx context.Context, tmdbID, season int) ([]Episode, 
 		}
 	}
 	return out, nil
+}
+
+// heldSpecials says which of the catalogue's specials (base, TMDB's list and numbers) the
+// library has a file of. The library's specials carry the numbers of their files, which
+// Sonarr names in TheTVDB's count: KonoSuba's first OVA is S00E03 on disk and TMDB's
+// special 1, so going by the number ticked TMDB's special 3 and left 1 looking missing.
+// They are paired as a request's specials are (arr.RenumberSpecials: by title, then by
+// air date, then by number). A pair made by the number alone does not count when the
+// two are dated and the dates differ: that is another video with the same number.
+func heldSpecials(base []Episode, lib []store.SpecialFile) map[int]bool {
+	refs := make([]arr.EpisodeRef, 0, len(base))
+	byNumber := map[int]Episode{}
+	for _, e := range base {
+		refs = append(refs, arr.EpisodeRef{Number: e.Number, Title: e.Title, AirDate: e.AirDate})
+		byNumber[e.Number] = e
+	}
+	eps := make([]arr.Episode, 0, len(lib))
+	for _, f := range lib {
+		eps = append(eps, arr.Episode{EpisodeNumber: f.Number, Title: f.Title, AirDate: f.AirDate})
+	}
+	held := map[int]bool{}
+	for i, e := range arr.RenumberSpecials(eps, refs) {
+		ref, listed := byNumber[e.EpisodeNumber]
+		if !listed {
+			continue
+		}
+		if !arr.SameSpecial(lib[i].Title, ref.Title) && lib[i].AirDate != "" && ref.AirDate != "" && lib[i].AirDate != ref.AirDate {
+			continue
+		}
+		held[e.EpisodeNumber] = true
+	}
+	return held
 }
 
 // EpisodeAirDates is the air date (YYYY-MM-DD) of each episode Sonarr has of the series

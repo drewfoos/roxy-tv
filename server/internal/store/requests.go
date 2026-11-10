@@ -198,3 +198,38 @@ func (s *Store) EpisodeFiles(ctx context.Context, seriesID string) (map[int]map[
 	}
 	return out, rows.Err()
 }
+
+// SpecialFile is a special (aired season 0) the library has a file of.
+type SpecialFile struct {
+	Number  int // as its file numbers it (Sonarr's and TheTVDB's count)
+	Title   string
+	AirDate string // YYYY-MM-DD, or empty
+}
+
+// SpecialFiles lists a series' specials that have a file, with what is needed to tell
+// which special each one is: a catalogue that counts specials differently (TMDB) cannot
+// go by the number (see EpisodeFiles for the regular seasons, where it can).
+func (s *Store) SpecialFiles(ctx context.Context, seriesID string) ([]SpecialFile, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(e.index_aired, 0), e.title, COALESCE(e.premiere_date, '')
+		FROM items e JOIN items sn ON e.parent_id = sn.id
+		WHERE sn.parent_id = ? AND e.type = 'episode' AND COALESCE(e.season_aired, 0) = 0
+		  AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = e.id)
+		ORDER BY 1`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SpecialFile
+	for rows.Next() {
+		var f SpecialFile
+		if err := rows.Scan(&f.Number, &f.Title, &f.AirDate); err != nil {
+			return nil, err
+		}
+		if len(f.AirDate) > 10 {
+			f.AirDate = f.AirDate[:10]
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}

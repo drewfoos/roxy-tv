@@ -117,3 +117,10 @@ func titleKey(title string) string {
 	}
 	return k
 }
+
+// SameSpecial: both titles name something and name the same thing (letters and digits
+// compared, as RenumberSpecials pairs them).
+func SameSpecial(a, b string) bool {
+	k := titleKey(a)
+	return k != "" && k == titleKey(b)
+}
