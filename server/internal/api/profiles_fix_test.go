@@ -25,6 +25,7 @@ func profileRouter(s *Server, userID string) http.Handler {
 	})
 	r.Get("/v1/me/profiles/{id}/avatar", s.profileAvatar)
 	r.Patch("/v1/me/profiles/{id}", s.updateProfile)
+	r.Delete("/v1/me/profiles/{id}", s.deleteProfile)
 	return r
 }
 

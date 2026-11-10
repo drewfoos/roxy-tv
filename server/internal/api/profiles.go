@@ -161,9 +161,11 @@ func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	if prof.AvatarPath != "" {
-		safefs.Remove(prof.AvatarPath)
-	}
+	// The picture and its resized copies (<profile>-<hash>.w160.jpg ...): removing only
+	// the picture left the copies behind for good.
+	avatarMu.Lock()
+	removeAvatarFiles(filepath.Join(s.cfg.ImagesDir(), "profiles"), prof.ID, "")
+	avatarMu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
 
