@@ -425,6 +425,14 @@ class PlayerSession(
             override fun onHdrNative(active: Boolean) {
                 if (active) flashOsd("Native HDR: styled subtitles are off for this video", 5000)
             }
+
+            override fun onPassthroughFailed(atSec: Double): Boolean {
+                // Reopened as a reload of this item: done by the player behind the session's
+                // back, the old file's end looked like a dropped stream ("Lost connection",
+                // reconnects spent) or, with no length known, the end of the episode.
+                if (life.audioOutputReload()) { Timber.i("passthrough failed: reopening at %.1f s", atSec); reopenSameItem(atSec) }
+                return true
+            }
         }
         glue = PlaybackGlue(context, object : PlaybackGlue.Controls {
             override fun play() { if (!retryAfterGivingUp()) player.setPaused(false); refreshUi(forceGlue = true) }
@@ -855,6 +863,8 @@ class PlayerSession(
         reconnectJob = scope.launch {
             delay(wait)
             if (destroyed) return@launch
+            // Something else took over meanwhile (the stream came back, a reload): nothing to reopen.
+            if (life.phase !is PlaybackLifecycle.Phase.Reconnecting) { Timber.i("reconnect at %.1f s no longer needed", at); return@launch }
             Timber.i("reconnect %d at %.1f s", reconnects.used, at)
             if (transcoding) { restartTranscode(at); return@launch }
             // A fresh media token: a long session can outlive the one in the old URL, and a
@@ -862,7 +872,7 @@ class PlayerSession(
             val sid = sourceId
             val url = if (sid != null && !local) runCatching { app.api.streamUrl(sid, app.api.mediaToken(sid)) }.getOrNull() ?: directUrl else directUrl
             directUrl = url
-            life.reopening()
+            if (!life.reopening()) return@launch
             player.play(url, at.toInt())
         }
     }
@@ -1166,6 +1176,15 @@ class PlayerSession(
         }
     }
 
+    /** This item's stream reopened at [at] (a reload: its old stream's end is not the end). */
+    private fun reopenSameItem(at: Double) {
+        if (transcoding) { restartTranscode(at); return }
+        reloadTarget = at
+        life.reloadStarted()
+        player.play(directUrl, at.toInt(), transcoded = false)
+        watchReload(at)
+    }
+
     private fun changeQuality(q: QualityOption) {
         if (sourceId == null || !app.prefs.session.value.isLoggedIn) return
         val current = if (transcoding) quality else QualityOption.Original
@@ -1176,10 +1195,7 @@ class PlayerSession(
         Timber.i("quality -> %s at %.1f s", q.key, pos)
         if (q.isOriginal) {
             transcoding = false
-            reloadTarget = pos
-            life.reloadStarted()
-            player.play(directUrl, pos.toInt(), transcoded = false)
-            watchReload(pos)
+            reopenSameItem(pos)
         } else {
             restartTranscode(pos)
         }

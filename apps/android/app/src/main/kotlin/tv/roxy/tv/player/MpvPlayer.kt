@@ -128,6 +128,13 @@ class MpvPlayer(
         fun onBufferingChanged(buffering: Boolean) {}
         /** Native HDR output switched on (true) for this file: styled subtitles are not drawn. */
         fun onHdrNative(active: Boolean) {}
+        /**
+         * Passthrough never started for this file's audio (see [watchPassthrough]); the codec
+         * is decoded here from now on. True: the listener reopens the file at [atSec] itself,
+         * as one of its own reloads, so the old file's end is not taken for a lost
+         * connection or the end of the episode. False: the player reopens it.
+         */
+        fun onPassthroughFailed(atSec: Double): Boolean = false
     }
 
     var listener: Listener? = null
@@ -334,6 +341,9 @@ class MpvPlayer(
         val url = pendingUrl ?: return
         pendingUrl = null
         frameRateGate.loadRequested()
+        // The passthrough watch belongs to the file it was armed for: left running, it
+        // reopened THIS file at the old one's position.
+        stopPassthroughWatch()
         lastUrl = url
         lastTranscoded = pendingTranscode
         Timber.i("loadfile %s start=%ds transcoded=%s", url.substringBefore("?"), startSeconds, pendingTranscode)
@@ -852,6 +862,14 @@ class MpvPlayer(
     }
 
     private var watchdog: Runnable? = null
+    private var passthroughWatch: PassthroughWatch? = null
+
+    private fun stopPassthroughWatch() {
+        watchdog?.let { main.removeCallbacks(it) }
+        watchdog = null
+        passthroughWatch?.cancel()
+        passthroughWatch = null
+    }
 
     /**
      * Safety net: some TVs never finish opening a passthrough audio output for a format
@@ -861,33 +879,39 @@ class MpvPlayer(
      * is decoded here from then on, for this sound output, and the file reopens where it was.
      */
     private fun watchPassthrough() {
-        watchdog?.let { main.removeCallbacks(it) }
+        stopPassthroughWatch()
         val codec = str("current-tracks/audio/codec")?.lowercase()
         if (codec == null || codec !in spdif) return
-        val startPos = dbl("time-pos") ?: 0.0
-        var tryingMs = 0L
-        var polls = 0
+        val url = lastUrl ?: return
+        val w = PassthroughWatch(url, lastTranscoded, dbl("time-pos") ?: 0.0)
+        passthroughWatch = w
         val r = object : Runnable {
             override fun run() {
-                if (destroyed) return
-                polls++
-                val pos = dbl("time-pos")
-                if (pos != null && pos > startPos + 0.5) return // the audio clock runs
-                val held = pausedFlag || cacheFlag || seekingFlag
-                if (!held) tryingMs += 1500
-                if (tryingMs < 6000) { if (polls < 400) main.postDelayed(this, 1500); return }
-                Timber.w("passthrough of %s did not start (pos %s); decoding it on the TV instead", codec, pos)
-                brokenSpdif += "${options.outputKey}|$codec"
-                // Remembered for this sound output, so later plays decode it at once.
-                audioPrefs.edit().putStringSet(brokenKey, (audioPrefs.getStringSet(brokenKey, emptySet()).orEmpty() + codec)).apply()
-                spdif = spdif - codec
-                mpv.setPropertyString("audio-spdif", spdif.joinToString(","))
-                val url = lastUrl ?: return
-                play(url, (pos ?: startPos).toInt(), lastTranscoded)
+                if (destroyed || passthroughWatch !== w) return
+                when (val v = w.poll(dbl("time-pos"), pausedFlag || cacheFlag || seekingFlag)) {
+                    PassthroughWatch.Verdict.Wait -> main.postDelayed(this, PassthroughWatch.POLL_MS)
+                    PassthroughWatch.Verdict.Done -> {}
+                    is PassthroughWatch.Verdict.Failed -> passthroughFailed(w, codec, v.at)
+                }
             }
         }
         watchdog = r
-        main.postDelayed(r, 1500)
+        main.postDelayed(r, PassthroughWatch.POLL_MS)
+    }
+
+    private fun passthroughFailed(w: PassthroughWatch, codec: String, at: Double) {
+        Timber.w("passthrough of %s did not start (pos %.1f); decoding it on the TV instead", codec, at)
+        passthroughWatch = null; watchdog = null
+        brokenSpdif += "${options.outputKey}|$codec"
+        // Remembered for this sound output, so later plays decode it at once.
+        audioPrefs.edit().putStringSet(brokenKey, (audioPrefs.getStringSet(brokenKey, emptySet()).orEmpty() + codec)).apply()
+        spdif = spdif - codec
+        mpv.setPropertyString("audio-spdif", spdif.joinToString(","))
+        // The session reopens it as one of its reloads; replaced behind its back, the old
+        // file's END_FILE looked like a dropped stream (a false "Lost connection" and a
+        // reconnect) or, with no length known, the end of the episode.
+        if (listener?.onPassthroughFailed(at) == true) return
+        play(w.url, at.toInt(), w.transcoded)
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {
@@ -923,7 +947,7 @@ class MpvPlayer(
      */
     fun destroy() {
         if (destroyed) return
-        watchdog?.let { main.removeCallbacks(it) }
+        stopPassthroughWatch()
         if (surfaceReady) runCatching {
             if (frameRate != 0f) { frameRate = 0f; applyFrameRate() }
             releaseSurface()
