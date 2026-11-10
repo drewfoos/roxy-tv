@@ -325,6 +325,9 @@ class PlayerSession(
     /** The item's saved audio stream: started on unless the viewer picked one in this session. */
     private var savedAudioIndex = params.audioIndex
     /** The tracks this item's file was opened on (chosen before the load), for reloads before it played. */
+    /** This item's subtitle streams and container as the server (or the download's snapshot) lists them; empty when unknown. */
+    private var itemSubs: List<SubtitleInfo> = emptyList()
+    private var itemContainer: String? = null
     private var itemPreload = TrackIds(null, null)
     /** The tracks this item's file is playing on (not a transcode's): a reload of the item reopens on them. */
     private var itemTracks: TrackIds? = null
@@ -640,6 +643,8 @@ class PlayerSession(
         transcoding = false
         // The previous file's sniffed languages name its own track ids; when this file's
         // lookup fails they must not relabel its tracks (and steer the language policy).
+        itemSubs = emptyList()
+        itemContainer = null
         player.subtitleLanguageOverrides = emptyMap()
         itemTracks = null
         itemPreload = TrackIds(null, null)
@@ -651,7 +656,9 @@ class PlayerSession(
             // The Quality menu names the file by its resolution ("1080p", "4K") offline too.
             sourceHeight = src?.streams?.firstOrNull { it.type == "video" }?.height ?: 0
             sourceDurationSec = src?.durationMs?.let { it / 1000.0 }
-            player.subtitleLanguageOverrides = subtitleInfos(src?.streams.orEmpty()).filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+            itemSubs = subtitleInfos(src?.streams.orEmpty())
+            itemContainer = src?.container
+            applyLanguageOverrides()
             // A download as the next episode: without this its load was taken for the old
             // file's and ignored, and the player stayed mid-switch (no progress, Next blocked).
             life.fileRequested()
@@ -691,7 +698,8 @@ class PlayerSession(
                 if (streams != null) {
                     val subs = subtitleInfos(streams)
                     subs.forEach { Timber.i("server sub mpvId=%d idx=%d tag=%s detected=%s title=%s", it.mpvId, it.index, it.language, it.detectedLanguage, it.title) }
-                    player.subtitleLanguageOverrides = subs.filter { it.detectedLanguage != null }.associate { it.mpvId to it.effectiveLanguage }
+                    itemSubs = subs
+                    itemContainer = source.await()?.container
                 } else Timber.w("could not fetch subtitle languages for %s", sourceId)
                 // A quality from the settings is for saving data: a file already smaller
                 // than it plays as-is. One picked in the menu is always honoured.
@@ -701,6 +709,7 @@ class PlayerSession(
                 // Without a token the file itself plays: it is not a transcode (its track
                 // numbers are the file's own, see savedAudioStart / subtitleStart).
                 transcoding = use && mt != null
+                applyLanguageOverrides() // numbered as what is about to be opened numbers them
                 life.fileRequested()
                 // The original file's numbering; a transcode is opened on mpv's own choice.
                 itemPreload = preloadTracks(streams.orEmpty())
@@ -715,6 +724,14 @@ class PlayerSession(
         endWaitJob?.cancel()
         val id = itemId ?: run { life.noLookup(); return }
         lookUpNext(id)
+    }
+
+    /**
+     * The sniffed subtitle languages, keyed as the stream about to be opened numbers its
+     * tracks: the file, or a transcode of it, which can leave a track out (see [languageOverrides]).
+     */
+    private fun applyLanguageOverrides() {
+        player.subtitleLanguageOverrides = languageOverrides(itemSubs, transcoding, itemContainer)
     }
 
     /** The tracks to open this item's file on, from the server's stream list (see [preloadSid], [preloadAid]). */
@@ -1201,6 +1218,7 @@ class PlayerSession(
         val sid = sourceId ?: return
         Timber.i("transcode %s from %.1f s", quality.key, at)
         transcoding = true
+        applyLanguageOverrides()
         reloadTarget = at
         life.reloadStarted() // the replaced stream's end is not the end of the episode
         val cached = app.api.cachedMediaToken(sid)
@@ -1255,6 +1273,7 @@ class PlayerSession(
         Timber.i("quality -> %s at %.1f s", q.key, pos)
         if (q.isOriginal) {
             transcoding = false
+            applyLanguageOverrides()
             reopenSameItem(pos)
         } else {
             restartTranscode(pos)
