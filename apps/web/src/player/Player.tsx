@@ -66,6 +66,22 @@ function initialTracks(item: Item, source: ReturnType<typeof primarySource>, aud
   return { audio, sub, subsOn, ownAudio: savedAudio != null, ownSub: savedSub != null }
 }
 
+/**
+ * The volume saved in this browser, 0..1; full when there is none or it cannot be read.
+ * Storage can be blocked (the read itself throws) and can hold anything: read in the first
+ * render, a throw here took the whole player down, and so did a value the element refuses
+ * (outside 0..1, or not a number).
+ */
+function savedVolume(): number {
+  try {
+    const raw = localStorage.getItem('roxy.volume')
+    const n = raw == null || raw.trim() === '' ? 1 : Number(raw)
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1
+  } catch {
+    return 1
+  }
+}
+
 const SUBS_FAILED = "Subtitles couldn't be loaded."
 
 function errorText(e: unknown): string {
@@ -165,7 +181,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [waiting, setWaiting] = useState(false)
   const [current, setCurrent] = useState(0)
   const [buffered, setBuffered] = useState(0)
-  const [volume, setVolume] = useState(() => Number(localStorage.getItem('roxy.volume') ?? 1))
+  const [volume, setVolume] = useState(savedVolume)
   const [muted, setMuted] = useState(false)
   const [rate, setRate] = useState(1)
   const [visible, setVisible] = useState(true)
@@ -581,7 +597,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     if (!v) return
     v.volume = volume
     v.muted = muted
-    localStorage.setItem('roxy.volume', String(volume))
+    try {
+      localStorage.setItem('roxy.volume', String(volume))
+    } catch {
+      /* storage blocked or full: the volume lasts for this page */
+    }
   }, [volume, muted])
   useEffect(() => {
     const v = videoRef.current

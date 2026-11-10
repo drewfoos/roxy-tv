@@ -356,6 +356,45 @@ describe('Player', () => {
     warn.mockRestore()
   })
 
+  // The volume is kept in localStorage, which can refuse (site data blocked: the read
+  // itself throws) or hold anything. Either took the whole player down: the read is in the
+  // first render, and a volume outside 0..1 makes the element throw.
+  describe('the saved volume', () => {
+    const slider = () => (host.querySelector('input[type=range]') as HTMLInputElement | null)?.value
+    it('plays at full volume when storage is blocked, and goes on when it cannot save', async () => {
+      const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('denied', 'SecurityError') })
+      const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('denied', 'SecurityError') })
+      try {
+        await mount(item('a', 'aac'))
+        expect(video()).not.toBeNull()
+        expect(slider()).toBe('1')
+        act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+        expect(slider()).toBe('0.9')
+        expect(video().volume).toBeCloseTo(0.9)
+      } finally {
+        get.mockRestore()
+        set.mockRestore()
+      }
+    })
+    it.each([
+      ['5', '1'],
+      ['-2', '0'],
+      ['loud', '1'],
+      ['', '1'],
+      ['0.35', '0.35'],
+    ])('reads a stored %j as %s', async (stored, want) => {
+      localStorage.setItem('roxy.volume', stored)
+      await mount(item('a', 'aac'))
+      expect(slider()).toBe(want)
+      expect(video().volume).toBeCloseTo(Number(want))
+    })
+    it('saves a change', async () => {
+      await mount(item('a', 'aac'))
+      act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+      expect(Number(localStorage.getItem('roxy.volume'))).toBeCloseTo(0.9)
+    })
+  })
+
   // The quality saved in Preferences was used whatever the file: "1080p" re-encoded every
   // 1080p file (and upscaled nothing but still transcoded a 720p one), and the gear menu,
   // which lists only sizes below the file's, then had no row ticked.
