@@ -26,6 +26,18 @@ export function chooseStream(quality: 'original' | number, tracks: AudioTrack[],
   return 'remux'
 }
 
+/**
+ * The quality an episode starts at, from the one saved in Preferences. That one is for
+ * saving data, so a file already that small plays as it is: re-encoding it saves nothing
+ * (the server never makes the picture taller than the file's). "A few lines taller"
+ * counts as that size, as in the apps (0.94). Only for the saved preference: a quality
+ * picked in the gear menu is used as picked. The web has no encode above 1080p.
+ */
+export function startQuality(pref: 'original' | number, srcHeight: number): 'original' | 1080 | 720 | 480 {
+  if (pref !== 1080 && pref !== 720 && pref !== 480) return 'original'
+  return srcHeight > 0 && pref >= srcHeight * 0.94 ? 'original' : pref
+}
+
 /** The part of a <video> element the clock reads. */
 export interface VideoClock {
   currentTime: number

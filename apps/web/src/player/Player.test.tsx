@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
   mediaToken: vi.fn(async () => ({ token: 'tok' })),
   streamUrl: (id: string) => `/v1/stream/${id}`,
   remuxUrl: (id: string, audio: number | null, start: number) => `/v1/sources/${id}/remux?start=${start}&audio=${audio}`,
-  transcodeUrl: (id: string) => `/v1/sources/${id}/transcode`,
+  transcodeUrl: (id: string, height: number) => `/v1/sources/${id}/transcode?h=${height}`,
   remuxStart: vi.fn(async (_id: string, start: number) => start),
   progress: vi.fn(async (..._args: unknown[]) => undefined),
   trickplay: vi.fn(async () => null),
@@ -354,6 +354,67 @@ describe('Player', () => {
     expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(600)
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  // The quality saved in Preferences was used whatever the file: "1080p" re-encoded every
+  // 1080p file (and upscaled nothing but still transcoded a 720p one), and the gear menu,
+  // which lists only sizes below the file's, then had no row ticked.
+  describe('the quality from Preferences', () => {
+    const tall = (id: string, height: number): Item => {
+      const it = item(id, 'aac')
+      it.mediaSources![0].streams![0].height = height
+      return it
+    }
+    const click = (el: Element | null | undefined) => act(() => { (el as HTMLElement).click() })
+    const ticked = () => {
+      click(host.querySelector('[aria-label="Settings"]'))
+      const rows = [...host.querySelectorAll('.panel__list .panel__row--on')].map((b) => b.querySelector('b')?.textContent)
+      click(host.querySelector('[aria-label="Settings"]'))
+      return rows
+    }
+
+    it('plays a file of that size as it is', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(tall('a', 1080))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(ticked()).toEqual(['1080p (Original)'])
+    })
+    it('plays a smaller file as it is', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(tall('a', 720))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(ticked()).toEqual(['720p (Original)'])
+    })
+    it('lowers a larger file', async () => {
+      prefs.set({ quality: 720 })
+      await mount(tall('a', 1080))
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=720')
+      expect(ticked()).toEqual(['720p'])
+    })
+    it('is decided again for each episode (the Player stays mounted)', async () => {
+      prefs.set({ quality: 720 })
+      await mount(tall('a', 1080))
+      expect(video().src).toContain('/transcode?h=720')
+      await act(async () => setShown(tall('b', 720)))
+      await flush()
+      expect(video().src).toBe('/v1/stream/src-b')
+      expect(ticked()).toEqual(['720p (Original)'])
+      await act(async () => setShown(tall('c', 1080)))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-c/transcode?h=720')
+    })
+    it('a quality picked in the gear menu is kept as picked', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(tall('a', 1080))
+      click(host.querySelector('[aria-label="Settings"]'))
+      click([...host.querySelectorAll('.panel__row')].find((b) => b.textContent?.startsWith('720p')))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=720')
+      // The next episode is smaller than the pick: still the viewer's pick, not the preference.
+      await act(async () => setShown(tall('b', 720)))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-b/transcode?h=720')
+    })
   })
 
   // "Signs & songs with a dub" was offered in Preferences and did nothing here: it played

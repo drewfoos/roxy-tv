@@ -5,7 +5,7 @@ import { lang3, prefs } from '../api/prefs'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
-import { chooseStream, MOVED_SEC, ReopenBudget, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, MOVED_SEC, ReopenBudget, startQuality, StreamClock, streamEnded, type Mode } from './stream'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -170,11 +170,12 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [rate, setRate] = useState(1)
   const [visible, setVisible] = useState(true)
   const [menu, setMenu] = useState<'none' | 'tracks' | 'quality' | 'speed'>('none')
-  // Account > Preferences sets the defaults; the gear menu overrides them for this episode.
-  const [quality, setQuality] = useState<Quality>(() => {
-    const q = prefs.get().quality
-    return q === 1080 || q === 720 || q === 480 ? q : 'original'
-  })
+  // Account > Preferences sets the defaults; the gear menu overrides them. The saved
+  // quality is weighed against each file (startQuality; again in the start effect, since
+  // the next episode may be another size); one picked in the menu is kept as picked.
+  const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
+  const [quality, setQuality] = useState<Quality>(() => startQuality(prefs.get().quality, srcHeight))
+  const qualityFromPrefs = useRef(true)
   const [autoplay, setAutoplay] = useState(() => prefs.get().autoplay)
   useEffect(() => {
     autoplayRef.current = autoplay
@@ -443,6 +444,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setSubsOn(tracks.subsOn)
     setTracksOf(item.id)
     ownTracks.current = { audio: tracks.ownAudio, sub: tracks.ownSub }
+    if (qualityFromPrefs.current) {
+      qualityRef.current = startQuality(prefs.get().quality, srcHeight)
+      setQuality(qualityRef.current)
+    }
     setSkip(null)
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
@@ -644,13 +649,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     lastReport.current = 0
   }
   const changeQuality = (q: Quality) => {
+    qualityFromPrefs.current = false
     qualityRef.current = q
     setQuality(q)
     setMenu('none')
     reopens.current.reset() // a new stream the viewer asked for: a fresh start
     reload(absTime(), audioIndex)
   }
-  const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
   const qualities: Quality[] = ['original', ...([1080, 720, 480] as const).filter((h) => srcHeight === 0 || h < srcHeight)]
   const changeSub = (idx: number | null) => {
     ownTracks.current.sub = true
