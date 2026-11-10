@@ -405,9 +405,6 @@ func (s *Store) UpsertItem(ctx context.Context, it *model.Item) error {
 			it.ID, it.GUID, it.LibraryID, it.Type, strPtrNull(it.ParentID), it.Title, nullStr(it.SortTitle), intPtrNull(it.Year), nullStr(it.Overview),
 			intPtrNull(it.IndexAired), intPtrNull(it.SeasonAired), intPtrNull(it.IndexAbsolute), intPtrNull(it.IndexAiredEnd), int64PtrNull(it.RuntimeMs), boolInt(it.IsVirtual),
 			nullStr(it.ExtraType), now, now)
-		if err == nil {
-			_, err = s.db.ExecContext(ctx, `INSERT INTO items_fts (rowid, title) SELECT rowid, title FROM items WHERE id = ?`, it.ID)
-		}
 	}
 	if err != nil {
 		return err

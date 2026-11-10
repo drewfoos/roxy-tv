@@ -218,14 +218,22 @@ func serveHTTP(ctx context.Context, ln net.Listener, h http.Handler) error {
 		IdleTimeout: 2 * time.Minute,
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
+	// Serve returns the moment Shutdown is called, not when it is done: without waiting
+	// here the caller closed the database under requests that were still finishing.
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
+	<-stopped
 	return nil
 }
+
+// shutdownGrace is how long requests in flight get to finish once the server is told to stop.
+var shutdownGrace = 5 * time.Second

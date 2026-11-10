@@ -5,6 +5,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,6 +52,23 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	// A number or a switch that cannot be read stops the start: taking the default in
+	// silence left ROXY_WATCH=flase watching and ROXY_SCAN_ON_START=off scanning.
+	var bad []string
+	envInt := func(key string, def int) int {
+		n, err := envInt(key, def)
+		if err != nil {
+			bad = append(bad, err.Error())
+		}
+		return n
+	}
+	envBool := func(key string, def bool) bool {
+		b, err := envBool(key, def)
+		if err != nil {
+			bad = append(bad, err.Error())
+		}
+		return b
+	}
 	c := &Config{
 		Listen:               env("ROXY_LISTEN", ":8096"),
 		HWAccel:              env("ROXY_HWACCEL", "auto"),
@@ -77,6 +96,9 @@ func Load() (*Config, error) {
 		TrustedProxies:       splitList(env("ROXY_TRUSTED_PROXIES", "")),
 		AdminUser:            env("ROXY_ADMIN_USER", "roxy"),
 		AdminPassword:        env("ROXY_ADMIN_PASSWORD", ""),
+	}
+	if len(bad) > 0 {
+		return nil, errors.New(strings.Join(bad, "; "))
 	}
 	for _, r := range strings.Split(env("ROXY_MEDIA_ROOTS", ""), ",") {
 		r = strings.TrimSpace(r)
@@ -133,28 +155,35 @@ func env(key, def string) string {
 // Version is reported by system/info and the discovery beacon.
 const Version = "0.1.0-dev"
 
-func envInt(key string, def int) int {
+func envInt(key string, def int) (int, error) {
 	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return def
+	if v = strings.TrimSpace(v); !ok || v == "" {
+		return def, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return def
+		return def, fmt.Errorf("%s is %q: it must be a whole number", key, v)
 	}
-	return n
+	return n, nil
 }
 
-func envBool(key string, def bool) bool {
+// envBool reads a switch: true/false, 1/0, yes/no, on/off, in any case.
+func envBool(key string, def bool) (bool, error) {
 	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return def
+	if v = strings.TrimSpace(v); !ok || v == "" {
+		return def, nil
+	}
+	switch strings.ToLower(v) {
+	case "yes", "on":
+		return true, nil
+	case "no", "off":
+		return false, nil
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return def
+		return def, fmt.Errorf("%s is %q: it must be true or false", key, v)
 	}
-	return b
+	return b, nil
 }
 
 // splitList splits a comma-separated setting, dropping blanks.
