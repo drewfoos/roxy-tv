@@ -13,6 +13,20 @@ export interface PlayerKeyActions {
   poke: () => void
 }
 
+/** Inputs nobody types in: a key pressed with the focus on one is still the player's. */
+const NOT_TEXT = new Set(['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image'])
+
+/**
+ * Whether a key pressed on this element is text being typed (or a choice in a list). Not
+ * every <input>: the volume slider is one and keeps the focus after a drag, and ignoring
+ * its keys left the player without a keyboard until something else was clicked.
+ */
+function typesInto(target: HTMLElement | null): boolean {
+  if (!target) return false
+  if (target.tagName === 'INPUT') return !NOT_TEXT.has((target as HTMLInputElement).type)
+  return target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable
+}
+
 /**
  * The player's keyboard: space / K play-pause, ← / J and → / L 10 s, ↑ ↓ volume, F
  * fullscreen, M mute, C subtitles, N next episode, Esc closes a menu. Ignored while typing
@@ -27,8 +41,7 @@ export function usePlayerKeys(actions: PlayerKeyActions) {
       // Ctrl/Cmd/Alt combinations belong to the browser and the OS (Ctrl+L, Cmd+F, Alt+Left
       // for back): they used to seek or go fullscreen as well as doing their own job.
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      if (typesInto(e.target as HTMLElement | null)) return
       const a = ref.current
       switch (e.key) {
         case ' ':
