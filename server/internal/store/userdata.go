@@ -55,7 +55,7 @@ const RewatchMinMs = 30_000
 // On a watched item it follows [RewatchMinMs]: a watched item is never also part-way,
 // which used to show "Watched" in the episode list and "Resume" on Home at once.
 func (s *Store) SetProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int) error {
-	_, err := s.setProgress(ctx, userID, guid, positionMs, audio, sub, "", RewatchMinMs)
+	_, err := s.setProgress(ctx, userID, guid, positionMs, audio, sub, "", RewatchMinMs, 0)
 	return err
 }
 
@@ -69,7 +69,7 @@ func (s *Store) SetProgressMin(ctx context.Context, userID, guid string, asOf *t
 	if asOf != nil {
 		stamp = asOfStamp(*asOf)
 	}
-	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, stamp, minMs)
+	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, stamp, minMs, minMs)
 }
 
 // MinResumeMs is the minimum resume point for an item [runtimeMs] long (Jellyfin's
@@ -92,7 +92,7 @@ const ShortItemMs = 300_000
 // statement, so a live report from another device cannot land between a separate check
 // and the write and then be wound back. False when it was not applied.
 func (s *Store) SetProgressAsOf(ctx context.Context, userID, guid string, at time.Time, positionMs int64, audio, sub *int) (bool, error) {
-	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, asOfStamp(at), RewatchMinMs)
+	return s.setProgress(ctx, userID, guid, positionMs, audio, sub, asOfStamp(at), RewatchMinMs, 0)
 }
 
 // asOfStamp is the stored form of a replayed report's time, which is both what it is
@@ -125,16 +125,13 @@ func stampOr(asOf string) string {
 const unlessNewer = ` WHERE ? = '' OR ((user_item_data.last_played_at IS NULL OR user_item_data.last_played_at = '' OR user_item_data.last_played_at <= ?)
 	AND (user_item_data.marked_at IS NULL OR user_item_data.marked_at <= ?))`
 
-// setProgress writes a position; one under [minMs] is a peek (see SetProgressMin). The
-// callers before minimum resume points pass [RewatchMinMs], which keeps their behaviour:
-// a peek at a watched item changed nothing, and an unwatched item kept any position.
-func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int, asOf string, minMs int64) (bool, error) {
-	// Unwatched items kept every position under the old rule; only a caller with a real
-	// minimum (SetProgressMin) turns their peeks into nothing.
-	unwatchedMin := int64(0)
-	if minMs != RewatchMinMs {
-		unwatchedMin = minMs
-	}
+// setProgress writes a position. On a watched item one under [minMs] is a peek and
+// changes nothing; on an unwatched item one under [unwatchedMin] keeps no resume point
+// (see SetProgressMin). The callers from before minimum resume points pass 0 there: an
+// unwatched item keeps any position. The two are separate arguments because the minimum
+// of a short item IS [RewatchMinMs]: telling "no minimum" from the value let a peek at a
+// short episode through to Continue Watching.
+func (s *Store) setProgress(ctx context.Context, userID, guid string, positionMs int64, audio, sub *int, asOf string, minMs, unwatchedMin int64) (bool, error) {
 	newPos, newStamp := positionMs, any(stampOr(asOf))
 	if positionMs < unwatchedMin {
 		newPos, newStamp = 0, nil
@@ -225,8 +222,13 @@ type execer interface {
 }
 
 func markPlayed(ctx context.Context, db execer, userID, guid string, played bool) error {
+	return markPlayedAt(ctx, db, userID, guid, played, Now())
+}
+
+// markPlayedAt is markPlayed with the time given, so one "mark all" stamps every episode
+// alike (see MarkPlayedUnder).
+func markPlayedAt(ctx context.Context, db execer, userID, guid string, played bool, now string) error {
 	if played {
-		now := Now()
 		_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, play_count, played, last_played_at, marked_at)
 			VALUES (?, ?, 0, 1, 1, ?, ?)
 			ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0,
@@ -239,7 +241,7 @@ func markPlayed(ctx context.Context, db execer, userID, guid string, played bool
 	// The time of the unmark is kept (marked_at): an offline report older than it does
 	// not mark the item watched again.
 	_, err := db.ExecContext(ctx, `INSERT INTO user_item_data (scope_id, item_guid, position_ms, played, marked_at) VALUES (?, ?, 0, 0, ?)
-		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0, marked_at = excluded.marked_at`, userID, guid, Now())
+		ON CONFLICT(scope_id, item_guid) DO UPDATE SET position_ms = 0, played = 0, marked_at = excluded.marked_at`, userID, guid, now)
 	return err
 }
 
@@ -249,6 +251,8 @@ func markPlayed(ctx context.Context, db execer, userID, guid string, played bool
 // (missing or unaired episodes): they share the GUID of the file that arrives later,
 // which would otherwise show up already watched. Marking unwatched clears them too.
 // One transaction: a failure part way leaves the season as it was, not half marked.
+// Every episode gets the same time: with a time of its own each, whichever happened to
+// be written last looked like the episode finished most recently.
 func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, played bool) error {
 	q := `WITH RECURSIVE tree(id) AS (
 			SELECT id FROM items WHERE id = ?
@@ -282,8 +286,9 @@ func (s *Store) MarkPlayedUnder(ctx context.Context, userID, itemID string, play
 		return err
 	}
 	rows.Close()
+	now := Now()
 	for _, g := range guids {
-		if err := markPlayed(ctx, tx, userID, g, played); err != nil {
+		if err := markPlayedAt(ctx, tx, userID, g, played, now); err != nil {
 			return err
 		}
 	}
@@ -298,7 +303,8 @@ func (s *Store) SetFavorite(ctx context.Context, userID, guid string, fav bool) 
 
 // ResumeItems lists in-progress items (position > 0), most recent first. A played item
 // with a position is a rewatch under way (finishing resets the position to 0), so it
-// counts as in progress too.
+// counts as in progress too. Placeholders (an episode whose file is gone, kept as
+// "missing" under the same GUID) are left out: there is nothing to resume.
 func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]model.Item, error) {
 	if limit <= 0 {
 		limit = 20
@@ -307,14 +313,14 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 	// each series (grouped by the season's parent); movies stand on their own.
 	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items i
 		JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
-		WHERE u.position_ms > 0 AND i.type IN ('movie', 'episode')
+		WHERE u.position_ms > 0 AND i.type IN ('movie', 'episode') AND i.is_virtual = 0
 		  AND NOT EXISTS (
 		    SELECT 1 FROM items i2
 		    JOIN user_item_data u2 ON u2.item_guid = i2.guid AND u2.scope_id = u.scope_id
 		    JOIN items s1 ON s1.id = i.parent_id
 		    JOIN items s2 ON s2.id = i2.parent_id
 		    WHERE i.type = 'episode' AND i2.type = 'episode' AND i2.id <> i.id
-		      AND s1.parent_id = s2.parent_id
+		      AND s1.parent_id = s2.parent_id AND i2.is_virtual = 0
 		      AND u2.position_ms > 0
 		      AND (u2.last_played_at > u.last_played_at OR (u2.last_played_at = u.last_played_at AND i2.id > i.id))
 		  )
@@ -339,7 +345,8 @@ func (s *Store) ResumeItems(ctx context.Context, userID string, limit int) ([]mo
 }
 
 // HistoryItems lists the episodes and movies the profile has played (started or
-// finished), most recently played first: My Lists' History tab.
+// finished), most recently played first: My Lists' History tab. Placeholders of removed
+// files are left out, as in ResumeItems.
 func (s *Store) HistoryItems(ctx context.Context, userID string, limit int) ([]model.Item, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -347,7 +354,7 @@ func (s *Store) HistoryItems(ctx context.Context, userID string, limit int) ([]m
 	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items i
 		JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
 		WHERE (u.position_ms > 0 OR u.played = 1) AND u.last_played_at IS NOT NULL AND u.last_played_at <> ''
-		  AND i.type IN ('movie', 'episode')
+		  AND i.type IN ('movie', 'episode') AND i.is_virtual = 0
 		ORDER BY u.last_played_at DESC, i.id DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err

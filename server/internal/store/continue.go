@@ -41,13 +41,20 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		}
 	}
 
-	// 2. The latest finished episode of each series.
-	rows, err := s.db.QueryContext(ctx, `SELECT se.parent_id, i.id, se.index_aired, i.index_aired, u.last_played_at
-		FROM user_item_data u
-		JOIN items i ON i.guid = u.item_guid AND i.type = 'episode'
-		JOIN items se ON se.id = i.parent_id
-		WHERE u.scope_id = ? AND u.played = 1 AND u.last_played_at IS NOT NULL AND u.last_played_at <> ''
-		ORDER BY u.last_played_at DESC LIMIT 300`, scopeID)
+	// 2. The latest finished episode of each series, picked per series in the query: a
+	// limit over all finished episodes first let one long show (a 300-episode series
+	// marked watched) fill the window and hide every other show's next episode. Episodes
+	// finished at the same moment (one "mark all") give the last in order.
+	rows, err := s.db.QueryContext(ctx, `SELECT series, item, season, ep, at, marked FROM (
+			SELECT se.parent_id AS series, i.id AS item, se.index_aired AS season, i.index_aired AS ep,
+				u.last_played_at AS at, COALESCE(u.marked_at, '') AS marked,
+				ROW_NUMBER() OVER (PARTITION BY se.parent_id
+					ORDER BY u.last_played_at DESC, COALESCE(se.index_aired, 0) DESC, COALESCE(i.index_aired, 0) DESC, i.id DESC) AS rn
+			FROM user_item_data u
+			JOIN items i ON i.guid = u.item_guid AND i.type = 'episode'
+			JOIN items se ON se.id = i.parent_id
+			WHERE u.scope_id = ? AND u.played = 1 AND u.last_played_at IS NOT NULL AND u.last_played_at <> ''
+		) WHERE rn = 1 ORDER BY at DESC LIMIT 300`, scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,20 +62,18 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		series, item  string
 		season, epNum int
 		at            string
+		marked        bool // the latest thing done to it was a "mark as watched", not a viewing
 	}
 	var done []finished
-	seen := map[string]bool{}
 	for rows.Next() {
 		var f finished
 		var season, ep *int
-		if err := rows.Scan(&f.series, &f.item, &season, &ep, &f.at); err != nil {
+		var marked string
+		if err := rows.Scan(&f.series, &f.item, &season, &ep, &f.at, &marked); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if seen[f.series] {
-			continue
-		}
-		seen[f.series] = true
+		f.marked = marked != "" && marked >= f.at
 		if season != nil {
 			f.season = *season
 		}
@@ -78,6 +83,9 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		done = append(done, f)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	// 3. For each, the next episode not yet watched, when the finish is the series' latest activity.
 	var nextUp []model.Item
@@ -89,6 +97,12 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		if err != nil || it == nil {
 			// Nothing unwatched after it. On a rewatch (every episode already watched)
 			// the next one in order still comes up; otherwise this was the last there is.
+			// A rewatch is a viewing: an episode that was only marked watched ("mark all
+			// as watched" on a series) is not one, and used to bring up an episode the
+			// profile had just marked.
+			if f.marked {
+				continue
+			}
 			if all, err2 := s.allEpisodesPlayed(ctx, scopeID, f.series); err2 == nil && all {
 				it, err = s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, f.season, f.epNum, false)
 			}
