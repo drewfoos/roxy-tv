@@ -274,6 +274,17 @@ func TestPlaybackOverHTTP(t *testing.T) {
 	if remux["video"]["codec_name"] != "h264" || remux["audio"] == nil {
 		t.Errorf("remux streams: %v", remux)
 	}
+	// Where a remux from 12.5 s begins: a keyframe (one a second here) at or before it,
+	// not the start point itself (the video is copied, so it cannot be cut between).
+	var rs struct {
+		StartSec float64 `json:"startSec"`
+	}
+	if err := json.Unmarshal(get("/v1/sources/"+src.ID+"/remux/start?start=12.5"), &rs); err != nil || rs.StartSec < 10.9 || rs.StartSec > 12.1 {
+		t.Errorf("remux start for 12.5: %+v %v, want the keyframe at 11 or 12", rs, err)
+	}
+	if err := json.Unmarshal(get("/v1/sources/"+src.ID+"/remux/start?start=0"), &rs); err != nil || rs.StartSec != 0 {
+		t.Errorf("remux start for 0: %+v %v", rs, err)
+	}
 	tr := probeOut("transcode.mkv", get("/v1/sources/"+src.ID+"/transcode?height=120&bitrate=300"))
 	if tr["video"]["codec_name"] != "h264" || tr["audio"]["codec_name"] != "aac" {
 		t.Errorf("transcode streams: %v", tr)

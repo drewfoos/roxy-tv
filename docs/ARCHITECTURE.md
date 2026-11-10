@@ -192,7 +192,8 @@ for one of three streams; the server only serves them.
 | Stream | Endpoint (`/v1`) | What it is |
 |---|---|---|
 | Direct play | `GET /stream/{id}` | The file itself, with range requests |
-| Remux | `GET /sources/{id}/remux?audio=&start=` | Video copied, one chosen audio track (re-encoded to AAC only if a browser cannot decode it), timestamps from `start`; Matroska on stdout. 8 slots |
+| Remux | `GET /sources/{id}/remux?audio=&start=` | Video copied, one chosen audio track (re-encoded to AAC only if a browser cannot decode it), timestamps from zero at the keyframe the seek to `start` lands on; Matroska on stdout. 8 slots |
+| Remux start | `GET /sources/{id}/remux/start?start=` | `{startSec}`: where that remux's zero is in the file (the keyframe, up to a GOP before `start`); the player adds this to the stream clock |
 | Transcode | `GET /sources/{id}/transcode?height=&bitrate=&start=` | H.264 at the chosen height and bitrate (tone-mapped to SDR for HDR), audio copied when compact, every subtitle track, font and chapter copied; Matroska on stdout. 4 slots |
 | Subtitles | `GET /sources/{id}/subtitles/{index}` | An extracted text track, untouched (ASS stays ASS) |
 | Fonts | `GET /sources/{id}/attachments/{index}` | An extracted attachment, served as a font only |
