@@ -38,3 +38,11 @@ internal fun afterAttemptsUsedUp(serverUp: Boolean, httpStatus: Int?, failedRoun
 internal fun cannotOpenMessage(httpStatus: Int?): String =
     if (httpStatus != null) "Roxy could not open this video (error $httpStatus). Press play to try again."
     else "Roxy is there, but this video keeps failing. Press play to try again."
+
+/**
+ * Whether the answer to a failed open ([httpStatus]) says the media token was not taken
+ * (401, 403): the server restarted and forgot it, or the sign-in it belonged to ended. The
+ * app keeps a token per source for hours, so the reconnect that follows has to ask for a
+ * new one first; with the kept one every attempt was refused the same way.
+ */
+internal fun tokenRefused(httpStatus: Int?): Boolean = httpStatus == 401 || httpStatus == 403

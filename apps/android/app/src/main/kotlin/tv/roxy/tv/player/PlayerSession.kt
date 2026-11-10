@@ -902,6 +902,8 @@ class PlayerSession(
         if (destroyed) return
         reconnectJob?.cancel()
         waitJob?.cancel()
+        // The server did not take the media token: the next open asks for a new one (see tokenRefused).
+        if (tokenRefused(failedHttp)) sourceId?.let { app.api.forgetMediaToken(it) }
         if (reconnects.used >= RECONNECT_DELAYS_MS.size) {
             Timber.w("reconnects used up at %.1f s; waiting for the server", at)
             reloadTarget = null

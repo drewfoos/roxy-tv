@@ -1,6 +1,7 @@
 package tv.roxy.tv.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -92,6 +93,20 @@ class OpenFailureTest {
         b.reset()
         assertEquals(0, b.failedRounds)
         assertEquals(0, b.used)
+    }
+
+    // The app keeps a media token per source for hours: one the server refuses has to be
+    // dropped before the reconnect, or every attempt sends it again.
+    @Test fun aRefusedTokenIsNotKeptForTheReconnect() {
+        assertTrue(tokenRefused(401))
+        assertTrue(tokenRefused(403))
+        for (other in listOf(null, 400, 404, 416, 500, 503)) assertFalse("$other", tokenRefused(other))
+        val session = java.io.File("src/main/kotlin/tv/roxy/tv/player/PlayerSession.kt").readText()
+        val reconnect = session.substring(session.indexOf("private fun reconnect("), session.indexOf("private fun waitForServer("))
+        val forget = reconnect.indexOf("if (tokenRefused(failedHttp)) sourceId?.let { app.api.forgetMediaToken(it) }")
+        assertTrue("reconnect drops the refused token", forget >= 0)
+        assertTrue("before the reopen asks for one", forget < reconnect.indexOf("app.api.mediaToken(sid)"))
+        assertTrue("and before a transcode is restarted", forget < reconnect.indexOf("restartTranscode(at)"))
     }
 
     @Test fun theMessageNamesTheServersAnswer() {
