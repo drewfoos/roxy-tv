@@ -578,6 +578,19 @@ class MpvPlayer(
     /** ffmpeg stream index of the selected track of [type] ("audio" | "sub"); matches Roxy's stream `index`. */
     fun currentStreamIndex(type: String): Int? = int("current-tracks/$type/ff-index")
 
+    /**
+     * The mpv id of the file's own [type] track at stream [index] (the server's numbering,
+     * what [currentStreamIndex] reports), or null: none, or only an added (external) one.
+     */
+    fun trackIdForStreamIndex(type: String, index: Int): Int? {
+        val n = int("track-list/count") ?: return null
+        for (i in 0 until n) {
+            if (str("track-list/$i/type") != type || bool("track-list/$i/external") == true) continue
+            if (int("track-list/$i/ff-index") == index) return int("track-list/$i/id")
+        }
+        return null
+    }
+
     // ---- stats ----
 
     fun snapshot(): MpvStats = MpvStats(

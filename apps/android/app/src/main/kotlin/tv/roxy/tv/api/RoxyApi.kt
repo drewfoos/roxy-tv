@@ -806,6 +806,8 @@ data class UserData(
     val lastPlayedAt: String? = null,
     /** The subtitle stream last chosen for this item; -1 = subtitles off, null = none saved. */
     val subtitleIndex: Int? = null,
+    /** The audio stream last chosen for this item (the file's stream number), null = none saved. */
+    val audioIndex: Int? = null,
 )
 
 @Serializable

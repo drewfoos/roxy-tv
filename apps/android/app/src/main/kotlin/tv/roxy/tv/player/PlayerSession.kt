@@ -59,6 +59,10 @@ class PlayerSession(
         val showStats: Boolean,
         /** The item's saved subtitle choice is "off" (userData.subtitleIndex -1): start without subtitles. */
         val subtitlesOff: Boolean = false,
+        /** The item's saved subtitle stream (userData.subtitleIndex > 0): the track it starts on. */
+        val subtitleIndex: Int? = null,
+        /** The item's saved audio stream: the track it starts on. */
+        val audioIndex: Int? = null,
     ) {
         companion object {
             fun from(req: PlayRequest, settings: PlayerSettings) = Params(
@@ -66,6 +70,8 @@ class PlayerSession(
                 startSeconds = req.startSeconds, local = req.local, hwdec = settings.hwdec, vo = settings.vo, subMode = settings.subMode,
                 forceSid = 0, audioLangs = settings.mpvAudioLangs, subLangs = settings.mpvSubLangs, anime = req.item.isAnime, showStats = settings.showStats,
                 subtitlesOff = req.item.userData?.subtitleIndex == -1,
+                subtitleIndex = req.item.userData?.subtitleIndex?.takeIf { it > 0 },
+                audioIndex = req.item.userData?.audioIndex?.takeIf { it > 0 },
             )
         }
     }
@@ -314,6 +320,10 @@ class PlayerSession(
     private var audioPick: TrackPick? = null
     /** The current item was last watched with subtitles off; applies until the viewer picks a track. */
     private var savedSubsOff = params.subtitlesOff
+    /** The item's saved subtitle stream: started on unless the viewer picked one in this session. */
+    private var savedSubIndex = params.subtitleIndex
+    /** The item's saved audio stream: started on unless the viewer picked one in this session. */
+    private var savedAudioIndex = params.audioIndex
 
     private val glue: PlaybackGlue
     private var lastGlueUpdate = 0L
@@ -449,14 +459,14 @@ class PlayerSession(
                 if (id > 0) lastSid = id
                 player.setSubtitleTrack(id)
                 subPick = pickOf(id, "sub")
-                savedSubsOff = false // the viewer chose: the saved "off" no longer applies
+                savedSubsOff = false; savedSubIndex = null // the viewer chose: the saved "off" no longer applies
                 refreshUi()
             }
             override fun selectAudio(id: Int) {
                 player.setAudioTrack(id)
                 audioPick = pickOf(id, "audio")
                 subPick = null // the subtitles follow the audio again (the policy just re-ran)
-                savedSubsOff = false
+                savedSubsOff = false; savedSubIndex = null; savedAudioIndex = null
                 refreshUi()
             }
             override fun setSpeed(speed: Double) { player.setSpeed(speed); refreshUi(forceGlue = true) }
@@ -467,7 +477,7 @@ class PlayerSession(
                 val target = if (current > 0) { lastSid = current; 0 } else lastSid.takeIf { it > 0 } ?: ui.subtitleTracks.firstOrNull()?.id ?: 0
                 player.setSubtitleTrack(target)
                 subPick = pickOf(target, "sub")
-                savedSubsOff = false
+                savedSubsOff = false; savedSubIndex = null
                 refreshUi()
             }
             override fun toggleAutoSkip() {
@@ -733,6 +743,8 @@ class PlayerSession(
         title = req.title
         subtitleLine = req.subtitleLine
         savedSubsOff = req.item.userData?.subtitleIndex == -1
+        savedSubIndex = req.item.userData?.subtitleIndex?.takeIf { it > 0 }
+        savedAudioIndex = req.item.userData?.audioIndex?.takeIf { it > 0 }
         skipped.clear()
         segments = emptyList()
         trickplay = null
@@ -926,20 +938,37 @@ class PlayerSession(
     /** On a new file: the viewer's earlier picks, matched by language and kind (title first). */
     private fun applyTrackPicks() {
         val tracks = player.tracksWithOverrides()
+        // The item's saved audio (no pick in this session): before the subtitles, since
+        // switching audio re-runs the subtitle policy.
+        if (audioPick == null) savedAudioIndex?.let { idx ->
+            player.trackIdForStreamIndex("audio", idx)?.takeIf { it != player.currentTrackId("audio") }?.let { id ->
+                Timber.i("audio saved for this item: stream %d -> %d", idx, id); player.setAudioTrack(id)
+            }
+        }
         audioPick?.let { p ->
             val audio = tracks.filter { it.type == "audio" && it.lang == p.lang }
             val t = audio.firstOrNull { it.title == p.title } ?: audio.firstOrNull()
             if (t != null && t.id != player.currentTrackId("audio")) { Timber.i("audio pick carried over -> %d", t.id); player.setAudioTrack(t.id) }
         }
-        // The viewer's pick in this session wins; without one, the item's saved "off".
-        if (subPick == null && savedSubsOff) { Timber.i("subtitles off (saved for this item)"); player.setSubtitleTrack(0); return }
-        subPick?.let { p ->
-            if (p.off) { player.setSubtitleTrack(0); return }
-            val subs = tracks.filter { it.type == "sub" && it.lang == p.lang && player.subtitleClass(it) == p.kind }
-            val t = subs.firstOrNull { it.title == p.title } ?: subs.firstOrNull() ?: return
-            Timber.i("subtitle pick carried over -> %d", t.id)
-            player.setSubtitleTrack(t.id)
-            lastSid = t.id
+        when (val start = subtitleStart(subPick != null, savedSubsOff, savedSubIndex)) {
+            SubtitleStart.Policy -> {}
+            SubtitleStart.Off -> { Timber.i("subtitles off (saved for this item)"); player.setSubtitleTrack(0) }
+            is SubtitleStart.Saved -> player.trackIdForStreamIndex("sub", start.streamIndex)?.let { id ->
+                // Found on the TV: Alya resumed on "Signs & Songs" (the policy's pick for a
+                // dub) although "Dialogue" was saved for the episode: only a saved "off" was
+                // honoured. Now the saved track is, as the server stores it per item.
+                Timber.i("subtitle saved for this item: stream %d -> %d", start.streamIndex, id)
+                player.setSubtitleTrack(id)
+                lastSid = id
+            }
+            SubtitleStart.CarryPick -> subPick?.let { p ->
+                if (p.off) { player.setSubtitleTrack(0); return }
+                val subs = tracks.filter { it.type == "sub" && it.lang == p.lang && player.subtitleClass(it) == p.kind }
+                val t = subs.firstOrNull { it.title == p.title } ?: subs.firstOrNull() ?: return
+                Timber.i("subtitle pick carried over -> %d", t.id)
+                player.setSubtitleTrack(t.id)
+                lastSid = t.id
+            }
         }
     }
 
@@ -1281,4 +1310,24 @@ class PlayerSession(
         player.listener = null
         player.destroy()
     }
+}
+
+/** Which subtitle track a file starts on. */
+sealed interface SubtitleStart {
+    /** The viewer's pick earlier in this session (carried from episode to episode). */
+    data object CarryPick : SubtitleStart
+    /** The item's saved "off". */
+    data object Off : SubtitleStart
+    /** The item's saved track (the server's stream number). */
+    data class Saved(val streamIndex: Int) : SubtitleStart
+    /** Nothing chosen: the language policy decides. */
+    data object Policy : SubtitleStart
+}
+
+/** The viewer's pick in this session wins; then the item's saved choice ("off" or a track); then the policy. */
+internal fun subtitleStart(sessionPick: Boolean, savedOff: Boolean, savedIndex: Int?): SubtitleStart = when {
+    sessionPick -> SubtitleStart.CarryPick
+    savedOff -> SubtitleStart.Off
+    savedIndex != null && savedIndex > 0 -> SubtitleStart.Saved(savedIndex)
+    else -> SubtitleStart.Policy
 }
