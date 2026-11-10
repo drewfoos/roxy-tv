@@ -48,3 +48,18 @@ internal fun actsOncePerPress(keyCode: Int): Boolean = when (keyCode) {
 
 /** True when the activity should drop this key-down: a repeat of a key that acts once per press. */
 internal fun dropsRepeat(keyCode: Int, repeatCount: Int): Boolean = repeatCount > 0 && actsOncePerPress(keyCode)
+
+/** What Back does in the player (see [backStep]). */
+internal enum class BackStep { SheetUp, CloseSheet, HideControls, Leave }
+
+/**
+ * Back goes up one level: a list (Audio, Subtitles...) back to Settings, Settings closed,
+ * then the controls away, and only then out of the player. The Back key and the system's
+ * back callback both ask this, so they cannot disagree.
+ */
+internal fun backStep(sheet: Sheet, controlsVisible: Boolean): BackStep = when {
+    sheet == Sheet.Settings -> BackStep.CloseSheet
+    sheet != Sheet.None -> BackStep.SheetUp
+    controlsVisible -> BackStep.HideControls
+    else -> BackStep.Leave
+}
