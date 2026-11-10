@@ -187,9 +187,14 @@ class MainActivity : ComponentActivity() {
         val ctx = this
         Thread({ runCatching { Timber.i("Device report:\n%s", DeviceReport.full(ctx)) } }, "device-report").start()
         val tv = isTelevision(this)
-        WatchNext.itemIdFrom(intent?.data)?.let { pendingPlayId = it }
-        WatchNext.detailsFrom(intent?.data)?.let { pendingOpen = it }
-        linkCodeFrom(intent?.data)?.let { pendingLinkCode = it }
+        // The link that launched the app, once. A rebuild (process death while the player was
+        // up, a configuration change) gets the same launch Intent again: reading it then
+        // replayed the Watch Next card, so Back from the player opened it once more.
+        if (savedInstanceState == null) {
+            WatchNext.itemIdFrom(intent?.data)?.let { pendingPlayId = it }
+            WatchNext.detailsFrom(intent?.data)?.let { pendingOpen = it }
+            linkCodeFrom(intent?.data)?.let { pendingLinkCode = it }
+        }
         // The TV UI is a landscape, D-pad layout; the phone browses in portrait like Netflix
         // (the player is landscape on both, set in the manifest).
         requestedOrientation = if (tv) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

@@ -144,7 +144,21 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     }
     // Every play on the phone (hero, Resume pill, downloads, episode rows) lands on the player page.
     DisposableEffect(nav) {
-        app.openPlayerPage = { item, fromStart, startMs -> openEpisode(item, fromStart, startMs) }
+        app.openPlayerPage = open@{ item, fromStart, startMs ->
+            // The episode page on screen already plays it ("Play on" from another device for
+            // the same item): that player seeks and carries on. Pushing another page made a
+            // new player while the "Play on" answer waited on the old one, which matched at
+            // once and was then destroyed, so the sender never heard back and timed out.
+            val player = app.remote.activePlayer?.takeIf { !it.destroyed && nav.currentBackStackEntry?.destination?.hasRoute<Route.Episode>() == true }
+            val same = player?.let { tv.roxy.tv.ui.samePlayer(it.itemId, item.id, fromStart, startMs) }
+            if (player != null && same != null) {
+                timber.log.Timber.i("play request for the item already playing here: %s", same.seekToSec?.let { "jump to ${it}s" } ?: "resume it")
+                same.seekToSec?.let { player.remoteSeekTo(it) }
+                player.remotePause(false)
+                return@open
+            }
+            openEpisode(item, fromStart, startMs)
+        }
         app.openArrSettings = { nav.navigate(Route.ArrSettings) }
         app.openTitleAdmin = { item, action ->
             if (action == "identify") nav.navigate(Route.Identify(item.id, item.title, if (item.isMovie) "movie" else "series"))

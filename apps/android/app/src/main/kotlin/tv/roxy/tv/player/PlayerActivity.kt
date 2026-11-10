@@ -49,6 +49,13 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_SUBS_OFF = "subsOff" // the item was last watched with subtitles off
         const val EXTRA_SUB_INDEX = "subIndex"     // the item's saved subtitle stream (server numbering)
         const val EXTRA_AUDIO_INDEX = "audioIndex" // the item's saved audio stream
+        const val EXTRA_SERIES_ID = "seriesId"     // the episode's show: "Go to Details" opens it without a lookup
+        const val EXTRA_SERIES_TITLE = "seriesTitle"
+        const val EXTRA_EPISODE = "episode"        // the item is an episode (else a film)
+
+        /** Saved state: the item on screen and where it was, for a rebuilt player (see [restartPlan]). */
+        private const val STATE_ITEM_ID = "player.itemId"
+        private const val STATE_POSITION = "player.positionSec"
 
         /**
          * The item's saved subtitle and audio streams, as the request carried them. Found on
@@ -73,7 +80,13 @@ class PlayerActivity : ComponentActivity() {
             subtitlesOff: Boolean = false,
             subtitleIndex: Int? = null,
             audioIndex: Int? = null,
+            seriesId: String? = null,
+            seriesTitle: String? = null,
+            episode: Boolean = false,
         ): Intent = Intent(context, PlayerActivity::class.java)
+            .putExtra(EXTRA_SERIES_ID, seriesId)
+            .putExtra(EXTRA_SERIES_TITLE, seriesTitle)
+            .putExtra(EXTRA_EPISODE, episode)
             .putExtra(EXTRA_SUBS_OFF, subtitlesOff)
             .putExtra(EXTRA_SUB_INDEX, subtitleIndex?.takeIf { it > 0 } ?: 0)
             .putExtra(EXTRA_AUDIO_INDEX, audioIndex?.takeIf { it > 0 } ?: 0)
@@ -95,7 +108,62 @@ class PlayerActivity : ComponentActivity() {
 
         fun intent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
             intent(context, req.url, req.title, req.item.id, req.sourceId, req.startSeconds, settings, req.subtitleLine, req.local, anime = req.item.isAnime, explicitStart = req.explicitStart,
-                subtitlesOff = req.item.userData?.subtitleIndex == -1, subtitleIndex = req.item.userData?.subtitleIndex, audioIndex = req.item.userData?.audioIndex)
+                subtitlesOff = req.item.userData?.subtitleIndex == -1, subtitleIndex = req.item.userData?.subtitleIndex, audioIndex = req.item.userData?.audioIndex,
+                seriesId = req.item.seriesId, seriesTitle = req.item.seriesTitle, episode = req.item.isEpisode)
+
+        /**
+         * The Intent that describes what the player shows now, after autoplay or Next moved
+         * it on to [req]. Never an explicit start: it is only the item, and a rebuild (see
+         * [restartPlan]) asks the server where it is.
+         */
+        fun nowPlayingIntent(context: Context, req: PlayRequest, settings: PlayerSettings): Intent =
+            intent(context, req.copy(explicitStart = false), settings)
+
+        /** Saved with the activity's state: the item on screen (the next episode after autoplay) and its position. */
+        fun saveState(out: Bundle, itemId: String?, positionSec: Int?) {
+            if (itemId == null) return
+            out.putString(STATE_ITEM_ID, itemId)
+            if (positionSec != null) out.putInt(STATE_POSITION, positionSec)
+        }
+
+        /** A rebuilt player resolves [itemId] again; [fallbackStartSec] is used if the server can't say. */
+        data class Restart(val itemId: String, val fallbackStartSec: Int)
+
+        /**
+         * What a player being created opens. A first start (no saved state) plays its Intent
+         * as given. A rebuild (process death, a recreation) got the ORIGINAL Intent back
+         * (setIntent is not kept by the system), which names the first episode with its old
+         * start, or 0 after Play from start: replayed, episode 1 reopened there and its 10 s
+         * reports overwrote its saved place. So a rebuild plays the item that was on screen,
+         * resolved again so the server's position wins, never the Intent's explicit start.
+         * Null: open [intent] as it is (a first start, or nothing to resolve: a bare URL).
+         */
+        fun restartPlan(intent: Intent, saved: Bundle?): Restart? {
+            saved ?: return null
+            val id = saved.getString(STATE_ITEM_ID) ?: intent.getStringExtra(EXTRA_ITEM_ID) ?: return null
+            val fallback = if (saved.containsKey(STATE_POSITION)) saved.getInt(STATE_POSITION) else intent.getIntExtra(EXTRA_START, 0)
+            return Restart(id, fallback)
+        }
+
+        /** Where "Go to Details" goes: a show's page for an episode, the film's own for a film. */
+        data class DetailsTarget(val id: String, val movie: Boolean, val title: String)
+
+        fun detailsTarget(item: tv.roxy.tv.api.Item): DetailsTarget? =
+            if (item.isEpisode) item.seriesId?.let { DetailsTarget(it, movie = false, title = item.seriesTitle.orEmpty()) }
+            else DetailsTarget(item.id, movie = true, title = item.title)
+
+        /**
+         * The details page for the player's [intent], read from its extras when they say
+         * enough (the series id of an episode, or a film), else from [lookup] (the cache,
+         * then the server). Null when neither knows: the player then stays open.
+         */
+        suspend fun resolveDetails(intent: Intent, itemId: String, lookup: suspend (String) -> tv.roxy.tv.api.Item?): DetailsTarget? {
+            if (intent.getStringExtra(EXTRA_ITEM_ID) == itemId) {
+                val seriesId = intent.getStringExtra(EXTRA_SERIES_ID)
+                if (intent.getBooleanExtra(EXTRA_EPISODE, false) && seriesId != null) return DetailsTarget(seriesId, movie = false, title = intent.getStringExtra(EXTRA_SERIES_TITLE).orEmpty())
+            }
+            return lookup(itemId)?.let { detailsTarget(it) }
+        }
     }
 
     private lateinit var app: RoxyApp
@@ -109,6 +177,9 @@ class PlayerActivity : ComponentActivity() {
         !isTv && packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
     }
 
+    /** A rebuild's lookup of the item it was showing (see [restartPlan]); a new request cancels it. */
+    private var restartJob: kotlinx.coroutines.Job? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // No FLAG_KEEP_SCREEN_ON here: PlayerSurface keeps the screen on only while playing.
@@ -119,11 +190,42 @@ class PlayerActivity : ComponentActivity() {
         }
 
         app = RoxyApp.get(this)
-        if (!startSession(intent)) { finish(); return }
+        restoredState = savedInstanceState
+        val restart = restartPlan(intent, savedInstanceState)
+        if (restart != null) restartJob = lifecycleScope.launch { restart(restart) }
+        else if (!startSession(intent)) { finish(); return }
         setContent {
             // A new session gets a new SurfaceView: the old one's holder belongs to the old player.
             shown.value?.let { s -> androidx.compose.runtime.key(s) { PlayerSurface(s, modifier = Modifier.fillMaxSize()) } }
         }
+    }
+
+    /** The state this instance was rebuilt from: saved again as it was while no session is up yet. */
+    private var restoredState: Bundle? = null
+
+    /** A rebuilt player: the item it showed, at the server's position (see [restartPlan]). */
+    private suspend fun restart(r: Restart) {
+        Timber.i("player rebuilt: resolving %s again", r.itemId)
+        val seed = app.items[r.itemId] ?: tv.roxy.tv.api.Item(
+            id = r.itemId, type = if (intent.getBooleanExtra(EXTRA_EPISODE, false)) "episode" else "movie", title = intent.getStringExtra(EXTRA_TITLE) ?: "",
+        )
+        val req = tv.roxy.tv.ui.playRequest(this, seed).onFailure { Timber.w(it, "rebuilt player: lookup failed") }.getOrNull()
+        val next = when {
+            req != null -> nowPlayingIntent(this, req, app.prefs.settings.value)
+            // Server away: the Intent's file if it is the same item, at the last known place.
+            intent.getStringExtra(EXTRA_ITEM_ID) == r.itemId -> Intent(intent).putExtra(EXTRA_START, r.fallbackStartSec).putExtra(EXTRA_START_EXPLICIT, false)
+            else -> null
+        }
+        restartJob = null
+        if (next == null || isFinishing) { finish(); return }
+        setIntent(next)
+        if (!startSession(next)) finish()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::session.isInitialized && !session.destroyed) saveState(outState, session.itemId, (session.positionMs() / 1000).toInt())
+        else restoredState?.let { r -> saveState(outState, r.getString(STATE_ITEM_ID), if (r.containsKey(STATE_POSITION)) r.getInt(STATE_POSITION) else null) }
     }
 
     /**
@@ -150,6 +252,7 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         Timber.i("new play request: %s", url.substringBefore('?'))
+        restartJob?.cancel(); restartJob = null // a rebuild's lookup is superseded
         setIntent(intent)
         if (::session.isInitialized) { session.reportProgress("stop"); session.destroy() }
         if (!startSession(intent)) finish()
@@ -183,18 +286,23 @@ class PlayerActivity : ComponentActivity() {
             subtitleIndex = savedStreams(intent).first,
             audioIndex = savedStreams(intent).second,
         )
-        val host = object : PlayerSession.Host {
-            override fun back() = finish()
-            override fun ended() = finish()
-            override fun openDetails(itemId: String?) = this@PlayerActivity.openDetails(itemId)
-            override val pipSupported: Boolean get() = this@PlayerActivity.pipSupported
-            override val inPip: Boolean get() = isInPictureInPictureMode
-            override fun enterPip() = this@PlayerActivity.enterPip()
-            override fun playingChanged(playing: Boolean) = updatePipParams(playing)
-        }
         session = PlayerSession(this, app, params, lifecycleScope, host)
         shown.value = session
         return true
+    }
+
+    /** What every session of this activity calls back. */
+    internal val host = object : PlayerSession.Host {
+        override fun back() = finish()
+        override fun ended() = finish()
+        override fun openDetails(itemId: String?) = this@PlayerActivity.openDetails(itemId)
+        override val pipSupported: Boolean get() = this@PlayerActivity.pipSupported
+        override val inPip: Boolean get() = isInPictureInPictureMode
+        override fun enterPip() = this@PlayerActivity.enterPip()
+        override fun playingChanged(playing: Boolean) = updatePipParams(playing)
+        // Autoplay / Next moved on: the Intent names the item on screen now, so anything
+        // that reads it (a rebuild, the same-item check of a new request) sees this one.
+        override fun nowPlaying(req: PlayRequest) = setIntent(nowPlayingIntent(this@PlayerActivity, req, RoxyApp.get(this@PlayerActivity).prefs.settings.value))
     }
 
     private fun pipParams(autoEnter: Boolean): android.app.PictureInPictureParams {
@@ -220,7 +328,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** Phone only: shrink to a floating window (the PiP button, and leaving the app while playing). */
     private fun enterPip() {
-        if (!pipSupported) return
+        if (!pipSupported || !::session.isInitialized) return
         session.hideControls()
         runCatching { enterPictureInPictureMode(pipParams(autoEnter = !session.ui.paused)) }.onFailure { Timber.w(it, "PiP failed") }
     }
@@ -234,6 +342,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (!::session.isInitialized) return
         if (isInPictureInPictureMode) session.hideControls() else session.showControls()
     }
 
@@ -293,22 +402,28 @@ class PlayerActivity : ComponentActivity() {
     /**
      * "Go to Details": the page of the show this episode is from (or the film itself), in the
      * app under the player. Coming from that page, closing the player shows it; otherwise the
-     * app opens it (roxytv://open/<id>, see MainActivity.pendingOpen).
+     * app opens it (roxytv://open/<id>, see MainActivity.pendingOpen). The video pauses first
+     * (the lookup can take seconds); the show comes from the Intent when it says, and only
+     * otherwise from a lookup. When nothing can say, the player stays open (paused, with a
+     * message) instead of closing on nothing.
      */
     private fun openDetails(itemId: String?) {
         val app = RoxyApp.get(this)
+        if (::session.isInitialized) session.playPause(play = false)
         if (itemId == null) { finish(); return }
         lifecycleScope.launch {
-            val item: tv.roxy.tv.api.Item? = app.items[itemId] ?: kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { app.api.item(itemId) }.getOrNull() }
-            if (item != null) {
-                val target = if (item.isEpisode) item.seriesId else item.id
-                if (target != null) {
-                    val title = if (item.isEpisode) item.seriesTitle.orEmpty() else item.title
-                    val uri = tv.roxy.tv.tv.WatchNext.detailsUri(target, movie = !item.isEpisode, title = title)
-                    startActivity(Intent(Intent.ACTION_VIEW, uri, this@PlayerActivity, tv.roxy.tv.MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP))
-                }
+            val target = resolveDetails(intent, itemId) { id ->
+                app.items[id] ?: kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { app.api.item(id) }.getOrNull() }
             }
+            if (target == null) {
+                Timber.w("go to details: %s not found", itemId)
+                android.widget.Toast.makeText(applicationContext, "Couldn't open the details right now.", android.widget.Toast.LENGTH_LONG).show()
+                if (::session.isInitialized) session.showControls()
+                return@launch
+            }
+            val uri = tv.roxy.tv.tv.WatchNext.detailsUri(target.id, movie = target.movie, title = target.title)
+            startActivity(Intent(Intent.ACTION_VIEW, uri, this@PlayerActivity, tv.roxy.tv.MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP))
             finish()
         }
     }

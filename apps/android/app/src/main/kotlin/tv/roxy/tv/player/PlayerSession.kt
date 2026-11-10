@@ -1330,11 +1330,16 @@ class PlayerSession(
         }
     }
 
-    /** The host went to the background: report and pause so audio does not keep playing. */
+    /**
+     * The host went to the background: report and pause so audio does not keep playing.
+     * Always, PiP or not: entering PiP only pauses the activity, so a stop is the PiP
+     * window closed or the screen turned off in PiP, when isInPictureInPictureMode may
+     * still say true; skipping the pause then left audio playing with nothing on screen.
+     */
     fun onStop() {
         commitScrub()
         reportProgress("stop")
-        if (!host.inPip) player.setPaused(true)
+        player.setPaused(true)
     }
 
     // ---- driven from another device ("Play on") ----
