@@ -254,6 +254,8 @@ private fun AppRoot(tv: Boolean) {
                     app.downloads.syncProgress(app.api)
                     app.downloads.kick()
                     app.updates.check()
+                    // Subtitle files a download could not get are asked for again (last: nothing waits on it).
+                    app.downloads.retryMissingSidecars(app.api)
                 }
                 .onFailure { t ->
                     if (t is ApiException && t.isUnauthorized) {

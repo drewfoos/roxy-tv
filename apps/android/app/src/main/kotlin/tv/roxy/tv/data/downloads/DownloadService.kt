@@ -130,13 +130,20 @@ class DownloadService : Service() {
         val failures = HashMap<String, Int>()
         // Stopping (or running again) is decided by finishRun once this job completes.
         while (true) {
-            val next = downloads.nextToFetch() ?: break
+            val next = downloads.nextToFetch()
+            if (next == null) {
+                // Nothing left to fetch: subtitle files an earlier fetch did not get are asked for again.
+                downloads.retryMissingSidecars(app.api)
+                break
+            }
             val outcome = try { fetch(next) } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 Timber.e(t, "download %s crashed", next.itemId) // never take the app down with it
                 downloads.update(next.itemId) { if (it.state == DownloadState.Downloading) it.copy(state = DownloadState.Queued, error = t.message) else it }
                 Outcome.Retry
             }
+            // Deleted while it was being fetched: whatever was written after the delete goes too.
+            if (outcome == Outcome.Stopped && live(next.itemId) == null) downloads.removeLeftovers(next)
             if (outcome != Outcome.Retry) { failures.remove(next.itemId); continue }
             val n = (failures[next.itemId] ?: 0) + 1
             failures[next.itemId] = n
@@ -197,7 +204,9 @@ class DownloadService : Service() {
 
         // Extras first: they are small and make the Downloads page complete even if the video stops midway.
         fetchImages(start)
-        fetchSidecars(start, dir)
+        downloads.fetchSidecars(app.api, itemId)
+        // Deleted while the extras were fetched: do not start on the video (runQueue cleans up).
+        if (live(itemId) == null) return Outcome.Stopped
 
         val part = downloads.partFileFor(start)
         val final = downloads.videoFile(start)
@@ -225,7 +234,11 @@ class DownloadService : Service() {
         }.build()
         try {
             app.api.http.newCall(req).execute().use { resp ->
-                if (resp.code == 416) { // our offset is past the end: the file changed on the server
+                if (resp.code == 416) {
+                    // Nothing after our offset. A part that is the whole file (every byte came,
+                    // the rename did not happen) only needs the rename below.
+                    if (partIsWhole(part.length(), expectedTotal, validator, resp.header("Content-Range"))) return@use
+                    // Otherwise our offset is past the end: the file changed on the server.
                     part.delete(); offset = 0
                     throw IOException("range rejected; restarting")
                 }
@@ -334,21 +347,6 @@ class DownloadService : Service() {
                 val url = api.imageUrl(e.item, type, px) ?: continue
                 if (saveUrl(url, downloads.imageFile(e.itemId, type))) downloads.update(e.itemId) { it.copy(images = it.images + type) }
             }
-        }
-    }
-
-    /**
-     * External subtitle files (Bazarr sidecars) saved as `video.<lang>.<ext>` beside the
-     * video so mpv's `sub-auto` picks them up; embedded tracks and fonts are inside the MKV.
-     */
-    private suspend fun fetchSidecars(e: DownloadEntry, dir: File) {
-        val src = e.item.primarySource ?: return
-        src.streams.filter { it.type == "subtitle" && it.isExternal }.forEach { s ->
-            val ext = when (s.codec.lowercase()) { "ass", "ssa" -> "ass"; "subrip", "srt" -> "srt"; "webvtt", "vtt" -> "vtt"; else -> s.codec.lowercase().ifEmpty { "srt" } }
-            val lang = (s.detectedLanguage ?: s.language ?: "und").lowercase().filter { it.isLetterOrDigit() }.ifEmpty { "und" }
-            val f = File(dir, "video.$lang.${s.index}.${ext.filter { it.isLetterOrDigit() }.ifEmpty { "srt" }}")
-            if (f.exists()) return@forEach
-            saveUrl("${app.api.baseUrl}/v1/sources/${src.id}/subtitles/${s.index}", f)
         }
     }
 

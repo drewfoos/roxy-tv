@@ -48,7 +48,9 @@ class RoxyApi(private val prefs: Prefs) {
             val b = req.newBuilder()
             if (s.token != null && req.header("Authorization") == null) b.header("Authorization", "Bearer ${s.token}")
             // Watch state, favourites and Home are per profile (docs/api/native.md "Profiles").
-            s.profileId?.let { b.header("X-Roxy-Profile", it) }
+            // A request that names its profile keeps it: a queued report belongs to the profile
+            // that made it, whichever is active by the time it is sent.
+            if (req.header(PROFILE_HEADER) == null) s.profileId?.let { b.header(PROFILE_HEADER, it) }
             // Any answer means the server is there; a failed connection (not one we cancelled)
             // tells ServerStatus to check, which drives the "Can't reach Roxy" banner.
             val resp = try { chain.proceed(b.build()) } catch (e: IOException) {
@@ -175,10 +177,13 @@ class RoxyApi(private val prefs: Prefs) {
         if (on) postNoBody("/v1/me/favorite/$itemId", "") else delete("/v1/me/favorite/$itemId")
     }
 
-    /** [at]: when an offline watched mark was made (Unix ms), so the server can drop it if the item was played since. */
-    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null, ageMs: Long? = null) {
+    /**
+     * [at]: when an offline watched mark was made (Unix ms), so the server can drop it if the item was played since.
+     * [profileId]: the profile the mark is for, when not the active one's request (a queued mark).
+     */
+    suspend fun setPlayed(itemId: String, on: Boolean, at: Long? = null, ageMs: Long? = null, profileId: String? = null) {
         val q = listOfNotNull(at?.let { "at=$it" }, ageMs?.let { "age=$it" }).joinToString("&")
-        if (on) postNoBody("/v1/me/played/$itemId" + (if (q.isEmpty()) "" else "?$q"), "") else delete("/v1/me/played/$itemId")
+        if (on) postNoBody("/v1/me/played/$itemId" + (if (q.isEmpty()) "" else "?$q"), "", profileId) else delete("/v1/me/played/$itemId")
     }
 
     // ---- profiles ----
@@ -475,10 +480,12 @@ class RoxyApi(private val prefs: Prefs) {
      * [ageMs]: how long ago, by this device's clock, the position was reached (a player left
      * paused, a report sent from the offline queue). The server orders reports by it, so a
      * stale one cannot undo what another device did since; [at] is for older servers.
+     * [profileId]: the profile that watched, sent with this request whichever profile is
+     * active now (a queued report); null = the active one, as every other call.
      */
-    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null, sourceId: String? = null, durationMs: Long? = null) {
+    suspend fun progress(itemId: String, positionMs: Long, audioIndex: Int? = null, subtitleIndex: Int? = null, at: Long? = null, ageMs: Long? = null, sourceId: String? = null, durationMs: Long? = null, profileId: String? = null) {
         val body = ProgressRequest(itemId, positionMs, audioIndex, subtitleIndex, at, ageMs, sourceId, durationMs)
-        postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body))
+        postNoBody("/v1/me/progress", json.encodeToString(ProgressRequest.serializer(), body), profileId)
     }
 
     // ---- urls the player and image loader fetch on their own ----
@@ -486,21 +493,51 @@ class RoxyApi(private val prefs: Prefs) {
     // libmpv (and an external player) cannot send headers, so the credential has to ride
     // in the URL. It is a media token: one source, one day, nothing else; the account
     // token never goes into a URL.
-    private val mediaTokens = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    //
+    // A media token belongs to the sign-in that asked for it (the server ties it to that
+    // sign-in's device, and signing out ends it), so the cache does too: after a sign-out
+    // and a new sign-in in the same run of the app, a token of the old sign-in is never
+    // handed out. (It used to be: the cache was keyed by source alone and kept for the
+    // life of the process, so replaying something within its day sent a dead token.)
+    private class MediaTokens(val account: String?) {
+        val bySource = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    }
+
+    @Volatile private var mediaTokens = MediaTokens(null)
+
+    /** The cache of the sign-in [account]; the cache of another sign-in is dropped. */
+    private fun mediaTokensOf(account: String?): MediaTokens {
+        mediaTokens.let { if (it.account == account) return it }
+        return synchronized(this) {
+            mediaTokens.takeIf { it.account == account } ?: MediaTokens(account).also { mediaTokens = it }
+        }
+    }
 
     /** A media token for [sourceId], reused while it has more than an hour left. */
     suspend fun mediaToken(sourceId: String): String {
         val now = System.currentTimeMillis()
-        mediaTokens[sourceId]?.let { (tok, exp) -> if (exp - now > 3_600_000L) return tok }
+        // Kept in the cache of the sign-in it was asked under: when the sign-in changes
+        // while the request is out, the answer lands in a cache nobody reads any more.
+        val cache = mediaTokensOf(token)
+        cache.bySource[sourceId]?.let { (tok, exp) -> if (exp - now > 3_600_000L) return tok }
         val r: MediaTokenResponse = get("/v1/sources/$sourceId/token")
         val exp = runCatching { java.time.Instant.parse(r.expiresAt).toEpochMilli() }.getOrDefault(now + 6 * 3_600_000L)
-        mediaTokens[sourceId] = r.token to exp
+        cache.bySource[sourceId] = r.token to exp
         return r.token
     }
 
     /** The cached media token, for places that cannot wait (fetched when playback started). */
     fun cachedMediaToken(sourceId: String): String? =
-        mediaTokens[sourceId]?.takeIf { (_, exp) -> exp - System.currentTimeMillis() > 60_000L }?.first
+        mediaTokensOf(token).bySource[sourceId]?.takeIf { (_, exp) -> exp - System.currentTimeMillis() > 60_000L }?.first
+
+    /**
+     * Forgets the cached media token of [sourceId], so the next [mediaToken] asks the server
+     * for a new one: for a caller the server has just refused (401 / 403) a stream, a
+     * subtitle or a transcode with it.
+     */
+    fun forgetMediaToken(sourceId: String) {
+        mediaTokensOf(token).bySource.remove(sourceId)
+    }
 
     fun streamUrl(sourceId: String, mediaToken: String): String = "$baseUrl/v1/stream/$sourceId?mt=$mediaToken"
 
@@ -566,8 +603,8 @@ class RoxyApi(private val prefs: Prefs) {
         execute<T>(request(path).get().build())
     }
 
-    private suspend fun postNoBody(path: String, body: String) = withContext(Dispatchers.IO) {
-        val req = request(path).post(body.toRequestBody(JSON_TYPE)).build()
+    private suspend fun postNoBody(path: String, body: String, profileId: String? = null) = withContext(Dispatchers.IO) {
+        val req = request(path).post(body.toRequestBody(JSON_TYPE)).apply { if (profileId != null) header(PROFILE_HEADER, profileId) }.build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw ApiException(resp.code, "HTTP ${resp.code} POST ${req.url.encodedPath}: ${resp.body.string().take(200)}")
         }
@@ -617,6 +654,7 @@ class RoxyApi(private val prefs: Prefs) {
 
     private companion object {
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
+        const val PROFILE_HEADER = "X-Roxy-Profile"
     }
 }
 

@@ -66,6 +66,11 @@ data class DownloadEntry(
      * on resume so a file that changed on the server restarts instead of being appended to.
      */
     val validator: String? = null,
+    /**
+     * External subtitle files (their stream numbers) the server did not give when they were
+     * asked for; [Downloads.retryMissingSidecars] asks again, also once the video is done.
+     */
+    val missingSidecars: List<Int> = emptyList(),
 ) {
     val isDone: Boolean get() = state == DownloadState.Done
     val fraction: Float get() = if (bytesTotal > 0) (bytesDone.toFloat() / bytesTotal).coerceIn(0f, 1f) else 0f
@@ -91,6 +96,13 @@ data class PendingProgress(
     /** The version played (its length decides "watched"), and that length. */
     val sourceId: String? = null,
     val durationMs: Long? = null,
+    /**
+     * The same moment as [at], as time since boot, and which boot that was: the age of the
+     * entry no longer depends on the date staying put (see [pendingAgeMs]). Null on an entry
+     * queued by an older build.
+     */
+    val elapsedAt: Long? = null,
+    val bootCount: Int? = null,
 )
 
 /**
@@ -121,9 +133,15 @@ const val PENDING_REFUSED_KEEP_MS = 24 * 60 * 60 * 1000L
  * rest waits for the next one. An answer refusing one entry does not hold up the others
  * (every report goes through this queue; one stuck entry stopped all watch progress): a
  * 4xx that will never succeed is dropped, another refusal is kept and retried, for a day.
+ * "Slow down" (429, the server's rate limit) and "took too long" (408) say nothing about
+ * the entry: it is kept and the drain stops, as when the server is away.
  * Returns null when all were sent, else the failure that stopped it or the last refusal.
+ * [age] is how old an entry is ([pendingAgeMs]; by the dates alone when not given).
  */
-suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspend (PendingProgress) -> Unit, remove: (PendingProgress) -> Unit): Throwable? {
+suspend fun drainPending(
+    entries: List<PendingProgress>, now: Long, send: suspend (PendingProgress) -> Unit, remove: (PendingProgress) -> Unit,
+    age: (PendingProgress) -> Long = { now - it.at },
+): Throwable? {
     var refused: Throwable? = null
     for (p in entries) {
         val failure = runCatching { send(p) }.exceptionOrNull()
@@ -132,8 +150,9 @@ suspend fun drainPending(entries: List<PendingProgress>, now: Long, send: suspen
             failure == null -> remove(p)
             failure !is tv.roxy.tv.api.ApiException -> return failure // the server away: stop here
             failure.isUnauthorized -> return failure // signed out: nothing else will go either
+            failure.code == 408 || failure.code == 429 -> return failure // asked to wait: the rest would be refused too
             failure.code in 400..499 -> remove(p) // will never succeed (the title was deleted meanwhile)
-            now - p.at > PENDING_REFUSED_KEEP_MS -> { remove(p); refused = failure }
+            age(p) > PENDING_REFUSED_KEEP_MS -> { remove(p); refused = failure }
             else -> refused = failure
         }
     }
@@ -170,6 +189,8 @@ class Downloads(
     journalDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
     /** How soon a failed journal write is tried again (tests: shorter, on real threads). */
     private val journalRetryMs: Long = JOURNAL_RETRY_MS,
+    /** The date, the time since boot and the boot's number (tests: their own). */
+    private val clock: DeviceClock = DeviceClock.system(context),
 ) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
@@ -387,8 +408,10 @@ class Downloads(
                 )
                 idx.entries + (itemId to e.copy(item = e.item.copy(userData = ud)))
             }
+            val ago = ageMs.coerceAtLeast(0)
             val pending = pendingAfter(idx.pendingProgress, profile, itemId, reportedToServer,
-                PendingProgress(profile, itemId, positionMs, System.currentTimeMillis() - ageMs.coerceAtLeast(0), played, audioIndex, subtitleIndex, sourceId, durationMs))
+                PendingProgress(profile, itemId, positionMs, clock.wallMs() - ago, played, audioIndex, subtitleIndex, sourceId, durationMs,
+                    elapsedAt = clock.elapsedMs() - ago, bootCount = clock.bootCount()))
             idx.copy(entries = entries, pendingProgress = pending)
         }
         if (durableNow) return writeQueueNow()
@@ -462,20 +485,25 @@ class Downloads(
 
     /**
      * Send the queued positions and "watched" marks, oldest first (every report goes through
-     * here: see ProgressReporter). Only the active profile's are sent (the header is per
-     * request). Returns null when the queue was sent, or the failure that stopped it (the
-     * rest stays queued).
+     * here: see ProgressReporter). Only the active profile's are sent, each naming that
+     * profile itself: the client's own header is the profile active when the request leaves,
+     * which may be another by then (Switch profile during a drain), and the report would be
+     * written to that one. An entry with no profile goes as before, with the client's header.
+     * Returns null when the queue was sent, or the failure that stopped it (the rest stays
+     * queued).
      */
     suspend fun syncProgress(api: RoxyApi): Throwable? = syncLock.withLock {
         val profile = prefs.session.value.profileId
         val mine = _index.value.pendingProgress.filter { it.profileId == profile }
-        drainPending(mine, System.currentTimeMillis(),
+        val ageOf = { p: PendingProgress -> pendingAgeMs(p, clock.wallMs(), clock.elapsedMs(), clock.bootCount()) }
+        drainPending(mine, clock.wallMs(), age = ageOf,
             send = { p ->
-                // Sent as an age by this device's clock (both times are this clock's, so a clock
-                // set wrong cancels out); at stays for an older server.
-                val age = (System.currentTimeMillis() - p.at).coerceAtLeast(0)
-                if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age)
-                else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs)
+                // Sent as an age by this device's clocks: the time since boot when the entry is
+                // from this boot (the date may have been set meanwhile), else the difference
+                // of two dates; at stays for an older server.
+                val age = ageOf(p)
+                if (p.played) api.setPlayed(p.itemId, true, at = p.at, ageMs = age, profileId = p.profileId)
+                else api.progress(p.itemId, p.positionMs, p.audioIndex, p.subtitleIndex, at = p.at, ageMs = age, sourceId = p.sourceId, durationMs = p.durationMs, profileId = p.profileId)
             },
             remove = { p ->
                 _index.update { idx -> idx.copy(pendingProgress = idx.pendingProgress - p) }
@@ -517,15 +545,91 @@ class Downloads(
     /** Where the service writes while fetching; the length is the resume offset. */
     fun partFileFor(e: DownloadEntry): File = partFile(e)
 
+    /**
+     * Remove what was written for [e] after it was deleted. [delete] clears the folders once,
+     * right away; a fetch that was running (images, subtitles, the first bytes of the video)
+     * may write after that and bring them back, with nothing left that would ever remove
+     * them. Does nothing for an item that is listed (again): only folders no entry and no
+     * title stands for are removed.
+     */
+    fun removeLeftovers(e: DownloadEntry) {
+        val idx = _index.value
+        for (id in setOf(e.itemId, e.titleId)) {
+            if (id !in idx.entries && id !in idx.titles) dir(id).deleteRecursively()
+        }
+    }
+
+    /** One sidecar fetch at a time (the service's and a retry may meet on the same file). */
+    private val sidecarLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Fetch the external subtitle files of [itemId] that are not beside its video yet, and
+     * note on the entry the ones the server did not give ([DownloadEntry.missingSidecars]),
+     * so they are asked for again instead of the download ending without them for good.
+     * Returns false when the server did not answer (the rest was not tried).
+     */
+    suspend fun fetchSidecars(api: RoxyApi, itemId: String): Boolean = sidecarLock.withLock {
+        withContext(Dispatchers.IO) {
+            val e = entry(itemId) ?: return@withContext true
+            val src = e.item.primarySource ?: return@withContext true
+            val dir = dir(itemId)
+            val missing = ArrayList<Int>()
+            var answered = true
+            for (s in sidecarsOf(e.item)) {
+                val f = File(dir, s.fileName)
+                if (f.exists()) continue
+                if (!answered) { missing += s.index; continue }
+                when (fetchSidecar(api, "${api.baseUrl}/v1/sources/${src.id}/subtitles/${s.index}", f)) {
+                    SidecarFetch.Saved, SidecarFetch.Gone -> Unit
+                    SidecarFetch.Refused -> missing += s.index
+                    SidecarFetch.NoAnswer -> { missing += s.index; answered = false }
+                }
+            }
+            update(itemId) { if (it.missingSidecars == missing) it else it.copy(missingSidecars = missing) }
+            if (entry(itemId) == null) removeLeftovers(e) // deleted meanwhile: do not leave the files behind
+            answered
+        }
+    }
+
+    /** One sidecar, written under another name first so a stopped write is never taken for the file. */
+    private fun fetchSidecar(api: RoxyApi, url: String, target: File): SidecarFetch = try {
+        api.http.newCall(okhttp3.Request.Builder().url(url).get().build()).execute().use { resp ->
+            val bytes = if (resp.isSuccessful) resp.body.bytes() else ByteArray(0)
+            val result = sidecarAnswer(resp.code, bytes.size)
+            if (result == SidecarFetch.Saved) {
+                target.parentFile?.mkdirs()
+                val tmp = File(target.parentFile, "sidecar.tmp")
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) { tmp.delete(); throw java.io.IOException("could not move ${target.name} into place") }
+            } else Timber.d("sidecar %s: HTTP %d", target.name, resp.code)
+            result
+        }
+    } catch (t: Exception) {
+        Timber.d("sidecar %s: %s", target.name, t.message)
+        SidecarFetch.NoAnswer
+    }
+
+    /**
+     * Ask again for the subtitle files earlier fetches did not get ([DownloadEntry.missingSidecars]),
+     * finished downloads included: the service only looks at an item while it fetches its
+     * video. Called when the server is known to answer (the app signed in, the queue ran
+     * dry); stops at the first try without an answer, and keeps to the Wi-Fi-only setting.
+     */
+    suspend fun retryMissingSidecars(api: RoxyApi) {
+        if (prefs.downloadsWifiOnly.value && !isUnmetered()) return
+        // A download that is being fetched right now gets its sidecars from the service.
+        val waiting = _index.value.entries.values.filter { it.missingSidecars.isNotEmpty() && it.state != DownloadState.Downloading }
+        for (e in waiting) if (!fetchSidecars(api, e.itemId)) return
+    }
+
     // ---- persistence ----
 
     private fun load(): DownloadIndex {
+        // An index that is missing or cannot be read is rebuilt from what can still be read of
+        // it and from the folders on disk (see readIndexFile), never taken for "no downloads".
         // The queue is read whatever else is there: without downloads, downloads.json may
-        // never be written, and returning early here lost the queue on every restart.
-        if (!indexFile.exists()) return DownloadIndex(pendingProgress = journal.read().orEmpty())
-        val idx = runCatching { json.decodeFromString<DownloadIndex>(indexFile.readText()) }
-            .onFailure { Timber.w(it, "downloads index unreadable; starting empty") }
-            .getOrDefault(DownloadIndex())
+        // never be written.
+        val idx = readIndexFile(indexFile, json, root, ::safeSegment)
         // Reconcile with disk after a process death: a download that was running is queued
         // again from the bytes on disk; a finished one whose file vanished is dropped.
         val entries = idx.entries.mapNotNull { (id, e) ->
@@ -540,11 +644,8 @@ class Downloads(
     }
 
     private suspend fun save(idx: DownloadIndex) = withContext(Dispatchers.IO) {
-        runCatching {
-            val tmp = File(indexFile.path + ".tmp")
-            tmp.writeText(json.encodeToString(DownloadIndex.serializer(), idx))
-            if (!tmp.renameTo(indexFile)) { indexFile.delete(); tmp.renameTo(indexFile) }
-        }.onFailure { Timber.w(it, "could not save the downloads index") }
+        runCatching { writeIndexFile(indexFile, json.encodeToString(DownloadIndex.serializer(), idx)) }
+            .onFailure { Timber.w(it, "could not save the downloads index") }
     }
 
     /** Resume waiting downloads when a usable network appears (Wi-Fi after cellular, or any network after none). */
