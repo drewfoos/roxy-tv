@@ -45,6 +45,8 @@ const st = (v: HTMLMediaElement): Fake => {
   return f
 }
 const play = vi.fn()
+/** How far the element has buffered, on its own clock (0 = nothing: every seek in a server stream opens a new one). */
+let bufferedTo = 0
 const proto = HTMLMediaElement.prototype
 Object.defineProperties(proto, {
   currentTime: { configurable: true, get() { return st(this).t }, set(x: number) { st(this).t = x } },
@@ -52,7 +54,7 @@ Object.defineProperties(proto, {
   ended: { configurable: true, get() { return st(this).ended } },
   seeking: { configurable: true, get() { return st(this).seeking } },
   readyState: { configurable: true, get() { return 4 } },
-  buffered: { configurable: true, get() { return { length: 0, start: () => 0, end: () => 0 } } },
+  buffered: { configurable: true, get() { return bufferedTo > 0 ? { length: 1, start: () => 0, end: () => bufferedTo } : { length: 0, start: () => 0, end: () => 0 } } },
   // As in a browser, a new src stops what was playing.
   src: { configurable: true, get() { return st(this).src }, set(x: string) { const f = st(this); f.src = x; f.paused = true } },
 })
@@ -130,6 +132,7 @@ beforeEach(() => {
   localStorage.clear()
   prefs.set({ subMode: 'full', audioLang: 'jpn', subLang: 'eng', quality: 'original', autoplay: true, autoSkip: false })
   vi.clearAllMocks()
+  bufferedTo = 0
   api.remuxStart.mockImplementation(async (_id: string, start: number) => start)
   onEnded = () => undefined
 })
@@ -354,6 +357,80 @@ describe('Player', () => {
     expect(subs.setOffset.mock.calls.at(-1)?.[0]).toBe(600)
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  // Auto-skip jumped whenever the playhead was inside an intro or outro. A remux starts at
+  // the keyframe before the point asked for, so the stream opened by the skip began inside
+  // the segment again and was skipped again: a new stream each time, until one happened to
+  // have buffered up to the segment's end before its first time update.
+  describe('auto-skip', () => {
+    const withIntro = (id: string, audioCodec: string): Item => {
+      const it = item(id, audioCodec)
+      it.mediaSources![0].segments = [{ type: 'intro', startMs: 60_000, endMs: 150_000 }]
+      return it
+    }
+    const back10 = () => act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })) })
+    const skipButton = () => host.querySelector('.player__skip')
+
+    it('skips a segment once when the remux it opens starts before the segment\'s end', async () => {
+      prefs.set({ autoSkip: true })
+      api.remuxStart.mockImplementation(async (_id: string, start: number) => (start === 150 ? 142 : start)) // the keyframe before 150 s
+      await mount(withIntro('a', 'ac3'))
+      bufferedTo = 70
+      playTo(60.5) // into the intro: skipped, to a point far past the buffer
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/remux?start=150&audio=1')
+      expect(api.remuxStart).toHaveBeenCalledTimes(1)
+      // The new stream: its zero is 142 s, 8 s short of the intro's end, with 3 s buffered.
+      bufferedTo = 3
+      st(video()).t = 0
+      fire('loadstart')
+      playTo(2)
+      await flush()
+      expect(api.remuxStart).toHaveBeenCalledTimes(1) // no second stream
+      playTo(9) // plays on, out of the intro
+      await flush()
+      expect(api.remuxStart).toHaveBeenCalledTimes(1)
+      pagehide()
+      expect(lastReport()?.ms).toBe(151_000)
+    })
+
+    it('lets the viewer watch a skipped segment they seek back into, with the Skip button', async () => {
+      prefs.set({ autoSkip: true, skipWindowSec: 0 })
+      await mount(withIntro('a', 'aac')) // direct play
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+      back10() // to 140 s: inside the intro, on purpose
+      playTo(142)
+      expect(st(video()).t).toBe(142)
+      expect(skipButton()?.textContent).toBe('Skip intro')
+      act(() => { (skipButton() as HTMLElement).click() })
+      expect(st(video()).t).toBe(150)
+    })
+
+    it('skips it again after a seek back to before it', async () => {
+      prefs.set({ autoSkip: true })
+      await mount(withIntro('a', 'aac'))
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+      for (let i = 0; i < 10; i++) back10() // to 50 s, before the intro
+      expect(st(video()).t).toBe(50)
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+    })
+
+    it('skips the next episode\'s intro too (the Player stays mounted)', async () => {
+      prefs.set({ autoSkip: true })
+      await mount(withIntro('a', 'aac'))
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+      await act(async () => setShown(withIntro('b', 'aac')))
+      await flush()
+      st(video()).t = 0
+      fire('loadstart')
+      playTo(60.5)
+      expect(st(video()).t).toBe(150)
+    })
   })
 
   // The volume is kept in localStorage, which can refuse (site data blocked: the read

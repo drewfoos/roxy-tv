@@ -82,6 +82,9 @@ function savedVolume(): number {
   }
 }
 
+/** Names a segment within its source, for remembering that auto-skip has jumped over it. */
+const segKey = (s: MediaSegment) => `${s.type}:${s.startMs}`
+
 const SUBS_FAILED = "Subtitles couldn't be loaded."
 
 function errorText(e: unknown): string {
@@ -145,6 +148,10 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // effects' cleanups run, so the final report (and the pause the removal fires) would
   // read 0 and wipe the saved position; they use this instead.
   const lastAbs = useRef(0)
+  // The intros and outros auto-skip has jumped over in this source (see segKey). A remux
+  // opens at the keyframe before the point asked for, so the stream a skip opens starts a
+  // few seconds inside the segment: without this it was skipped again, stream after stream.
+  const skipped = useRef(new Set<string>())
   const seekReport = useRef<number | null>(null)
   useEffect(() => () => { if (seekReport.current) window.clearTimeout(seekReport.current) }, [])
   // When the position last moved, or the tracks were changed (performance.now): a report's
@@ -397,10 +404,13 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   )
 
   const seekTo = useCallback(
-    (t: number) => {
+    (t: number, auto = false) => {
       const v = videoRef.current
       if (!v) return
       t = Math.max(0, Math.min(duration || Infinity, t))
+      // The viewer going back to before a segment gets it skipped again; back into it, they
+      // asked to see it (the Skip button is there).
+      if (!auto) for (const s of source?.segments ?? []) if (t * 1000 < s.startMs) skipped.current.delete(segKey(s))
       // Where the viewer is now, even before the stream gets there: leaving right after a
       // seek out of the buffer (the element still empty) saved the position before it.
       lastAbs.current = t
@@ -425,7 +435,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
         reload(t, m.audio)
       }
     },
-    [duration, reload],
+    [duration, reload, source],
   )
 
   // ---- start: token, stream, subtitles, trickplay ----
@@ -460,6 +470,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setSubsOn(tracks.subsOn)
     setTracksOf(item.id)
     ownTracks.current = { audio: tracks.ownAudio, sub: tracks.ownSub }
+    skipped.current.clear()
     if (qualityFromPrefs.current) {
       qualityRef.current = startQuality(prefs.get().quality, srcHeight)
       setQuality(qualityRef.current)
@@ -502,10 +513,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const ms = t * 1000
       const seg = (source.segments ?? []).find((s) => (s.type === 'intro' || s.type === 'outro') && ms >= s.startMs && ms < s.endMs - 1000) ?? null
       const p = prefs.get()
-      if (seg && p.autoSkip && !v.paused && !v.seeking) {
-        // Jump once per segment: the end is past the window, so this does not fire again.
+      if (seg && p.autoSkip && !v.paused && !v.seeking && !skipped.current.has(segKey(seg))) {
+        // Jump once per segment: where the jump lands can still be inside it (see skipped).
+        skipped.current.add(segKey(seg))
         setSkip(null)
-        seekTo(seg.endMs / 1000)
+        seekTo(seg.endMs / 1000, true)
         return
       }
       // The button stays for the window, or the whole segment when the window is 0.
