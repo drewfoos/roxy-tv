@@ -52,7 +52,7 @@ describe('a server that cannot be reached', () => {
 
   it('is checked again by itself, and says once when it is back', async () => {
     let up = false
-    const fetchMock = vi.fn((url: string) => (up ? Promise.resolve(ok(url === '/healthz' ? {} : { id: 'x' })) : dead()))
+    const fetchMock = vi.fn((url: string) => (up ? Promise.resolve(ok(url === '/healthz' ? { status: 'ok' } : { id: 'x' })) : dead()))
     vi.stubGlobal('fetch', fetchMock)
     let back = 0
     const off = connection.onBack(() => back++)
@@ -88,9 +88,70 @@ describe('a server that cannot be reached', () => {
   it('Try again asks at once', async () => {
     vi.stubGlobal('fetch', vi.fn(dead))
     await api.item('x').catch(() => undefined)
-    vi.stubGlobal('fetch', vi.fn(async () => ok({})))
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ status: 'ok' })))
     await expect(connection.check()).resolves.toBe(true)
     expect(connection.get()).toBe('ok')
+  })
+
+  // Whether Roxy answers is the only thing that decides. A network, or the internet, says
+  // nothing about a server at home; and a server on this network answers without either.
+  it('asks the server when the browser loses its network, instead of declaring it gone', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ status: 'ok' })))
+    online(false)
+    window.dispatchEvent(new Event('offline'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(connection.get()).toBe('ok')
+
+    vi.stubGlobal('fetch', vi.fn(dead))
+    window.dispatchEvent(new Event('offline'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(connection.get()).toBe('offline')
+  })
+
+  it("does not take a proxy's gateway page for the server answering", async () => {
+    const page = (status: number) => ({ ok: false, status, headers: new Headers({ 'content-type': 'text/html' }), json: async () => { throw new SyntaxError('<html>') } })
+    for (const status of [502, 503, 504]) {
+      connection.reset()
+      vi.stubGlobal('fetch', vi.fn(async () => page(status)))
+      const err = await api.item('x').catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(NetworkError)
+      expect((err as Error).message).toBe("Can't reach your Roxy server")
+      expect(connection.get()).toBe('away')
+    }
+    // Roxy's own 503 ("already transcoding as much as it can") is an answer.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ error: 'busy' }) })))
+    await expect(api.item('x')).rejects.toThrow('busy')
+    expect(connection.get()).toBe('ok')
+  })
+
+  it('is not back until Roxy itself answers the check', async () => {
+    vi.stubGlobal('fetch', vi.fn(dead))
+    await api.item('x').catch(() => undefined)
+    // A Wi-Fi sign-in page answering every address with 200:
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('<html>') } })))
+    await expect(connection.check()).resolves.toBe(false)
+    expect(connection.get()).toBe('away')
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ hello: 'world' })))
+    await expect(connection.check()).resolves.toBe(false)
+    expect(connection.get()).toBe('away')
+  })
+
+  it('looks at once when a hidden tab is shown again', async () => {
+    vi.stubGlobal('fetch', vi.fn(dead))
+    await api.item('x').catch(() => undefined)
+    const up = vi.fn(async () => ok({ status: 'ok' }))
+    vi.stubGlobal('fetch', up)
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(up).toHaveBeenCalledTimes(1)
+    expect(connection.get()).toBe('ok')
+  })
+
+  it('claims nothing about the internet, which it cannot know', () => {
+    for (const link of ['offline', 'away'] as const) {
+      const w = connectionWords(link)
+      expect(`${w.strip} ${w.title} ${w.body}`).not.toMatch(/internet|is online/i)
+    }
   })
 
   it('never speaks of downloads: the web app has none', () => {

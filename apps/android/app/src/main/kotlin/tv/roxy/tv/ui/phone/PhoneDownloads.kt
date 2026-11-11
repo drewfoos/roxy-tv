@@ -274,7 +274,7 @@ fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: 
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onTap).padding(start = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(short, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (tint == RoxyColors.onBackground) Color.White else tint)
+                Text(short, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (tint == RoxyColors.onBackground) Color.White else tint, maxLines = 1, softWrap = false)
                 Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(36.dp).padding(6.dp))
             }
         } else Row(

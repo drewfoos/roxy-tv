@@ -54,7 +54,9 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
 
     init {
         // Called on OkHttp's threads: state changes happen on the scope's (main) thread.
-        api.onReachability = { ok -> if (!ok) checkSoon() else if (!_online.value) scope.launch { markUp() } }
+        // While away, an answer is not taken at its word: the probe asks whether it is Roxy
+        // answering (see isRoxyInfo) before the app says the server is back.
+        api.onReachability = { ok -> if (!ok || !_online.value) checkSoon() }
         api.awayGate = { prefs.session.value.isLoggedIn && gate.failNow(away = !_online.value) }
         watchNetwork()
     }
@@ -160,10 +162,10 @@ fun offlineWords(hasNetwork: Boolean, downloads: Int): OfflineWords {
     return if (hasNetwork) OfflineWords(
         strip = "Can't reach your Roxy server",
         title = "Can't reach your server",
-        body = "This phone is online, but Roxy isn't answering. You may be away from your home network or Tailscale. $still",
+        body = "This phone has a connection, but your Roxy server isn't answering. You may be away from your home network or Tailscale. $still",
         short = "Showing what's downloaded on this phone.",
     ) else OfflineWords(
-        strip = "No internet connection",
+        strip = "No network connection",
         title = "You're offline",
         body = "Connect to Wi-Fi or mobile data to browse your library. $still",
         short = "Showing what's downloaded on this phone.",
@@ -180,9 +182,9 @@ data class TvOfflineWords(val pill: String, val title: String, val body: String)
 fun tvOfflineWords(hasNetwork: Boolean): TvOfflineWords = if (hasNetwork) TvOfflineWords(
     pill = "Can't reach your Roxy server  ·  Reconnecting…",
     title = "Can't reach your Roxy server",
-    body = "This TV is online, but Roxy isn't answering. Check that the server is on and on the same network. This page loads by itself when it's back.",
+    body = "This TV has a connection, but your Roxy server isn't answering. Check that the server is on and on the same network. This page loads by itself when it's back.",
 ) else TvOfflineWords(
-    pill = "No internet connection",
+    pill = "No network connection",
     title = "This TV is offline",
     body = "Check the TV's Wi-Fi or network cable. Roxy comes back by itself once it's connected.",
 )

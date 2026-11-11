@@ -368,20 +368,22 @@ fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier
 
 /** Full-width season selector under the tabs: the name with a caret opens [menu]; [trailing] sits at the right end. */
 @Composable
-private fun SeasonRow(label: String, onOpen: () -> Unit, trailing: @Composable () -> Unit) {
+internal fun SeasonRow(label: String, onOpen: () -> Unit, trailing: @Composable () -> Unit) {
     // Solid, like the tab strip: the pinned banner must not show through it.
     Column(modifier = Modifier.background(RoxyColors.background)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalAlignment = Alignment.CenterVertically) {
-            Box {
+            // The name takes what [trailing] leaves and is cut with an ellipsis: a film's long
+            // name ("Rascal Does Not Dream of a Dreaming Girl") used to take the whole row and
+            // squeeze "Download all" into a column of single letters.
+            Box(Modifier.weight(1f)) {
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpen).padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(label, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                    Text(label, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose season", tint = RoxyColors.onBackground)
                 }
             }
-            Spacer(Modifier.weight(1f))
             trailing()
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(RoxyColors.surfaceHigh))

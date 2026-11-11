@@ -37,7 +37,7 @@ beforeEach(() => {
   clearAsyncCache()
   connection.reset()
   up = false
-  vi.stubGlobal('fetch', vi.fn((url: string) => (up ? Promise.resolve(ok(url === '/healthz' ? {} : { id: 'x', title: 'Frieren' })) : Promise.reject(new TypeError('Failed to fetch')))))
+  vi.stubGlobal('fetch', vi.fn((url: string) => (up ? Promise.resolve(ok(url === '/healthz' ? { status: 'ok' } : { id: 'x', title: 'Frieren' })) : Promise.reject(new TypeError('Failed to fetch')))))
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)

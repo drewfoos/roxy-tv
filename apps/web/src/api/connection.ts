@@ -4,7 +4,12 @@
 // this turns that into one calm state the whole app can show, checks quietly until the
 // server answers again, and tells the pages so they load by themselves.
 
-/** ok: answering. offline: the browser has no network. away: network, but no server. */
+/**
+ * ok: Roxy answers. offline: it does not, and the browser has no network. away: it does
+ * not, though there is a network. Only the server's own answer decides between ok and the
+ * rest: a network (or the internet) says nothing about a server at home, and a server on
+ * the same network answers with the internet down.
+ */
 export type Link = 'ok' | 'offline' | 'away'
 
 export interface ConnectionWords {
@@ -18,14 +23,14 @@ export interface ConnectionWords {
 export function connectionWords(link: Exclude<Link, 'ok'>): ConnectionWords {
   if (link === 'offline')
     return {
-      strip: 'No internet connection',
+      strip: 'No network connection',
       title: "You're offline",
       body: 'Check your Wi-Fi or network connection. Roxy comes back by itself once you are connected.',
     }
   return {
     strip: "Can't reach your Roxy server",
     title: "Can't reach your Roxy server",
-    body: "This device is online, but Roxy isn't answering. Check that the server is on and that you are on the same network. This page loads by itself when it's back.",
+    body: "This device has a connection, but your Roxy server isn't answering. Check that the server is on and that you are on the same network. This page loads by itself when it's back.",
   }
 }
 
@@ -91,18 +96,18 @@ export const connection = {
   /** Ask the server now (the Try again button, the browser's "online" event, the timer). */
   check(): Promise<boolean> {
     if (probing) return probing
+    // Roxy's own answer, not just any: a proxy in front of a stopped server, or a Wi-Fi
+    // sign-in page, also answers this address.
     probing = fetch('/healthz', { cache: 'no-store' })
+      .then((r) => (r.ok ? (r.json() as Promise<{ status?: string }>) : null))
       .then(
-        (r) => r.ok,
+        (j) => j?.status === 'ok',
         () => false,
       )
       .then((up) => {
         probing = null
         if (up) connection.answered()
-        else if (link !== 'ok') {
-          set(hasNetwork() ? 'away' : 'offline')
-          schedule()
-        }
+        else connection.failed()
         return up
       })
     return probing
@@ -116,9 +121,14 @@ export const connection = {
 }
 
 if (typeof window !== 'undefined') {
-  // The browser noticing first: say so at once instead of waiting for a request to fail.
-  window.addEventListener('offline', () => connection.failed())
+  // The browser lost its network: ask the server instead of taking that as "offline". A
+  // server on this machine or network may well still answer, and then nothing is wrong.
+  window.addEventListener('offline', () => void connection.check())
   window.addEventListener('online', () => {
     if (link !== 'ok') void connection.check()
+  })
+  // Timers barely run in a tab that is not shown: look at once when it is shown again.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && link !== 'ok') void connection.check()
   })
 }

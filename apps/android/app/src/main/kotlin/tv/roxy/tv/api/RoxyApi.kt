@@ -59,13 +59,15 @@ class RoxyApi(private val prefs: Prefs) {
             // packets (away from home, no VPN) every page otherwise sat on its spinner for
             // the whole connect timeout before saying "Can't reach Roxy". The probe passes.
             if (sent.tag(Probe::class.java) == null && awayGate?.invoke() == true) throw ServerAwayException()
-            // Any answer means the server is there; a failed connection (not one we cancelled)
-            // tells ServerStatus to check, which drives the "Can't reach Roxy" banner.
+            // An answer from Roxy means the server is there; a failed connection (not one we
+            // cancelled) tells ServerStatus to check, which drives the "Can't reach Roxy"
+            // banner. So does a proxy's "bad gateway" page: something answered, but not Roxy.
+            // The probe's own request reports nothing here: its result is what decides.
             val resp = try { chain.proceed(sent) } catch (e: IOException) {
                 if (!chain.call().isCanceled()) onReachability?.invoke(false)
                 throw e
             }
-            onReachability?.invoke(true)
+            if (sent.tag(Probe::class.java) == null) onReachability?.invoke(answeredByRoxy(resp.code, resp.header("Content-Type")))
             // The profile this request named is not the login's any more (deleted on another
             // device): the server refuses it instead of quietly using another profile. If it is
             // the active one, back to "Who's watching?".
@@ -235,7 +237,7 @@ class RoxyApi(private val prefs: Prefs) {
         val url = baseUrl
         if (url.isEmpty()) return false
         return runCatching {
-            probe.newCall(Request.Builder().url("$url/v1/system/info").get().tag(Probe::class.java, Probe).build()).execute().use { it.isSuccessful }
+            probe.newCall(Request.Builder().url("$url/v1/system/info").get().tag(Probe::class.java, Probe).build()).execute().use { it.isSuccessful && isRoxyInfo(it.peekBody(64 * 1024).string()) }
         }.getOrDefault(false)
     }
 
@@ -679,6 +681,22 @@ class RoxyApi(private val prefs: Prefs) {
         const val PROFILE_GONE_HEADER = "X-Roxy-Profile-Gone"
     }
 }
+
+/**
+ * Whether an HTTP answer came from Roxy itself. Having a network, or the internet, says
+ * nothing about the home server: a proxy in front of it (Tailscale serve, a reverse proxy)
+ * answers 502 / 503 / 504 with a page of its own while the server is down. Roxy's own
+ * errors with those codes ("the server is already transcoding…") are JSON.
+ */
+fun answeredByRoxy(code: Int, contentType: String?): Boolean =
+    code !in 502..504 || contentType.orEmpty().startsWith("application/json", ignoreCase = true)
+
+/**
+ * Whether the body of GET /v1/system/info is Roxy's. On another network the saved address
+ * can belong to something else (a Wi-Fi sign-in page answers every address with 200): that
+ * is not the server being back.
+ */
+fun isRoxyInfo(body: String): Boolean = Regex(""""product"\s*:\s*"roxy"""").containsMatchIn(body)
 
 /**
  * The profile the server refused, if this answer is that refusal: a 409 marked with the

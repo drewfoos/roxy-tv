@@ -37,6 +37,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import tv.roxy.tv.data.tvOfflineWords
@@ -120,12 +123,27 @@ fun TvPageError(message: String, onRetry: () -> Unit, modifier: Modifier = Modif
 /**
  * Runs [block] each time the server answers again after being away: a screen that failed
  * to load puts this beside its error so it fills in by itself once Roxy is back.
+ *
+ * A page under another one (a title page under the player, a tab left for Downloads) is
+ * not drawn, so it cannot hear the return when it happens. It remembers the last return it
+ * saw instead, and catches up when it is shown again: before, it came back still saying
+ * "Can't reach your server" under a strip that had already gone.
  */
 @Composable
 fun OnServerBack(block: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val latest by rememberUpdatedState(block)
-    LaunchedEffect(Unit) { app.server.backOnline.drop(1).collect { latest() } }
+    var seen by rememberSaveable { mutableIntStateOf(app.server.backOnline.value) }
+    LaunchedEffect(Unit) { onReturns(app.server.backOnline, seen = { seen }, mark = { seen = it }) { latest() } }
+}
+
+/**
+ * [block] for each change of [returns] (ServerStatus.backOnline, a count) from the count
+ * last [seen]: the returns that happen while collecting, and the one that happened while
+ * nobody was (the count moved on from [seen]).
+ */
+internal suspend fun onReturns(returns: Flow<Int>, seen: () -> Int, mark: (Int) -> Unit, block: () -> Unit) {
+    returns.collect { n -> if (n != seen()) { mark(n); block() } }
 }
 
 /**

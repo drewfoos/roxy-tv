@@ -85,7 +85,7 @@ fun rememberOfflineWords(): OfflineWords {
 }
 
 /**
- * The strip over the bottom bar: grey "No internet connection" (or "Can't reach your Roxy
+ * The strip over the bottom bar: grey "No network connection" (or "Can't reach your Roxy
  * server") while the server is away, then green "Back online" for a moment when it answers.
  */
 @Composable

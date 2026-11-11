@@ -280,7 +280,7 @@ img { display: block; }
 .age { display: inline-block; padding: 1px 6px; border-radius: 3px; background: var(--age-pill); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; line-height: 15px; }
 .seasonrow { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin: 40px 0 18px; }
 .seasonsel { position: relative; min-width: 0; }
-.seasonsel__btn { display: flex; align-items: center; gap: 8px; max-width: 70vw; padding: 10px 0; color: var(--accent); font-size: 17px; font-weight: 700; text-align: left; }
+.seasonsel__btn { display: flex; align-items: center; gap: 8px; max-width: min(70vw, 100%); padding: 10px 0; color: var(--accent); font-size: 17px; font-weight: 700; text-align: left; }
 .seasonsel__btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seasonsel__btn:hover { color: var(--accent-light); }
 .seasonsel__menu { position: absolute; left: 0; top: 100%; z-index: 20; min-width: min(520px, 90vw); max-width: 90vw; padding: 8px 0; background: #1f1f24; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6); }
@@ -291,7 +291,7 @@ img { display: block; }
 .seasonsel__count { flex: none; font-size: 12px; font-weight: 500; line-height: 18px; }
 .seasonsel__row--on .seasonsel__count { color: #f2f2f2; }
 .seasonrow__spacer { flex: 1; }
-.seasonrow__tool { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; }
+.seasonrow__tool { display: flex; flex: none; white-space: nowrap; align-items: center; gap: 6px; color: var(--muted); font-weight: 700; font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; }
 .seasonrow__tool:hover { color: #fff; }
 
 .seasonnav { display: flex; justify-content: space-between; margin: 36px var(--gutter) 0; padding-top: 18px; border-top: 1px solid rgba(255, 255, 255, 0.1); }

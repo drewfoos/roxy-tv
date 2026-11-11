@@ -63,7 +63,8 @@ class AwayGateTest {
     // the probe itself is not refused (it would never see the server come back).
     private val context = ApplicationProvider.getApplicationContext<android.app.Application>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-    private val server = RecordingServer()
+    // The probe wants Roxy's own answer, not just any answer.
+    private val server = RecordingServer { if (it.path == "/v1/system/info") 200 to """{"product":"roxy"}""" else 200 to "{}" }
     private val prefs = Prefs(context, scope)
     private val api = RoxyApi(prefs)
 

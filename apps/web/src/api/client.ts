@@ -72,6 +72,12 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
     const link = connection.get()
     throw new NetworkError(connectionWords(link === 'ok' ? 'away' : link).title)
   }
+  // A proxy in front of the server answering for it (502 / 503 / 504 with a page of its
+  // own) is not Roxy answering; Roxy's own errors with those codes are JSON.
+  if (res.status >= 502 && res.status <= 504 && !(res.headers?.get('content-type') ?? '').includes('json')) {
+    connection.failed()
+    throw new NetworkError(connectionWords('away').title)
+  }
   connection.answered()
   if (!res.ok) {
     let msg = `${res.status} ${method} ${path}`

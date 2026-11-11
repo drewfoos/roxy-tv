@@ -10,6 +10,7 @@ import { Art, formatAirDate, ProgressBar, SaveButton } from '../components/Cards
 import { IconPlay, IconReplay } from '../components/Icons'
 import { Spinner } from '../components/Skeleton'
 import { LoadError } from '../components/Connection'
+import { connection } from '../api/connection'
 import { Player } from '../player/Player'
 
 /**
@@ -39,6 +40,10 @@ export function Watch() {
       live = false
     }
   }, [id, tries])
+  // The server is back: a page left on "can't reach" loads by itself. Only then: with the
+  // item loaded nothing is asked again, so a video that is playing is never restarted.
+  const missing = loaded != null && loaded.id === id && loaded.item == null
+  useEffect(() => (missing ? connection.onBack(() => setTries((n) => n + 1)) : undefined), [missing])
   const item = loaded?.item ?? null
   const seriesId = item?.seriesId ?? null
   const { data: series } = useAsync(seriesId ? `item:${seriesId}` : null, () => api.item(seriesId!), [seriesId])
