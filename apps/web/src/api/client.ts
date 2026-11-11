@@ -2,6 +2,7 @@
 // Vite dev server proxies /v1 to it. Every call carries the device token and the
 // profile; a 401 clears the session so the app returns to the login screen.
 import { session, deviceName } from './session'
+import { connection, connectionWords } from './connection'
 import type { AccountUser, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
 import type {
   DiscoverDetail,
@@ -45,6 +46,13 @@ export class ApiError extends Error {
   }
 }
 
+/** The request got no answer: no network, or the server is not there. */
+export class NetworkError extends ApiError {
+  constructor(message: string) {
+    super(0, message)
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown, auth = true, keepalive = false): Promise<T> {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -54,7 +62,17 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
     if (s.profileId) headers['X-Roxy-Profile'] = s.profileId
   }
   // keepalive lets a small request (a progress report) outlive the page that sent it.
-  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive })
+  let res: Response
+  try {
+    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive })
+  } catch {
+    // The browser's own text here is "Failed to fetch" / "NetworkError when attempting…":
+    // say what happened instead, and let the app show it is waiting for the server.
+    connection.failed()
+    const link = connection.get()
+    throw new NetworkError(connectionWords(link === 'ok' ? 'away' : link).title)
+  }
+  connection.answered()
   if (!res.ok) {
     let msg = `${res.status} ${method} ${path}`
     let code = ''

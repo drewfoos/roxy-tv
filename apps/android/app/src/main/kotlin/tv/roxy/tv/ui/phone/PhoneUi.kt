@@ -134,25 +134,26 @@ fun PosterTile(item: Item, api: RoxyApi, modifier: Modifier = Modifier, onClick:
 /**
  * Big title card for rows (shows and movies): 2:3 poster sized so two and a half fit
  * across the screen, the name under it, then "Dub | Sub" with the three-dot menu on the
- * right.
+ * right. A downloaded title shown while the server is away passes its saved [image], its
+ * own [caption] ("3 episodes") and no [menu] (every entry in it needs the server).
  */
 @Composable
-fun TitleCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
+fun TitleCard(item: Item, api: RoxyApi, width: Dp, image: String? = null, caption: String? = null, menu: Boolean = true, onClick: () -> Unit) {
     Column(modifier = Modifier.width(width)) {
         Box(
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable(onClick = onClick),
         ) {
-            RoxyImage(api.imageUrl(item, "poster", widthPx(width) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+            RoxyImage(image ?: api.imageUrl(item, "poster", widthPx(width) * 2), item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             DownloadCorner(item, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
         }
         // One line, so every card in a row is the same height (the full name is on the title page).
         Text(item.title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
             Text(
-                audioBadge(item) ?: listOfNotNull(item.year?.toString(), if (item.isMovie) "Movie" else null).joinToString("  ·  "),
+                caption ?: audioBadge(item) ?: listOfNotNull(item.year?.toString(), if (item.isMovie) "Movie" else null).joinToString("  ·  "),
                 fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
-            CardMenu(item, api, onPlay = onClick)
+            if (menu) CardMenu(item, api, onPlay = onClick)
         }
     }
 }
@@ -194,7 +195,13 @@ fun ThumbTile(item: Item, api: RoxyApi, width: Dp = ThumbW, onClick: () -> Unit)
  * menu at the top-right and the progress bar along the bottom edge.
  */
 @Composable
-fun ContinueRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> Unit, modifier: Modifier = Modifier) {
+fun ContinueRow(
+    title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> Unit, modifier: Modifier = Modifier,
+    /** The picture of a card (type, width in px) when it is not the server's: the saved copy of a download. */
+    image: ((Item, String, Int) -> String?)? = null,
+    /** False while the server is away: everything in the menu needs it. */
+    menu: Boolean = true,
+) {
     val screen = LocalConfiguration.current.screenWidthDp.dp
     val cardWidth = screen - PhonePad - 44.dp
     Column(modifier = modifier.fillMaxWidth()) {
@@ -202,19 +209,20 @@ fun ContinueRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) 
         // Snaps card to card, so a swipe never leaves one half off the screen.
         val state = rememberLazyListState()
         LazyRow(state = state, flingBehavior = rememberSnapFlingBehavior(state), contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(items, key = { it.id }) { item -> ContinueCard(item, api, width = cardWidth, onClick = { onClick(item) }) }
+            items(items, key = { it.id }) { item -> ContinueCard(item, api, width = cardWidth, image = image, menu = menu, onClick = { onClick(item) }) }
         }
     }
 }
 
 @Composable
-private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Unit) {
+private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, image: ((Item, String, Int) -> String?)?, menu: Boolean, onClick: () -> Unit) {
     val isMovie = item.isMovie
     // Square corners: the progress bar runs along the bottom edge, and rounded corners
     // clipped its ends.
     Box(modifier = Modifier.width(width).aspectRatio(16f / 9f).background(RoxyColors.surfaceHigh).clickable(onClick = onClick)) {
         val px = widthPx(width) * 2
-        val url = if (isMovie) api.imageUrl(item, "backdrop", px) ?: api.imageUrl(item, "poster", px) else api.imageUrl(item, "thumb", px)
+        val pick = image ?: { i, type, w -> api.imageUrl(i, type, w) }
+        val url = if (isMovie) pick(item, "backdrop", px) ?: pick(item, "poster", px) else pick(item, "thumb", px)
         RoxyImage(url, item.seriesTitle ?: item.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 0)
         // Dark along the bottom (the text's ground) and a little at the top (the menu's).
         Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x59000000), 0.25f to Color.Transparent, 0.5f to Color.Transparent, 1f to Color(0xD9000000))))
@@ -222,7 +230,7 @@ private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, onClick: () -> Uni
             audioBadge(item)?.let { BadgePill(it) }
             DownloadCorner(item)
         }
-        CardMenu(item, api, onPlay = onClick, tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 6.dp))
+        if (menu) CardMenu(item, api, onPlay = onClick, tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 6.dp))
         Row(modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 12.dp, end = 10.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(46.dp).clip(CircleShape).background(Color(0xCC1A1A1A)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(30.dp))

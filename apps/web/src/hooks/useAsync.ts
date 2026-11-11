@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { session } from '../api/session'
+import { connection } from '../api/connection'
 
 export interface AsyncState<T> {
   data: T | null
@@ -130,6 +131,11 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   )
 
   again.current = run
+  // The server is back after being unreachable: a page left showing "can't reach" (or
+  // old data its refresh could not replace) loads by itself.
+  const failed = useRef(false)
+  failed.current = held.key === key && held.error != null
+  useEffect(() => connection.onBack(() => { if (failed.current) again.current(true) }), [])
   // Gone from the screen: whatever is still in flight for this component is ignored.
   useEffect(() => () => { gen.current++ }, [])
 

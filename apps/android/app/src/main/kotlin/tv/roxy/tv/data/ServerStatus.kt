@@ -148,7 +148,7 @@ class AwayGate(private val now: () -> Long, private val probe: () -> Boolean) {
 }
 
 /** The words of the phone's offline notices: the strip over the bottom bar, and a page that cannot load. */
-data class OfflineWords(val strip: String, val title: String, val body: String)
+data class OfflineWords(val strip: String, val title: String, val body: String, /** One line for the notice over a Home made of downloads. */ val short: String)
 
 /**
  * No network at all reads "You're offline"; a network with the server silent says so
@@ -161,12 +161,31 @@ fun offlineWords(hasNetwork: Boolean, downloads: Int): OfflineWords {
         strip = "Can't reach your Roxy server",
         title = "Can't reach your server",
         body = "This phone is online, but Roxy isn't answering. You may be away from your home network or Tailscale. $still",
+        short = "Showing what's downloaded on this phone.",
     ) else OfflineWords(
         strip = "No internet connection",
         title = "You're offline",
         body = "Connect to Wi-Fi or mobile data to browse your library. $still",
+        short = "Showing what's downloaded on this phone.",
     )
 }
+
+/** The words of the TV's notices while the server is away: the pill at the top, and a page that cannot load. */
+data class TvOfflineWords(val pill: String, val title: String, val body: String)
+
+/**
+ * The TV has no downloads, so its notices only say what is wrong and what to check: the
+ * TV's own connection when it has no network, the server when it has one.
+ */
+fun tvOfflineWords(hasNetwork: Boolean): TvOfflineWords = if (hasNetwork) TvOfflineWords(
+    pill = "Can't reach your Roxy server  ·  Reconnecting…",
+    title = "Can't reach your Roxy server",
+    body = "This TV is online, but Roxy isn't answering. Check that the server is on and on the same network. This page loads by itself when it's back.",
+) else TvOfflineWords(
+    pill = "No internet connection",
+    title = "This TV is offline",
+    body = "Check the TV's Wi-Fi or network cable. Roxy comes back by itself once it's connected.",
+)
 
 /**
  * Words for an error shown to people: a connection failure reads "Can't reach Roxy"

@@ -86,6 +86,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
+import androidx.compose.ui.platform.LocalConfiguration
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.components.RoxyImage
@@ -295,50 +296,43 @@ private fun rowTitle(key: String) = when (key) {
  * With none, the hat sends out sonar rings while we look for the server.
  */
 @Composable
-private fun OfflineState(serverUrl: String, titles: List<DownloadedTitle>, bottomInset: Dp, onRetry: () -> Unit, onDownloads: () -> Unit, onOpenTitle: (String) -> Unit) {
+internal fun OfflineState(serverUrl: String, titles: List<DownloadedTitle>, bottomInset: Dp, onRetry: () -> Unit, onDownloads: () -> Unit, onOpenTitle: (String) -> Unit) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
     val words = rememberOfflineWords()
     val resume = remember(titles) { continueFromDownloads(titles) }
-    var checking by remember { mutableStateOf(0) }
-    LaunchedEffect(checking) { if (checking > 0) { delay(2500); checking = 0 } }
-    val retry = { checking++; app.server.checkSoon(); onRetry() }
-    val retryWord = if (checking > 0) "Checking…" else "Try again"
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = bottomInset + 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         if (titles.isEmpty()) {
+            val (retryWord, retry) = rememberRetry(onRetry)
             Sonar(modifier = Modifier.padding(top = 56.dp)) { WitchHat(size = 64.dp) }
             Text(words.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(top = 8.dp))
-            Text(serverUrl, fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp))
-            Text(words.body, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 20.dp))
-            GreyButton(retryWord, icon = Icons.Filled.Refresh, onClick = retry)
+            Text(serverUrl.removePrefix("http://").removePrefix("https://"), fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp))
+            Text(words.body, fontSize = 14.sp, lineHeight = 21.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(start = 40.dp, end = 40.dp, top = 12.dp, bottom = 24.dp))
+            PlayButton(retryWord, icon = Icons.Filled.Refresh, pill = true, onClick = retry)
             return@Column
         }
-        Column(modifier = Modifier.fillMaxWidth().padding(start = PhonePad, end = PhonePad, top = 18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(26.dp))
-                Text(words.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = 10.dp))
-            }
-            Text(words.body, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PlayButton("Go to Downloads", icon = Icons.Outlined.Download, pill = true, container = RoxyColors.accent, content = OnBrand, modifier = Modifier.weight(1f), onClick = onDownloads)
-                GreyButton(retryWord, icon = Icons.Filled.Refresh, modifier = Modifier.weight(1f), onClick = retry)
-            }
-        }
+        // Home's own top (the hat) and Home's own rows and cards, filled from the downloads.
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) { WitchHat(size = 32.dp) }
+        OfflineNote(onRetry = onRetry, modifier = Modifier.padding(top = 10.dp))
+        val saved: (Item, String, Int) -> String? = { item, type, px -> app.downloads.image(app.api, item, type, px) }
         if (resume.isNotEmpty()) {
-            DownloadsContinueRow(resume, onPlay = { e -> scope.launch { playItem(context, e.item).onFailure { Timber.w(it, "play failed") } } }, modifier = Modifier.padding(top = 30.dp))
+            ContinueRow(
+                "Continue Watching", resume.map { it.item }, app.api, image = saved, menu = false, modifier = Modifier.padding(top = 24.dp),
+                onClick = { item -> scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } } },
+            )
         }
-        Column(modifier = Modifier.fillMaxWidth().padding(top = 30.dp)) {
-            Text("Your downloads", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, bottom = 10.dp))
+        val cardWidth = (LocalConfiguration.current.screenWidthDp.dp - PhonePad - 10.dp * 2) / 2.5f
+        Column(modifier = Modifier.fillMaxWidth().padding(top = 26.dp)) {
+            RowHeading("Downloads", onSeeAll = onDownloads, modifier = Modifier.padding(bottom = 6.dp))
             LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(titles, key = { it.id }) { t ->
-                    Column(modifier = Modifier.width(PosterW + 20.dp)) {
-                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh).clickable { onOpenTitle(t.id) }) {
-                            RoxyImage(app.downloads.image(app.api, t.title, "poster", widthPx(PosterW + 20.dp) * 2), t.title.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 12)
-                        }
-                        Text(t.title.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-                        Text(if (t.title.isMovie) "Movie" else "${t.doneCount} episode${if (t.doneCount == 1) "" else "s"}", fontSize = 12.sp, color = RoxyColors.muted)
-                    }
+                    TitleCard(
+                        t.title, app.api, width = cardWidth, menu = false,
+                        image = saved(t.title, "poster", widthPx(cardWidth) * 2),
+                        caption = if (t.title.isMovie) "Movie" else "${t.doneCount} episode${if (t.doneCount == 1) "" else "s"}",
+                        onClick = { onOpenTitle(t.id) },
+                    )
                 }
             }
         }

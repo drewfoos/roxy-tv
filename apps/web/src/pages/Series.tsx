@@ -8,6 +8,7 @@ import { Art, CardMenu, ProgressBar, SaveButton, isWatched, useWatchedState, wit
 import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { GridSkeleton, Spinner } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
@@ -99,7 +100,7 @@ export function Series() {
   }, [reload, reloadNext])
 
   if (loading && !series) return <Spinner />
-  if (!series) return <div className="empty error">{error ?? 'Not found'}</div>
+  if (!series) return <div className="page"><TopBar /><LoadError error={error ?? 'Not found'} onRetry={() => reload()} /></div>
 
   // The server's answer; when it could not be had, the open season's own pick (useAsync's
   // data is null, never undefined, so the old fallback never ran: Play said "Nothing to

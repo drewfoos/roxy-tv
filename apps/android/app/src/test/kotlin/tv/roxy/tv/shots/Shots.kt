@@ -188,4 +188,98 @@ class Shots {
 
     @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
     fun tvPlayerSettings() = tvPlayer("tv-player-settings", Sheet.Settings)
+
+    // ---- Offline: the server away, with and without a network or downloads. ----
+
+    private fun <T> setFlow(owner: Any, field: String, value: T) {
+        val f = owner.javaClass.getDeclaredField(field).apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST") (f.get(owner) as kotlinx.coroutines.flow.MutableStateFlow<T>).value = value
+    }
+    private fun away(hasNetwork: Boolean) { setFlow(app.server, "_online", false); setFlow(app.server, "_hasNetwork", hasNetwork) }
+
+    private fun dl(show: String, showTitle: String, n: Int, title: String, pos: Long = 0, played: Boolean = false, at: String? = null) = tv.roxy.tv.data.downloads.DownloadEntry(
+        itemId = "$show-e$n", sourceId = "src", titleId = show, seasonNumber = 1, state = tv.roxy.tv.data.downloads.DownloadState.Done, bytesTotal = 310_000_000,
+        item = Item(id = "$show-e$n", type = "episode", title = title, seriesId = show, seriesTitle = showTitle, seasonAired = 1, indexAired = n, runtimeMs = 1_440_000,
+            userData = UserData(positionMs = pos, played = played, lastPlayedAt = at)),
+    )
+    private val offlineTitles: List<tv.roxy.tv.data.downloads.DownloadedTitle> get() {
+        val kono = listOf(dl("kono", "KonoSuba", 1, "This Self-Proclaimed Goddess and Reincarnation in Another World!", played = true, at = "2026-11-09T20:00:00Z"),
+            dl("kono", "KonoSuba", 2, "An Explosion for This Chunchunmaru!", pos = 600_000, at = "2026-11-10T20:00:00Z"), dl("kono", "KonoSuba", 3, "A Panty Treasure in This Right Hand!"))
+        val dress = listOf(dl("dress", "My Dress-Up Darling", 1, "Someone Who Lives in the Exact Opposite World as Me", pos = 200_000, at = "2026-11-08T20:00:00Z"), dl("dress", "My Dress-Up Darling", 2, "Wanna Hurry Up, and Do It?"))
+        val film = tv.roxy.tv.data.downloads.DownloadEntry(itemId = "girl", sourceId = "src", titleId = "girl", state = tv.roxy.tv.data.downloads.DownloadState.Done, bytesTotal = 1_900_000_000,
+            item = Item(id = "girl", type = "movie", title = "Rascal Does Not Dream of a Dreaming Girl", year = 2019, runtimeMs = 5_400_000))
+        return listOf(
+            tv.roxy.tv.data.downloads.DownloadedTitle("kono", Item(id = "kono", type = "series", title = "KonoSuba"), kono),
+            tv.roxy.tv.data.downloads.DownloadedTitle("dress", Item(id = "dress", type = "series", title = "My Dress-Up Darling"), dress),
+            tv.roxy.tv.data.downloads.DownloadedTitle("girl", film.item, listOf(film)),
+        )
+    }
+    private fun seedDownloads() {
+        val t = offlineTitles
+        setFlow(app.downloads, "_index", tv.roxy.tv.data.downloads.DownloadIndex(entries = t.flatMap { it.entries }.associateBy { it.itemId }, titles = t.associate { it.id to tv.roxy.tv.data.downloads.TitleSnapshot(it.title) }))
+    }
+    private val offlineNav = tv.roxy.tv.ui.phone.OfflineNav(downloads = {}, title = {})
+
+    private fun phoneOffline(name: String, content: @androidx.compose.runtime.Composable () -> Unit) {
+        compose.setContent {
+            tv.roxy.tv.ui.theme.RoxyTheme {
+                androidx.compose.runtime.CompositionLocalProvider(tv.roxy.tv.ui.phone.LocalOfflineNav provides offlineNav) {
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().background(tv.roxy.tv.ui.theme.RoxyColors.background)) {
+                        Box(Modifier.fillMaxWidth().weight(1f)) { content() }
+                        tv.roxy.tv.ui.phone.OfflineStrip()
+                        // Where the bottom bar sits.
+                        Box(Modifier.fillMaxWidth().padding(0.dp).background(Color(0xFF121214)).padding(vertical = 28.dp))
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        shot(name)
+    }
+
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneOfflinePage() { away(hasNetwork = false); seedDownloads(); phoneOffline("phone-offline-page") { tv.roxy.tv.ui.phone.OfflinePage(onRetry = {}) } }
+
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneServerAwayPage() { away(hasNetwork = true); phoneOffline("phone-server-away-page") { tv.roxy.tv.ui.phone.OfflinePage(onRetry = {}) } }
+
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneOfflineHome() {
+        away(hasNetwork = false); seedDownloads()
+        phoneOffline("phone-offline-home") { tv.roxy.tv.ui.phone.OfflineState(serverUrl = "http://192.168.1.50:8097", titles = offlineTitles, bottomInset = 0.dp, onRetry = {}, onDownloads = {}, onOpenTitle = {}) }
+    }
+
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneOfflineHomeEmpty() {
+        away(hasNetwork = true)
+        phoneOffline("phone-offline-home-empty") { tv.roxy.tv.ui.phone.OfflineState(serverUrl = "http://192.168.1.50:8097", titles = emptyList(), bottomInset = 0.dp, onRetry = {}, onDownloads = {}, onOpenTitle = {}) }
+    }
+
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneOfflineTitle() {
+        away(hasNetwork = false); seedDownloads()
+        phoneOffline("phone-offline-title") { tv.roxy.tv.ui.phone.PhoneDownloadedTitle(titleId = "kono", onBack = {}, offlineNote = true) }
+    }
+
+    private fun tvOffline(name: String, hasNetwork: Boolean) {
+        away(hasNetwork)
+        // Signed in, so the pill at the top shows.
+        setFlow(app.prefs, "_session", app.prefs.session.value.copy(token = "t", serverUrl = "http://192.168.1.50:8097"))
+        compose.setContent {
+            tv.roxy.tv.ui.theme.RoxyTheme {
+                Box(Modifier.fillMaxSize().background(tv.roxy.tv.ui.theme.RoxyColors.background)) {
+                    tv.roxy.tv.ui.components.TvOfflinePage(onRetry = {})
+                    tv.roxy.tv.ui.components.ServerBanner(tv = true)
+                }
+            }
+        }
+        compose.waitForIdle()
+        shot(name)
+    }
+
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvOfflinePage() = tvOffline("tv-offline-page", hasNetwork = false)
+
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvServerAwayPage() = tvOffline("tv-server-away-page", hasNetwork = true)
 }

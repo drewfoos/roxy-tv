@@ -9,6 +9,7 @@ import { Footer } from '../components/Footer'
 import { Art, formatAirDate, ProgressBar, SaveButton } from '../components/Cards'
 import { IconPlay, IconReplay } from '../components/Icons'
 import { Spinner } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 import { Player } from '../player/Player'
 
 /**
@@ -27,6 +28,7 @@ export function Watch() {
   // position). While the next item loads the previous one stays, so the Player stays
   // mounted and only switches items (fullscreen survives Next and Autoplay).
   const [loaded, setLoaded] = useState<{ id: string; item: Item | null; error: string | null } | null>(null)
+  const [tries, setTries] = useState(0)
   useEffect(() => {
     let live = true
     api.item(id).then(
@@ -36,7 +38,7 @@ export function Watch() {
     return () => {
       live = false
     }
-  }, [id])
+  }, [id, tries])
   const item = loaded?.item ?? null
   const seriesId = item?.seriesId ?? null
   const { data: series } = useAsync(seriesId ? `item:${seriesId}` : null, () => api.item(seriesId!), [seriesId])
@@ -46,7 +48,7 @@ export function Watch() {
   useEffect(() => setMore(false), [id])
 
   if (!loaded) return <Spinner />
-  if (!item) return <div className="empty error">{loaded.error ?? 'Not found'}</div>
+  if (!item) return <LoadError error={loaded.error ?? 'Not found'} onRetry={() => setTries((n) => n + 1)} />
   if (!isPlayable(item)) return <div className="empty">This title has no file to play yet.</div>
 
   const at = siblings.findIndex((e) => e.id === item.id)

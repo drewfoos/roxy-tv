@@ -156,10 +156,14 @@ fun TvHome(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onUnauthor
     }
     when (val s = state) {
         HomeUiState.Loading -> HomeSkeleton()
-        is HomeUiState.Error -> Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.ContentStart, top = 160.dp)) {
-            Text(if (s.unauthorized) "Your session has expired." else if (s.offline) "Can't reach Roxy" else "Could not load the library", color = RoxyColors.error, fontSize = 20.sp)
+        is HomeUiState.Error -> if (s.offline && !s.unauthorized) {
+            tv.roxy.tv.ui.components.OnServerBack { vm.load() }
+            tv.roxy.tv.ui.components.TvOfflinePage(onRetry = { vm.load() }, takeFocus = false, button = Modifier.focusKey(memory, "retry"))
+            LaunchedEffect(Unit) { memory.restore("retry") }
+        } else Column(modifier = Modifier.fillMaxSize().padding(start = TvDims.ContentStart, top = 160.dp)) {
+            Text(if (s.unauthorized) "Your session has expired." else "Could not load the library", color = RoxyColors.error, fontSize = 20.sp)
             Text(
-                if (s.offline) "Check that the server is running and this TV is on the home network. Home loads by itself when Roxy is back." else s.message,
+                s.message,
                 color = RoxyColors.muted, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
             )
             // The server restarted or the Wi-Fi dropped: reload once it answers again.

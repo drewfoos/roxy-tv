@@ -184,7 +184,7 @@ fun TvDiscover(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpen
                     }
                 }
             }
-            state.rows == null && state.error != null -> PageMessage(state.error ?: "Could not load Discover", color = RoxyColors.error)
+            state.rows == null && state.error != null -> tv.roxy.tv.ui.components.TvPageError(state.error ?: "Could not load Discover", onRetry = { vm.load() })
             else -> {
                 val pin = with(LocalDensity.current) { DiscoverPin.roundToPx() }
                 // The focused row goes to the top with the row above peeking in (so Up has a

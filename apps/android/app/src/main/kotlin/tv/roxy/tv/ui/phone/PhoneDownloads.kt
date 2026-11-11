@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.DownloadDone
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
@@ -412,16 +413,28 @@ fun PhoneDownloadedTitle(titleId: String, onBack: () -> Unit, offlineNote: Boole
     val isMovie = group.title.isMovie
     val bySeason = group.entries.groupBy { it.seasonNumber ?: 0 }
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        PageHeader(group.title.title, onBack = onBack)
+        PageHeader("Downloads", onBack = onBack)
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
             item(key = "top") {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad)) {
-                    if (offlineNote) Row(modifier = Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(16.dp))
-                        Text(if (isMovie) "You're offline. Playing from this phone." else "You're offline. Showing downloaded episodes only.", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
+                    // The title as a small card: its poster, what is on the phone, and (offline) why
+                    // this is not the full page.
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.width(84.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(RoxyColors.surfaceHigh)) {
+                            RoxyImage(app.downloads.image(app.api, group.title, "poster", widthPx(84.dp) * 2), group.title.title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 10)
+                        }
+                        Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                            Text(group.title.title, fontSize = 18.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            val count = if (isMovie) "Movie" else "${group.doneCount} episode${if (group.doneCount == 1) "" else "s"}"
+                            Text("$count  ·  ${formatBytes(group.bytes)}", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 4.dp))
+                            Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(if (offlineNote) Icons.Outlined.CloudOff else Icons.Outlined.DownloadDone, contentDescription = null, tint = if (offlineNote) RoxyColors.muted else RoxyColors.accent, modifier = Modifier.size(16.dp))
+                                Text(if (!offlineNote) "Downloaded to this phone" else if (isMovie) "Offline: playing from this phone" else "Offline: downloaded episodes only", fontSize = 12.5.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
                     }
                     if (next != null) {
-                        PlayButton(next.label, modifier = Modifier.fillMaxWidth(), onClick = { play(next.entry.item) })
+                        PlayButton(next.label, height = 46.dp, modifier = Modifier.fillMaxWidth(), onClick = { play(next.entry.item) })
                         if (!isMovie) Text(next.entry.item.title, fontSize = 13.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
                     }
                     if (onOpenFull != null && online) {

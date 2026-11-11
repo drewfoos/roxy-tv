@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -96,6 +97,13 @@ private fun ListMessage(text: String, color: androidx.compose.ui.graphics.Color 
     Text(text, color = color, fontSize = 16.sp, modifier = Modifier.padding(start = TvDims.FocusBorder, top = 10.dp))
 }
 
+/** A list that could not load: the offline page while the server is away, the error's line otherwise. */
+@Composable
+private fun ListError(text: String, onRetry: () -> Unit) {
+    val online by RoxyApp.get(LocalContext.current).server.online.collectAsStateWithLifecycle()
+    if (!online) tv.roxy.tv.ui.components.TvOfflinePage(onRetry, takeFocus = false) else ListMessage(text, color = RoxyColors.error)
+}
+
 /** The saved titles (the profile's favourites), newest saved first. */
 @Composable
 private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
@@ -119,7 +127,7 @@ private fun WatchlistTab(memory: FocusMemory, upKey: String, onFirst: (String?) 
 
     val list = items
     when {
-        list == null && error != null -> ListMessage(error!!, color = RoxyColors.error)
+        list == null && error != null -> ListError(error!!) { scope.launch { load() } }
         list == null -> Unit
         list.isEmpty() -> ListMessage("Titles you add to your watchlist show up here.")
         // Hold OK on a card: its menu (Remove from Watchlist there; the page reloads without it).
@@ -150,7 +158,7 @@ private fun HistoryTab(memory: FocusMemory, upKey: String, onFirst: (String?) ->
 
     val list = items
     when {
-        list == null && error != null -> ListMessage(error!!, color = RoxyColors.error)
+        list == null && error != null -> ListError(error!!) { scope.launch { load() } }
         list == null -> Unit
         list.isEmpty() -> ListMessage("Episodes and movies you watch show up here, newest first.")
         else -> CardGrid(list, memory, key = "history", upKey = upKey, secondLine = { historyLine(it, dateFormat) }) { item ->

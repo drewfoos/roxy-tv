@@ -8,6 +8,7 @@ import { Art, ProgressBar, Row, SaveButton, TitleCard, isWatched } from '../comp
 import { IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
 import { Spinner } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { DiscoverGrid } from '../components/DiscoverBits'
@@ -29,7 +30,7 @@ export function Movie() {
   }, [reload])
 
   if (loading && !movie) return <Spinner />
-  if (!movie) return <div className="empty error">{error ?? 'Not found'}</div>
+  if (!movie) return <div className="page"><TopBar /><LoadError error={error ?? 'Not found'} onRetry={() => reload()} /></div>
 
   const playable = isPlayable(movie)
   const resumable = (movie.userData?.positionMs ?? 0) > 0

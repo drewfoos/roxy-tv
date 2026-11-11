@@ -6,6 +6,7 @@ import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { Row } from '../components/Cards'
 import { GridSkeleton, RowSkeleton } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 import { IconClose, IconSearch } from '../components/Icons'
 import { DiscoverCard, DiscoverGrid, isActive, isPending } from '../components/DiscoverBits'
 
@@ -106,13 +107,7 @@ export function Discover() {
           <DiscoverGrid items={results} />
         )
       ) : rows.error && !rows.data ? (
-        <div className="empty">
-          <div style={{ color: 'var(--fg)', fontSize: 18, fontWeight: 700 }}>Discover is unavailable</div>
-          <div style={{ margin: '8px 0 16px' }}>{rows.error}</div>
-          <button className="btn btn--grey" onClick={() => rows.reload()}>
-            Try again
-          </button>
-        </div>
+        <LoadError title="Discover is unavailable" error={rows.error} onRetry={() => rows.reload()} />
       ) : !ready ? (
         <>
           <RowSkeleton />

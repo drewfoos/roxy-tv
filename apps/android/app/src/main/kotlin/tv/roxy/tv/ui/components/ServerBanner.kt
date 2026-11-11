@@ -28,7 +28,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import tv.roxy.tv.data.tvOfflineWords
+import tv.roxy.tv.ui.tv.PageMessage
 import kotlinx.coroutines.flow.drop
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.isTelevision
@@ -39,29 +51,70 @@ import tv.roxy.tv.ui.tv.TvButton
 import tv.roxy.tv.ui.tv.TvDims
 
 /**
- * The one "Can't reach Roxy" notice for the whole app: a small pill at the top while the
- * server is away (restart, Wi-Fi drop, away from home). Not focusable, so the TV's D-pad
- * never lands on it; each screen keeps its own Retry. Hidden while the phone's player is
- * up (it says "reconnecting" itself) and before anyone is signed in.
+ * The TV's notice that the server is away (restart, Wi-Fi drop): a quiet dark pill at the
+ * top, the way the streaming apps say it, not a red alarm; green "Back online" for a
+ * moment when the server answers. Not focusable, so the D-pad never lands on it. Hidden
+ * before anyone is signed in.
  */
 @Composable
 fun ServerBanner(tv: Boolean, modifier: Modifier = Modifier) {
     val app = RoxyApp.get(LocalContext.current)
     val online by app.server.online.collectAsStateWithLifecycle()
+    val hasNetwork by app.server.hasNetwork.collectAsStateWithLifecycle()
     val playing by app.server.playerActive.collectAsStateWithLifecycle()
     val session by app.prefs.session.collectAsStateWithLifecycle()
-    val show = !online && !playing && session.isLoggedIn && !session.setupInProgress
+    var back by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { app.server.backOnline.drop(1).collect { back = true; delay(2500); back = false } }
+    val signedIn = session.isLoggedIn && !session.setupInProgress
+    val show = signedIn && !playing && (!online || back)
     Box(modifier = modifier.fillMaxWidth().then(if (tv) Modifier.padding(top = 18.dp) else Modifier.statusBarsPadding().padding(top = 6.dp)), contentAlignment = Alignment.TopCenter) {
         AnimatedVisibility(show, enter = fadeIn(), exit = fadeOut()) {
-            Text(
-                "Can't reach Roxy. Retrying…",
-                color = Color.White, fontSize = if (tv) 15.sp else 13.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .background(Color(0xE6B3261E), RoundedCornerShape(50))
-                    .padding(horizontal = if (tv) 20.dp else 14.dp, vertical = if (tv) 8.dp else 6.dp),
-            )
+            Row(
+                modifier = Modifier.background(if (online) Color(0xF01E8E3E) else Color(0xF026262B), RoundedCornerShape(50)).padding(horizontal = if (tv) 18.dp else 14.dp, vertical = if (tv) 8.dp else 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(if (online) Icons.Filled.Check else Icons.Outlined.CloudOff, contentDescription = null, tint = Color.White, modifier = Modifier.size(if (tv) 18.dp else 14.dp))
+                Text(
+                    if (online) "Back online" else tvOfflineWords(hasNetwork).pill,
+                    color = Color.White, fontSize = if (tv) 14.sp else 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 8.dp),
+                )
+            }
         }
     }
+}
+
+/**
+ * A TV page that cannot load because the server is away: the crossed-out cloud, what is
+ * wrong and what to check, and Try again (which also looks for the server at once). The
+ * page's caller reloads it when the server is back (OnServerBack). [takeFocus] puts the
+ * remote on the button: for a whole page, not for one under tabs the remote is already on.
+ */
+@Composable
+fun TvOfflinePage(onRetry: () -> Unit, modifier: Modifier = Modifier, takeFocus: Boolean = true, button: Modifier = Modifier) {
+    val app = RoxyApp.get(LocalContext.current)
+    val hasNetwork by app.server.hasNetwork.collectAsStateWithLifecycle()
+    val words = tvOfflineWords(hasNetwork)
+    var checking by remember { mutableStateOf(0) }
+    LaunchedEffect(checking) { if (checking > 0) { delay(2500); checking = 0 } }
+    val focus = remember { FocusRequester() }
+    Column(modifier = modifier.fillMaxSize().padding(bottom = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(64.dp))
+        Text(words.title, color = RoxyColors.onBackground, fontSize = 26.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 18.dp))
+        Text(words.body, color = RoxyColors.muted, fontSize = 15.sp, lineHeight = 22.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp, bottom = 26.dp).widthIn(max = 460.dp))
+        TvButton(if (checking > 0) "Checking…" else "Try again", onClick = { checking++; app.server.checkSoon(); onRetry() }, modifier = button.focusRequester(focus))
+    }
+    if (takeFocus) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+}
+
+/**
+ * A TV page's "could not load" under its own heading or tabs: the offline page while the
+ * server is away, the error's own line otherwise.
+ */
+@Composable
+fun TvPageError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    val online by RoxyApp.get(LocalContext.current).server.online.collectAsStateWithLifecycle()
+    if (!online) TvOfflinePage(onRetry, modifier = modifier, takeFocus = false)
+    else PageMessage(message, modifier = modifier, color = RoxyColors.error)
 }
 
 /**
@@ -86,7 +139,9 @@ fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
     val tv = remember { isTelevision(context) }
     val online by RoxyApp.get(context).server.online.collectAsStateWithLifecycle()
     OnServerBack(onRetry)
-    if (tv) {
+    if (tv && !online) {
+        TvOfflinePage(onRetry = onRetry, modifier = modifier)
+    } else if (tv) {
         val focus = remember { FocusRequester() }
         Column(modifier = modifier.fillMaxWidth().padding(start = TvDims.ContentStart, end = TvDims.ContentStart, top = 120.dp)) {
             Text(message, color = RoxyColors.onBackground, fontSize = 18.sp)

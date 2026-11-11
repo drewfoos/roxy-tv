@@ -6,6 +6,7 @@ import type { Profile } from '../api/types'
 import { useAsync, clearAsyncCache } from '../hooks/useAsync'
 import { Avatar, signOut } from '../components/TopBar'
 import { useSession } from '../app/useSession'
+import { LoadError } from '../components/Connection'
 import { IconBack, IconEdit, WitchHat } from '../components/Icons'
 import { ProfileEditor } from './account/Profiles'
 
@@ -92,12 +93,7 @@ export function Profiles() {
           <div className="bone profiles__bone" />
         </div>
       ) : error && !data ? (
-        <div className="profiles__error">
-          <div className="error">{error}</div>
-          <button className="btn btn--brand" onClick={() => reload()}>
-            Try again
-          </button>
-        </div>
+        <LoadError error={error} onRetry={() => reload()} />
       ) : (
         <div className="profiles__list">
           {profiles.map((p) => {

@@ -9,6 +9,7 @@ import { Footer } from '../components/Footer'
 import { Hero, type HeroPick } from '../components/Hero'
 import { ContinueTile, Row, ThumbTile, TitleCard } from '../components/Cards'
 import { RowSkeleton, Spinner } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 import { WitchHat } from '../components/Icons'
 
 const MAX_HEROES = 6
@@ -83,13 +84,7 @@ export function Home() {
       {loading && !data ? (
         <Spinner />
       ) : error && !data ? (
-        <div className="empty">
-          <div style={{ fontSize: 18, color: 'var(--fg)', marginBottom: 8 }}>Could not load the library</div>
-          <div>{error}</div>
-          <button className="btn btn--grey" style={{ marginTop: 16 }} onClick={() => reload()}>
-            Retry
-          </button>
-        </div>
+        <LoadError title="Could not load the library" error={error} onRetry={() => reload()} />
       ) : empty ? (
         <div className="empty" style={{ paddingTop: 160 }}>
           <WitchHat size={72} />

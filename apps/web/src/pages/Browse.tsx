@@ -10,6 +10,7 @@ import { IconSearch } from '../components/Icons'
 import { Footer } from '../components/Footer'
 import { TitleCard } from '../components/Cards'
 import { GridSkeleton } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 import { matchesSearch } from './searchText'
 
 /** The library list is ~1000 titles; a visit within this long of the last one reuses it. */
@@ -54,7 +55,7 @@ export function Browse() {
   const q = (params.get('q') ?? '').trim()
   // ?type=movie is the old Movies link; old bookmarks still land on Movies.
   const selected = params.get('c') ?? (params.get('type') === 'movie' ? 'movies' : 'new')
-  const { data, error, loading } = useAsync('library', () => api.allItems({ type: 'series,movie', recursive: true, sort: 'title' }), [], LIBRARY_FRESH_MS)
+  const { data, error, loading, reload } = useAsync('library', () => api.allItems({ type: 'series,movie', recursive: true, sort: 'title' }), [], LIBRARY_FRESH_MS)
 
   const all = useMemo(() => data?.items ?? [], [data])
   const cats = useMemo(() => categories(all), [all])
@@ -168,7 +169,7 @@ export function Browse() {
           {loading && !data ? (
             <GridSkeleton />
           ) : error && !data ? (
-            <div className="empty error">{error}</div>
+            <LoadError error={error} onRetry={() => reload()} />
           ) : shown.length === 0 ? (
             <div className="empty">{q ? `No matches for "${params.get('q')}".` : 'Nothing here yet.'}</div>
           ) : (

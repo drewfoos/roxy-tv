@@ -7,6 +7,7 @@ import { useSession } from '../app/useSession'
 import { Art, Row } from '../components/Cards'
 import { TitleBanner, TitleBelow } from '../components/TitlePage'
 import { TopBar } from '../components/TopBar'
+import { LoadError } from '../components/Connection'
 import { Footer } from '../components/Footer'
 import { PhoneTitleHeader } from '../components/PhoneChrome'
 import { IconCheck, IconCheckCircle, IconExpand, IconHistory, IconPlay, IconSettings } from '../components/Icons'
@@ -79,13 +80,7 @@ export function DiscoverTitle() {
     return (
       <div className="page">
         <TopBar />
-        <div className="empty">
-          <div style={{ color: 'var(--fg)', fontSize: 18, fontWeight: 700 }}>Couldn't load this title</div>
-          <div style={{ margin: '8px 0 16px' }}>{error ?? 'Not found'}</div>
-          <button className="btn btn--grey" onClick={() => reload()}>
-            Try again
-          </button>
-        </div>
+        <LoadError title="Couldn't load this title" error={error ?? 'Not found'} onRetry={() => reload()} />
       </div>
     )
   }

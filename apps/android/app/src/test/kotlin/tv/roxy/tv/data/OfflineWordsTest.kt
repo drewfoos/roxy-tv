@@ -23,4 +23,13 @@ class OfflineWordsTest {
         assertTrue(offlineWords(true, 3).body.endsWith("Your downloads still play."))
         assertTrue("with none it does not promise any", "Your downloads" !in offlineWords(false, 0).body)
     }
+
+    @Test fun theTvNeverSpeaksOfDownloads() {
+        for (net in listOf(true, false)) {
+            val w = tvOfflineWords(net)
+            for (text in listOf(w.pill, w.title, w.body)) assertTrue(text, "ownload" !in text && "phone" !in text)
+        }
+        assertTrue("no network is the TV's own problem", "offline" in tvOfflineWords(false).title)
+        assertTrue("a network with no answer is the server's", "server" in tvOfflineWords(true).title)
+    }
 }

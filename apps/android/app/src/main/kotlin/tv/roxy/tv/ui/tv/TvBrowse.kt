@@ -140,7 +140,7 @@ fun TvBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     }
     Column(modifier = Modifier.fillMaxSize()) {
         PageTitle("Browse")
-        if (all == null && error != null) { PageMessage(error, color = RoxyColors.error); return@Column }
+        if (all == null && error != null) { tv.roxy.tv.ui.components.TvPageError(error, onRetry = {}); return@Column }
         Row(modifier = Modifier.fillMaxSize()) {
             LazyColumn(modifier = Modifier.width(CategoryStart + CategoryWidth).fillMaxHeight(), contentPadding = PaddingValues(start = CategoryStart, bottom = 24.dp)) {
                 items(cats, key = { it.key }) { c ->
@@ -195,7 +195,7 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
         Spacer(Modifier.height(40.dp))
         TvTextField(query, { query = it }, placeholder = "Search series, movies, genres", imeAction = ImeAction.Search, modifier = Modifier.padding(start = 15.dp, end = 85.dp).width(520.dp).focusKey(memory, "search/field").focusProperties { gridTarget()?.let { down = memory.requester(it) } })
         Spacer(Modifier.height(24.dp))
-        if (all == null && error != null) { PageMessage(error, color = RoxyColors.error); return@Column }
+        if (all == null && error != null) { tv.roxy.tv.ui.components.TvPageError(error, onRetry = {}); return@Column }
         if (all != null && shown.isEmpty()) { PageMessage("No matches for \"${query.trim()}\"."); return@Column }
         // Six posters across at full card size: the Browse grid's five narrow posters sit beside
         // its category list; here the cells were wider than the posters and the focus frame

@@ -9,6 +9,7 @@ import { Art, PosterTile, ThumbTile, itemPath } from '../components/Cards'
 import { TabSearchLink } from '../components/PhoneChrome'
 import { IconBookmark } from '../components/Icons'
 import { GridSkeleton } from '../components/Skeleton'
+import { LoadError } from '../components/Connection'
 
 /**
  * My Lists, laid out like Crunchyroll's: the bookmark and title centred, WATCHLIST |
@@ -47,9 +48,9 @@ export function Lists() {
 }
 
 function Watchlist() {
-  const { data, error, loading } = useAsync('watchlist', () => api.favorites())
+  const { data, error, loading, reload } = useAsync('watchlist', () => api.favorites())
   if (loading && !data) return <GridSkeleton thumbs count={8} />
-  if (error && !data) return <div className="empty error">{error}</div>
+  if (error && !data) return <LoadError error={error} onRetry={() => reload()} />
   const items = data?.items ?? []
   if (!items.length) return <div className="empty">Titles you save with the bookmark on their page show up here.</div>
   return (
@@ -74,9 +75,9 @@ function Watchlist() {
 }
 
 function History() {
-  const { data, error, loading } = useAsync('history', () => api.history(200))
+  const { data, error, loading, reload } = useAsync('history', () => api.history(200))
   if (loading && !data) return <GridSkeleton thumbs count={8} />
-  if (error && !data) return <div className="empty error">{error}</div>
+  if (error && !data) return <LoadError error={error} onRetry={() => reload()} />
   const items = data?.items ?? []
   if (!items.length) return <div className="empty">Episodes and movies you watch show up here, newest first.</div>
   return (
