@@ -157,6 +157,22 @@ class SidecarFetchTest {
         assertFalse("the show's images go with its last download", downloads.dir("show").exists())
     }
 
+    // This is why the test below failed once in a while: delete cleared the folder in the
+    // background whatever had happened since, so a download queued again right after could
+    // lose its first bytes. Here the clearing is made to finish after the new files exist.
+    @Test fun aDeleteStillClearingDoesNotTakeTheNewDownloadsFiles() {
+        repeat(50) {
+            queue("e1")
+            val clearing = downloads.delete("e1")
+            queue("e1")
+            val part = File(downloads.dir("e1"), "video.mkv.part").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(64)) }
+            runBlocking { clearing.join() }
+            assertTrue("round $it: the new download's bytes are still there", part.exists())
+            runBlocking { downloads.delete("e1").join() }
+            assertFalse("a delete with nothing queued after it clears the folder", downloads.dir("e1").exists())
+        }
+    }
+
     @Test fun aDownloadQueuedAgainKeepsItsFiles() {
         queue("e1")
         val e1 = downloads.entry("e1")!!

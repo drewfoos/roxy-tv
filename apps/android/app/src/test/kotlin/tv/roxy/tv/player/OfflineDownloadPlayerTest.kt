@@ -95,6 +95,12 @@ class OfflineDownloadPlayerTest {
         assertEquals(listOf("s1e2", "s1e3", "s2e1", "sp"), got)
     }
 
+    // A file on the phone does not wait for a cache to fill before its first frame.
+    @Test fun aDownloadStartsWithoutWaitingForACache() {
+        assertEquals(listOf("cache" to "auto", "cache-pause-initial" to "no"), loadCacheOptions("/data/user/0/tv.roxy.tv/files/downloads/e1/video.mkv"))
+        assertEquals(listOf("cache" to "yes", "cache-pause-initial" to "yes"), loadCacheOptions("http://192.168.1.125:8097/v1/sources/s/stream"))
+    }
+
     @Test fun watchedOnADownloadWaitsForTheServerOnlyWhenItDidNotAnswer() {
         val away = IOException("failed to connect")
         assertTrue(markWatchedOffline(away, on = true, downloaded = true))

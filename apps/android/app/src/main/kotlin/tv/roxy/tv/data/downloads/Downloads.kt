@@ -297,7 +297,9 @@ class Downloads(
             val existing = before[item.id] ?: continue
             if (existing.state == DownloadState.Failed && !sameFile(existing, src)) partFile(existing).delete()
         }
-        _index.update { idx ->
+        // Under the folders' lock: a delete of the same item still clearing its folder either
+        // finishes first or sees this entry and leaves the folder alone (see [delete]).
+        synchronized(foldersLock) { _index.update { idx ->
             val entries = idx.entries.toMutableMap()
             for (item in items) {
                 val src = item.primarySource ?: continue
@@ -321,7 +323,7 @@ class Downloads(
                 )
             }
             idx.copy(entries = entries, titles = idx.titles + (title.id to TitleSnapshot(title, idx.titles[title.id]?.images.orEmpty())))
-        }
+        } }
         kick()
     }
 
@@ -341,19 +343,26 @@ class Downloads(
     fun pauseAll(itemIds: Collection<String>) = itemIds.forEach { pause(it) }
 
     /** Remove a download and its files; a running one stops (the service sees the entry vanish). */
-    fun delete(itemId: String) {
+    fun delete(itemId: String): kotlinx.coroutines.Job {
         _index.update { idx ->
             val entries = idx.entries - itemId
             val remaining = entries.values.map { it.titleId }.toSet()
             idx.copy(entries = entries, titles = idx.titles.filterKeys { it in remaining })
         }
-        scope.launch(Dispatchers.IO) {
-            dir(itemId).deleteRecursively()
-            // The title's images go once its last download is gone.
-            val titles = _index.value.titles.keys
-            root.listFiles()?.filter { it.isDirectory && it.name !in _index.value.entries && it.name !in titles }?.forEach { it.deleteRecursively() }
+        // The folders go in the background, and only those nothing stands for by then: the
+        // item may have been queued again meanwhile (delete, then download again), and this
+        // used to remove the new download's first bytes and its subtitles from under it.
+        return scope.launch(Dispatchers.IO) {
+            synchronized(foldersLock) {
+                val idx = _index.value
+                // The title's images go once its last download is gone.
+                root.listFiles()?.filter { it.isDirectory && it.name !in idx.entries && it.name !in idx.titles }?.forEach { it.deleteRecursively() }
+            }
         }
     }
+
+    /** Held while folders are cleared after a delete, and while entries are added: see [delete]. */
+    private val foldersLock = Any()
 
     fun deleteAll() {
         val ids = _index.value.entries.keys.toList()

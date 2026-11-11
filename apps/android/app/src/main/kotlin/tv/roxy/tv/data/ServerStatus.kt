@@ -40,11 +40,15 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
     @Volatile var onBack: (() -> Unit)? = null
 
     @Volatile private var foreground = 0
+
+    /** Fails calls at once while the server is away, on a look no older than [AwayGate.FRESH_MS]. */
+    private val gate = AwayGate(now = { android.os.SystemClock.elapsedRealtime() }, probe = { api.reachableNow().also { if (it) scope.launch { markUp() } } })
     private var probeJob: Job? = null
 
     init {
         // Called on OkHttp's threads: state changes happen on the scope's (main) thread.
         api.onReachability = { ok -> if (!ok) checkSoon() else if (!_online.value) scope.launch { markUp() } }
+        api.awayGate = { prefs.session.value.isLoggedIn && gate.failNow(away = !_online.value) }
         watchNetwork()
     }
 
@@ -57,10 +61,16 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
     /** Check now (a Retry button, a network change). */
     fun checkSoon() {
         scope.launch {
-            if (probeJob?.isActive == true) return@launch
+            // A probe between two looks (up to 30 s apart) starts over: Retry, a new network
+            // or a failed call means "look now", not "at the next turn".
+            if (probeJob?.isActive == true && !resting) return@launch
+            probeJob?.cancel()
             probeJob = scope.launch { probe() }
         }
     }
+
+    /** The probe is waiting for its next look (main thread only). */
+    private var resting = false
 
     private fun markUp() {
         if (_online.value) return
@@ -74,11 +84,13 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
         var wait = 3_000L
         while (scope.isActive) {
             if (!prefs.session.value.isLoggedIn) return
-            if (api.reachable()) { markUp(); return }
+            if (api.reachable()) { gate.looked(true); markUp(); return }
+            gate.looked(false)
             if (_online.value) { _online.value = false; Timber.w("server unreachable") }
             // Off screen: stop; the next onStart (or a network change) checks again.
             if (foreground == 0) return
-            delay(wait)
+            resting = true
+            try { delay(wait) } finally { resting = false }
             wait = (wait * 2).coerceAtMost(30_000L)
         }
     }
@@ -93,6 +105,29 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
             })
         }.onFailure { Timber.w(it, "server status network callback") }
     }
+}
+
+/**
+ * Whether a call to the server should fail without being sent. While the server is away a
+ * call is refused at once if the last look ([probe], 3 s at most) was under [FRESH_MS] ago;
+ * otherwise it waits for one new look, shared by every call that arrives meanwhile. So a
+ * page opened away from home says "Can't reach Roxy" at once (3 s at worst) instead of
+ * after the connect timeout, and a server that came back is noticed by the next call.
+ */
+class AwayGate(private val now: () -> Long, private val probe: () -> Boolean) {
+    private var lookedAt = Long.MIN_VALUE
+    private var answered = true
+
+    /** The background probe's result, so a call right after it does not look again. */
+    @Synchronized fun looked(ok: Boolean) { lookedAt = now(); answered = ok }
+
+    @Synchronized fun failNow(away: Boolean): Boolean {
+        if (!away) return false
+        if (lookedAt == Long.MIN_VALUE || now() - lookedAt >= FRESH_MS) looked(probe())
+        return !answered
+    }
+
+    companion object { const val FRESH_MS = 10_000L }
 }
 
 /**

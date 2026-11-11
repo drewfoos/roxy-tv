@@ -393,6 +393,7 @@ class MpvPlayer(
         lastLoadSid = pendingSid; lastLoadAid = pendingAid
         for ((name, value) in MpvTracks.loadTrackOptions(pendingSid, pendingAid)) mpv.setPropertyString(name, value)
         pendingSid = null; pendingAid = null
+        for ((name, value) in loadCacheOptions(loadUrl)) mpv.setPropertyString(name, value)
         queuedLoads.incrementAndGet()
         mpv.command(arrayOf("loadfile", loadUrl, "replace"))
         mpv.setPropertyBoolean("pause", false)
@@ -1141,3 +1142,13 @@ class MpvPlayer(
         for ((name, fmt) in observed) mpv.observeProperty(name, fmt)
     }
 }
+
+/**
+ * The cache settings a load is opened with. A stream is read ahead into a cache and waits
+ * for a first stretch of it before it starts ("cache-pause-initial"), so it does not start
+ * and stall at once. A file on this device (a download) needs neither: with them it sat
+ * "buffering" for a moment at every start although nothing had to arrive.
+ */
+internal fun loadCacheOptions(url: String): List<Pair<String, String>> =
+    if (url.startsWith("http://") || url.startsWith("https://")) listOf("cache" to "yes", "cache-pause-initial" to "yes")
+    else listOf("cache" to "auto", "cache-pause-initial" to "no")

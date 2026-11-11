@@ -18,6 +18,9 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** An HTTP error from Roxy Server. `code == 404` on a contract endpoint means "server not updated yet". */
+/** A call not sent because the server is known to be away (see [RoxyApi.awayGate]). Reads as any failed connection. */
+class ServerAwayException : IOException("Can't reach Roxy")
+
 class ApiException(val code: Int, message: String) : IOException(message) {
     val isUnauthorized: Boolean get() = code == 401
     val isNotFound: Boolean get() = code == 404
@@ -52,6 +55,10 @@ class RoxyApi(private val prefs: Prefs) {
             // that made it, whichever is active by the time it is sent.
             if (req.header(PROFILE_HEADER) == null) s.profileId?.let { b.header(PROFILE_HEADER, it) }
             val sent = b.build()
+            // The server is known to be away: say so now. On a network that swallows the
+            // packets (away from home, no VPN) every page otherwise sat on its spinner for
+            // the whole connect timeout before saying "Can't reach Roxy". The probe passes.
+            if (sent.tag(Probe::class.java) == null && awayGate?.invoke() == true) throw ServerAwayException()
             // Any answer means the server is there; a failed connection (not one we cancelled)
             // tells ServerStatus to check, which drives the "Can't reach Roxy" banner.
             val resp = try { chain.proceed(sent) } catch (e: IOException) {
@@ -69,6 +76,12 @@ class RoxyApi(private val prefs: Prefs) {
 
     /** Told whether each call to the server got an answer (set by ServerStatus; any thread). */
     @Volatile var onReachability: ((Boolean) -> Unit)? = null
+
+    /** Asked before each call to the server: true = it is away, fail the call at once (set by ServerStatus; any thread, may block for one probe). */
+    @Volatile var awayGate: (() -> Boolean)? = null
+
+    /** Marks the reachability probe's own request, which the gate lets through. */
+    private object Probe
 
     val baseUrl: String get() = prefs.session.value.serverUrl.trimEnd('/')
     private val token: String? get() = prefs.session.value.token
@@ -215,11 +228,14 @@ class RoxyApi(private val prefs: Prefs) {
      * Is the server reachable right now? A fast probe (3 s) of the unauthenticated system
      * endpoint, for the "you're not on the home network" state. Never throws.
      */
-    suspend fun reachable(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun reachable(): Boolean = withContext(Dispatchers.IO) { reachableNow() }
+
+    /** [reachable] for a thread that may block (the gate, on the HTTP client's threads). */
+    fun reachableNow(): Boolean {
         val url = baseUrl
-        if (url.isEmpty()) return@withContext false
-        runCatching {
-            probe.newCall(Request.Builder().url("$url/v1/system/info").get().build()).execute().use { it.isSuccessful }
+        if (url.isEmpty()) return false
+        return runCatching {
+            probe.newCall(Request.Builder().url("$url/v1/system/info").get().tag(Probe::class.java, Probe).build()).execute().use { it.isSuccessful }
         }.getOrDefault(false)
     }
 
