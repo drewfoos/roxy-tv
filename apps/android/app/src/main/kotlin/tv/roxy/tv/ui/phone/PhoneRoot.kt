@@ -132,7 +132,15 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
         dest.hasRoute<Route.Account>() -> Tab.Account
         else -> null
     }
-    val bottomInset = BarHeight + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val online by app.server.online.collectAsStateWithLifecycle()
+    // The offline strip sits on the bottom bar: the tab pages end above it.
+    val bottomInset = BarHeight + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + if (online) 0.dp else OfflineStripHeight
+    val offlineNav = remember(nav) {
+        OfflineNav(
+            downloads = { nav.navigate(Route.Downloads) { launchSingleTop = true } },
+            title = { nav.navigate(Route.DownloadedTitle(it)) },
+        )
+    }
 
     // The tapped item goes into the cache first, so the page can paint its header from it
     // while it slides in.
@@ -168,6 +176,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     }
 
     PhoneTheme {
+        androidx.compose.runtime.CompositionLocalProvider(LocalOfflineNav provides offlineNav) {
         Box(modifier = Modifier.fillMaxSize().background(RoxyColors.background)) {
             NavHost(
                 nav, startDestination = Route.Home, modifier = Modifier.fillMaxSize(),
@@ -222,7 +231,10 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.DownloadedTitle> { e ->
                     Page {
-                        PhoneDownloadedTitle(titleId = e.toRoute<Route.DownloadedTitle>().id, onBack = { nav.popBackStack() })
+                        PhoneDownloadedTitle(
+                            titleId = e.toRoute<Route.DownloadedTitle>().id, onBack = { nav.popBackStack() },
+                            onOpenFull = { t -> if (t.isMovie) openMovie(t) else openSeries(t) },
+                        )
                     }
                 }
                 composable<Route.Discover> {
@@ -396,6 +408,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 Column(modifier = Modifier.align(Alignment.BottomCenter)) {
                     UpdateBar(update, onInstall = { app.updates.install() }, onDismiss = { app.updates.dismiss() })
                     RemoteBar()
+                    OfflineStrip()
                     BottomBar(
                         current = currentTab,
                         profileName = session.profileName.ifEmpty { session.userName },
@@ -411,6 +424,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     )
                 }
             }
+        }
         }
     }
 }

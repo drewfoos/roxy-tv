@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
@@ -72,6 +73,7 @@ import tv.roxy.tv.api.Item
 import tv.roxy.tv.data.downloads.DownloadEntry
 import tv.roxy.tv.data.downloads.DownloadState
 import tv.roxy.tv.data.downloads.formatBytes
+import tv.roxy.tv.data.downloads.upNextOf
 import tv.roxy.tv.ui.components.ProgressBar
 import tv.roxy.tv.ui.components.RoxyImage
 import tv.roxy.tv.ui.components.widthPx
@@ -338,6 +340,7 @@ fun PhoneDownloads(onBack: (() -> Unit)?, onOpenTitle: (String) -> Unit, onBrows
     val wifiOnly by app.prefs.downloadsWifiOnly.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val titles = remember(index) { app.downloads.titles() }
+    val online by app.server.online.collectAsStateWithLifecycle()
     var confirmAll by remember { mutableStateOf(false) }
 
     // onBack == null: shown as My Lists' Downloads tab, under that page's header and tabs.
@@ -355,7 +358,9 @@ fun PhoneDownloads(onBack: (() -> Unit)?, onOpenTitle: (String) -> Unit, onBrows
                     "Episodes and movies you download appear here and play even when your server is out of reach.",
                     fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 20.dp),
                 )
-                PlayButton("Find something to download", icon = Icons.Outlined.Download, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onBrowse)
+                // With the server away there is nothing to browse: say when downloading works.
+                if (online) PlayButton("Find something to download", icon = Icons.Outlined.Download, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onBrowse)
+                else Text("Connect to your Roxy server to download something.", fontSize = 13.sp, color = RoxyColors.muted, textAlign = TextAlign.Center)
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -383,12 +388,18 @@ fun PhoneDownloads(onBack: (() -> Unit)?, onOpenTitle: (String) -> Unit, onBrows
     }
 }
 
-/** A downloaded show: its episodes by season, each with a thumb, size and the download control. */
+/**
+ * A downloaded show (or movie): a Play button for what comes next (see upNextOf), then its
+ * episodes by season, each with a thumb, size and the download control. [offlineNote]: it
+ * is standing in for the title's own page while the server is away, and says so.
+ * [onOpenFull] opens that page ("Find more episodes"), offered while the server answers.
+ */
 @Composable
-fun PhoneDownloadedTitle(titleId: String, onBack: () -> Unit) {
+fun PhoneDownloadedTitle(titleId: String, onBack: () -> Unit, offlineNote: Boolean = false, onOpenFull: ((Item) -> Unit)? = null) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val index by app.downloads.index.collectAsStateWithLifecycle()
+    val online by app.server.online.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val group = remember(index) { app.downloads.titles().firstOrNull { it.id == titleId } }
     if (group == null) {
@@ -396,17 +407,37 @@ fun PhoneDownloadedTitle(titleId: String, onBack: () -> Unit) {
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) { PageHeader("Downloads", onBack = onBack) }
         return
     }
+    fun play(item: Item) { scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } } }
+    val next = remember(group) { upNextOf(group.entries) }
+    val isMovie = group.title.isMovie
     val bySeason = group.entries.groupBy { it.seasonNumber ?: 0 }
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         PageHeader(group.title.title, onBack = onBack)
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-            bySeason.toSortedMap().forEach { (season, entries) ->
+            item(key = "top") {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad)) {
+                    if (offlineNote) Row(modifier = Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(16.dp))
+                        Text(if (isMovie) "You're offline. Playing from this phone." else "You're offline. Showing downloaded episodes only.", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 8.dp))
+                    }
+                    if (next != null) {
+                        PlayButton(next.label, modifier = Modifier.fillMaxWidth(), onClick = { play(next.entry.item) })
+                        if (!isMovie) Text(next.entry.item.title, fontSize = 13.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                    }
+                    if (onOpenFull != null && online) {
+                        GreyButton(if (isMovie) "Open the movie's page" else "Find more episodes", modifier = Modifier.fillMaxWidth().padding(top = 10.dp), onClick = { onOpenFull(group.title) })
+                    }
+                }
+            }
+            if (isMovie) {
+                items(group.entries, key = { it.itemId }) { e -> MovieDownloadRow(e, onPlay = { play(e.item) }) }
+            } else bySeason.toSortedMap().forEach { (season, entries) ->
                 item(key = "season-$season") {
                     val name = entries.firstOrNull()?.seasonName?.takeIf { it.isNotBlank() } ?: if (season == 0) "Specials" else "Season $season"
                     Text(name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(start = PhonePad, top = 16.dp, bottom = 4.dp))
                 }
                 items(entries, key = { it.itemId }) { e ->
-                    DownloadedEpisodeRow(e, onPlay = { scope.launch { playItem(context, e.item).onFailure { Timber.w(it, "play failed") } } })
+                    DownloadedEpisodeRow(e, onPlay = { play(e.item) })
                 }
             }
         }

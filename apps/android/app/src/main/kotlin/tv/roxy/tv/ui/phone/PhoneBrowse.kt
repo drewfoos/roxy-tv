@@ -238,7 +238,9 @@ fun PhoneWatchlist(
     onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, bottomInset: Dp, onSearch: (() -> Unit)? = null,
     onOpenDownloadedTitle: (String) -> Unit = {}, onBrowse: () -> Unit = {},
 ) {
-    var tab by rememberSaveable { mutableStateOf(0) }
+    // Opened with the server away, it starts on the one list that works: Downloads.
+    val server = RoxyApp.get(LocalContext.current).server
+    var tab by rememberSaveable { mutableStateOf(if (server.online.value) 0 else 2) }
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         TabHeader("My Lists", onSearch = onSearch)
         SectionTabs(listOf("Watchlist", "History", "Downloads"), tab) { tab = it }
@@ -262,6 +264,7 @@ private fun WatchlistGrid(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> U
         items = state.items, error = state.error,
         emptyText = "Titles you add with \"My List\" on their page show up here.",
         bottomInset = bottomInset, onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) },
+        onRetry = { vm.load(force = true) },
     )
 }
 
@@ -337,8 +340,8 @@ fun PhoneSearch(onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (
         }
         when {
             state.items == null && state.error == null -> GridSkeleton(modifier = Modifier.padding(top = 8.dp), rows = 2)
-            q.isEmpty() -> Text("Start typing to search your library.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad))
-            else -> PosterGrid(items = results, error = state.error, emptyText = "No matches for \"$q\".", bottomInset = 16.dp, onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) })
+            q.isEmpty() && state.items != null -> Text("Start typing to search your library.", color = RoxyColors.muted, modifier = Modifier.padding(PhonePad))
+            else -> PosterGrid(items = results, error = state.error, emptyText = "No matches for \"$q\".", bottomInset = 16.dp, onOpen = { if (it.isMovie) onOpenMovie(it) else onOpenSeries(it) }, onRetry = { vm.load(force = true, version = items.version) })
         }
     }
 }
@@ -347,10 +350,12 @@ fun PhoneSearch(onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenMovie: (
 @Composable
 private fun PosterGrid(
     items: List<Item>?, error: String?, emptyText: String, bottomInset: Dp,
-    state: LazyGridState = rememberLazyGridState(), onOpen: (Item) -> Unit,
+    state: LazyGridState = rememberLazyGridState(), onRetry: (() -> Unit)? = null, onOpen: (Item) -> Unit,
 ) {
     val app = RoxyApp.get(LocalContext.current)
     when {
+        // What went wrong and a Retry (the offline page while the server is away), not a dead-end line.
+        items == null && error != null && onRetry != null -> tv.roxy.tv.ui.components.LoadError(error, onRetry = onRetry, modifier = Modifier.padding(bottom = bottomInset))
         items == null && error != null -> Text(error, color = RoxyColors.error, modifier = Modifier.padding(PhonePad))
         items == null -> CaptionedGridSkeleton(modifier = Modifier.padding(top = 8.dp))
         // Scrollable even when empty, so pull-to-refresh still works on an empty category.

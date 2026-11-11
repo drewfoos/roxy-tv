@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.drop
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.isTelevision
 import tv.roxy.tv.ui.phone.GreyButton
+import tv.roxy.tv.ui.phone.OfflinePage
 import tv.roxy.tv.ui.theme.RoxyColors
 import tv.roxy.tv.ui.tv.TvButton
 import tv.roxy.tv.ui.tv.TvDims
@@ -83,6 +84,7 @@ fun OnServerBack(block: () -> Unit) {
 fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val tv = remember { isTelevision(context) }
+    val online by RoxyApp.get(context).server.online.collectAsStateWithLifecycle()
     OnServerBack(onRetry)
     if (tv) {
         val focus = remember { FocusRequester() }
@@ -91,6 +93,9 @@ fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
             Box(Modifier.padding(top = 20.dp)) { TvButton("Retry", onClick = onRetry, modifier = Modifier.focusRequester(focus)) }
         }
         LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    } else if (!online) {
+        // The server is away, whatever this call's own error said: the offline page.
+        OfflinePage(onRetry = onRetry, modifier = modifier)
     } else {
         Column(
             modifier = modifier.fillMaxSize().padding(24.dp),

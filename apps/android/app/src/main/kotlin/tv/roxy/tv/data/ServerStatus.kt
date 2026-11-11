@@ -33,6 +33,13 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
     private val _backOnline = MutableStateFlow(0)
     val backOnline: StateFlow<Int> get() = _backOnline
 
+    /**
+     * Whether the device has a network at all. With one and the server silent, the phone is
+     * away from home (or the server is down), not offline: the notices say which.
+     */
+    private val _hasNetwork = MutableStateFlow(true)
+    val hasNetwork: StateFlow<Boolean> get() = _hasNetwork
+
     /** True while a player page is up on the phone: it shows its own "reconnecting" message. */
     val playerActive = MutableStateFlow(false)
 
@@ -100,8 +107,18 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
         val req = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
         runCatching {
+            // The networks that are up now: none left means offline (asking the system for
+            // "the active one" inside onLost can still name the one just lost).
+            val up = java.util.Collections.synchronizedSet(HashSet<Network>())
+            _hasNetwork.value = cm.activeNetwork != null
             cm.registerNetworkCallback(req, object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) { if (!_online.value) checkSoon() }
+                override fun onAvailable(network: Network) { up += network; _hasNetwork.value = true; if (!_online.value) checkSoon() }
+                override fun onLost(network: Network) {
+                    up -= network
+                    _hasNetwork.value = up.isNotEmpty()
+                    // Wi-Fi gone with mobile data still up (or nothing): find out which at once.
+                    checkSoon()
+                }
             })
         }.onFailure { Timber.w(it, "server status network callback") }
     }
@@ -128,6 +145,27 @@ class AwayGate(private val now: () -> Long, private val probe: () -> Boolean) {
     }
 
     companion object { const val FRESH_MS = 10_000L }
+}
+
+/** The words of the phone's offline notices: the strip over the bottom bar, and a page that cannot load. */
+data class OfflineWords(val strip: String, val title: String, val body: String)
+
+/**
+ * No network at all reads "You're offline"; a network with the server silent says so
+ * instead (away from home, Tailscale off, the server down), since the fix differs. Either
+ * way the last sentence says what still works: the [downloads] finished on this phone.
+ */
+fun offlineWords(hasNetwork: Boolean, downloads: Int): OfflineWords {
+    val still = if (downloads > 0) "Your downloads still play." else "Episodes and movies you download play without it."
+    return if (hasNetwork) OfflineWords(
+        strip = "Can't reach your Roxy server",
+        title = "Can't reach your server",
+        body = "This phone is online, but Roxy isn't answering. You may be away from your home network or Tailscale. $still",
+    ) else OfflineWords(
+        strip = "No internet connection",
+        title = "You're offline",
+        body = "Connect to Wi-Fi or mobile data to browse your library. $still",
+    )
 }
 
 /**

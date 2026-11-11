@@ -232,6 +232,7 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
     PollWhileResumed(if (anyActive) PollFastMs else PollSlowMs) { vm.refreshRequests() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
     tv.roxy.tv.ui.components.OnServerBack { vm.load(force = true) }
+    val serverOnline by app.server.online.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         TabHeader("Discover")
@@ -263,6 +264,9 @@ fun PhoneDiscover(onOpen: (DiscoverItem) -> Unit, bottomInset: Dp) {
                     }
                 }
             }
+            // The server is what is away (it does the TMDB lookups): say that, not "TMDB".
+            (state.searchError != null || (state.rows == null && state.error != null)) && !serverOnline ->
+                OfflinePage(onRetry = { if (state.searchError != null) vm.search(state.query) else vm.load(force = true) }, modifier = Modifier.padding(bottom = bottomInset))
             state.searchError != null -> Column(modifier = Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Couldn't reach TMDB", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
                 Text(state.searchError ?: "", fontSize = 12.sp, color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 14.dp))

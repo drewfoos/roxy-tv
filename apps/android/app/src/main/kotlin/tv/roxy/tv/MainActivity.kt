@@ -206,8 +206,9 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), colors = SurfaceDefaults.colors(containerColor = RoxyColors.background)) {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
                         AppRoot(tv)
-                        // Above every page: "Can't reach Roxy" while the server is away.
-                        ServerBanner(tv)
+                        // Above every page: "Can't reach Roxy" while the server is away. The phone
+                        // says it its own way (a strip over the bottom bar, offline pages).
+                        if (tv) ServerBanner(tv)
                     }
                 }
             }

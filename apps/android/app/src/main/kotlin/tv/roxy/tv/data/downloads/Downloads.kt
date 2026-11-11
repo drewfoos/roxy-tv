@@ -421,6 +421,8 @@ class Downloads(
                 val old = e.item.userData ?: UserData()
                 val ud = old.copy(
                     positionMs = positionMs,
+                    // The phone's own Continue Watching (the server is away) orders by this.
+                    lastPlayedAt = java.time.Instant.ofEpochMilli(clock.wallMs() - ageMs.coerceAtLeast(0)).toString(),
                     played = played || (old.played && positionMs == 0L),
                     // Kept for offline playback: a saved -1 starts the download with subtitles off.
                     subtitleIndex = subtitleIndex ?: old.subtitleIndex,
@@ -579,9 +581,13 @@ class Downloads(
      * title stands for are removed.
      */
     fun removeLeftovers(e: DownloadEntry) {
-        val idx = _index.value
-        for (id in setOf(e.itemId, e.titleId)) {
-            if (id !in idx.entries && id !in idx.titles) dir(id).deleteRecursively()
+        // One clearer at a time: delete's background job may be walking the same folder,
+        // and two walks of one folder trip over each other's removals.
+        synchronized(foldersLock) {
+            val idx = _index.value
+            for (id in setOf(e.itemId, e.titleId)) {
+                if (id !in idx.entries && id !in idx.titles) dir(id).deleteRecursively()
+            }
         }
     }
 
