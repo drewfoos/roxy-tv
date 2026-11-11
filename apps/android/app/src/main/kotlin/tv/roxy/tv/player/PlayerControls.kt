@@ -126,6 +126,8 @@ data class PlayerUiState(
     val qualityKey: String = QualityOption.Original.key,
     /** Why only Original is offered (a download plays from the phone), or null. */
     val qualityNote: String? = null,
+    /** "Play on another device" can work: false for a download playing with the server out of reach. */
+    val castAvailable: Boolean = true,
     val fillScreen: Boolean = false,      // crop to fill (fullscreen button) vs letterbox
     val pipSupported: Boolean = false,
     val hasNext: Boolean = false,
@@ -190,6 +192,28 @@ data class QualityOption(val key: String, val label: String, val height: Int, va
         }
 
         fun byKey(key: String): QualityOption = Presets.firstOrNull { it.key == key } ?: Original
+    }
+}
+
+/** The Quality menu's entries and the line under them. */
+data class QualityMenu(val options: List<QualityOption>, val note: String?)
+
+/**
+ * What the Quality menu offers. Every entry but the top one is a transcode the server makes
+ * while it plays, so they are listed only when the server can be asked: there is a source
+ * to name ([hasSource]), someone is [signedIn], and, for a download ([local]), the server
+ * answers ([serverOnline]). A download away from the server lists its own file alone and
+ * says why. (Signed in is not "connected": the menu used to offer 720p on a plane.) A
+ * stream that lost the server keeps its list: the player is reconnecting, and the choice is
+ * for when it is back.
+ */
+internal fun qualityMenu(sourceHeight: Int, hasSource: Boolean, signedIn: Boolean, local: Boolean, serverOnline: Boolean): QualityMenu {
+    val all = QualityOption.forSource(sourceHeight)
+    return when {
+        !hasSource || !signedIn -> QualityMenu(all.take(1), if (local) "Downloads play from this device at their original quality." else null)
+        local && !serverOnline -> QualityMenu(all.take(1), "Not connected to Roxy: this download plays from this device at its original quality.")
+        local -> QualityMenu(all, "Downloaded: the top quality plays from this phone; lower ones stream from the server.")
+        else -> QualityMenu(all, null)
     }
 }
 
@@ -330,7 +354,7 @@ fun PlayerControls(
                 // Next, Cast (a placeholder until casting exists), settings (everything lives in
                 // there: subtitles, audio, speed, skip), fullscreen.
                 if (state.hasNext) IconButton(Icons.Filled.SkipNext, "Next episode", onClick = { actions.next() }, onFocus = onInteraction, compact = compact)
-                IconButton(Icons.Filled.Cast, "Play on another device", onClick = { onInteraction(); actions.cast() }, onFocus = onInteraction, compact = compact)
+                if (state.castAvailable) IconButton(Icons.Filled.Cast, "Play on another device", onClick = { onInteraction(); actions.cast() }, onFocus = onInteraction, compact = compact)
                 IconButton(Icons.Filled.Settings, "Settings", onClick = { onSheet(if (sheet == Sheet.None) Sheet.Settings else Sheet.None) }, onFocus = onInteraction, compact = compact)
                 if (state.fullscreen == true) IconButton(Icons.Filled.CloseFullscreen, "Exit fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)
                 else IconButton(Icons.Filled.OpenInFull, "Fullscreen", onClick = { actions.toggleFullscreen() }, onFocus = onInteraction, compact = compact)

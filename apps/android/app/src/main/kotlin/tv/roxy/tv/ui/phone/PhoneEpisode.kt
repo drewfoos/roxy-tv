@@ -57,6 +57,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
@@ -224,7 +225,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     var series by remember { mutableStateOf<Item?>(null) }
     LaunchedEffect(episode?.seriesId) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
-        series = app.items[seriesId] ?: runCatching { app.api.item(seriesId) }.getOrNull()
+        // Away from the server, the show as it was saved with the download.
+        series = app.items[seriesId]
+            ?: (if (app.server.online.value) runCatching { app.api.item(seriesId) }.getOrNull() else null)
+            ?: app.downloads.title(seriesId)
     }
     val seriesRating = series?.officialRating
     // The page's own episode (or film) was loaded once, for the player; its watched state
@@ -233,15 +237,19 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     LaunchedEffect(watchedKey) {
         if (watchedKey == 0) return@LaunchedEffect
         val id = episode?.id ?: return@LaunchedEffect
-        runCatching { app.api.item(id) }.onSuccess { fresh -> if (episode?.id == id) episode = episode?.copy(userData = fresh.userData) }
+        // Away from the server, a download's own record (a mark made offline is in it).
+        val userData = (if (app.server.online.value) runCatching { app.api.item(id) }.getOrNull()?.userData else null) ?: app.downloads.entry(id)?.item?.userData ?: return@LaunchedEffect
+        if (episode?.id == id) episode = episode?.copy(userData = userData)
     }
-    LaunchedEffect(episode?.seriesId, watchedKey) {
+    // The server coming back refills the list (and going away is noticed by the first failure).
+    val serverBack by app.server.backOnline.collectAsStateWithLifecycle()
+    LaunchedEffect(episode?.seriesId, watchedKey, serverBack) {
         val seriesId = episode?.seriesId ?: return@LaunchedEffect
-        // Next / previous only: no files needed.
-        runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
-            .onSuccess { eps ->
-                siblings = eps.sortedWith(compareBy({ (it.seasonAired ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
-            }
+        // Next / previous only: no files needed. Away from the server the downloaded
+        // episodes of the show are the list, so Next Episode offers the next one that plays.
+        val online = if (app.server.online.value) runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }.getOrNull() else null
+        val eps = online ?: app.downloads.episodesOf(seriesId).takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
+        siblings = tv.roxy.tv.ui.inPlayOrder(eps)
     }
     // Stopped means off screen: the PiP window was dismissed, or the app was left while
     // paused. Entering PiP never stops the activity, so this always pauses.
@@ -274,7 +282,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                 error != null -> Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     Text(error ?: "", color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                 }
-                ep != null -> RoxyImage(app.api.imageUrl(ep, "thumb", widthPx(420.dp) * 2) ?: app.api.imageUrl(ep, "backdrop", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
+                ep != null -> RoxyImage(app.downloads.image(app.api, ep, "thumb", widthPx(420.dp) * 2) ?: app.api.imageUrl(ep, "backdrop", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             }
         }
         if (!full) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {

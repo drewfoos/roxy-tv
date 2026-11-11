@@ -53,6 +53,9 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
     // The server's current copy, when it is needed and reachable. A download never waits long
     // for it: offline playback must start at once.
     val fresh: Item? = when {
+        // Known to be away: no wait at all (it is asked again in the background, so the next
+        // play knows if it came back).
+        entry != null && !app.server.online.value -> { app.server.checkSoon(); null }
         entry != null -> if (explicit || app.downloads.hasPendingProgress(item.id) || !app.prefs.session.value.isLoggedIn) null
             else {
                 // The HTTP call blocks its thread and ignores cancellation, so it runs apart
@@ -100,6 +103,10 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
     val url = local?.path ?: runCatching { app.api.streamUrl(source.id, app.api.mediaToken(source.id)) }.getOrElse { return Result.failure(it) }
     return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, explicitStart = fromStart || startMs != null, local = local != null))
 }
+
+/** Episodes in play order: by season, specials last, then by number. */
+fun inPlayOrder(episodes: List<Item>): List<Item> =
+    episodes.sortedWith(compareBy({ (it.seasonAired ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
 
 /** A resume point this close to the end starts the item from the beginning (see [playRequest]). */
 const val END_STRETCH_MS = 15_000L
@@ -172,12 +179,15 @@ suspend fun nextEpisodeLookup(context: Context, itemId: String): Result<PlayRequ
     val seriesId = current.seriesId ?: return Result.success(null)
     // Order and playability only: playRequest fetches the one episode it plays, files and
     // all (with every episode's files a long show's list was megabytes for the TV to parse).
-    val onlineRead = runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
-    onlineRead.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it; if (download == null) return Result.failure(it) }
-    val online = onlineRead.getOrNull()
-    val episodes = online ?: app.downloads.index.value.entries.values.filter { it.titleId == seriesId && it.isDone }.map { it.item }
-    fun seasonKey(e: Item) = (e.seasonAired ?: 0).let { if (it == 0) Int.MAX_VALUE else it }
-    val ordered = episodes.sortedWith(compareBy({ seasonKey(it) }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
+    // A download with the server known to be away does not ask it: on a network that drops
+    // the packets (hotel Wi-Fi, mobile data without Tailscale) the answer "nobody there"
+    // took the whole connect timeout, and Next stayed hidden until then. The player asks
+    // again when the server is back.
+    val onlineRead = if (download != null && !app.server.online.value) null
+        else runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
+    onlineRead?.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it; if (download == null) return Result.failure(it) }
+    val online = onlineRead?.getOrNull()
+    val ordered = inPlayOrder(online ?: app.downloads.episodesOf(seriesId))
     val at = ordered.indexOfFirst { it.id == current.id }
     if (at < 0) return Result.success(null)
     val next = ordered.drop(at + 1).firstOrNull { it.isPlayable && (online != null || app.downloads.localFile(it.id) != null) } ?: return Result.success(null)

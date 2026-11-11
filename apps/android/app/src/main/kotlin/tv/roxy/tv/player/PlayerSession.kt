@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -249,6 +250,8 @@ class PlayerSession(
      * to reconnect, not the end of the file.
      */
     private val fromDisk: Boolean get() = local && !transcoding
+    /** The server is not answering (away from home, no network): only what is on this device plays. */
+    private val serverAway: Boolean get() = !app.server.online.value
     private var directUrl = params.url
     private var sourceHeight = 0
     private var sourceDurationSec: Double? = null
@@ -463,6 +466,14 @@ class PlayerSession(
         showAdvisory(params.itemId)
         app.remote.activePlayer = this
         app.server.playerActive.value = true
+        // A download playing away from the server knows only the downloaded episodes after
+        // it: once the server answers again, ask it what really comes next.
+        scope.launch {
+            app.server.backOnline.drop(1).collect {
+                val id = itemId
+                if (local && id != null && !destroyed && !life.ended && !switching) lookUpNext(id)
+            }
+        }
 
         actions = object : PlayerActions {
             // While waiting for the server, Play means "try now".
@@ -677,6 +688,9 @@ class PlayerSession(
             life.fileRequested()
             itemPreload = preloadTracks(src?.streams.orEmpty())
             player.play(url, start, sid = itemPreload.sid, aid = itemPreload.aid)
+            // Is the server there? The Quality menu and "Play on" depend on the answer, and
+            // nothing else may ask for a while (reports rest a minute when it is away).
+            app.server.checkSoon()
             // Seek previews are a bonus when the server happens to be reachable.
             if (sourceId != null && app.prefs.session.value.isLoggedIn) scope.launch {
                 val m = runCatching { app.api.trickplay(sourceId) }.getOrNull()
@@ -900,6 +914,8 @@ class PlayerSession(
      */
     private fun reconnect(at: Double, failedHttp: Int? = null) {
         if (destroyed) return
+        // A download playing a lower quality from the server: its own file is right here.
+        if (local && transcoding) { backToDownload(at); return }
         reconnectJob?.cancel()
         waitJob?.cancel()
         // The server did not take the media token: the next open asks for a new one (see tokenRefused).
@@ -1008,6 +1024,8 @@ class PlayerSession(
         if (stallTicks == STALL_CHECK_TICKS) scope.launch {
             if (!app.api.reachable() && stallTicks >= STALL_CHECK_TICKS) {
                 Timber.w("stream stalled and the server is unreachable")
+                // A download does not wait for it: mpv would retry the dead stream for minutes.
+                if (local && transcoding && !destroyed) { backToDownload(player.timePosSeconds() ?: ui.positionSec); return@launch }
                 stallShown = true
                 flashOsd(LOST_CONNECTION, 0)
             }
@@ -1152,20 +1170,17 @@ class PlayerSession(
         val settling = pendingStart != null
         // A download plays from the phone; while the server is reachable the lower qualities
         // stream a transcode from it, and the top entry goes back to the file here.
-        val offline = sourceId == null || !app.prefs.session.value.isLoggedIn
+        val menu = qualityMenu(sourceHeight, hasSource = sourceId != null, signedIn = app.prefs.session.value.isLoggedIn, local = local, serverOnline = !serverAway)
         ui = PlayerUiState(
             title = title,
             subtitle = subtitleLine,
             positionSec = reloadTarget ?: pendingStart ?: timePos ?: 0.0,
             // A transcode stream has no length of its own; the source knows it.
             durationSec = (if (transcoding) sourceDurationSec else null) ?: player.durationSeconds() ?: sourceDurationSec ?: 0.0,
-            qualityOptions = QualityOption.forSource(sourceHeight).let { if (offline) it.take(1) else it },
+            qualityOptions = menu.options,
             qualityKey = if (transcoding) quality.key else QualityOption.Original.key,
-            qualityNote = when {
-                local && offline -> "Downloads play from this device at their original quality."
-                local -> "Downloaded: the top quality plays from this phone; lower ones stream from the server."
-                else -> null
-            },
+            qualityNote = menu.note,
+            castAvailable = !(local && serverAway),
             bufferedSec = player.cacheEndSeconds() ?: 0.0,
             paused = player.isPaused(),
             buffering = (player.isBuffering() || reconnecting || (switching && reloadTarget != null)) && !player.isPaused(),
@@ -1292,8 +1307,10 @@ class PlayerSession(
                     .onSuccess { player.play(app.api.transcodeUrl(sid, quality.height, quality.kbps, at, it), 0, transcoded = true) }
                     .onFailure {
                         Timber.w(it, "media token")
-                        // Server still away: count it as a failed attempt rather than sit "reconnecting".
-                        if (reconnecting && !destroyed) reconnect(at)
+                        if (destroyed) return@onFailure
+                        // A download goes back to its own file; a stream counts a failed
+                        // attempt rather than sit "reconnecting" with the server still away.
+                        if (local) backToDownload(at) else if (reconnecting) reconnect(at)
                     }
             }
         }
@@ -1307,6 +1324,7 @@ class PlayerSession(
             if (!destroyed && reloadTarget == at && life.reloadTimedOut()) {
                 Timber.w("reload at %.1f s did not start", at)
                 reloadTarget = null
+                if (local && transcoding) { backToDownload(at); return@launch }
                 // Started while waiting for the server: wait again (and ask it again).
                 waitingAt?.let { w -> waitForServer(w); return@launch }
                 flashOsd("The server could not start this quality", 4000)
@@ -1324,10 +1342,32 @@ class PlayerSession(
         watchReload(at)
     }
 
+    /**
+     * A download's lower-quality stream from the server failed, dropped or never started:
+     * the file on this device takes over at [at], instead of "reconnecting" to a server
+     * that may be a flight away. The chosen quality stays for streamed episodes after it.
+     */
+    private fun backToDownload(at: Double) {
+        if (destroyed) return
+        Timber.w("download: the %s stream from the server is gone at %.1f s; playing the file", quality.key, at)
+        reconnectJob?.cancel()
+        waitJob?.cancel()
+        stallTicks = 0
+        stallShown = false
+        transcoding = false
+        applyLanguageOverrides()
+        reopenSameItem(at)
+        flashOsd("That quality needs the server. Playing your download.", 5000)
+        refreshUi(forceGlue = true)
+    }
+
     private fun changeQuality(q: QualityOption) {
         if (sourceId == null || !app.prefs.session.value.isLoggedIn) return
         val current = if (transcoding) quality else QualityOption.Original
         if (q == current) return
+        // A download with the server away has nothing else to play (the menu no longer
+        // lists the others; this is a tap that raced the server going away).
+        if (local && serverAway && !q.isOriginal) { flashOsd("Not connected to Roxy: playing your download", 4000); return }
         val pos = reloadTarget ?: player.timePosSeconds() ?: 0.0
         quality = q
         qualityFromSettings = false

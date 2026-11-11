@@ -268,6 +268,12 @@ class Downloads(
         }.sortedByDescending { t -> t.entries.maxOf { it.addedAt } }
     }
 
+    /** The finished downloads of one show, as items (unordered): the episode list while the server is away. */
+    fun episodesOf(titleId: String): List<Item> = _index.value.entries.values.filter { it.titleId == titleId && it.isDone && it.item.isEpisode }.map { it.item }
+
+    /** The show (or movie) snapshot saved with its downloads, or null. */
+    fun title(titleId: String): Item? = _index.value.titles[titleId]?.item
+
     fun usedBytes(): Long = _index.value.entries.values.sumOf { if (it.isDone) it.bytesTotal else it.bytesDone }
 
     fun freeBytes(): Long = runCatching { StatFs(root.path).availableBytes }.getOrDefault(0L)
