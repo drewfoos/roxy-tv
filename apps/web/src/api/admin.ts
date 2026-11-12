@@ -176,6 +176,17 @@ export interface TranscodingSettings {
   options: { id: string; label: string; available: boolean }[]
 }
 
+/** The server's other addresses (GET/PUT /v1/settings/addresses). */
+export interface AddressSettings {
+  /** ROXY_ADVERTISE_URL: the home address the apps are told first; '' when not set. */
+  advertised: string
+  addresses: string[]
+  /** ROXY_OTHER_URLS sets them: shown, not editable here. */
+  fromEnvironment: boolean
+  /** After a save: what asking each address "are you this server?" came to. */
+  checks?: { address: string; state: 'ok' | 'other' | 'notRoxy' | 'unreachable' }[]
+}
+
 export interface ApiKeyRow {
   id: string
   name: string

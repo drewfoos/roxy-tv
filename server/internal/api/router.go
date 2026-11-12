@@ -162,6 +162,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 			r.Get("/settings/arr", s.arrSettingsGet)
 			r.Put("/settings/arr", s.arrSettingsPut)
 			r.Post("/settings/arr/test", s.arrSettingsTest)
+			r.Get("/settings/addresses", s.addressSettingsGet)
+			r.Put("/settings/addresses", s.addressSettingsPut)
 			r.Get("/settings/fanart", s.fanartSettingsGet)
 			r.Put("/settings/fanart", s.fanartSettingsPut)
 			r.Get("/settings/transcoding", s.transcodingSettingsGet)

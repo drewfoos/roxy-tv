@@ -30,6 +30,8 @@ sealed interface Route {
     @Serializable data class EditMetadata(val id: String, val title: String) : Route
     @Serializable data class DiscoverMoreDetails(val type: String, val tmdbId: Int, val title: String) : Route
     @Serializable data object Webhooks : Route
+    // Admin: the server's other addresses (Tailscale, a domain).
+    @Serializable data object ServerAddresses : Route
     @Serializable data class Legal(val doc: String) : Route
     @Serializable data object Watchlist : Route
     // TV: what the profile played, newest first (the phone shows it inside My Lists).

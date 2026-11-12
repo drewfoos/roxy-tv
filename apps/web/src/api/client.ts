@@ -3,7 +3,7 @@
 // profile; a 401 clears the session so the app returns to the login screen.
 import { session, deviceName } from './session'
 import { connection, connectionWords } from './connection'
-import type { AccountUser, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
+import type { AccountUser, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
 import type {
   DiscoverDetail,
   DiscoverEpisode,
@@ -256,6 +256,8 @@ export const api = {
   testArr: (kind: 'sonarr' | 'radarr', url: string, apiKey: string) => post<ArrTest>('/v1/settings/arr/test', { kind, url, apiKey }),
   fanart: () => get<{ apiKey: string; enabled: boolean }>('/v1/settings/fanart'),
   saveFanart: (apiKey: string) => put<{ apiKey: string; enabled: boolean }>('/v1/settings/fanart', { apiKey }),
+  addresses: () => get<AddressSettings>('/v1/settings/addresses'),
+  saveAddresses: (addresses: string[]) => put<AddressSettings>('/v1/settings/addresses', { addresses }),
   tmdb: () => get<{ set: boolean; source?: string }>('/v1/settings/tmdb'),
   saveTmdb: (key: string) => put<{ set: boolean }>('/v1/settings/tmdb', { key }),
   transcoding: () => get<TranscodingSettings>('/v1/settings/transcoding'),

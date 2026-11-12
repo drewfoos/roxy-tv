@@ -79,7 +79,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	out["profileId"] = p.ScopeID // the profile this request's watch state is keyed by
 	// Where else this server answers (its Tailscale address, say), and its id so the app
 	// can tell it is this server answering there before it sends its token.
-	if addrs := s.addresses(); len(addrs) > 0 {
+	if addrs := s.addresses(r.Context()); len(addrs) > 0 {
 		out["addresses"] = addrs
 		out["serverId"], _ = s.store.ServerID(r.Context())
 	}
@@ -148,20 +148,6 @@ func (s *Server) sessionCookie(w http.ResponseWriter, r *http.Request) {
 	}
 	auth.SetSessionCookie(w, r, token)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// addresses lists the URLs the server is configured to answer at: the advertised one
-// first, then ROXY_OTHER_URLS. Empty when none is set.
-func (s *Server) addresses() []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, u := range append([]string{s.cfg.AdvertiseURL}, s.cfg.OtherURLs...) {
-		if u != "" && !seen[u] {
-			seen[u] = true
-			out = append(out, u)
-		}
-	}
-	return out
 }
 
 func userJSON(u *model.User) map[string]any {

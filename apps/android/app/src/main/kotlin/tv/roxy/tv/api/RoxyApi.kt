@@ -412,6 +412,12 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun fanartSettings(): FanartSettings = get("/v1/settings/fanart")
     suspend fun saveFanartSettings(apiKey: String): FanartSettings = putJson("/v1/settings/fanart", json.encodeToString(FanartSettings.serializer(), FanartSettings(apiKey)))
 
+    /** Admin: the server's other addresses (its Tailscale one, a domain), which every signed-in app is told. */
+    suspend fun addressSettings(): AddressSettings = get("/v1/settings/addresses")
+    /** Saves the whole list; the server checks each address and refuses a bad one in its own words ([ApiException.message]). */
+    suspend fun saveAddressSettings(addresses: List<String>): AddressSettings =
+        putJson("/v1/settings/addresses", json.encodeToString(AddressList.serializer(), AddressList(addresses)))
+
     /** Which encoder the server transcodes with; the first call can take a few seconds (the server test-encodes). */
     suspend fun transcodingSettings(): TranscodingSettings = get("/v1/settings/transcoding")
 
@@ -1497,6 +1503,24 @@ data class ArtCandidates(val candidates: List<ArtCandidate> = emptyList())
 
 @Serializable
 private data class ImageUrlBody(val url: String)
+
+@Serializable
+private data class AddressList(val addresses: List<String>)
+
+/**
+ * The server's other addresses. [advertised] is its home address ("" when not set);
+ * [fromEnvironment] means the list is fixed where the server is started; [checks] come
+ * with a save: what asking each address "are you this server?" came to.
+ */
+@Serializable
+data class AddressSettings(
+    val advertised: String = "", val addresses: List<String> = emptyList(), val fromEnvironment: Boolean = false,
+    val checks: List<AddressCheck> = emptyList(),
+)
+
+/** [state]: ok, notRoxy (something else answered) or unreachable (nothing answered from where the server runs). */
+@Serializable
+data class AddressCheck(val address: String = "", val state: String = "")
 
 @Serializable
 data class FanartSettings(val apiKey: String = "", val enabled: Boolean = false)

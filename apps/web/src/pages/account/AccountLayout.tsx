@@ -9,6 +9,7 @@ import { ProfilesPage } from './Profiles'
 import { PreferencesPage } from './Preferences'
 import { DevicesPage } from './Devices'
 import { AboutPage } from './About'
+import { AddressesPage } from './Addresses'
 import { PasswordPage } from './Password'
 import { LogoutPage } from './Logout'
 import { RequestsPage } from './Requests'
@@ -42,6 +43,7 @@ const SERVER: NavItem[] = [
   { to: 'transcoding', label: 'Transcoding' },
   { to: 'keys', label: 'TMDB & fanart.tv' },
   { to: 'webhooks', label: 'Webhooks' },
+  { to: 'addresses', label: 'Server addresses' },
 ]
 
 /**
@@ -118,6 +120,7 @@ export function AccountSection() {
                   <Route path="transcoding" element={<TranscodingPage />} />
                   <Route path="keys" element={<KeysPage />} />
                   <Route path="webhooks" element={<WebhooksPage />} />
+                  <Route path="addresses" element={<AddressesPage />} />
                 </>
               )}
               <Route path="*" element={<Navigate to="profiles" replace />} />

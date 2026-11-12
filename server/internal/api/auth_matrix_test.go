@@ -25,6 +25,7 @@ import (
 // extra), and a second film; users alice (basic) and admin, and the app's update files.
 type authWorld struct {
 	h          http.Handler
+	cfg        *config.Config // the router reads it live: a test may set fields
 	st         *store.Store
 	authSvc    *auth.Service
 	alice      *model.User
@@ -109,7 +110,7 @@ func newAuthWorld(t *testing.T) *authWorld {
 	}
 
 	authSvc := auth.New(st)
-	w := &authWorld{st: st, authSvc: authSvc}
+	w := &authWorld{st: st, authSvc: authSvc, cfg: cfg}
 	newUser := func(id, role string) (*model.User, *model.Device, string, string) {
 		t.Helper()
 		u := &model.User{ID: id, Name: id, Role: role, IsAdmin: role == model.RoleAdmin}

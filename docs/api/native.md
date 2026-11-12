@@ -12,7 +12,7 @@ the Sonarr / Radarr webhooks all use this API.
 | Method | Path | Body / result |
 |---|---|---|
 | POST | `/v1/auth/login` | `{username, password, client, device, deviceId, version}` -> `{token, user: {id, name, isAdmin}, deviceId}` |
-| GET | `/v1/auth/me` | `{id, name, isAdmin}` or `{apiKey: true, isAdmin: true}`. With `ROXY_ADVERTISE_URL` / `ROXY_OTHER_URLS` set, also `addresses` (every URL this server answers at) and `serverId`: the app uses whichever address answers with that id |
+| GET | `/v1/auth/me` | `{id, name, isAdmin}` or `{apiKey: true, isAdmin: true}`. When the server knows more than one address of its own (`ROXY_ADVERTISE_URL`, plus `ROXY_OTHER_URLS` or the list saved under *Server addresses* below), also `addresses` (every URL this server answers at) and `serverId`: the app uses whichever address answers with that id |
 | POST | `/v1/auth/logout` | revokes the calling device token, clears the session cookie, 204 |
 | POST | `/v1/auth/cookie` | sets `roxy_token` (HttpOnly, SameSite=Strict, a year) carrying the caller's device token, 204; for Roxy Web, whose `<img>` and `<video>` cannot send a header |
 
@@ -447,6 +447,31 @@ half-complete season shows which half. Specials (TMDB season 0) appear last with
 EpisodeSearch. Sonarr gets per-season monitoring and a SeasonSearch per requested season (or
 the seasons monitored on an already-added series). `requested_by` names the profile that
 asked when the login is shared.
+
+### Server addresses (admin)
+
+The server's other addresses (its Tailscale one, a public name), saved on the server
+(settings key `server_addresses`) so they are set once and every signed-in app learns
+them from `/v1/auth/me`. `ROXY_OTHER_URLS`, when set, is used instead and the saved list
+cannot be changed.
+
+- `GET /v1/settings/addresses` → `{advertised, addresses, fromEnvironment}`: the home
+  address (`ROXY_ADVERTISE_URL`, `""` when not set), the other addresses in force, and
+  whether they come from `ROXY_OTHER_URLS`.
+- `PUT /v1/settings/addresses` `{addresses: [..]}` replaces the whole list (`[]` clears
+  it) → the same shape plus `checks: [{address, state}]`.
+  - Each address is `scheme://host[:port]`: no path, query or sign-in details; at most 8.
+    `https` anywhere; plain `http` only for a private, CGNAT (Tailscale) or link-local
+    IP address or a `.ts.net` name. Loopback is refused. Stored in lower case.
+  - Before saving, the server asks each address for `/v1/system/info` (4 s, no
+    redirects, no credentials). `state`: `ok` (this server answered), `notRoxy`
+    (something else answered), `unreachable` (nothing did), `other` (a **different**
+    Roxy server answered).
+  - `400` with nothing saved: a malformed address, or any address in state `other`.
+    `notRoxy` and `unreachable` are saved and reported: an address meant for outside
+    often cannot be reached from where the server runs. The apps compare the server id
+    themselves before they use an address.
+  - `409` when `ROXY_OTHER_URLS` is set.
 
 ### Sonarr / Radarr settings (admin)
 

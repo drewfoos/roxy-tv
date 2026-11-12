@@ -284,7 +284,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 }
                 composable<Route.Account> {
                     Page {
-                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onLinkTv = { nav.navigate(Route.LinkTv()) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) }, onOpenUsers = { nav.navigate(Route.Users) }, onOpenRequests = { nav.navigate(Route.AdminRequests) })
+                        PhoneAccount(bottomInset = bottomInset, onOpenDownloads = { nav.navigate(Route.Downloads) }, onLinkTv = { nav.navigate(Route.LinkTv()) }, onOpenArrSettings = { nav.navigate(Route.ArrSettings) }, onOpenFanart = { nav.navigate(Route.FanartSettings) }, onOpenTranscoding = { nav.navigate(Route.TranscodingSettings) }, onOpenWebhooks = { nav.navigate(Route.Webhooks) }, onOpenAddresses = { nav.navigate(Route.ServerAddresses) }, onOpenLegal = { nav.navigate(Route.Legal(it)) }, onOpenLibrary = { nav.navigate(Route.LibrarySettings) }, onChangePassword = { nav.navigate(Route.ChangePassword) }, onOpenUsers = { nav.navigate(Route.Users) }, onOpenRequests = { nav.navigate(Route.AdminRequests) })
                     }
                 }
                 composable<Route.ArrSettings> {
@@ -343,6 +343,11 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 composable<Route.FanartSettings> {
                     Page {
                         PhoneFanartSettings(onBack = { nav.popBackStack() })
+                    }
+                }
+                composable<Route.ServerAddresses> {
+                    Page {
+                        PhoneServerAddresses(onBack = { nav.popBackStack() })
                     }
                 }
                 composable<Route.Webhooks> {

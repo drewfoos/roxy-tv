@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Webhook
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Tune
@@ -109,7 +110,7 @@ private class Pick(val title: String, val options: List<String>, val selected: S
  * "Coming soon" so the shape of the page is already right.
  */
 @Composable
-fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}, onOpenRequests: () -> Unit = {}) {
+fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: () -> Unit = {}, onOpenArrSettings: () -> Unit = {}, onOpenFanart: () -> Unit = {}, onOpenTranscoding: () -> Unit = {}, onOpenWebhooks: () -> Unit = {}, onOpenAddresses: () -> Unit = {}, onOpenLegal: (String) -> Unit = {}, onOpenLibrary: () -> Unit = {}, onChangePassword: () -> Unit = {}, onOpenUsers: () -> Unit = {}, onOpenRequests: () -> Unit = {}) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
@@ -252,6 +253,8 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: ()
                 SettingRow(Icons.Outlined.Image, "TMDB & fanart.tv", "Metadata keys: titles, posters, logos and backgrounds", onClick = onOpenFanart)
                 Divider()
                 SettingRow(Icons.Outlined.Webhook, "Webhooks", "How imports reach the library without a rescan", onClick = onOpenWebhooks)
+                Divider()
+                SettingRow(Icons.Outlined.Public, "Server addresses", "Other ways to reach this server, like Tailscale", onClick = onOpenAddresses)
             }
         }
 
