@@ -44,6 +44,12 @@ class TvMenuMarkTest {
 
     @Before fun start() {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        // The app looks for the server before its first call: answer as Roxy does.
+        server.createContext("/v1/system/info") { ex ->
+            val body = """{"product":"roxy"}""".toByteArray()
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(200, body.size.toLong()); ex.responseBody.use { it.write(body) }; ex.close()
+        }
         server.createContext("/") { ex ->
             hits += "${ex.requestMethod} ${ex.requestURI.path}"
             Thread.sleep(300) // answers after the menu has closed
