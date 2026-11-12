@@ -434,6 +434,30 @@ A test bench with real Sonarr / Radarr and a fake indexer and download client is
 
 ### Seasons and requests
 
+**Films of an anime series.** `GET /v1/discover/tv/{tmdbId}/films` → `{films: [{anilistId,
+tmdbId?, title, year, date, poster, afterSeason, eligible, note?, libraryItemId?,
+requestStatus?, inRadarr?, withRequest}], auto, requestsEnabled}`: the films AniList links to the show's
+seasons, for the season list (`afterSeason`: the season number the film is shown after, `0`
+before the first, `-1` apart from the seasons). The server alone decides, and every client
+shows the same:
+- `eligible`: the film may come along with a request for the series. Only when AniList's
+  links (sequel / prequel, or a run of films joining two seasons) put it between two
+  neighbouring seasons of this show, its full release date is between their starts, no
+  link calls it a recap, a retelling, a side story or a spin-off, and TMDB's film is
+  matched for certain. A release date alone never does it. Everything else is listed with
+  a `note` saying why ("Side story", "After the latest season", …) and can be requested on
+  its own (`POST /v1/discover/request {type: "movie", tmdbId}`) when it has a `tmdbId`.
+- `withRequest`: the page's main Request button brings this film now (eligible, not in the
+  library, not requested, not in Radarr, not declined before). Send those `tmdbId`s as
+  `films: [...]` with the series request; ids the server would not have offered are
+  ignored. Not allowed with `episodes` or for a movie (400).
+- A request made with `films` remembers that films were asked for and which AniList
+  seasons it covered (`filmAuto`, `filmSeasons` on the request row). Only such a request
+  brings films announced later, and only those between two seasons it covered; a new
+  season does not widen it until someone requests that season with its films. Requests
+  made without `films` (every request from before this existed) never bring any. `auto`
+  says the series' request is one that does.
+
 A series detail carries `seasons: [{number, name, episodes, airDate, poster, have, known,
 requested}]` (`have` = episodes with a file, `known` = files + placeholders). `POST
 /v1/discover/request` takes `seasons: [n, …]` to ask for those only (empty = every season

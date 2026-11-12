@@ -295,6 +295,38 @@ export interface RequestRow {
   createdAt?: string
 }
 
+/**
+ * A film of an anime series, for the series' season list. Where it sits, whether it may
+ * come along with a request and what the main button brings are the server's decisions
+ * (GET /v1/discover/tv/{id}/films): the page shows them and decides nothing itself.
+ */
+export interface DiscoverFilm {
+  anilistId: number
+  /** Missing: TMDB's film could not be told for certain, so it cannot be requested. */
+  tmdbId?: number
+  title: string
+  year?: number
+  date?: string
+  poster?: string
+  /** The season number the film is shown after; 0 before the first; -1 under "More films". */
+  afterSeason: number
+  eligible: boolean
+  /** Why the film is only listed ("Side story", "After the latest season"). */
+  note?: string
+  libraryItemId?: string
+  requestStatus?: string
+  inRadarr?: boolean
+  /** The page's main Request button brings this film. */
+  withRequest: boolean
+}
+
+export interface DiscoverFilms {
+  films: DiscoverFilm[]
+  /** The series' request brings films between its seasons as they are announced. */
+  auto: boolean
+  requestsEnabled: boolean
+}
+
 /** One season on a Discover title page, with what the library holds and whether it is requested. */
 export interface DiscoverSeason {
   number: number

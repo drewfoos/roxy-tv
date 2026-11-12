@@ -1034,6 +1034,9 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .dseason__state { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .dseason__state--lib { color: var(--accent); }
 .dseason .chip { white-space: nowrap; flex: none; }
+.dfilm .dseason__toggle { padding-left: 30px; }
+.dseasons__more { margin: 22px 0 4px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.dseasons__auto { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
 .dseason .chip:hover { background: #444; }
 .dseason .chip[disabled] { opacity: 0.5; }
 /* Title pages (library and Discover) on ultra screens: the copy, facts and seasons kept

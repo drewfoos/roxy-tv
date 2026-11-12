@@ -1,5 +1,11 @@
 package tv.roxy.tv.ui.phone
 
+import tv.roxy.tv.ui.FilmState
+import tv.roxy.tv.ui.buttonFilms
+import tv.roxy.tv.ui.filmLine
+import tv.roxy.tv.ui.filmState
+import tv.roxy.tv.ui.filmsSuffix
+import tv.roxy.tv.ui.placeFilms
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -468,10 +474,20 @@ internal fun StatusBadge(inLibrary: Boolean, requestStatus: String?, modifier: M
 fun PhoneDiscoverDetail(
     type: String, tmdbId: Int, onBack: () -> Unit, onOpenSeries: (String, String) -> Unit, onOpenMovie: (String, String) -> Unit,
     onMoreDetails: (String) -> Unit = {}, onOpenPerson: (tv.roxy.tv.api.CastMember) -> Unit = {},
+    onOpenDiscover: (String, Int) -> Unit = { _, _ -> },
 ) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<DiscoverDetail?>(null) }
+    // An anime series' films, placed among its seasons by the server (which also says which
+    // of them the Request button brings). Asked for apart from the page: the first look
+    // reads AniList and can take a while. Asked again after each action here.
+    var films by remember(type, tmdbId) { mutableStateOf<tv.roxy.tv.api.DiscoverFilms?>(null) }
+    var filmsTick by remember { mutableStateOf(0) }
+    val wantsFilms = type == "tv" && detail?.isAnime == true
+    LaunchedEffect(type, tmdbId, wantsFilms, filmsTick, detail?.request?.status) {
+        if (wantsFilms) runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }.onFailure { Timber.w(it, "discover films") }
+    }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var setupPrompt by remember { mutableStateOf(false) }
@@ -511,17 +527,30 @@ fun PhoneDiscoverDetail(
     }
     PollWhileResumed(pollMs, key = "${reqNow?.id}/${reqNow?.status}") { reload() }
 
-    fun requestSeasons(seasons: List<Int>) {
+    // withFilms: the page's main button also asks for the films the server put on it; a
+    // season's own button never does.
+    fun requestSeasons(seasons: List<Int>, withFilms: List<Int> = emptyList()) {
         val cur = detail ?: return
         if (!cur.requestsEnabled) { setupPrompt = true; return }
         if (busy) return
         busy = true
         requestError = null
         scope.launch {
-            runCatching { app.api.discoverRequest(cur.type, cur.tmdbId, seasons) }.onFailure(::failed)
-            reload(); busy = false
+            runCatching { app.api.discoverRequest(cur.type, cur.tmdbId, seasons, films = withFilms) }.onFailure(::failed)
+            reload(); filmsTick++; busy = false
         }
     }
+    fun requestFilm(f: tv.roxy.tv.api.DiscoverFilm) {
+        val id = f.tmdbId ?: return
+        if (busy) return
+        busy = true
+        requestError = null
+        scope.launch {
+            runCatching { app.api.discoverRequest("movie", id) }.onFailure(::failed)
+            filmsTick++; busy = false
+        }
+    }
+    val mainFilms = if (wantsFilms) buttonFilms(films) else emptyList()
 
     val d = detail
     if (d == null) {
@@ -576,6 +605,20 @@ fun PhoneDiscoverDetail(
                     if (d.seasons.isNotEmpty()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(top = 22.dp)) {
                             Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                            val placed = placeFilms(films?.films.orEmpty(), d.seasons.map { it.number })
+                            val filmRows: @Composable (List<tv.roxy.tv.api.DiscoverFilm>) -> Unit = { list ->
+                                list.forEach { f ->
+                                    DiscoverFilmRow(
+                                        f, requestsEnabled = films?.requestsEnabled == true,
+                                        onOpen = {
+                                            val lib = f.libraryItemId
+                                            if (!lib.isNullOrEmpty()) onOpenMovie(lib, f.title) else f.tmdbId?.let { onOpenDiscover("movie", it) }
+                                        },
+                                        onRequest = { requestFilm(f) },
+                                    )
+                                }
+                            }
+                            filmRows(placed.before)
                             d.seasons.forEach { sn ->
                                 val reqId = d.request?.takeIf { it.status == "sent" }?.id
                                 SeasonRow(
@@ -598,7 +641,16 @@ fun PhoneDiscoverDetail(
                                     },
                                     admin = app.prefs.session.value.isAdmin,
                                 )
+                                filmRows(placed.after[sn.number].orEmpty())
                             }
+                            if (placed.more.isNotEmpty()) {
+                                Text("More films", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.muted, modifier = Modifier.padding(top = 16.dp, bottom = 2.dp))
+                                filmRows(placed.more)
+                            }
+                            if (films?.auto == true) Text(
+                                "Films between the seasons you requested are requested as they are announced.",
+                                fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp),
+                            )
                         }
                     }
                     val dl = d.download
@@ -677,7 +729,7 @@ fun PhoneDiscoverDetail(
                     d.inLibrary && (d.seasons.isEmpty() || missing.isEmpty()) -> PlayButton("Watch", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
                     d.inLibrary -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         PlayButton("Watch", modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
-                        GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }) })
+                        GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}${filmsSuffix(mainFilms.size)}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }, mainFilms) })
                     }
                     d.request != null && d.request.status != "failed" && d.request.status != "declined" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         PlayButton(if (d.request.status == "approval") "Waiting for approval" else "Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
@@ -697,8 +749,8 @@ fun PhoneDiscoverDetail(
                         when {
                             busy -> "Requesting…"
                             d.request?.status == "failed" || d.request?.status == "declined" -> "Request again"
-                            missing.isNotEmpty() && missing.size < d.seasons.count { !it.special } -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}"
-                            else -> "Request"
+                            missing.isNotEmpty() && missing.size < d.seasons.count { !it.special } -> "Request ${missing.size} more season${if (missing.size == 1) "" else "s"}${filmsSuffix(mainFilms.size)}"
+                            else -> "Request${filmsSuffix(mainFilms.size)}"
                         },
                         modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.AddCircleOutline, height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand,
                         onClick = {
@@ -706,13 +758,46 @@ fun PhoneDiscoverDetail(
                             busy = true
                             requestError = null
                             scope.launch {
-                                runCatching { app.api.discoverRequest(d.type, d.tmdbId) }.onFailure(::failed)
-                                reload(); busy = false
+                                runCatching { app.api.discoverRequest(d.type, d.tmdbId, films = mainFilms) }.onFailure(::failed)
+                                reload(); filmsTick++; busy = false
                             }
                         },
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A film of the series in the season list: its title with what it is ("Side story",
+ * "Comes with the request") and, at the end, where it stands or a Request of its own.
+ * The row opens the film (in the library when it is there, else its Discover page).
+ */
+@Composable
+internal fun DiscoverFilmRow(f: tv.roxy.tv.api.DiscoverFilm, requestsEnabled: Boolean, onOpen: () -> Unit, onRequest: () -> Unit) {
+    val opens = !f.libraryItemId.isNullOrEmpty() || f.tmdbId != null
+    Row(
+        modifier = Modifier.fillMaxWidth().then(if (opens) Modifier.clickable(onClick = onOpen) else Modifier).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(start = 28.dp, end = 8.dp)) {
+            Text(f.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(filmLine(f), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        when (val state = filmState(f, requestsEnabled)) {
+            FilmState.Library -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Check, contentDescription = null, tint = RoxyColors.accent, modifier = Modifier.size(18.dp))
+                Text("In library", fontSize = 13.sp, color = RoxyColors.accent, modifier = Modifier.padding(start = 4.dp))
+            }
+            FilmState.Requested, FilmState.Approval -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Schedule, contentDescription = null, tint = RoxyColors.muted, modifier = Modifier.size(18.dp))
+                Text(if (state == FilmState.Approval) "Waiting for approval" else "Requested", fontSize = 13.sp, color = RoxyColors.muted, modifier = Modifier.padding(start = 4.dp))
+            }
+            FilmState.Failed -> Text("Request failed", fontSize = 13.sp, color = RoxyColors.muted)
+            FilmState.Radarr -> Text("In Radarr", fontSize = 13.sp, color = RoxyColors.muted)
+            FilmState.Request -> Chip("Request", selected = false, onClick = onRequest)
+            FilmState.None -> {}
         }
     }
 }

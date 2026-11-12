@@ -543,6 +543,21 @@ func (c *Client) searchSeasons(ctx context.Context, seriesID int, want map[int]b
 	}
 }
 
+// HasMovie says whether Radarr already holds a film (monitored or not, with a file or
+// without). Nothing is changed.
+func (c *Client) HasMovie(ctx context.Context, tmdbID int) (bool, error) {
+	var existing []map[string]any
+	if err := c.do(ctx, http.MethodGet, "/movie", url.Values{"tmdbId": {strconv.Itoa(tmdbID)}}, nil, &existing); err != nil {
+		return false, err
+	}
+	for _, m := range existing {
+		if tm, _ := m["tmdbId"].(float64); int(tm) == tmdbID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // AddMovie adds a movie to Radarr by TMDB id (monitored, search on add). Returns the Radarr movie id.
 func (c *Client) AddMovie(ctx context.Context, tmdbID int, anime bool) (int, error) {
 	var existing []map[string]any

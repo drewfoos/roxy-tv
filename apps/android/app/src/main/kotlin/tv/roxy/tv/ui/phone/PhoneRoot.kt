@@ -252,6 +252,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onOpenMovie = { id, title -> nav.navigate(Route.Movie(id, title)) },
                             onMoreDetails = { title -> nav.navigate(Route.DiscoverMoreDetails(r.type, r.tmdbId, title)) },
                             onOpenPerson = { c -> nav.navigate(Route.Person(c.tmdbId, c.name)) },
+                            onOpenDiscover = { t, id -> nav.navigate(Route.DiscoverDetail(t, id)) },
                         )
                     }
                 }

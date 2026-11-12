@@ -52,20 +52,32 @@ type Request struct {
 	// Seasons asked for (series only); empty = the whole series.
 	Seasons []int `json:"seasons,omitempty"`
 	// Individual episodes asked for (specials), as "S0E5" codes.
-	Episodes  []string `json:"episodes,omitempty"`
-	ArrID     int      `json:"arrId,omitempty"`
-	Error     string   `json:"error,omitempty"`
-	CreatedAt string   `json:"createdAt"`
-	UpdatedAt string   `json:"updatedAt"`
+	Episodes []string `json:"episodes,omitempty"`
+	// FilmAuto: the request asked for the films between its seasons too (the button
+	// named them), and brings such films as they are announced. FilmSeasons are the
+	// seasons it covered, by AniList id: only films between two of THESE come by
+	// themselves, however the seasons are later numbered, split or added to.
+	FilmAuto    bool   `json:"filmAuto,omitempty"`
+	FilmSeasons []int  `json:"filmSeasons,omitempty"`
+	ArrID       int    `json:"arrId,omitempty"`
+	Error       string `json:"error,omitempty"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
 }
 
-const requestCols = `r.id, r.media_type, r.tmdb_id, r.title, COALESCE(r.year, 0), COALESCE(r.poster_path, ''), r.user_id, COALESCE(NULLIF(r.requested_by, ''), u.name, ''), r.status, COALESCE(r.arr_id, 0), COALESCE(r.error, ''), r.created_at, r.updated_at, COALESCE(r.seasons, ''), COALESCE(r.episodes, '')`
+const requestCols = `r.id, r.media_type, r.tmdb_id, r.title, COALESCE(r.year, 0), COALESCE(r.poster_path, ''), r.user_id, COALESCE(NULLIF(r.requested_by, ''), u.name, ''), r.status, COALESCE(r.arr_id, 0), COALESCE(r.error, ''), r.created_at, r.updated_at, COALESCE(r.seasons, ''), COALESCE(r.episodes, ''), r.film_scope`
 
 func scanRequest(row interface{ Scan(...any) error }) (*Request, error) {
 	var r Request
-	var seasons, episodes string
-	if err := row.Scan(&r.ID, &r.MediaType, &r.TMDBID, &r.Title, &r.Year, &r.PosterPath, &r.UserID, &r.UserName, &r.Status, &r.ArrID, &r.Error, &r.CreatedAt, &r.UpdatedAt, &seasons, &episodes); err != nil {
+	var seasons, episodes, films string
+	if err := row.Scan(&r.ID, &r.MediaType, &r.TMDBID, &r.Title, &r.Year, &r.PosterPath, &r.UserID, &r.UserName, &r.Status, &r.ArrID, &r.Error, &r.CreatedAt, &r.UpdatedAt, &seasons, &episodes, &films); err != nil {
 		return nil, err
+	}
+	if films != "" {
+		var fs filmScope
+		if json.Unmarshal([]byte(films), &fs) == nil {
+			r.FilmAuto, r.FilmSeasons = fs.Auto, fs.Seasons
+		}
 	}
 	if seasons != "" {
 		_ = json.Unmarshal([]byte(seasons), &r.Seasons)
@@ -74,6 +86,12 @@ func scanRequest(row interface{ Scan(...any) error }) (*Request, error) {
 		_ = json.Unmarshal([]byte(episodes), &r.Episodes)
 	}
 	return &r, nil
+}
+
+// filmScope is how FilmAuto and FilmSeasons are kept (requests.film_scope).
+type filmScope struct {
+	Auto    bool  `json:"auto"`
+	Seasons []int `json:"seasons,omitempty"`
 }
 
 func (s *Store) GetRequest(ctx context.Context, mediaType string, tmdbID int) (*Request, error) {
@@ -140,10 +158,15 @@ func (s *Store) UpsertRequest(ctx context.Context, r *Request) error {
 		b, _ := json.Marshal(r.Episodes)
 		episodes = sql.NullString{String: string(b), Valid: true}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO requests (id, media_type, tmdb_id, title, year, poster_path, user_id, status, arr_id, error, created_at, updated_at, seasons, requested_by, episodes)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(media_type, tmdb_id) DO UPDATE SET status = excluded.status, arr_id = excluded.arr_id, error = excluded.error, updated_at = excluded.updated_at, seasons = excluded.seasons, episodes = excluded.episodes`,
-		r.ID, r.MediaType, r.TMDBID, r.Title, nullInt(r.Year), nullStr(r.PosterPath), r.UserID, r.Status, nullInt(r.ArrID), nullStr(r.Error), r.CreatedAt, r.UpdatedAt, seasons, nullStr(r.UserName), episodes)
+	films := ""
+	if r.FilmAuto || len(r.FilmSeasons) > 0 {
+		b, _ := json.Marshal(filmScope{Auto: r.FilmAuto, Seasons: r.FilmSeasons})
+		films = string(b)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO requests (id, media_type, tmdb_id, title, year, poster_path, user_id, status, arr_id, error, created_at, updated_at, seasons, requested_by, episodes, film_scope)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(media_type, tmdb_id) DO UPDATE SET status = excluded.status, arr_id = excluded.arr_id, error = excluded.error, updated_at = excluded.updated_at, seasons = excluded.seasons, episodes = excluded.episodes, film_scope = excluded.film_scope`,
+		r.ID, r.MediaType, r.TMDBID, r.Title, nullInt(r.Year), nullStr(r.PosterPath), r.UserID, r.Status, nullInt(r.ArrID), nullStr(r.Error), r.CreatedAt, r.UpdatedAt, seasons, nullStr(r.UserName), episodes, films)
 	return err
 }
 

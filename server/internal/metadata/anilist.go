@@ -58,7 +58,7 @@ const anilistMediaFields = `
 	duration
 	studios(isMain: true) { nodes { name } }
 	streamingEpisodes { title thumbnail }
-	relations { edges { relationType node { id idMal type format episodes title { romaji english } startDate { year } coverImage { extraLarge } } } }`
+	relations { edges { relationType node { id idMal type format episodes title { romaji english } startDate { year month day } coverImage { extraLarge } } } }`
 
 const anilistSearchQuery = `query ($search: String, $format: [MediaFormat]) {
   Page(perPage: 8) {
@@ -357,113 +357,12 @@ func (a *AniList) Match(ctx context.Context, item *model.Item, hints Hints) (*Re
 // entries 1..n. Each hop is one by-id query (relations are only one level deep).
 // Related entries (movies, OVAs, side stories) of every hop are merged, de-duplicated.
 func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result, error) {
-	const maxHops = 12
-	fetch := func(id int) (*anilistMedia, error) {
-		resp, err := a.query(ctx, anilistByIDQuery, map[string]any{"id": id})
-		if err != nil {
-			return nil, err
-		}
-		return resp.Data.Media, nil
+	w, err := a.walkChain(ctx, start)
+	if err != nil {
+		return nil, err
 	}
-	next := func(m *anilistMedia, relType string) int {
-		for _, e := range m.Relations.Edges {
-			if e.RelationType == relType && e.Node.Type == "ANIME" && isSeasonFormat(e.Node.Format) {
-				return e.Node.ID
-			}
-		}
-		return 0
-	}
-	// Films on the way: AniList often links two seasons only through films (Bunny Girl
-	// Senpai: Season 1 -> Dreaming Girl -> Sister Venturing Out -> Knapsack Kid -> Season
-	// 2). step goes to the next season by a direct edge, else through up to maxFilmHops
-	// films; the films it passes are part of the story (storyFilms).
-	const maxFilmHops = 4
-	storyFilms := map[int]*anilistMedia{}
-	filmEdge := func(m *anilistMedia, relType string) int {
-		for _, e := range m.Relations.Edges {
-			if e.RelationType == relType && e.Node.Type == "ANIME" && e.Node.Format == "MOVIE" {
-				return e.Node.ID
-			}
-		}
-		return 0
-	}
-	step := func(m *anilistMedia, relType string) (int, error) {
-		if id := next(m, relType); id != 0 {
-			return id, nil
-		}
-		cur := m
-		passed := map[int]bool{} // this hop's films: a film linking back is not a loop forever
-		for i := 0; i < maxFilmHops; i++ {
-			fid := filmEdge(cur, relType)
-			if fid == 0 || passed[fid] {
-				return 0, nil
-			}
-			passed[fid] = true
-			f := storyFilms[fid] // passed the other way already: no second query
-			if f == nil {
-				var err error
-				if f, err = fetch(fid); err != nil {
-					return 0, err
-				}
-				if f == nil {
-					return 0, nil
-				}
-				storyFilms[fid] = f
-			}
-			if id := next(f, relType); id != 0 {
-				return id, nil
-			}
-			cur = f
-		}
-		return 0, nil
-	}
-	// Back to the root.
-	root := start
-	seen := map[int]bool{start.ID: true}
-	for hops := 0; hops < maxHops; hops++ {
-		id, err := step(root, "PREQUEL")
-		if err != nil {
-			return nil, err
-		}
-		if id == 0 || seen[id] {
-			break
-		}
-		m, err := fetch(id)
-		if err != nil {
-			// A failed hop (rate limit, outage) must not pass for a shorter chain: the
-			// seasons and relations would be saved short.
-			return nil, err
-		}
-		if m == nil {
-			break
-		}
-		seen[id] = true
-		root = m
-	}
-	// Forward from the root.
+	root, chain, seen, storyFilms := w.chain[0], w.chain, w.seen, w.films
 	base := a.mediaResult(root)
-	chain := []*anilistMedia{root}
-	cur := root
-	seen = map[int]bool{root.ID: true}
-	for hops := 0; hops < maxHops; hops++ {
-		id, err := step(cur, "SEQUEL")
-		if err != nil {
-			return nil, err
-		}
-		if id == 0 || seen[id] {
-			break
-		}
-		m, err := fetch(id)
-		if err != nil {
-			return nil, err
-		}
-		if m == nil {
-			break
-		}
-		seen[id] = true
-		chain = append(chain, m)
-		cur = m
-	}
 	base.Seasons = a.chainSeasons(chain)
 	base.EpisodeCount = 0
 	for _, si := range base.Seasons {
@@ -505,6 +404,147 @@ func (a *AniList) followChain(ctx context.Context, start *anilistMedia) (*Result
 		base.Status = anilistStatus(chain[len(chain)-1].Status)
 	}
 	return base, nil
+}
+
+// chainWalk is what walkChain found: the seasons in order, the films passed between
+// them, and which two seasons each run of films joined.
+type chainWalk struct {
+	chain []*anilistMedia
+	seen  map[int]bool          // the chain's ids
+	films map[int]*anilistMedia // films passed on the way, read in full
+	paths []StoryPath
+}
+
+// walkChain walks PREQUEL edges back to the first TV entry, then SEQUEL edges forward.
+func (a *AniList) walkChain(ctx context.Context, start *anilistMedia) (*chainWalk, error) {
+	const maxHops = 12
+	var paths []StoryPath
+	addPath := func(after, before int, films []int) {
+		for _, p := range paths {
+			if p.After == after && p.Before == before {
+				return
+			}
+		}
+		paths = append(paths, StoryPath{After: after, Before: before, Films: films})
+	}
+	fetch := func(id int) (*anilistMedia, error) {
+		resp, err := a.query(ctx, anilistByIDQuery, map[string]any{"id": id})
+		if err != nil {
+			return nil, err
+		}
+		return resp.Data.Media, nil
+	}
+	next := func(m *anilistMedia, relType string) int {
+		for _, e := range m.Relations.Edges {
+			if e.RelationType == relType && e.Node.Type == "ANIME" && isSeasonFormat(e.Node.Format) {
+				return e.Node.ID
+			}
+		}
+		return 0
+	}
+	// Films on the way: AniList often links two seasons only through films (Bunny Girl
+	// Senpai: Season 1 -> Dreaming Girl -> Sister Venturing Out -> Knapsack Kid -> Season
+	// 2). step goes to the next season by a direct edge, else through up to maxFilmHops
+	// films; the films it passes are part of the story (storyFilms).
+	const maxFilmHops = 4
+	storyFilms := map[int]*anilistMedia{}
+	filmEdge := func(m *anilistMedia, relType string) int {
+		for _, e := range m.Relations.Edges {
+			if e.RelationType == relType && e.Node.Type == "ANIME" && e.Node.Format == "MOVIE" {
+				return e.Node.ID
+			}
+		}
+		return 0
+	}
+	step := func(m *anilistMedia, relType string) (int, error) {
+		if id := next(m, relType); id != 0 {
+			return id, nil
+		}
+		cur := m
+		passed := map[int]bool{} // this hop's films: a film linking back is not a loop forever
+		var order []int
+		for i := 0; i < maxFilmHops; i++ {
+			fid := filmEdge(cur, relType)
+			if fid == 0 || passed[fid] {
+				return 0, nil
+			}
+			passed[fid] = true
+			f := storyFilms[fid] // passed the other way already: no second query
+			if f == nil {
+				var err error
+				if f, err = fetch(fid); err != nil {
+					return 0, err
+				}
+				if f == nil {
+					return 0, nil
+				}
+				storyFilms[fid] = f
+			}
+			order = append(order, fid)
+			if id := next(f, relType); id != 0 {
+				// A run of films that reached a season: it sits between the two.
+				if relType == "SEQUEL" {
+					addPath(m.ID, id, order)
+				} else {
+					rev := make([]int, len(order))
+					for i, v := range order {
+						rev[len(order)-1-i] = v
+					}
+					addPath(id, m.ID, rev)
+				}
+				return id, nil
+			}
+			cur = f
+		}
+		return 0, nil
+	}
+	// Back to the root.
+	root := start
+	seen := map[int]bool{start.ID: true}
+	for hops := 0; hops < maxHops; hops++ {
+		id, err := step(root, "PREQUEL")
+		if err != nil {
+			return nil, err
+		}
+		if id == 0 || seen[id] {
+			break
+		}
+		m, err := fetch(id)
+		if err != nil {
+			// A failed hop (rate limit, outage) must not pass for a shorter chain: the
+			// seasons and relations would be saved short.
+			return nil, err
+		}
+		if m == nil {
+			break
+		}
+		seen[id] = true
+		root = m
+	}
+	// Forward from the root.
+	chain := []*anilistMedia{root}
+	cur := root
+	seen = map[int]bool{root.ID: true}
+	for hops := 0; hops < maxHops; hops++ {
+		id, err := step(cur, "SEQUEL")
+		if err != nil {
+			return nil, err
+		}
+		if id == 0 || seen[id] {
+			break
+		}
+		m, err := fetch(id)
+		if err != nil {
+			return nil, err
+		}
+		if m == nil {
+			break
+		}
+		seen[id] = true
+		chain = append(chain, m)
+		cur = m
+	}
+	return &chainWalk{chain: chain, seen: seen, films: storyFilms, paths: paths}, nil
 }
 
 // chainSeasons numbers the chain's entries as seasons 1..n.

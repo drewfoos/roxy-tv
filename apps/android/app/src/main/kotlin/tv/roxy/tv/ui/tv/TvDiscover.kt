@@ -1,5 +1,10 @@
 package tv.roxy.tv.ui.tv
 
+import tv.roxy.tv.api.DiscoverFilm
+import tv.roxy.tv.api.DiscoverFilms
+import tv.roxy.tv.ui.buttonFilms
+import tv.roxy.tv.ui.filmWord
+import tv.roxy.tv.ui.filmsSuffix
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
@@ -282,11 +287,21 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         else -> 0L
     }
     PollWhileResumed(pollMs, key = "${reqNow?.id}/${reqNow?.status}") { load() }
+    // An anime series' films, placed among its seasons by the server (which also says which
+    // of them the Request brings). Asked for apart from the page: the first look reads
+    // AniList and can take a while.
+    var films by remember(type, tmdbId) { mutableStateOf<DiscoverFilms?>(null) }
+    val wantsFilms = type == "tv" && detail?.isAnime == true
+    LaunchedEffect(type, tmdbId, wantsFilms, reqNow?.id, reqNow?.status) {
+        if (wantsFilms) runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }
+    }
     val d = detail
     if (d == null) {
         if (error != null) PageMessage(error!!, color = RoxyColors.error) else DiscoverTitleSkeleton()
         return
     }
+    val mainFilms = if (wantsFilms) buttonFilms(films) else emptyList()
+    val filmsToRadarr = if (mainFilms.isEmpty()) "" else if (mainFilms.size == 1) " and 1 film to Radarr" else " and ${mainFilms.size} films to Radarr"
     val action = remember { FocusRequester() }
     LaunchedEffect(d.tmdbId) { retryEachFrame("discover title: action") { action.tryFocus() } }
 
@@ -304,7 +319,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         busy && !canRequestMissing -> "Requesting…"
         live -> requestWord(d)
         dead && d.requestsEnabled -> "Request again"
-        d.requestsEnabled -> "Request"
+        d.requestsEnabled -> "Request" + filmsSuffix(mainFilms.size)
         else -> "Requests aren't set up"
     }
     val icon = when {
@@ -326,8 +341,8 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         !d.requestsEnabled && app.prefs.session.value.isAdmin -> "Set up ${if (d.isMovie) "Radarr" else "Sonarr"} on your phone or in the web app (Account, Sonarr & Radarr) to turn requests on."
         !d.requestsEnabled -> "Ask whoever runs this server to connect ${if (d.isMovie) "Radarr" else "Sonarr"}."
         d.isMovie -> "Sends the movie to Radarr."
-        missing.isEmpty() || missing.size == d.seasons.count { !it.special } -> "Sends the series to Sonarr."
-        else -> "Sends " + missing.joinToString(", ") { "S${it.number}" } + " to Sonarr."
+        missing.isEmpty() || missing.size == d.seasons.count { !it.special } -> "Sends the series to Sonarr$filmsToRadarr."
+        else -> "Sends " + missing.joinToString(", ") { "S${it.number}" } + " to Sonarr$filmsToRadarr."
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -365,7 +380,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
                         canRequest -> scope.launch {
                             busy = true
                             error = null
-                            runCatching { app.api.discoverRequest(d.type, d.tmdbId, missing.map { it.number }) }.onFailure { error = it.message ?: "The request failed" }
+                            runCatching { app.api.discoverRequest(d.type, d.tmdbId, missing.map { it.number }, films = mainFilms) }.onFailure { error = it.message ?: "The request failed" }
                             load()
                             busy = false // after load(): the old state would re-enable Request for a moment
                         }
@@ -377,13 +392,13 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
             if (canRequestMissing) {
                 Spacer(Modifier.height(8.dp))
                 TvListRow(
-                    label = if (busy) "Requesting…" else "Request ${missing.size} missing season${if (missing.size == 1) "" else "s"}",
+                    label = if (busy) "Requesting…" else "Request ${missing.size} missing season${if (missing.size == 1) "" else "s"}${filmsSuffix(mainFilms.size)}",
                     icon = Icons.Outlined.Add, height = TvDims.ListRowHeight,
                     onClick = {
                         if (!busy) scope.launch {
                             busy = true
                             error = null
-                            runCatching { app.api.discoverRequest("tv", d.tmdbId, missing.map { it.number }) }.onFailure { error = it.message ?: "The request failed" }
+                            runCatching { app.api.discoverRequest("tv", d.tmdbId, missing.map { it.number }, films = mainFilms) }.onFailure { error = it.message ?: "The request failed" }
                             load()
                             busy = false
                         }
@@ -405,6 +420,19 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     seasons.take(10).forEach { SeasonPill(it) }
                     if (seasons.size > 10) Text("+${seasons.size - 10}", color = RoxyColors.muted, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
+                }
+                Spacer(Modifier.height(18.dp))
+            }
+            // The series' films, in the server's order (as the phone lists them among the
+            // seasons): where each belongs and how it stands. A film is requested with the
+            // series when the server put it on the action, or from its own page.
+            val listed = films?.films.orEmpty()
+            if (listed.isNotEmpty()) {
+                Text("FILMS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listed.take(4).forEach { FilmPill(it) }
+                    if (listed.size > 4) Text("+${listed.size - 4}", color = RoxyColors.muted, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
                 }
                 Spacer(Modifier.height(18.dp))
             }
@@ -472,6 +500,16 @@ private fun SeasonPill(s: DiscoverSeason) {
     Column(modifier = Modifier.background(bg, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("S${s.number}", color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         if (note.isNotEmpty()) Text(note, color = fg, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+/** One film of the series: its name over where it belongs or how it stands (accent = in the library or coming with the request). */
+@Composable
+private fun FilmPill(f: DiscoverFilm) {
+    val bright = !f.libraryItemId.isNullOrEmpty() || f.withRequest
+    Column(modifier = Modifier.width(200.dp).background(RoxyColors.surfaceHigh, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Text(f.title, color = RoxyColors.onBackground, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(listOfNotNull(f.year?.takeIf { it > 0 }?.toString(), filmWord(f).ifEmpty { null }).joinToString("  ·  "), color = if (bright) RoxyColors.accent else RoxyColors.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

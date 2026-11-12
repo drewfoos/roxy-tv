@@ -356,8 +356,15 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun similar(itemId: String): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/items/$itemId/similar").items
 
     /** Request a title; [seasons] narrows a series to those seasons (empty = everything the library lacks). */
-    suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList(), episodes: List<String> = emptyList()): RequestRow =
-        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons, episodes)))
+    /**
+     * [films] (TMDB ids, a series' main Request only): the films the server marked
+     * `withRequest` on [discoverFilms]. The server checks each again and ignores the rest.
+     */
+    suspend fun discoverRequest(type: String, tmdbId: Int, seasons: List<Int> = emptyList(), episodes: List<String> = emptyList(), films: List<Int> = emptyList()): RequestRow =
+        postJson("/v1/discover/request", json.encodeToString(DiscoverRequestBody.serializer(), DiscoverRequestBody(type, tmdbId, seasons, episodes, films)))
+
+    /** An anime series' films as the server places them among its seasons. Slow the first time (the server reads AniList). */
+    suspend fun discoverFilms(tmdbId: Int): DiscoverFilms = get("/v1/discover/tv/$tmdbId/films")
 
     suspend fun discoverRequests(): List<DiscoverItem> = get<DiscoverItemsResponse>("/v1/discover/requests").items
 
@@ -1431,7 +1438,40 @@ data class DiscoverDetail(
 }
 
 @Serializable
-private data class DiscoverRequestBody(val type: String, val tmdbId: Int, val seasons: List<Int> = emptyList(), val episodes: List<String> = emptyList())
+private data class DiscoverRequestBody(
+    val type: String, val tmdbId: Int, val seasons: List<Int> = emptyList(), val episodes: List<String> = emptyList(),
+    val films: List<Int> = emptyList(),
+)
+
+/** One film of an anime series on its Discover page. Where it sits and what may be done with it are the server's word. */
+@Serializable
+data class DiscoverFilm(
+    val anilistId: Int = 0,
+    /** Null: TMDB's film could not be told for certain, so it cannot be requested. */
+    val tmdbId: Int? = null,
+    val title: String = "",
+    val year: Int? = null,
+    val date: String? = null,
+    val poster: String? = null,
+    /** The season number the film is shown after; 0 before the first; -1 under "More films". */
+    val afterSeason: Int = -1,
+    val eligible: Boolean = false,
+    /** Why the film is only listed ("Side story", "After the latest season"). */
+    val note: String? = null,
+    val libraryItemId: String? = null,
+    val requestStatus: String? = null,
+    val inRadarr: Boolean = false,
+    /** The page's main Request brings this film. */
+    val withRequest: Boolean = false,
+)
+
+@Serializable
+data class DiscoverFilms(
+    val films: List<DiscoverFilm> = emptyList(),
+    /** The series' request brings films between its seasons as they are announced. */
+    val auto: Boolean = false,
+    val requestsEnabled: Boolean = false,
+)
 
 /** One season on a Discover title page, with what the library holds and whether it is requested. */
 @Serializable

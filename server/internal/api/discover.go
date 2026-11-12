@@ -16,6 +16,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/discover"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/store"
 )
 
 // Discover (Roxy's request flow): TMDB rows and search annotated with what the library has
@@ -75,6 +76,31 @@ func (s *Server) discoverEpisodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"episodes": eps})
+}
+
+// GET /v1/discover/tv/{tmdbId}/films -> {films: [Film], auto}: the films of an anime
+// series, each with where it sits in the season list, whether it may come along with a
+// request for the series (eligible) and whether the main Request button brings it now
+// (withRequest). The rules are the server's alone (discover/films.go): clients show
+// what this says and send back the withRequest films' ids, nothing more.
+func (s *Server) discoverFilms(w http.ResponseWriter, r *http.Request) {
+	if !s.discoverGuard(w) {
+		return
+	}
+	id, err := strconv.Atoi(chi.URLParam(r, "tmdbId"))
+	if err != nil || id <= 0 {
+		writeError(w, 400, "bad tmdb id")
+		return
+	}
+	films, err := s.discover.Films(r.Context(), id)
+	if err != nil {
+		upstreamError(w, "discover films", err)
+		return
+	}
+	if films.Films == nil {
+		films.Films = []discover.Film{}
+	}
+	writeJSON(w, 200, films)
 }
 
 // GET /v1/discover/{type}/{tmdbId}
@@ -218,6 +244,10 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 		TMDBID   int      `json:"tmdbId"`
 		Seasons  []int    `json:"seasons"`
 		Episodes []string `json:"episodes"` // specials, "S0E5"
+		// Films: TMDB ids of the series' films to request with it (the withRequest films
+		// of GET …/films). The server requests only those it would itself put on the
+		// button, and from then on brings later films between the seasons this covered.
+		Films []int `json:"films"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.TMDBID == 0 || (body.Type != "tv" && body.Type != "movie") {
 		writeError(w, 400, "type and tmdbId required")
@@ -225,6 +255,10 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.Episodes) > 12 {
 		writeError(w, 400, "at most 12 episodes per request")
+		return
+	}
+	if len(body.Films) > 40 || (len(body.Films) > 0 && (body.Type != "tv" || len(body.Episodes) > 0)) {
+		writeError(w, 400, "films come with a request for the series or its seasons")
 		return
 	}
 	// Requests go straight to Sonarr / Radarr; without one there is nowhere to send them,
@@ -237,7 +271,13 @@ func (s *Server) discoverRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 412, app+" isn't connected to Roxy Server yet. An admin can connect it under Account → Server → Sonarr & Radarr.")
 		return
 	}
-	req, err := s.discover.Request(r.Context(), body.Type, body.TMDBID, p, body.Seasons, body.Episodes)
+	var req *store.Request
+	var err error
+	if len(body.Films) > 0 {
+		req, err = s.discover.RequestWithFilms(r.Context(), body.TMDBID, p, body.Seasons, body.Films)
+	} else {
+		req, err = s.discover.Request(r.Context(), body.Type, body.TMDBID, p, body.Seasons, body.Episodes)
+	}
 	if err != nil {
 		writeError(w, 409, err.Error())
 		return

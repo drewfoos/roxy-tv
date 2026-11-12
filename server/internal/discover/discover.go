@@ -80,6 +80,8 @@ type Detail struct {
 	// SeasonLayout says where Seasons came from: "tmdb", or "episodeGroup" when TMDB's
 	// "Seasons" grouping (TVDB's numbering, what Sonarr uses) replaced its merged season.
 	SeasonLayout string `json:"seasonLayout,omitempty"`
+	// lastAir is the date of the newest episode aired (series), for films.go.
+	lastAir string
 	// groupEpisodes holds each season's episodes when the layout is an episode group.
 	groupEpisodes map[int][]Episode
 }
@@ -113,9 +115,12 @@ type Service struct {
 	tmdb   *metadata.TMDB
 	sonarr *arr.Client
 	radarr *arr.Client
-	// storyFilmTried: AniList relation -> when its TMDB film was last looked for (storyfilms.go).
-	storyFilmTried map[string]time.Time
-	arrCfg         ArrSettings
+	// storyGraph reads a series' seasons and films from AniList (films.go); storyMu lets
+	// one series be read at a time; radarrHas remembers which films Radarr holds.
+	storyGraph func(ctx context.Context, anilistID int, title string, year int) (*metadata.StoryGraph, error)
+	storyMu    sync.Mutex
+	radarrHas  *ttlCache[bool]
+	arrCfg     ArrSettings
 	// prowlarr finds season packs Sonarr cannot parse (nil when not configured).
 	prowlarr *arr.Prowlarr
 	packs    packState
@@ -186,7 +191,8 @@ func (c *ttlCache[T]) put(k string, v T) {
 }
 
 func New(st *store.Store, cfg *config.Config, tmdb *metadata.TMDB) *Service {
-	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), people: newTTLCache[*Person](time.Hour, 300), similar: newTTLCache[[]Item](time.Hour, 500), episodes: newTTLCache[[]Episode](10*time.Minute, 500)}
+	s := &Service{store: st, cfg: cfg, tmdb: tmdb, genres: map[string]map[int]string{}, details: newTTLCache[*Detail](10*time.Minute, 500), search: newTTLCache[[]Item](5*time.Minute, 300), browse: newTTLCache[*BrowseResult](5*time.Minute, 300), people: newTTLCache[*Person](time.Hour, 300), similar: newTTLCache[[]Item](time.Hour, 500), episodes: newTTLCache[[]Episode](10*time.Minute, 500), radarrHas: newTTLCache[bool](2*time.Minute, 500)}
+	s.storyGraph = metadata.NewAniList().StoryGraph
 	s.dl = tracker{status: map[string]*Download{}, progress: map[string]progressMark{}, kick: make(chan struct{}, 1), refresh: map[string]time.Time{}, stalled: map[string]time.Time{}}
 	s.loadArr(context.Background())
 	return s
@@ -303,7 +309,7 @@ func (s *Service) RetryPending(ctx context.Context) {
 	}
 }
 
-// Start runs the pending-request retry and the story-film requests (storyfilms.go)
+// Start runs the pending-request retry and the films of film-bringing requests (films.go)
 // every 10 minutes, and the download tracker.
 func (s *Service) Start(ctx context.Context) {
 	s.startTracker(ctx)
@@ -317,7 +323,7 @@ func (s *Service) Start(ctx context.Context) {
 				return
 			case <-t.C:
 				s.RetryPending(ctx)
-				s.RequestStoryFilms(ctx)
+				s.AcquireStoryFilms(ctx)
 			}
 		}
 	}()
@@ -740,10 +746,11 @@ func (s *Service) Search(ctx context.Context, query string) ([]Item, error) {
 
 type tmdbDetail struct {
 	tmdbListEntry
-	Tagline string `json:"tagline"`
-	Status  string `json:"status"`
-	Runtime int    `json:"runtime"`
-	Genres  []struct {
+	Tagline     string `json:"tagline"`
+	Status      string `json:"status"`
+	Runtime     int    `json:"runtime"`
+	LastAirDate string `json:"last_air_date"`
+	Genres      []struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"genres"`
@@ -844,7 +851,7 @@ func (s *Service) Detail(ctx context.Context, kind string, tmdbID int) (*Detail,
 		item := s.toItem(ctx, d.tmdbListEntry, kind)
 		item.Backdrop = s.tmdb.ImageURL("w1280", d.BackdropPath)
 		item.Poster = s.tmdb.ImageURL("w500", d.PosterPath)
-		base = &Detail{Item: item, Tagline: d.Tagline, Status: d.Status, SeasonCount: d.NumSeasons, Episodes: d.NumEpisodes, RuntimeM: d.Runtime, OfficialRating: d.usRating()}
+		base = &Detail{Item: item, lastAir: d.LastAirDate, Tagline: d.Tagline, Status: d.Status, SeasonCount: d.NumSeasons, Episodes: d.NumEpisodes, RuntimeM: d.Runtime, OfficialRating: d.usRating()}
 		if d.Images != nil {
 			// Text-free art under the logo, like the library's banners.
 			if b := pickArt(d.Images.Backdrops, ""); b != "" {
@@ -962,15 +969,8 @@ func (s *Service) Request(ctx context.Context, kind string, tmdbID int, user *mo
 	r := det.Request
 	if r == nil {
 		r = &store.Request{ID: newID(), MediaType: kind, TMDBID: tmdbID, Title: det.Title, Year: det.Year, PosterPath: det.Poster, UserID: user.UserID, Status: "pending", Seasons: seasons}
-		if user.User != nil {
-			r.UserName = user.User.Name
-		}
 		// Several people share one login as profiles: name the profile that asked.
-		if user.ScopeID != "" {
-			if pr, err := s.store.GetProfile(ctx, user.ScopeID); err == nil && pr != nil && pr.Name != "" {
-				r.UserName = pr.Name
-			}
-		}
+		r.UserName = s.requesterName(ctx, user)
 	} else {
 		// Widen: union of seasons; whole-series stays whole. New seasons mean a new send.
 		if len(r.Seasons) > 0 && len(seasons) > 0 {

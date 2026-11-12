@@ -7,6 +7,7 @@ import type { AccountUser, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, Ava
 import type {
   DiscoverDetail,
   DiscoverEpisode,
+  DiscoverFilms,
   DiscoverItem,
   DiscoverResponse,
   ItemDetails,
@@ -363,8 +364,11 @@ export const api = {
   /** "Your requests": the signed-in user's requests as Discover titles, with download status. */
   discoverRequests: () => get<{ items: DiscoverItem[] }>('/v1/discover/requests'),
   /** Request a title; `seasons` narrows a series (empty = everything the library lacks), `episodes` are specials ("S0E5"). */
-  discoverRequest: (type: string, tmdbId: number, seasons?: number[], episodes?: string[]) =>
-    post<RequestRow>('/v1/discover/request', { type, tmdbId, seasons: seasons ?? [], episodes: episodes ?? [] }),
+  /** `films`: TMDB ids of the series' films the server put on the main button (withRequest). */
+  discoverRequest: (type: string, tmdbId: number, seasons?: number[], episodes?: string[], films?: number[]) =>
+    post<RequestRow>('/v1/discover/request', { type, tmdbId, seasons: seasons ?? [], episodes: episodes ?? [], films: films ?? [] }),
+  /** The films of an anime series, placed in its season list by the server. */
+  discoverFilms: (tmdbId: number | string) => get<DiscoverFilms>(`/v1/discover/tv/${tmdbId}/films`),
   deleteRequest: (id: string) => del<void>(`/v1/discover/requests/${id}`),
   /**
    * Ask Sonarr / Radarr to look again for what the request still lacks: everything, or just

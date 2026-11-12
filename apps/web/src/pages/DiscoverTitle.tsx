@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
-import type { DiscoverDetail, DiscoverEpisode, DiscoverSeason, Item, ItemDetails } from '../api/types'
+import type { DiscoverDetail, DiscoverEpisode, DiscoverFilm, DiscoverSeason, Item, ItemDetails } from '../api/types'
 import { useAsync, markStale } from '../hooks/useAsync'
 import { useSession } from '../app/useSession'
 import { Art, Row } from '../components/Cards'
@@ -11,6 +11,7 @@ import { LoadError } from '../components/Connection'
 import { Footer } from '../components/Footer'
 import { PhoneTitleHeader } from '../components/PhoneChrome'
 import { IconCheck, IconCheckCircle, IconExpand, IconHistory, IconPlay, IconSettings } from '../components/Icons'
+import { buttonFilms, filmLine, filmState, filmsSuffix, placeFilms } from './discoverFilms'
 import { DownloadBar, DownloadStatusCard, canSearchFor, effectiveState, episodeLine, isActive, isPending, stateColor } from '../components/DiscoverBits'
 
 /**
@@ -29,6 +30,11 @@ export function DiscoverTitle() {
   const { data: d, error, loading, reload } = useAsync(`discover:${type}:${tmdbId}`, () => api.discoverDetail(type, tmdbId), [type, tmdbId])
   // A movie has no seasons: its page carries the cast and the facts instead.
   const { data: more } = useAsync(isMovie ? `discover:details:${type}:${tmdbId}` : null, () => api.discoverMoreDetails(type, tmdbId), [type, tmdbId])
+  // An anime series' films, placed in its season list by the server (which also says
+  // which of them the Request button brings). Asked for apart from the page: the first
+  // look reads AniList and can take a while, and the page does not wait for it.
+  const filmsKey = !isMovie && d?.isAnime ? `discover:films:${tmdbId}` : null
+  const { data: films, reload: reloadFilms } = useAsync(filmsKey, () => api.discoverFilms(tmdbId), [filmsKey])
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -72,6 +78,7 @@ export function DiscoverTitle() {
     }
     markStale('discover')
     reload(true)
+    reloadFilms(true)
     setBusy(false)
   }
 
@@ -95,6 +102,14 @@ export function DiscoverTitle() {
   const arr = isMovie ? 'Radarr' : 'Sonarr'
   const openLibrary = () => d.libraryItemId && nav(isMovie ? `/movie/${d.libraryItemId}` : `/series/${d.libraryItemId}`)
   const request = (seasonNums?: number[], episodes?: string[]) => act(() => api.discoverRequest(type, d.tmdbId, seasonNums, episodes))
+  // The page's main button also asks for the films the server put on it; a season's own
+  // button and a special's never do.
+  const withFilms = isMovie ? [] : buttonFilms(films)
+  const requestAll = (seasonNums?: number[]) => act(() => api.discoverRequest(type, d.tmdbId, seasonNums, undefined, withFilms))
+  const requestFilm = (f: DiscoverFilm) => f.tmdbId && act(() => api.discoverRequest('movie', f.tmdbId as number))
+  const placed = placeFilms(films?.films, seasons.map((s) => s.number))
+  const filmRows = (list: DiscoverFilm[] | undefined) =>
+    (list ?? []).map((f) => <FilmRow key={f.anilistId} f={f} enabled={!!films?.requestsEnabled} busy={busy} onRequest={() => requestFilm(f)} />)
   // Searches: errors (409 "searched a moment ago…") land in the notice; success polls fast.
   const search = (fn: () => Promise<unknown>) => act(fn, () => setBurst(true))
   // Roxy forgets the request; what Sonarr / Radarr already have stays with them.
@@ -128,8 +143,8 @@ export function DiscoverTitle() {
           <IconPlay size={20} /> Watch
         </button>
         {d.requestsEnabled ? (
-          <button className="btn btn--grey" disabled={busy} onClick={() => request(missing.map((s) => s.number))}>
-            {busy ? 'Requesting…' : `Request ${plural(missing.length)}`}
+          <button className="btn btn--grey" disabled={busy} onClick={() => requestAll(missing.map((s) => s.number))}>
+            {busy ? 'Requesting…' : `Request ${plural(missing.length)}${filmsSuffix(withFilms.length)}`}
           </button>
         ) : (
           notSetUp
@@ -155,10 +170,10 @@ export function DiscoverTitle() {
       : req?.status === 'failed' || req?.status === 'declined'
         ? 'Request again'
         : missing.length > 0 && missing.length < mainSeasons.length
-          ? `Request ${missing.length} more season${missing.length === 1 ? '' : 's'}`
-          : 'Request'
+          ? `Request ${missing.length} more season${missing.length === 1 ? '' : 's'}${filmsSuffix(withFilms.length)}`
+          : `Request${filmsSuffix(withFilms.length)}`
     actions = (
-      <button className="btn btn--brand" disabled={busy} onClick={() => request()}>
+      <button className="btn btn--brand" disabled={busy} onClick={() => requestAll()}>
         {label}
       </button>
     )
@@ -222,9 +237,10 @@ export function DiscoverTitle() {
       {seasons.length > 0 && (
         <section className="dseasons">
           <h2 className="row__title">Seasons</h2>
+          {filmRows(placed.before)}
           {seasons.map((sn) => (
+            <Fragment key={sn.number}>
             <SeasonRow
-              key={sn.number}
               sn={sn}
               tmdbId={d.tmdbId}
               refreshKey={dl?.updatedAt ?? null}
@@ -237,7 +253,12 @@ export function DiscoverTitle() {
               onRequestEpisode={(code) => request(undefined, [code])}
               onEpisodeAction={sentId ? (code, retry) => search(() => (retry ? api.tryAnotherRelease(sentId, [code]) : api.searchAgain(sentId, { episodes: [code] }))) : null}
             />
+            {filmRows(placed.after.get(sn.number))}
+            </Fragment>
           ))}
+          {placed.more.length > 0 && <h3 className="dseasons__more">More films</h3>}
+          {filmRows(placed.more)}
+          {films?.auto && <p className="dseasons__auto">Films between the seasons you requested are requested as they are announced.</p>}
         </section>
       )}
 
@@ -301,6 +322,67 @@ function statusWord(status?: string | null): string | null {
     default:
       return status ?? null
   }
+}
+
+/**
+ * A film of the series in the season list: its title with what it is ("Side story",
+ * "Comes with the request") and, on the right, where it stands or a Request of its own.
+ * The title opens the film's page when TMDB's film is known.
+ */
+function FilmRow({ f, enabled, busy, onRequest }: { f: DiscoverFilm; enabled: boolean; busy: boolean; onRequest: () => void }) {
+  const text = (
+    <span className="dseason__text">
+      <b>{f.title}</b>
+      <span>{filmLine(f)}</span>
+    </span>
+  )
+  let state
+  switch (filmState(f, enabled)) {
+    case 'library':
+      state = (
+        <span className="dseason__state dseason__state--lib">
+          <IconCheck size={18} /> In library
+        </span>
+      )
+      break
+    case 'requested':
+    case 'approval':
+      state = (
+        <span className="dseason__state">
+          <IconHistory size={18} /> {f.requestStatus === 'approval' ? 'Waiting for approval' : 'Requested'}
+        </span>
+      )
+      break
+    case 'failed':
+      state = <span className="dseason__state">Request failed</span>
+      break
+    case 'radarr':
+      state = <span className="dseason__state">In Radarr</span>
+      break
+    case 'request':
+      state = (
+        <button className="chip" disabled={busy} onClick={onRequest}>
+          Request
+        </button>
+      )
+      break
+    default:
+      state = null
+  }
+  return (
+    <div className="dseason dfilm">
+      <div className="dseason__head">
+        {f.tmdbId ? (
+          <Link className="dseason__toggle" to={`/discover/movie/${f.tmdbId}`}>
+            {text}
+          </Link>
+        ) : (
+          <div className="dseason__toggle">{text}</div>
+        )}
+        {state}
+      </div>
+    </div>
+  )
 }
 
 /**
