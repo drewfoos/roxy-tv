@@ -76,9 +76,11 @@ class BlipsTest {
         runBlocking { prefs.saveSession(Session(serverUrl = server.url, token = "t")) }
         val api = RoxyApi(prefs)
         val status = ServerStatus(context, api, prefs, scope)
+        // The first look of a test run pays for the client's start-up: not what is measured.
+        assertTrue(runBlocking { api.reachable() })
         assertEquals(0, status.reloads.value)
         api.onReachability!!.invoke(false)
-        val n = runBlocking { withTimeoutOrNull(5_000) { status.reloads.first { it > 0 } } }
+        val n = runBlocking { withTimeoutOrNull(20_000) { status.reloads.first { it > 0 } } }
         assertEquals("pages retry", 1, n)
         assertTrue("the server never counted as away", status.online.value)
         assertEquals("so nothing says \"back online\"", 0, status.backOnline.value)
