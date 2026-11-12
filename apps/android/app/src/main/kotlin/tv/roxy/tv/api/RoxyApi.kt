@@ -14,6 +14,7 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okio.buffer
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import timber.log.Timber
@@ -83,7 +84,9 @@ class RoxyApi(private val prefs: Prefs) {
             // device): the server refuses it instead of quietly using another profile. If it is
             // the active one, back to "Who's watching?".
             profileRefused(resp.code, resp.header(PROFILE_GONE_HEADER), sent.header(PROFILE_HEADER))?.let { prefs.forgetProfile(it) }
-            resp
+            // The answer can still die on its way (a long list over a link that drops): that
+            // is a failed call too, though its first bytes said the server was there.
+            resp.newBuilder().body(watched(resp.body) { if (!chain.call().isCanceled()) onReachability?.invoke(false) }).build()
         })
         .build()
 
@@ -807,6 +810,25 @@ class Ways(current: String, known: List<String>) {
     }
 
     private fun HttpUrl.at(o: HttpUrl) = scheme == o.scheme && host == o.host && port == o.port
+}
+
+/**
+ * [body], telling [onCut] when reading it fails: the connection went with the answer half
+ * read. The failure is passed on unchanged.
+ */
+fun watched(body: okhttp3.ResponseBody, onCut: () -> Unit): okhttp3.ResponseBody {
+    val source = object : okio.ForwardingSource(body.source()) {
+        private var told = false
+        override fun read(sink: okio.Buffer, byteCount: Long): Long = try { super.read(sink, byteCount) } catch (e: IOException) {
+            if (!told) { told = true; onCut() }
+            throw e
+        }
+    }.buffer()
+    return object : okhttp3.ResponseBody() {
+        override fun contentType() = body.contentType()
+        override fun contentLength() = body.contentLength()
+        override fun source() = source
+    }
 }
 
 const val PROBE_MS = 3_000L

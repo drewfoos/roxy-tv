@@ -135,7 +135,8 @@ class ServerAddressesTest {
     @Test fun theProbeCarriesNoLogin() {
         signIn(b.url, listOf(a.url, b.url))
         runBlocking { api.reachable() }
-        assertTrue(a.seen.isNotEmpty() && b.seen.isNotEmpty())
+        // Not both: the look ends at the best answer, and the other call may be dropped before it is sent.
+        assertTrue(a.seen.isNotEmpty() || b.seen.isNotEmpty())
         (a.seen + b.seen).forEach { assertNull(it.header("Authorization")); assertNull(it.header("X-Roxy-Profile")) }
     }
 
