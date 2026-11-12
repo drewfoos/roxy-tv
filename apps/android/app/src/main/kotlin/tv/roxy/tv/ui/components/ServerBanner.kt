@@ -133,8 +133,8 @@ fun TvPageError(message: String, onRetry: () -> Unit, modifier: Modifier = Modif
 fun OnServerBack(block: () -> Unit) {
     val app = RoxyApp.get(LocalContext.current)
     val latest by rememberUpdatedState(block)
-    var seen by rememberSaveable { mutableIntStateOf(app.server.backOnline.value) }
-    LaunchedEffect(Unit) { onReturns(app.server.backOnline, seen = { seen }, mark = { seen = it }) { latest() } }
+    var seen by rememberSaveable { mutableIntStateOf(app.server.reloads.value) }
+    LaunchedEffect(Unit) { onReturns(app.server.reloads, seen = { seen }, mark = { seen = it }) { latest() } }
 }
 
 /**

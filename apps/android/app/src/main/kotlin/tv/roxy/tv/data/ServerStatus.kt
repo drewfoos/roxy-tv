@@ -34,6 +34,15 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
     val backOnline: StateFlow<Int> get() = _backOnline
 
     /**
+     * Counts the moments a page that failed to load should try again: each return of the
+     * server ([backOnline]), and each call that failed while the server turned out to be
+     * there all along (see [Blips]). Pages listen to this one (OnServerBack in the UI).
+     */
+    private val _reloads = MutableStateFlow(0)
+    val reloads: StateFlow<Int> get() = _reloads
+    private val blips = Blips(now = { android.os.SystemClock.elapsedRealtime() })
+
+    /**
      * Whether the device has a network at all. With one and the server silent, the phone is
      * away from home (or the server is down), not offline: the notices say which.
      */
@@ -56,7 +65,10 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
         // Called on OkHttp's threads: state changes happen on the scope's (main) thread.
         // While away, an answer is not taken at its word: the probe asks whether it is Roxy
         // answering (see isRoxyInfo) before the app says the server is back.
-        api.onReachability = { ok -> if (!ok || !_online.value) checkSoon() else gate.looked(true) }
+        api.onReachability = { ok ->
+            if (!ok || !_online.value) { if (!ok && _online.value) blips.failed(); checkSoon() }
+            else { gate.looked(true); blips.answered() }
+        }
         api.awayGate = { prefs.session.value.isLoggedIn && gate.failNow(away = !_online.value) }
         watchNetwork()
     }
@@ -85,6 +97,8 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
         if (_online.value) return
         _online.value = true
         _backOnline.value++
+        blips.forget()
+        _reloads.value++
         Timber.i("server reachable again")
         runCatching { onBack?.invoke() }.onFailure { Timber.w(it, "server back handler") }
     }
@@ -101,7 +115,18 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
         var wait = 3_000L
         while (scope.isActive) {
             if (!prefs.session.value.isLoggedIn) return
-            if (api.reachable()) { gate.looked(true); markUp(); return }
+            if (api.reachable()) {
+                gate.looked(true)
+                val wasOnline = _online.value
+                markUp()
+                // A call failed, yet the server is there (the phone changed network or
+                // address under it, a relayed link dropped it): nothing "came back", so the
+                // page would keep its error until someone pressed Retry. Tell it to try
+                // again. The short wait lets the page show its error first, or it would
+                // not be listening yet.
+                if (wasOnline && blips.retry()) { delay(RETRY_AFTER_MS); _reloads.value++; Timber.i("a call failed with the server there: pages retry") }
+                return
+            }
             gate.looked(false)
             if (_online.value) { _online.value = false; Timber.w("server unreachable") }
             // Off screen: stop; the next onStart (or a network change) checks again.
@@ -137,6 +162,46 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
             })
         }.onFailure { Timber.w(it, "server status network callback") }
     }
+}
+
+/** How long after a failed call its page is told to try again (see [ServerStatus.reloads]). */
+const val RETRY_AFTER_MS = 400L
+
+/**
+ * Calls that failed although the server is there. A phone that leaves Wi-Fi for mobile
+ * data (or moves between the server's addresses) loses the calls in flight; the look that
+ * follows finds the server, so it never counts as away and never "comes back": the page
+ * that asked kept "Can't reach Roxy" until someone pressed Retry.
+ *
+ * [retry] says whether pages should try again by themselves: once per failure, and not
+ * again until a call has been answered and [GAP_MS] has passed, so a call that fails
+ * every time (and takes its page with it) is not asked for in a loop.
+ */
+class Blips(private val now: () -> Long) {
+    private var pending = false
+    private var answeredSince = true
+    private var retriedAt = Long.MIN_VALUE
+
+    /** A call to the server failed while the server was believed to be there. */
+    @Synchronized fun failed() { pending = true }
+
+    /** A call to the server was answered. */
+    @Synchronized fun answered() { answeredSince = true }
+
+    /** The server went away and came back: every page reloads for that anyway. */
+    @Synchronized fun forget() { pending = false }
+
+    /** A look found the server there: should the pages that failed try again? */
+    @Synchronized fun retry(): Boolean {
+        if (!pending) return false
+        pending = false
+        if (!answeredSince || (retriedAt != Long.MIN_VALUE && now() - retriedAt < GAP_MS)) return false
+        answeredSince = false
+        retriedAt = now()
+        return true
+    }
+
+    companion object { const val GAP_MS = 15_000L }
 }
 
 /**
