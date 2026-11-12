@@ -245,6 +245,8 @@ private fun AppRoot(tv: Boolean) {
                 .onSuccess {
                     Timber.i("session ok: %s @ %s", it.name ?: "api-key", session.serverUrl)
                     app.prefs.setAdmin(it.isAdmin)
+                    // Where else the server answers (home address, Tailscale): the app moves between them.
+                    if (app.prefs.setAddresses(it.addresses, it.serverId)) app.server.checkSoon()
                     // Terms are agreed by the checkbox on the sign-in screen; record that with the
                     // server once (it keeps the version per login), and mirror what it knows.
                     runCatching { app.api.legalStatus() }.onSuccess { st ->

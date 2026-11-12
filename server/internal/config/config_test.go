@@ -61,3 +61,14 @@ func TestDefaults(t *testing.T) {
 		t.Errorf("defaults: watch %v, scan on start %v, debug %v, discovery port %d", c.Watch, c.ScanOnStart, c.Debug, c.DiscoveryPort)
 	}
 }
+
+func TestOtherURLsAreSplitAndTrimmed(t *testing.T) {
+	t.Setenv("ROXY_OTHER_URLS", " http://100.64.0.7:8097/ , http://box.example.ts.net:8097 ,")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.OtherURLs) != 2 || c.OtherURLs[0] != "http://100.64.0.7:8097" || c.OtherURLs[1] != "http://box.example.ts.net:8097" {
+		t.Fatalf("OtherURLs = %q", c.OtherURLs)
+	}
+}

@@ -15,6 +15,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -40,8 +41,28 @@ data class Session(
     val lastProfileId: String? = null,
     /** Signed in by the first-time setup, which isn't finished yet: the wizard stays on screen. */
     val setupInProgress: Boolean = false,
+    /**
+     * Every address the server says it answers at (auth/me), e.g. its home address and its
+     * Tailscale one. [serverUrl] is the one in use; see [knownAddresses].
+     */
+    val addresses: List<String> = emptyList(),
+    /** The server's id (auth/me): another address is only used if the server there has it. */
+    val serverId: String = "",
 ) {
     val isLoggedIn: Boolean get() = token != null && serverUrl.isNotEmpty()
+
+    /**
+     * The addresses this server may be reached at, best first: home network before
+     * Tailscale before anything else, and within a kind in the server's order. An address
+     * that is neither https nor on a private network or tailnet is left out (the login
+     * would cross the internet in the clear); the one signed in to is always kept.
+     */
+    val knownAddresses: List<String>
+        get() {
+            val cur = serverUrl.trim().trimEnd('/')
+            val others = addresses.map { it.trim().trimEnd('/') }.filter { it == cur || ServerAddress.usableAlternate(it) }
+            return (others + cur).filter { it.isNotEmpty() }.distinct().sortedBy { ServerAddress.rank(it) }
+        }
     val hasProfile: Boolean get() = profileId != null
 }
 
@@ -247,6 +268,42 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
     }
 
     /** Keep the admin flag in step with what the server says at start-up. */
+    /**
+     * What auth/me said about where the server answers. True when that changed what is
+     * known (the caller then looks for the best address).
+     */
+    suspend fun setAddresses(addresses: List<String>, serverId: String): Boolean {
+        val cur = _session.value
+        val list = addresses.map { it.trim().trimEnd('/') }.filter { it.isNotEmpty() && ADDR_SEP !in it }.distinct().take(MAX_ADDRESSES)
+        // An older server (or one with nothing set) says nothing: keep the address the app
+        // moved away from, or it could never go back to it.
+        if (list.isEmpty() && serverId.isEmpty()) return false
+        if (cur.addresses == list && cur.serverId == serverId) return false
+        saveSession(cur.copy(addresses = list, serverId = serverId))
+        return cur.knownAddresses != _session.value.knownAddresses
+    }
+
+    /**
+     * Talk to the server at [url] from now on (one of [Session.knownAddresses]); the address
+     * left stays known. Memory first, so the very next request goes there. Any thread.
+     */
+    fun useAddress(url: String) {
+        val u = url.trim().trimEnd('/')
+        var moved: Session? = null
+        _session.update { cur ->
+            moved = null
+            if (!cur.isLoggedIn || cur.serverUrl.trimEnd('/') == u || u !in cur.knownAddresses) return@update cur
+            cur.copy(serverUrl = u, addresses = (cur.addresses + cur.serverUrl.trimEnd('/')).distinct()).also { moved = it }
+        }
+        val next = moved ?: return
+        scope.launch {
+            write {
+                // Only if the file still holds this login: a sign-out since then wins.
+                if (it[KEY_TOKEN] == next.token) { it[KEY_SERVER] = next.serverUrl; it[KEY_ADDRESSES] = next.addresses.joinToString(ADDR_SEP) }
+            }
+        }
+    }
+
     suspend fun setAdmin(admin: Boolean) {
         val cur = _session.value
         if (cur.isAdmin != admin) saveSession(cur.copy(isAdmin = admin))
@@ -277,6 +334,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_TERMS] = s.acceptedTerms
             it[KEY_SETUP] = s.setupInProgress
             if (s.lastProfileId == null) it.remove(KEY_LAST_PROFILE) else it[KEY_LAST_PROFILE] = s.lastProfileId
+            if (s.addresses.isEmpty()) it.remove(KEY_ADDRESSES) else it[KEY_ADDRESSES] = s.addresses.joinToString(ADDR_SEP)
+            if (s.serverId.isEmpty()) it.remove(KEY_SERVER_ID) else it[KEY_SERVER_ID] = s.serverId
         }
     }
 
@@ -333,6 +392,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it.remove(KEY_PROFILES_CACHE)
             it.remove(KEY_TERMS)
             it.remove(KEY_SETUP)
+            it.remove(KEY_ADDRESSES)
+            it.remove(KEY_SERVER_ID)
         }
     }
 
@@ -370,6 +431,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         acceptedTerms = this[KEY_TERMS].orEmpty(),
         lastProfileId = this[KEY_LAST_PROFILE]?.takeIf { it.isNotEmpty() },
         setupInProgress = this[KEY_SETUP] ?: false,
+        addresses = this[KEY_ADDRESSES].orEmpty().split(ADDR_SEP).filter { it.isNotEmpty() },
+        serverId = this[KEY_SERVER_ID].orEmpty(),
     )
 
     private fun Preferences.toPins(): List<ServerPin> =
@@ -415,6 +478,10 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_TERMS = stringPreferencesKey("accepted_terms")
         val KEY_SETUP = booleanPreferencesKey("setup_in_progress")
         val KEY_LAST_PROFILE = stringPreferencesKey("last_profile_id")
+        val KEY_ADDRESSES = stringPreferencesKey("server_addresses")
+        val KEY_SERVER_ID = stringPreferencesKey("server_id")
+        const val ADDR_SEP = "\n"
+        const val MAX_ADDRESSES = 8
         // "_v2": "auto" (zero-copy first) became the default on 2026-10-31; the old key held
         // the previous default, mediacodec-copy, for everyone who ever saved a setting.
         val KEY_HWDEC = stringPreferencesKey("hwdec_v2")

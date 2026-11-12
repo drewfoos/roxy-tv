@@ -19,17 +19,21 @@ type Config struct {
 	VAAPIDevice string // ROXY_VAAPI_DEVICE, default /dev/dri/renderD128
 	// LAN discovery: the UDP port the beacon answers "who is roxy?" on (same number as
 	// the HTTP default so there is one port to remember and publish); 0 turns it off.
-	DiscoveryPort int      // ROXY_DISCOVERY_PORT, default 8096
-	AdvertiseURL  string   // ROXY_ADVERTISE_URL: the URL clients should use when the LAN address is wrong (Docker bridge, proxy)
-	DataDir       string   // ROXY_DATA_DIR, default ./data (db, caches)
-	MediaRoots    []string // ROXY_MEDIA_ROOTS, comma separated; each becomes a library
-	FFmpegPath    string   // ROXY_FFMPEG_PATH, default: search PATH then ~/tools/jellyfin-ffmpeg
-	FFprobePath   string   // ROXY_FFPROBE_PATH
-	FontsDir      string   // ROXY_FONTS_DIR, extra fonts for burn-in / client fallback
-	ScanOnStart   bool     // ROXY_SCAN_ON_START, default true
-	Watch         bool     // ROXY_WATCH, default true: rescan when files change in a library folder
-	Debug         bool     // ROXY_DEBUG
-	TMDBAPIKey    string   // ROXY_TMDB_API_KEY; empty disables the TMDB provider (AniList still runs)
+	DiscoveryPort int    // ROXY_DISCOVERY_PORT, default 8096
+	AdvertiseURL  string // ROXY_ADVERTISE_URL: the URL clients should use when the LAN address is wrong (Docker bridge, proxy)
+	// OtherURLs: more addresses this same server answers at (ROXY_OTHER_URLS, comma
+	// separated), e.g. its Tailscale address. Signed-in apps learn them and use whichever
+	// answers: the home address at home, the other one away.
+	OtherURLs   []string
+	DataDir     string   // ROXY_DATA_DIR, default ./data (db, caches)
+	MediaRoots  []string // ROXY_MEDIA_ROOTS, comma separated; each becomes a library
+	FFmpegPath  string   // ROXY_FFMPEG_PATH, default: search PATH then ~/tools/jellyfin-ffmpeg
+	FFprobePath string   // ROXY_FFPROBE_PATH
+	FontsDir    string   // ROXY_FONTS_DIR, extra fonts for burn-in / client fallback
+	ScanOnStart bool     // ROXY_SCAN_ON_START, default true
+	Watch       bool     // ROXY_WATCH, default true: rescan when files change in a library folder
+	Debug       bool     // ROXY_DEBUG
+	TMDBAPIKey  string   // ROXY_TMDB_API_KEY; empty disables the TMDB provider (AniList still runs)
 	// Discover requests are forwarded to Sonarr / Radarr when these are set; without
 	// them requests are recorded and shown as pending.
 	SonarrURL            string // ROXY_SONARR_URL, e.g. http://sonarr:8989
@@ -75,6 +79,7 @@ func Load() (*Config, error) {
 		VAAPIDevice:          env("ROXY_VAAPI_DEVICE", ""),
 		DiscoveryPort:        envInt("ROXY_DISCOVERY_PORT", 8096),
 		AdvertiseURL:         strings.TrimRight(env("ROXY_ADVERTISE_URL", ""), "/"),
+		OtherURLs:            trimURLs(splitList(env("ROXY_OTHER_URLS", ""))),
 		DataDir:              env("ROXY_DATA_DIR", "data"),
 		FFmpegPath:           env("ROXY_FFMPEG_PATH", ""),
 		FFprobePath:          env("ROXY_FFPROBE_PATH", ""),
@@ -187,6 +192,13 @@ func envBool(key string, def bool) (bool, error) {
 }
 
 // splitList splits a comma-separated setting, dropping blanks.
+func trimURLs(in []string) []string {
+	for i := range in {
+		in[i] = strings.TrimRight(in[i], "/")
+	}
+	return in
+}
+
 func splitList(v string) []string {
 	var out []string
 	for _, p := range strings.Split(v, ",") {

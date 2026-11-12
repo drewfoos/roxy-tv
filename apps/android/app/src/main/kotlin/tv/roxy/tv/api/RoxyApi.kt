@@ -5,16 +5,23 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Dispatcher
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import timber.log.Timber
 import tv.roxy.tv.data.Prefs
+import tv.roxy.tv.data.ServerAddress
+import tv.roxy.tv.data.Session
 import java.io.IOException
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /** An HTTP error from Roxy Server. `code == 404` on a contract endpoint means "server not updated yet". */
@@ -43,11 +50,20 @@ class RoxyApi(private val prefs: Prefs) {
         // client), the rest queue. The server also rate-limits the JSON API per client.
         .dispatcher(Dispatcher().apply { maxRequests = 12; maxRequestsPerHost = 6 })
         .addInterceptor(Interceptor { chain ->
-            val s = prefs.session.value
-            val req = chain.request()
+            val asked = chain.request()
+            // The probe asks one address whether Roxy is there: no login goes with it, and
+            // what it finds is its caller's to judge.
+            if (asked.tag(Probe::class.java) != null) return@Interceptor chain.proceed(asked)
             // Only Roxy Server gets the token and profile; images from TMDB (Discover) go bare.
-            val serverHost = runCatching { s.serverUrl.toHttpUrl().host }.getOrNull()
-            if (serverHost == null || req.url.host != serverHost) return@Interceptor chain.proceed(req)
+            if (!ways(prefs.session.value).knows(asked.url)) return@Interceptor chain.proceed(asked)
+            // The server is known to be away: say so now. On a network that swallows the
+            // packets (away from home, no VPN) every page otherwise sat on its spinner for
+            // the whole connect timeout before saying "Can't reach Roxy".
+            if (awayGate?.invoke() == true) throw ServerAwayException()
+            // That look may have moved the app to another of the server's addresses (home
+            // Wi-Fi left, Tailscale on): a request written for the old one goes to the new.
+            val s = prefs.session.value
+            val req = ways(s).aimed(asked) ?: return@Interceptor chain.proceed(asked)
             val b = req.newBuilder()
             if (s.token != null && req.header("Authorization") == null) b.header("Authorization", "Bearer ${s.token}")
             // Watch state, favourites and Home are per profile (docs/api/native.md "Profiles").
@@ -55,19 +71,14 @@ class RoxyApi(private val prefs: Prefs) {
             // that made it, whichever is active by the time it is sent.
             if (req.header(PROFILE_HEADER) == null) s.profileId?.let { b.header(PROFILE_HEADER, it) }
             val sent = b.build()
-            // The server is known to be away: say so now. On a network that swallows the
-            // packets (away from home, no VPN) every page otherwise sat on its spinner for
-            // the whole connect timeout before saying "Can't reach Roxy". The probe passes.
-            if (sent.tag(Probe::class.java) == null && awayGate?.invoke() == true) throw ServerAwayException()
             // An answer from Roxy means the server is there; a failed connection (not one we
             // cancelled) tells ServerStatus to check, which drives the "Can't reach Roxy"
             // banner. So does a proxy's "bad gateway" page: something answered, but not Roxy.
-            // The probe's own request reports nothing here: its result is what decides.
             val resp = try { chain.proceed(sent) } catch (e: IOException) {
                 if (!chain.call().isCanceled()) onReachability?.invoke(false)
                 throw e
             }
-            if (sent.tag(Probe::class.java) == null) onReachability?.invoke(answeredByRoxy(resp.code, resp.header("Content-Type")))
+            onReachability?.invoke(answeredByRoxy(resp.code, resp.header("Content-Type")))
             // The profile this request named is not the login's any more (deleted on another
             // device): the server refuses it instead of quietly using another profile. If it is
             // the active one, back to "Who's watching?".
@@ -84,6 +95,13 @@ class RoxyApi(private val prefs: Prefs) {
 
     /** Marks the reachability probe's own request, which the gate lets through. */
     private object Probe
+
+    /** The session's addresses as URLs, worked out once per session value. */
+    @Volatile private var waysOf: Pair<Session, Ways>? = null
+    private fun ways(s: Session): Ways {
+        waysOf?.let { if (it.first === s) return it.second }
+        return Ways(s.serverUrl, s.knownAddresses).also { waysOf = s to it }
+    }
 
     val baseUrl: String get() = prefs.session.value.serverUrl.trimEnd('/')
     private val token: String? get() = prefs.session.value.token
@@ -232,17 +250,49 @@ class RoxyApi(private val prefs: Prefs) {
      */
     suspend fun reachable(): Boolean = withContext(Dispatchers.IO) { reachableNow() }
 
-    /** [reachable] for a thread that may block (the gate, on the HTTP client's threads). */
+    /**
+     * [reachable] for a thread that may block (the gate, on the HTTP client's threads).
+     *
+     * A server can have more than one address (home network, Tailscale; see
+     * [Session.knownAddresses]). All are asked at once and the app moves to the best one
+     * that answers as this server: at home that is the home address even with Tailscale on,
+     * away from home the Tailscale one, with nothing to change by hand. The first answer
+     * waits [BETTER_WAIT_MS] for a better address still to answer, no longer.
+     */
     fun reachableNow(): Boolean {
-        val url = baseUrl
-        if (url.isEmpty()) return false
-        return runCatching {
-            probe.newCall(Request.Builder().url("$url/v1/system/info").get().tag(Probe::class.java, Probe).build()).execute().use { it.isSuccessful && isRoxyInfo(it.peekBody(64 * 1024).string()) }
-        }.getOrDefault(false)
+        val s = prefs.session.value
+        val current = s.serverUrl.trim().trimEnd('/')
+        val urls = s.knownAddresses
+        if (urls.isEmpty()) return false
+        val answers = LinkedBlockingQueue<Pair<Int, Boolean>>()
+        val calls = urls.mapIndexed { i, url ->
+            val call = runCatching { probe.newCall(Request.Builder().url("$url/v1/system/info").get().tag(Probe::class.java, Probe).build()) }.getOrNull()
+            if (call == null) answers.put(i to false)
+            call?.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { answers.put(i to false) }
+                override fun onResponse(call: Call, response: Response) {
+                    val ok = runCatching {
+                        response.use { it.isSuccessful && isThisServer(it.peekBody(64 * 1024).string(), s.serverId, other = url != current) }
+                    }.getOrDefault(false)
+                    answers.put(i to ok)
+                }
+            })
+            call
+        }
+        val best = firstBest(urls.size, BETTER_WAIT_MS, PROBE_MS + 500) { ms -> answers.poll(ms, TimeUnit.MILLISECONDS) }
+        calls.forEach { it?.cancel() }
+        if (best < 0) return false
+        if (urls[best] != current) {
+            Timber.i("server address: now %s", if (ServerAddress.rank(urls[best]) == 1) "Tailscale" else "home network")
+            prefs.useAddress(urls[best])
+        }
+        return true
     }
 
+    // Its own dispatcher: with the server away the shared one can be full of calls waiting
+    // out their connect timeout, and the look that would end the wait must not queue behind them.
     private val probe: OkHttpClient by lazy {
-        http.newBuilder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).build()
+        http.newBuilder().dispatcher(Dispatcher()).connectTimeout(PROBE_MS, TimeUnit.MILLISECONDS).readTimeout(PROBE_MS, TimeUnit.MILLISECONDS).build()
     }
 
     /**
@@ -692,6 +742,72 @@ fun answeredByRoxy(code: Int, contentType: String?): Boolean =
     code !in 502..504 || contentType.orEmpty().startsWith("application/json", ignoreCase = true)
 
 /**
+ * Whether the system/info [body] is Roxy answering, and for an address [other] than the
+ * one signed in to, the very server signed in to ([serverId]): the same private address
+ * is somebody else's machine on another network, and must not be handed the login.
+ */
+fun isThisServer(body: String, serverId: String, other: Boolean): Boolean {
+    if (!isRoxyInfo(body)) return false
+    if (!other) return true
+    if (serverId.isEmpty()) return false
+    return Regex(""""id"\s*:\s*"([^"]*)"""").find(body)?.groupValues?.get(1) == serverId
+}
+
+/**
+ * Which of [n] addresses (best first) to use, from their answers as they come in
+ * ([next] waits up to the given milliseconds for one: index and whether it is the
+ * server; null = nothing came). The first good answer waits [betterWaitMs] for a better
+ * address still out; -1 when none answered within [totalMs].
+ */
+fun firstBest(n: Int, betterWaitMs: Long, totalMs: Long, now: () -> Long = { System.nanoTime() / 1_000_000 }, next: (Long) -> Pair<Int, Boolean>?): Int {
+    val said = arrayOfNulls<Boolean>(n)
+    var best = -1
+    val end = now() + totalMs
+    var until = end
+    while (true) {
+        if (best >= 0 && (0 until best).all { said[it] == false }) return best
+        if (said.all { it != null }) return best
+        val wait = until - now()
+        if (wait <= 0) return best
+        val (i, ok) = next(wait) ?: return best
+        if (i !in 0 until n) continue
+        said[i] = ok
+        if (ok && (best < 0 || i < best)) {
+            if (best < 0) until = minOf(end, now() + betterWaitMs)
+            best = i
+        }
+    }
+}
+
+/** A session's addresses as URLs: which requests are for the server, and where they go now. */
+class Ways(current: String, known: List<String>) {
+    private val cur: HttpUrl? = current.trim().toHttpUrlOrNull()
+    private val all: List<HttpUrl> = (known.mapNotNull { it.toHttpUrlOrNull() } + listOfNotNull(cur))
+
+    /** Whether [url] is at one of the server's addresses. */
+    fun knows(url: HttpUrl): Boolean = all.any { it.at(url) }
+
+    /**
+     * [req] as it should be sent: unchanged at the address in use, moved to it from another
+     * of the server's addresses. Null = send it as it is and without the login (an address
+     * that cannot be moved: one of them sits under a path).
+     */
+    fun aimed(req: Request): Request? {
+        val c = cur ?: return null
+        if (c.at(req.url)) return req
+        val from = all.firstOrNull { it.at(req.url) } ?: return null
+        if (c.encodedPath != "/" || from.encodedPath != "/") return null
+        return req.newBuilder().url(req.url.newBuilder().scheme(c.scheme).host(c.host).port(c.port).build()).build()
+    }
+
+    private fun HttpUrl.at(o: HttpUrl) = scheme == o.scheme && host == o.host && port == o.port
+}
+
+const val PROBE_MS = 3_000L
+/** How long the first address to answer waits for a better one (the home network's). */
+const val BETTER_WAIT_MS = 700L
+
+/**
  * Whether the body of GET /v1/system/info is Roxy's. On another network the saved address
  * can belong to something else (a Wi-Fi sign-in page answers every address with 200): that
  * is not the server being back.
@@ -750,7 +866,11 @@ data class User(val id: String, val name: String, val isAdmin: Boolean = false)
 
 /** `/v1/auth/me`: a user, or `{apiKey: true}` for an integration key. */
 @Serializable
-data class MeResponse(val id: String? = null, val name: String? = null, val isAdmin: Boolean = false, val apiKey: Boolean = false, val profileId: String? = null)
+data class MeResponse(
+    val id: String? = null, val name: String? = null, val isAdmin: Boolean = false, val apiKey: Boolean = false, val profileId: String? = null,
+    /** Every address the server is set to answer at (home first), and its id; empty on an older server. */
+    val addresses: List<String> = emptyList(), val serverId: String = "",
+)
 
 @Serializable
 data class Profile(

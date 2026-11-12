@@ -279,6 +279,7 @@ picked up.
 - Environment variables only (`internal/config`): `ROXY_LISTEN`, `ROXY_DATA_DIR`,
   `ROXY_MEDIA_ROOTS`, `ROXY_FFMPEG_PATH`, `ROXY_FFPROBE_PATH`, `ROXY_HWACCEL`,
   `ROXY_VAAPI_DEVICE`, `ROXY_SCAN_ON_START`, `ROXY_DISCOVERY_PORT`, `ROXY_ADVERTISE_URL`,
+  `ROXY_OTHER_URLS` (more addresses of this server, e.g. its Tailscale one: the apps switch between them),
   `ROXY_TRUSTED_PROXIES`, `ROXY_TMDB_API_KEY`, the Sonarr / Radarr / Prowlarr URLs, keys,
   quality profiles and root folders, `ROXY_ADMIN_USER` / `ROXY_ADMIN_PASSWORD`,
   `ROXY_DEBUG`. Most arr and provider settings can also be set from the app (admin).

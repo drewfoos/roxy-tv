@@ -12,7 +12,7 @@ the Sonarr / Radarr webhooks all use this API.
 | Method | Path | Body / result |
 |---|---|---|
 | POST | `/v1/auth/login` | `{username, password, client, device, deviceId, version}` -> `{token, user: {id, name, isAdmin}, deviceId}` |
-| GET | `/v1/auth/me` | `{id, name, isAdmin}` or `{apiKey: true, isAdmin: true}` |
+| GET | `/v1/auth/me` | `{id, name, isAdmin}` or `{apiKey: true, isAdmin: true}`. With `ROXY_ADVERTISE_URL` / `ROXY_OTHER_URLS` set, also `addresses` (every URL this server answers at) and `serverId`: the app uses whichever address answers with that id |
 | POST | `/v1/auth/logout` | revokes the calling device token, clears the session cookie, 204 |
 | POST | `/v1/auth/cookie` | sets `roxy_token` (HttpOnly, SameSite=Strict, a year) carrying the caller's device token, 204; for Roxy Web, whose `<img>` and `<video>` cannot send a header |
 

@@ -122,7 +122,12 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
             val up = java.util.Collections.synchronizedSet(HashSet<Network>())
             _hasNetwork.value = cm.activeNetwork != null
             cm.registerNetworkCallback(req, object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) { up += network; _hasNetwork.value = true; if (!_online.value) checkSoon() }
+                override fun onAvailable(network: Network) {
+                    up += network; _hasNetwork.value = true
+                    // With more than one way to the server, a new network may bring a
+                    // better one (home Wi-Fi after Tailscale on mobile data): look.
+                    if (!_online.value || prefs.session.value.knownAddresses.size > 1) checkSoon()
+                }
                 override fun onLost(network: Network) {
                     up -= network
                     _hasNetwork.value = up.isNotEmpty()

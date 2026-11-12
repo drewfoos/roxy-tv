@@ -42,6 +42,39 @@ object ServerAddress {
         return false
     }
 
+    /** A Tailscale address: 100.64/10 or a MagicDNS name (*.ts.net). */
+    fun isTailnet(host: String): Boolean {
+        val h = host.lowercase().removePrefix("[").removeSuffix("]").trimEnd('.')
+        if (h.endsWith(".ts.net")) return true
+        val b = ipv4(h) ?: return false
+        return b[0] == 100 && b[1] in 64..127
+    }
+
+    /**
+     * How good [url] is as a way to the server when several answer: 0 on the home network
+     * (the direct, fast way), 1 over Tailscale (may be relayed), 2 anything else.
+     */
+    fun rank(url: String): Int {
+        val host = hostOf(url) ?: return 2
+        return when {
+            isTailnet(host) -> 1
+            isHomeNetwork(host) -> 0
+            else -> 2
+        }
+    }
+
+    /**
+     * Whether the app may move its login to [url] because the server listed it: https, or a
+     * private / Tailscale address. Plain http to anywhere else would send the login across
+     * the internet in the clear, so such an address is only used if someone typed it.
+     */
+    fun usableAlternate(url: String): Boolean {
+        val t = url.trim()
+        if (!t.startsWith("http://", ignoreCase = true) && !t.startsWith("https://", ignoreCase = true)) return false
+        val host = hostOf(t) ?: return false
+        return t.startsWith("https://", ignoreCase = true) || isPrivateOrTailnet(host)
+    }
+
     /**
      * Private as above, or a name that only means something on a home network: a single
      * label ("myserver") or .local / .lan / .home.arpa / .internal. For the "not encrypted"
