@@ -32,8 +32,33 @@ class AwayGateTest {
     private val gate = AwayGate(now = { clock }, probe = { probes++; serverThere })
 
     @Test fun nothingIsRefusedWhileTheServerAnswers() {
+        gate.looked(true)
+        clock += AwayGate.TRUST_MS - 1
         assertFalse(gate.failNow(away = false))
         assertEquals("and nobody looks", 0, probes)
+    }
+
+    // Opened away from home after days: the app last saw the server at home, so it believed
+    // it was there and every call of the first page waited out the connect timeout (the
+    // page sat on its skeleton). The first call of a start looks first.
+    @Test fun theFirstCallOfAStartLooksBeforeItBelievesTheServerIsThere() {
+        assertTrue("refused after one look", gate.failNow(away = false))
+        assertTrue("and so are the calls beside it, before the app has marked itself away", gate.failNow(away = false))
+        assertEquals(1, probes)
+    }
+
+    @Test fun aServerNotHeardFromForAWhileIsLookedAtAgain() {
+        gate.looked(true)
+        clock += AwayGate.TRUST_MS
+        assertTrue(gate.failNow(away = false))
+        assertEquals(1, probes)
+    }
+
+    @Test fun aLookThatFindsTheServerLetsTheCallThrough() {
+        serverThere = true
+        assertFalse(gate.failNow(away = false))
+        assertFalse(gate.failNow(away = false))
+        assertEquals(1, probes)
     }
 
     @Test fun awayRefusesAtOnceOnAFreshLook() {

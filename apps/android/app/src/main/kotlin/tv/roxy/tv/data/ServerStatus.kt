@@ -49,14 +49,14 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
     @Volatile private var foreground = 0
 
     /** Fails calls at once while the server is away, on a look no older than [AwayGate.FRESH_MS]. */
-    private val gate = AwayGate(now = { android.os.SystemClock.elapsedRealtime() }, probe = { api.reachableNow().also { if (it) scope.launch { markUp() } } })
+    private val gate = AwayGate(now = { android.os.SystemClock.elapsedRealtime() }, probe = { api.reachableNow().also { scope.launch { if (it) markUp() else markDown() } } })
     private var probeJob: Job? = null
 
     init {
         // Called on OkHttp's threads: state changes happen on the scope's (main) thread.
         // While away, an answer is not taken at its word: the probe asks whether it is Roxy
         // answering (see isRoxyInfo) before the app says the server is back.
-        api.onReachability = { ok -> if (!ok || !_online.value) checkSoon() }
+        api.onReachability = { ok -> if (!ok || !_online.value) checkSoon() else gate.looked(true) }
         api.awayGate = { prefs.session.value.isLoggedIn && gate.failNow(away = !_online.value) }
         watchNetwork()
     }
@@ -87,6 +87,14 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
         _backOnline.value++
         Timber.i("server reachable again")
         runCatching { onBack?.invoke() }.onFailure { Timber.w(it, "server back handler") }
+    }
+
+    /** A look made for a call found the server gone: say so, and keep looking for it. */
+    private fun markDown() {
+        if (!_online.value) return
+        _online.value = false
+        Timber.w("server unreachable")
+        checkSoon()
     }
 
     private suspend fun probe() {
@@ -132,6 +140,11 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
  * otherwise it waits for one new look, shared by every call that arrives meanwhile. So a
  * page opened away from home says "Can't reach Roxy" at once (3 s at worst) instead of
  * after the connect timeout, and a server that came back is noticed by the next call.
+ *
+ * A server believed to be there is looked at too, when nothing has been heard from it for
+ * [TRUST_MS] or since the app started: the app opened away from home last saw the server
+ * at home, and its first page otherwise waits out the connect timeout on its skeleton.
+ * At home that look is one small request before the first call.
  */
 class AwayGate(private val now: () -> Long, private val probe: () -> Boolean) {
     private var lookedAt = Long.MIN_VALUE
@@ -141,12 +154,16 @@ class AwayGate(private val now: () -> Long, private val probe: () -> Boolean) {
     @Synchronized fun looked(ok: Boolean) { lookedAt = now(); answered = ok }
 
     @Synchronized fun failNow(away: Boolean): Boolean {
-        if (!away) return false
-        if (lookedAt == Long.MIN_VALUE || now() - lookedAt >= FRESH_MS) looked(probe())
+        val trust = if (away) FRESH_MS else TRUST_MS
+        if (lookedAt == Long.MIN_VALUE || now() - lookedAt >= trust) looked(probe())
         return !answered
     }
 
-    companion object { const val FRESH_MS = 10_000L }
+    companion object {
+        const val FRESH_MS = 10_000L
+        /** How long an answer from the server is taken to mean it is still there. */
+        const val TRUST_MS = 60_000L
+    }
 }
 
 /** The words of the phone's offline notices: the strip over the bottom bar, and a page that cannot load. */
