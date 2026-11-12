@@ -371,7 +371,7 @@ private fun TvRoot(onUnauthorized: () -> Unit) {
             }
             composable<Route.DiscoverDetail> { entry ->
                 val r = entry.toRoute<Route.DiscoverDetail>()
-                TvDiscoverTitle(r.type, r.tmdbId, onOpenSeries = openSeries, onOpenMovie = openMovie)
+                TvDiscoverTitle(r.type, r.tmdbId, onOpenSeries = openSeries, onOpenMovie = openMovie, onOpenDiscover = openDiscover)
             }
             composable<Route.Watchlist> { TvMyLists(onOpenSeries = openSeries, onOpenMovie = openMovie) }
             composable<Route.Discover> { TvDiscover(onOpenSeries = openSeries, onOpenMovie = openMovie, onOpenDiscover = { type, tmdbId -> openDiscover(type, tmdbId) }) }

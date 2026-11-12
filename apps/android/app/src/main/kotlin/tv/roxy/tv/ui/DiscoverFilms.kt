@@ -58,7 +58,25 @@ fun filmState(f: DiscoverFilm, requestsEnabled: Boolean): FilmState {
 fun filmLine(f: DiscoverFilm): String =
     listOfNotNull("Film", f.year?.takeIf { it > 0 }?.toString(), (if (f.withRequest) "Comes with the request" else f.note)?.takeIf { it.isNotBlank() }).joinToString("  ·  ")
 
-/** A film's state in words, where there is no button for it (the TV page). */
+/** What OK does on a film's entry on the TV page. */
+enum class FilmAction { OpenLibrary, Request, OpenPage, None }
+
+/** The film in the library opens; one that can be requested is requested; any other opens its own page when TMDB's film is known. */
+fun filmAction(f: DiscoverFilm, requestsEnabled: Boolean): FilmAction = when (filmState(f, requestsEnabled)) {
+    FilmState.Library -> FilmAction.OpenLibrary
+    FilmState.Request -> FilmAction.Request
+    else -> if (f.tmdbId != null) FilmAction.OpenPage else FilmAction.None
+}
+
+/** What the focused entry says OK will do. */
+fun filmActionWord(a: FilmAction): String = when (a) {
+    FilmAction.OpenLibrary -> "Open in library"
+    FilmAction.Request -> "Request"
+    FilmAction.OpenPage -> "Open"
+    FilmAction.None -> ""
+}
+
+/** A film's state in words, shown under its name on the TV page. */
 fun filmWord(f: DiscoverFilm): String = when (filmState(f, requestsEnabled = false)) {
     FilmState.Library -> "In library"
     FilmState.Approval -> "Waiting for approval"

@@ -2,7 +2,11 @@ package tv.roxy.tv.ui.tv
 
 import tv.roxy.tv.api.DiscoverFilm
 import tv.roxy.tv.api.DiscoverFilms
+import tv.roxy.tv.ui.FilmAction
 import tv.roxy.tv.ui.buttonFilms
+import tv.roxy.tv.ui.filmAction
+import tv.roxy.tv.ui.filmActionWord
+import tv.roxy.tv.ui.placeFilms
 import tv.roxy.tv.ui.filmWord
 import tv.roxy.tv.ui.filmsSuffix
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -254,10 +258,11 @@ private fun DiscoverCard(c: DiscoverItem, onClick: () -> Unit, modifier: Modifie
  * A title from TMDB, its own page rather than a library title's frame: the art at the
  * right, copy and facts at the left, one action (Request, its status, or Open in library)
  * with a line under it saying what will happen or what is happening, then the seasons
- * and what the library holds of each. Only the action takes focus.
+ * and what the library holds of each, with an anime series' films among them. The action
+ * takes focus first; the films can be reached below it.
  */
 @Composable
-fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
+fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit, onOpenDiscover: (type: String, tmdbId: Int) -> Unit = { _, _ -> }) {
     val app = RoxyApp.get(LocalContext.current)
     val scope = rememberCoroutineScope()
     val cacheKey = "$type:$tmdbId"
@@ -292,7 +297,8 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
     // AniList and can take a while.
     var films by remember(type, tmdbId) { mutableStateOf<DiscoverFilms?>(null) }
     val wantsFilms = type == "tv" && detail?.isAnime == true
-    LaunchedEffect(type, tmdbId, wantsFilms, reqNow?.id, reqNow?.status) {
+    var filmsTick by remember { mutableStateOf(0) }
+    LaunchedEffect(type, tmdbId, wantsFilms, reqNow?.id, reqNow?.status, filmsTick) {
         if (wantsFilms) runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }
     }
     val d = detail
@@ -413,26 +419,51 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         }
         // Bottom: the seasons (series) and the facts that do not fit the top line.
         Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 56.dp, end = 56.dp, bottom = 36.dp)) {
+            // The seasons, with the series' films where the server put them (as the phone and the
+            // web list them): before the first season, after the season they follow, the rest at
+            // the end. A film takes focus: OK requests it, or opens it.
             val seasons = d.seasons.filter { !it.special }
-            if (seasons.isNotEmpty()) {
-                Text("SEASONS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    seasons.take(10).forEach { SeasonPill(it) }
-                    if (seasons.size > 10) Text("+${seasons.size - 10}", color = RoxyColors.muted, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
+            val placed = placeFilms(films?.films.orEmpty(), seasons.map { it.number })
+            val filmsOn = films?.requestsEnabled == true
+            val film: @Composable (DiscoverFilm) -> Unit = { f ->
+                TvFilmPill(f, filmsOn) {
+                    when (filmAction(f, filmsOn)) {
+                        FilmAction.OpenLibrary -> onOpenMovie(Item(id = f.libraryItemId.orEmpty(), type = "movie", title = f.title))
+                        FilmAction.OpenPage -> f.tmdbId?.let { onOpenDiscover("movie", it) }
+                        FilmAction.Request -> f.tmdbId?.takeIf { !busy }?.let { film ->
+                          scope.launch {
+                            busy = true
+                            error = null
+                            runCatching { app.api.discoverRequest("movie", film) }.onFailure { error = it.message ?: "The request failed" }
+                            filmsTick++
+                            busy = false
+                          }
+                        }
+                        FilmAction.None -> {}
+                    }
                 }
-                Spacer(Modifier.height(18.dp))
             }
-            // The series' films, in the server's order (as the phone lists them among the
-            // seasons): where each belongs and how it stands. A film is requested with the
-            // series when the server put it on the action, or from its own page.
-            val listed = films?.films.orEmpty()
-            if (listed.isNotEmpty()) {
-                Text("FILMS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
+            val anyFilm = placed.before.isNotEmpty() || placed.after.isNotEmpty() || placed.more.isNotEmpty()
+            if (seasons.isNotEmpty() || anyFilm) {
+                Text(if (anyFilm) "SEASONS AND FILMS" else "SEASONS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listed.take(4).forEach { FilmPill(it) }
-                    if (listed.size > 4) Text("+${listed.size - 4}", color = RoxyColors.muted, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    placed.before.forEach { f -> item(key = "f${f.anilistId}") { film(f) } }
+                    // Seasons take no focus, so with no film to move to the row cannot scroll: a count ends it.
+                    val listed = if (anyFilm) seasons else seasons.take(10)
+                    listed.forEach { sn ->
+                        item(key = "s${sn.number}") { SeasonPill(sn) }
+                        placed.after[sn.number].orEmpty().forEach { f -> item(key = "f${f.anilistId}") { film(f) } }
+                    }
+                    if (seasons.size > listed.size) item(key = "rest") { Text("+${seasons.size - listed.size}", color = RoxyColors.muted, fontSize = 14.sp) }
+                    if (placed.more.isNotEmpty()) {
+                        item(key = "more") { Text("MORE FILMS", color = RoxyColors.muted, fontSize = 12.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 12.dp, end = 4.dp)) }
+                        placed.more.forEach { f -> item(key = "f${f.anilistId}") { film(f) } }
+                    }
+                }
+                if (films?.auto == true) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Films between the seasons you requested are requested as they are announced.", color = RoxyColors.muted, fontSize = 13.sp, maxLines = 1)
                 }
                 Spacer(Modifier.height(18.dp))
             }
@@ -503,13 +534,21 @@ private fun SeasonPill(s: DiscoverSeason) {
     }
 }
 
-/** One film of the series: its name over where it belongs or how it stands (accent = in the library or coming with the request). */
+/**
+ * One film of the series among its seasons: its name over where it belongs or how it
+ * stands; focused, what OK does (Request, Open). A film TMDB could not be matched to
+ * takes no focus: there is nothing to do with it.
+ */
 @Composable
-private fun FilmPill(f: DiscoverFilm) {
+internal fun TvFilmPill(f: DiscoverFilm, requestsEnabled: Boolean, onClick: () -> Unit) {
+    val action = filmAction(f, requestsEnabled)
     val bright = !f.libraryItemId.isNullOrEmpty() || f.withRequest
-    Column(modifier = Modifier.width(200.dp).background(RoxyColors.surfaceHigh, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-        Text(f.title, color = RoxyColors.onBackground, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(listOfNotNull(f.year?.takeIf { it > 0 }?.toString(), filmWord(f).ifEmpty { null }).joinToString("  ·  "), color = if (bright) RoxyColors.accent else RoxyColors.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    TvFocusable(onClick = onClick, enabled = action != FilmAction.None, focusedBackground = RoxyColors.accent, background = RoxyColors.surfaceHigh, shape = RoundedCornerShape(6.dp)) { focused ->
+        Column(modifier = Modifier.width(210.dp).padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Text(f.title, color = if (focused) OnAccent else RoxyColors.onBackground, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val line = if (focused) filmActionWord(action) else listOfNotNull("Film", f.year?.takeIf { it > 0 }?.toString(), filmWord(f).ifEmpty { null }).joinToString("  ·  ")
+            Text(line, color = if (focused) OnAccent else if (bright) RoxyColors.accent else RoxyColors.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
