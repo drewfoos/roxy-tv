@@ -61,10 +61,12 @@ class SeriesOpeningTest {
         val vm = twoLookups(server)
         server.answer("next", ep("s2", 4)) // the older one
         assertEquals(emptyList<String>(), episodeReads(server))
+        assertTrue("not yet known what comes next", !vm.state.value.upNextKnown)
         server.answer("next", ep("s1", 7))
         assertEquals("s1", vm.state.value.seasons[vm.state.value.selectedSeason].id)
         assertEquals(listOf("episodes:s1"), episodeReads(server))
         assertEquals("s1-e7", vm.state.value.upNext?.id)
+        assertTrue("Play's words are final from here", vm.state.value.upNextKnown)
         server.answer("episodes:s1", eps("s1"))
         assertEquals("s1", vm.state.value.episodes.single().parentId)
     }

@@ -3,13 +3,19 @@ package tv.roxy.tv.ui.phone
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.sp
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -50,5 +56,18 @@ class SeasonRowTest {
         val button = compose.onNodeWithText("Download all").getBoundsInRoot()
         assertTrue("the name keeps its own width", name.right < 140.dp)
         assertTrue("the button is at the end", button.right > 380.dp)
+    }
+
+    // While the season list is being read the row is there already, as a placeholder of
+    // the height it will have: the name arriving moves nothing below it.
+    @Test fun theRowKeepsItsHeightWhenTheNameArrives() {
+        var label by mutableStateOf<String?>(null)
+        compose.setContent { Box(Modifier.width(412.dp)) { SeasonRow(label, onOpen = {}) { } } }
+        compose.onNodeWithTag("season-name-pending").assertExists()
+        val before = compose.onRoot().getBoundsInRoot().height
+        label = "Season 1"
+        compose.waitForIdle()
+        compose.onNodeWithTag("season-name-pending").assertDoesNotExist()
+        assertEquals(before, compose.onRoot().getBoundsInRoot().height)
     }
 }

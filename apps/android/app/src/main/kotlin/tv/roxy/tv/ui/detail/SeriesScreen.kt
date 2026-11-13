@@ -50,6 +50,8 @@ data class SeriesUiState(
     val showExtras: Boolean = false,
     /** What Play plays, across all seasons (null until the episode list is in). */
     val upNext: Item? = null,
+    /** The server has said what comes next (or that it cannot): until then Play's words are not final. */
+    val upNextKnown: Boolean = false,
     /** Rows that do not show their own episode number (see [rowNumbersFor]): id -> number shown, null for none. */
     val rowNumbers: Map<String, Int?> = emptyMap(),
 )
@@ -372,7 +374,7 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
             if (!lookups.isLatest(mine)) return@launch
             if (opening && _state.value.seasons.isNotEmpty()) openOn(NextWait(next, answered = true))
             // Play's target, whenever it comes (after the episodes when /next was slow).
-            _state.value = _state.value.copy(upNext = next)
+            _state.value = _state.value.copy(upNext = next, upNextKnown = true)
         }
     }
 

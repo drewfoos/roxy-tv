@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -99,6 +100,7 @@ import tv.roxy.tv.ui.components.ProgressBar
 import tv.roxy.tv.ui.components.RoxyImage
 import tv.roxy.tv.ui.components.ImageMemo
 import tv.roxy.tv.ui.components.widthPx
+import tv.roxy.tv.ui.detail.SeriesUiState
 import tv.roxy.tv.ui.detail.SeriesViewModel
 import tv.roxy.tv.ui.detail.rowNumber
 import tv.roxy.tv.ui.playItem
@@ -175,25 +177,17 @@ fun PhoneSeries(
         val have = state.seasons.mapNotNull { it.indexAired }.toSet()
         extraSeasons = providerSeasons.filter { it.number !in have && it.number != 0 }
     }
-    val seasonLabel = when {
-        selectedExtra != null -> "Season $selectedExtra"
-        state.showExtras -> "Extras"
-        state.seasons.isEmpty() -> "Episodes"
-        else -> state.seasons[state.selectedSeason].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
-    }
+    // Null while the season list is still being read: the row shows a placeholder, never a
+    // name that is replaced a moment later.
+    val seasonName = seriesSeasonLabel(state, selectedExtra)
+    val seasonLabel = seasonName ?: "Episodes"
     fun download(items: List<Item>) = startDownload(items, series, seasonLabel.takeIf { it != "Episodes" })
     val playable = state.episodes.filter { it.isPlayable }
     // Across all seasons (the list below shows one); the season's own pick until it is known.
     val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 }
         ?: playable.firstOrNull { it.userData?.played != true }
         ?: playable.firstOrNull()
-    val resumable = next != null && (next.userData?.positionMs ?: 0) > 0
-    val label = when {
-        next == null && (state.loading || state.episodesLoading) -> "Play" // the list is still on its way; don't claim there is nothing
-        next == null -> "Nothing to play yet"
-        resumable -> "Resume ${next.episodeCode}"
-        else -> "Start watching ${next.episodeCode}".trim()
-    }
+    val label = seriesPlayLabel(state, next)
     val listState = rememberLazyListState()
 
     TitlePageScaffold(
@@ -203,9 +197,10 @@ fun PhoneSeries(
         onArtChanged = { vm.load() },
     ) { bottomInset ->
         // Crunchyroll's order: key art with the logo, the facts and synopsis centred, a tab
-        // strip (Episodes / Movies & OVAs), the season row, then the episodes. Nothing in
-        // the list is a skeleton: the header is drawn from the card that opened the page
-        // and the episodes simply appear under the season row when they land.
+        // strip (Episodes / Movies & OVAs), the season row, then the episodes. The header is
+        // drawn from the card that opened the page; the season row, "Download all" and the
+        // episodes hold their places as placeholders until they are known, so nothing on
+        // the page says one thing and then another, and nothing below is pushed down.
         // Two tabs. The franchise's films and the OVAs are entries in the season list, in
         // release order (GET /v1/items/{id}/sections), not a page of their own.
         val tabs = listOf("Episodes", "More like this")
@@ -243,7 +238,7 @@ fun PhoneSeries(
                     } }
                 }
             } else {
-                if (state.seasons.isNotEmpty() || extraSeasons.isNotEmpty()) {
+                if (seasonName == null || state.seasons.isNotEmpty() || extraSeasons.isNotEmpty()) {
                     item(key = "seasons") {
                         var seasonsOpen by remember { mutableStateOf(false) }
                         if (seasonsOpen) {
@@ -275,11 +270,13 @@ fun PhoneSeries(
                             })
                         }
                         SeasonRow(
-                            label = seasonLabel,
+                            label = seasonName,
                             onOpen = { seasonsOpen = true },
                             trailing = {
                                 // Season download lives at the end of the season row as an icon, not a row of its own.
-                                if (selectedExtra == null && !state.showExtras && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
+                                // Its place is held while the episodes are on their way.
+                                if (downloadAllPending(state, selectedExtra)) BoneLine(width = 112.dp, height = 14.dp, modifier = Modifier.testTag("download-all-pending"))
+                                else if (selectedExtra == null && !state.showExtras && state.episodes.any { it.isPlayable }) SeasonDownloadRow(state.episodes, seasonLabel, onDownloadAll = ::download, compact = true)
                             },
                         )
                     }
@@ -366,9 +363,40 @@ fun SectionTabs(tabs: List<String>, selected: Int, modifier: Modifier = Modifier
     }
 }
 
-/** Full-width season selector under the tabs: the name with a caret opens [menu]; [trailing] sits at the right end. */
+/** The season list has not been read yet (a page opened from a card shows its header at once). */
+internal fun seasonsPending(state: SeriesUiState): Boolean = state.loading && state.seasons.isEmpty()
+
+/**
+ * The season selector's name. Null while the season list is still being read: the page
+ * used to say "Episodes" (its word for a show without seasons) and then "Season 1".
+ */
+internal fun seriesSeasonLabel(state: SeriesUiState, selectedExtra: Int?): String? = when {
+    selectedExtra != null -> "Season $selectedExtra"
+    state.showExtras -> "Extras"
+    seasonsPending(state) -> null
+    state.seasons.isEmpty() -> "Episodes"
+    else -> state.seasons[state.selectedSeason.coerceIn(0, state.seasons.lastIndex)].let { it.title.ifEmpty { "Season ${it.indexAired ?: state.selectedSeason + 1}" } }
+}
+
+/** "Download all" is not known yet (it depends on the episodes): its place is held. */
+internal fun downloadAllPending(state: SeriesUiState, selectedExtra: Int?): Boolean =
+    selectedExtra == null && !state.showExtras && state.episodes.isEmpty() && state.episodesError == null && (state.episodesLoading || seasonsPending(state))
+
+/**
+ * Play's words. Null while they are not final: the server has not said what comes next
+ * (or there is nothing to go by yet) and the page is still loading. The button used to
+ * say "Play" and then "Start watching S01E01".
+ */
+internal fun seriesPlayLabel(state: SeriesUiState, next: Item?): String? = when {
+    (next == null || !state.upNextKnown) && (state.loading || state.episodesLoading) -> null
+    next == null -> "Nothing to play yet"
+    (next.userData?.positionMs ?: 0) > 0 -> "Resume ${next.episodeCode}"
+    else -> "Start watching ${next.episodeCode}".trim()
+}
+
+/** Full-width season selector under the tabs: the name with a caret opens [menu]; [trailing] sits at the right end. A null [label] is a placeholder of the same height. */
 @Composable
-internal fun SeasonRow(label: String, onOpen: () -> Unit, trailing: @Composable () -> Unit) {
+internal fun SeasonRow(label: String?, onOpen: () -> Unit, trailing: @Composable () -> Unit) {
     // Solid, like the tab strip: the pinned banner must not show through it.
     Column(modifier = Modifier.background(RoxyColors.background)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalAlignment = Alignment.CenterVertically) {
@@ -376,7 +404,8 @@ internal fun SeasonRow(label: String, onOpen: () -> Unit, trailing: @Composable 
             // name ("Rascal Does Not Dream of a Dreaming Girl") used to take the whole row and
             // squeeze "Download all" into a column of single letters.
             Box(Modifier.weight(1f)) {
-                Row(
+                if (label == null) Box(Modifier.height(48.dp), contentAlignment = Alignment.CenterStart) { BoneLine(width = 96.dp, height = 16.dp, modifier = Modifier.testTag("season-name-pending")) }
+                else Row(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpen).padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -404,7 +433,8 @@ fun TitlePageScaffold(
     api: RoxyApi,
     listState: LazyListState,
     onBack: () -> Unit,
-    playLabel: String,
+    /** Null while the words are not final (see [seriesPlayLabel]). */
+    playLabel: String?,
     onPlay: () -> Unit,
     onSaved: () -> Unit,
     /** The three-dot menu's "Mark … as watched / unwatched"; null hides the menu. */

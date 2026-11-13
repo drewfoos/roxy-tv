@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -294,7 +295,8 @@ fun PhoneRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> 
 /** White primary button: black icon and bold label. [pill] rounds it fully (the hero); otherwise 4 dp corners (Netflix). */
 @Composable
 fun PlayButton(
-    text: String,
+    /** Null: the words are not known yet. The button keeps its place and shape with a faint line for them, so nothing is shown that a moment later reads differently. */
+    text: String?,
     modifier: Modifier = Modifier,
     icon: ImageVector = Icons.Filled.PlayArrow,
     height: Dp = 42.dp,
@@ -310,7 +312,8 @@ fun PlayButton(
     ) {
         Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(6.dp))
-        Text(text, color = content, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (text == null) Box(Modifier.width(154.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(content.copy(alpha = 0.22f)).testTag("play-words-pending"))
+        else Text(text, color = content, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -322,7 +325,7 @@ val OnBrand = Color(0xFF07182B)
  * and the round bookmark beside it.
  */
 @Composable
-fun PlayAndSaveRow(label: String, item: Item, api: RoxyApi, modifier: Modifier = Modifier, onPlay: () -> Unit, onSaved: () -> Unit = {}) {
+fun PlayAndSaveRow(label: String?, item: Item, api: RoxyApi, modifier: Modifier = Modifier, onPlay: () -> Unit, onSaved: () -> Unit = {}) {
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         PlayButton(label, modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = onPlay)
         SaveButton(item, api, onSaved = onSaved)

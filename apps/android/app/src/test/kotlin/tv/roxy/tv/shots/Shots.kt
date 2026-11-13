@@ -66,6 +66,20 @@ class Shots {
 
     private val app get() = ApplicationProvider.getApplicationContext<RoxyApp>()
 
+    // A series page while it loads: the season row and Play as placeholders, then as known.
+    @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")
+    fun phoneSeriesLoadingRows() {
+        compose.setContent {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().background(Color.Black).padding(top = 40.dp, bottom = 20.dp)) {
+                tv.roxy.tv.ui.phone.SeasonRow(null, onOpen = {}) { tv.roxy.tv.ui.phone.BoneLine(width = 112.dp, height = 14.dp) }
+                Box(Modifier.padding(16.dp)) { tv.roxy.tv.ui.phone.PlayButton(null, modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = tv.roxy.tv.ui.theme.RoxyColors.accent, content = tv.roxy.tv.ui.phone.OnBrand, onClick = {}) }
+                tv.roxy.tv.ui.phone.SeasonRow("Season 1", onOpen = {}) { androidx.compose.material3.Text("Download all", color = Color.White) }
+                Box(Modifier.padding(16.dp)) { tv.roxy.tv.ui.phone.PlayButton("Start watching S01E01", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = tv.roxy.tv.ui.theme.RoxyColors.accent, content = tv.roxy.tv.ui.phone.OnBrand, onClick = {}) }
+            }
+        }
+        shot("phone-series-loading-rows")
+    }
+
     @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")
     fun phoneContinueWatching() {
         val items = listOf(

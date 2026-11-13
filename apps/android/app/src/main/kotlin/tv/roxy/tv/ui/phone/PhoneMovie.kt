@@ -54,6 +54,12 @@ import tv.roxy.tv.ui.detail.MovieViewModel
 import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
+/**
+ * The film page's tabs. "Part of" is only known once the film's relations are read, so it
+ * comes last: it used to appear between the other two and push "More like this" aside.
+ */
+internal fun movieTabs(partOf: Boolean): List<String> = listOf("Movie", "More like this") + if (partOf) listOf("Part of") else emptyList()
+
 /** Netflix's phone movie page: backdrop, title and meta, Play, synopsis, the franchise it belongs to. */
 @Composable
 fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpenSeries: (Item) -> Unit, onOpenDetails: (Item) -> Unit = {}, onOpenMovie: (Item) -> Unit = {}, onOpenDiscover: (DiscoverItem) -> Unit = {}) {
@@ -98,10 +104,10 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
     ) { bottomInset ->
         // The series page's shape (Crunchyroll's): key art with the logo, facts and synopsis
         // centred, a tab strip, then the film as one row with its download and menu, and the
-        // franchise it belongs to under a second tab when there is one.
-        val tabs = listOf("Movie") + (if (state.partOf.isNotEmpty()) listOf("Part of") else emptyList()) + "More like this"
+        // franchise it belongs to under a tab of its own when there is one.
+        val tabs = movieTabs(state.partOf.isNotEmpty())
         var tab by rememberSaveable(movie.id) { mutableStateOf(0) }
-        val moreLike = tab == tabs.lastIndex
+        val moreLike = tab == 1
         var similar by remember(movie.id) { mutableStateOf<List<DiscoverItem>?>(null) }
         LaunchedEffect(moreLike, movie.id) { if (moreLike && similar == null) similar = runCatching { app.api.similar(movie.id) }.getOrDefault(emptyList()) }
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset)) {
@@ -128,7 +134,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                         }
                     } }
                 }
-            } else if (tab == 1 && state.partOf.isNotEmpty()) {
+            } else if (tab == 2 && state.partOf.isNotEmpty()) {
                 item(key = "partof-top") { Spacer(Modifier.height(10.dp)) }
                 items(state.partOf.chunked(2)) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
             } else {
