@@ -110,9 +110,9 @@ func TestPlaceFilmsDragonBall(t *testing.T) {
 }
 
 // Digimon (TMDB: Adventure and 02 as two seasons of one show): Our War Game is linked
-// as the sequel of Adventure and the prequel of 02 and came out between them. Nothing
-// else is brought along: the film before the series, the one after 02, a side story, a
-// spin-off; the tri. films hang off other films and are not this show's.
+// as the sequel of Adventure and the prequel of 02 and came out between them, and 02
+// names Revenge of Diaboromon as its sequel: the story after the latest season. Nothing
+// else is brought along: the film before the series, a side story, a spin-off; the tri. films hang off other films and are not this show's.
 func TestPlaceFilmsDigimon(t *testing.T) {
 	g := &metadata.StoryGraph{
 		Seasons: []metadata.StorySeason{season(552, "1999-03-07", "Digimon: Digital Monsters"), season(1313, "2000-04-02", "Digimon: Digital Monsters 02")},
@@ -129,7 +129,7 @@ func TestPlaceFilmsDigimon(t *testing.T) {
 	wantPlaced(t, got,
 		"Digimon Adventure (Movie) | 0 | Before the first season",
 		"Digimon: Our War Game | 1 | eligible 552-1313",
-		"Digimon Adventure 02: Revenge of Diaboromon | 2 | After the latest season",
+		"Digimon Adventure 02: Revenge of Diaboromon | 2 | eligible 1313-0",
 		"Digimon: Hurricane Touchdown | -1 | Side story",
 		"Digmon X-Evolution | -1 | Spin-off")
 }
@@ -147,7 +147,7 @@ func TestPlaceFilmsEvangelion(t *testing.T) {
 	}
 	got := placeFilms(g, listed("1995-10-04"), "1996-03-27")
 	wantPlaced(t, got,
-		"Neon Genesis Evangelion: The End of Evangelion | 1 | After the latest season",
+		"Neon Genesis Evangelion: The End of Evangelion | 1 | eligible 30-0",
 		"Neon Genesis Evangelion: Death & Rebirth | -1 | Recap")
 }
 
@@ -159,7 +159,7 @@ func TestPlaceFilmsBunnyGirl(t *testing.T) {
 		"Rascal Does Not Dream of a Dreaming Girl | 1 | eligible 101291-171046",
 		"Rascal Does Not Dream of a Sister Venturing Out | 1 | eligible 101291-171046",
 		"Rascal Does Not Dream of a Knapsack Kid | 1 | eligible 101291-171046",
-		"Rascal Does Not Dream of a Dear Friend | 2 | After the latest season")
+		"Rascal Does Not Dream of a Dear Friend | 2 | eligible 171046-0")
 }
 
 // TMDB lists both AniList seasons as one (or a page renumbers them): the films are
@@ -171,7 +171,7 @@ func TestPlaceFilmsMergedAndRenumberedSeasons(t *testing.T) {
 		"Rascal Does Not Dream of a Dreaming Girl | 1 | eligible 101291-171046",
 		"Rascal Does Not Dream of a Sister Venturing Out | 1 | eligible 101291-171046",
 		"Rascal Does Not Dream of a Knapsack Kid | 1 | eligible 101291-171046",
-		"Rascal Does Not Dream of a Dear Friend | 1 | After the latest season")
+		"Rascal Does Not Dream of a Dear Friend | 1 | eligible 171046-0")
 	// The same show listed as seasons 4 and 9.
 	renumbered := []Season{{Number: 9, AirDate: "2025-07-05"}, {Number: 4, AirDate: "2018-10-04"}}
 	got := placeFilms(bunnyGirl(), renumbered, "2025-09-27")
@@ -180,16 +180,69 @@ func TestPlaceFilmsMergedAndRenumberedSeasons(t *testing.T) {
 	}
 }
 
-// One season: nothing can be between two seasons.
+// One season: nothing can be between two seasons, but the film the season names as its
+// sequel continues the story; the one before it is only listed.
 func TestPlaceFilmsSingleSeason(t *testing.T) {
 	g := &metadata.StoryGraph{
 		Seasons: []metadata.StorySeason{season(1, "2020-01-05", "Show")},
 		Films:   []metadata.StoryFilm{film(2, "2021-06-01", "Show: The Movie", link(1, "SEQUEL")), film(3, "2019-06-01", "Show: Episode 0", link(1, "PREQUEL"))},
 	}
-	for _, p := range placeFilms(g, listed("2020-01-05"), "2020-03-29") {
-		if p.Eligible {
-			t.Fatalf("%s is eligible on a one-season show", p.Film.Title)
+	wantPlaced(t, placeFilms(g, listed("2020-01-05"), "2020-03-29"),
+		"Show: Episode 0 | 0 | Before the first season",
+		"Show: The Movie | 1 | eligible 1-0")
+}
+
+// Demon Slayer: Infinity Castle is the sequel of the latest season (Hashira Training)
+// and comes with a request that covers it. Mugen Train is retold by a TV season of its
+// own and stays listed; the later Infinity Castle films hang off the first one only.
+func TestPlaceFilmsDemonSlayer(t *testing.T) {
+	g := &metadata.StoryGraph{
+		Seasons: []metadata.StorySeason{
+			season(101922, "2019-04-06", "Demon Slayer"), season(129874, "2021-10-10", "Mugen Train Arc"),
+			season(142329, "2021-12-05", "Entertainment District Arc"), season(145139, "2023-04-09", "Swordsmith Village Arc"),
+			season(166240, "2024-05-12", "Hashira Training Arc"),
+		},
+		Films: []metadata.StoryFilm{
+			film(112151, "2020-10-16", "Mugen Train", link(101922, "SEQUEL"), link(129874, "ALTERNATIVE"), link(142329, "PREQUEL")),
+			film(178788, "2025-07-18", "Infinity Castle", link(166240, "SEQUEL")),
+			film(195200, "", "Infinity Castle Part 2"),
+		},
+	}
+	got := placeFilms(g, listed("2019-04-06", "2021-10-10", "2021-12-05", "2023-04-09", "2024-05-12"), "2024-06-30")
+	wantPlaced(t, got,
+		"Infinity Castle | 5 | eligible 166240-0",
+		"Mugen Train | -1 | Alternate version")
+}
+
+// After the latest season, and still only listed: a film on a run that leaves the show
+// without the season naming it, a sequel dated before the season began or by year
+// only, a recap, a side story; and the sequel of a season that is not the latest (its
+// next season is another AniList entry inside the same listed season).
+func TestPlaceFilmsAfterTheLatestSeasonNotEligible(t *testing.T) {
+	seasons := []metadata.StorySeason{season(1, "2019-04-06", "S1"), season(2, "2021-10-10", "S2")}
+	cases := []struct {
+		name string
+		film metadata.StoryFilm
+		note string
+	}{
+		{"only on a run out of the show", joined(film(10, "2022-06-01", "Bridge"), 2, 99), "After the latest season"},
+		{"dated before the season", film(11, "2021-01-01", "Early", link(2, "SEQUEL")), "After the latest season"},
+		{"year only", film(12, "2022", "Sometime", link(2, "SEQUEL")), "After the latest season"},
+		{"recap", film(13, "2022-06-01", "Show: Compilation Film", link(2, "SEQUEL")), "Recap"},
+		{"side story", film(14, "2022-06-01", "Aside", link(2, "SIDE_STORY")), "Side story"},
+		{"also an alternate version", film(15, "2022-06-01", "Retold", link(2, "SEQUEL"), link(1, "ALTERNATIVE")), "Alternate version"},
+	}
+	for _, c := range cases {
+		g := &metadata.StoryGraph{Seasons: seasons, Films: []metadata.StoryFilm{c.film}}
+		got := placeFilms(g, listed("2019-04-06", "2021-10-10"), "2021-12-26")
+		if len(got) != 1 || got[0].Eligible || got[0].Note != c.note {
+			t.Errorf("%s: %v, want listed with %q", c.name, placedLines(got), c.note)
 		}
+	}
+	// The control: the latest season's sequel, dated after it.
+	g := &metadata.StoryGraph{Seasons: seasons, Films: []metadata.StoryFilm{film(20, "2022-06-01", "The Movie", link(2, "SEQUEL"))}}
+	if got := placeFilms(g, listed("2019-04-06", "2021-10-10"), "2021-12-26"); len(got) != 1 || !got[0].Eligible || got[0].Between != [2]int{2, 0} {
+		t.Fatalf("control: %v", placedLines(got))
 	}
 }
 
@@ -430,8 +483,8 @@ func (w *filmWorld) movieItem(id string, providers map[string]string) {
 	}
 }
 
-// The page: all four films, each after its season; the three between the seasons are
-// on the main button, the one after the last season is not; AniList is read once.
+// The page: all four films, each after its season; the three between the seasons and
+// the one that continues the latest season are on the main button; AniList is read once.
 func TestFilmsListedOnTheSeriesPage(t *testing.T) {
 	w := newFilmWorld(t)
 	fs := w.films()
@@ -442,7 +495,7 @@ func TestFilmsListedOnTheSeriesPage(t *testing.T) {
 		104157: {TMDBID: dreamingGirl, AfterSeason: 1, Eligible: true, WithRequest: true},
 		154967: {TMDBID: sisterOut, AfterSeason: 1, Eligible: true, WithRequest: true},
 		161474: {TMDBID: knapsackKid, AfterSeason: 1, Eligible: true, WithRequest: true},
-		199340: {TMDBID: dearFriend, AfterSeason: 2, Note: "After the latest season"},
+		199340: {TMDBID: dearFriend, AfterSeason: 2, Eligible: true, WithRequest: true},
 	} {
 		f := fs[anilist]
 		if f.TMDBID != want.TMDBID || f.AfterSeason != want.AfterSeason || f.Eligible != want.Eligible || f.WithRequest != want.WithRequest || f.Note != want.Note {
@@ -465,7 +518,7 @@ func TestRequestWithFilms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.wantAdded("the named films", dreamingGirl, sisterOut, knapsackKid)
+	w.wantAdded("the named films", dreamingGirl, sisterOut, knapsackKid, dearFriend)
 	if r.Status != "sent" || !r.FilmAuto || fmt.Sprint(r.FilmSeasons) != "[101291 171046]" {
 		t.Fatalf("series request %+v, want sent, films asked for, both seasons covered", r)
 	}
@@ -473,7 +526,7 @@ func TestRequestWithFilms(t *testing.T) {
 	if saved == nil || !saved.FilmAuto || fmt.Sprint(saved.FilmSeasons) != "[101291 171046]" {
 		t.Fatalf("saved %+v", saved)
 	}
-	for _, id := range []int{dreamingGirl, sisterOut, knapsackKid} {
+	for _, id := range []int{dreamingGirl, sisterOut, knapsackKid, dearFriend} {
 		if fr, _ := w.st.GetRequest(ctx, "movie", id); fr == nil || fr.Status != "sent" || fr.UserName != "drewfoos" {
 			t.Fatalf("film %d request %+v", id, fr)
 		}
@@ -482,7 +535,35 @@ func TestRequestWithFilms(t *testing.T) {
 	// error of its own) and the background run ask for nothing twice.
 	_, _ = w.s.RequestWithFilms(ctx, 100, w.admin, nil, []int{dreamingGirl, sisterOut, knapsackKid})
 	w.s.AcquireStoryFilms(ctx)
-	w.wantAdded("after a second press and a background run", dreamingGirl, sisterOut, knapsackKid)
+	w.wantAdded("after a second press and a background run", dreamingGirl, sisterOut, knapsackKid, dearFriend)
+}
+
+// The film after the latest season comes only with a request that covers that season:
+// asked for season 1 alone, it stays; announced after a request that covered both
+// seasons and named films, it comes by itself.
+func TestFilmAfterTheLatestSeasonNeedsThatSeason(t *testing.T) {
+	ctx := context.Background()
+	w := newFilmWorld(t)
+	if _, err := w.s.RequestWithFilms(ctx, 100, w.admin, []int{1}, []int{dearFriend}); err != nil {
+		t.Fatal(err)
+	}
+	w.wantAdded("season 1 alone")
+	w.s.AcquireStoryFilms(ctx)
+	w.wantAdded("season 1 alone, the background run")
+
+	w = newFilmWorld(t)
+	full := bunnyGirl()
+	w.graph = &metadata.StoryGraph{Seasons: full.Seasons, Films: full.Films[:3]} // Dear Friend is not announced yet
+	if _, err := w.s.RequestWithFilms(ctx, 100, w.admin, nil, []int{dreamingGirl, sisterOut, knapsackKid}); err != nil {
+		t.Fatal(err)
+	}
+	w.wantAdded("at the request", dreamingGirl, sisterOut, knapsackKid)
+	w.mu.Lock()
+	w.graph = full
+	w.mu.Unlock()
+	w.aDayLater()
+	w.s.AcquireStoryFilms(ctx)
+	w.wantAdded("once the film after the latest season is announced", dreamingGirl, sisterOut, knapsackKid, dearFriend)
 }
 
 // Only part of the films was named (one was unticked, or the page was old): only those.
@@ -594,6 +675,7 @@ func TestFilmsAlreadyHadAreNotRequested(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.inArr[knapsackKid] = true
+	w.inArr[dearFriend] = true
 	fs := w.films()
 	for id, f := range fs {
 		if f.WithRequest {

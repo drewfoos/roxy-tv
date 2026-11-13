@@ -648,7 +648,7 @@ fun PhoneDiscoverDetail(
                                 filmRows(placed.more)
                             }
                             if (films?.auto == true) Text(
-                                "Films between the seasons you requested are requested as they are announced.",
+                                "Story films of the seasons you requested are requested as they are announced.",
                                 fontSize = 12.sp, lineHeight = 16.sp, color = RoxyColors.muted, modifier = Modifier.padding(top = 10.dp),
                             )
                         }

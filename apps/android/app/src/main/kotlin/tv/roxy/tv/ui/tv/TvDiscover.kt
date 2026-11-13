@@ -463,7 +463,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
                 }
                 if (films?.auto == true) {
                     Spacer(Modifier.height(8.dp))
-                    Text("Films between the seasons you requested are requested as they are announced.", color = RoxyColors.muted, fontSize = 13.sp, maxLines = 1)
+                    Text("Story films of the seasons you requested are requested as they are announced.", color = RoxyColors.muted, fontSize = 13.sp, maxLines = 1)
                 }
                 Spacer(Modifier.height(18.dp))
             }

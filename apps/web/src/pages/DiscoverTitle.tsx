@@ -258,7 +258,7 @@ export function DiscoverTitle() {
           ))}
           {placed.more.length > 0 && <h3 className="dseasons__more">More films</h3>}
           {filmRows(placed.more)}
-          {films?.auto && <p className="dseasons__auto">Films between the seasons you requested are requested as they are announced.</p>}
+          {films?.auto && <p className="dseasons__auto">Story films of the seasons you requested are requested as they are announced.</p>}
         </section>
       )}
 

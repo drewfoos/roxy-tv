@@ -16,24 +16,31 @@ import (
 
 // Films of a series: an anime's films are listed on its Discover page, between the
 // seasons they sit between. Listing is all most of them get: a film is requested when
-// somebody asks for it. The one exception is a film that AniList's own links place
+// somebody asks for it. The exceptions are a film that AniList's own links place
 // between two seasons of this show (Bunny Girl Senpai's three films between its two
-// seasons): the main Request button names those and brings them along, and a request
-// made that way keeps bringing such films as they are announced.
+// seasons) and one that continues the story after the latest season (Demon Slayer:
+// Infinity Castle after the Hashira Training season): the main Request button names
+// those and brings them along, and a request made that way keeps bringing such films
+// as they are announced.
 //
 // The rules, the same for every client because only the server applies them:
 //
 //   - Who may be acquired without being asked for one by one (eligible): a film that
 //     AniList links as the sequel of season A, the prequel of season B, or on the run of
 //     films joining A to B, where A and B are neighbouring seasons of THIS show, every
-//     such link names the same gap, and the film came out between the two. A release
-//     date alone never does it. A side story, recap, alternate version or spin-off, a
-//     film before the first or after the last season, one whose links disagree, and one
-//     TMDB cannot be matched to for certain are all listed and left to be asked for.
+//     such link names the same gap, and the film came out between the two. Or a film
+//     the show's LATEST season itself names as its sequel, out after that season began
+//     (the story goes on in a film; a film that only follows the last season on a run
+//     into another series does not count). A release date alone never does it. A side
+//     story, recap, alternate version or spin-off, a film before the first season, one
+//     after an earlier season with nothing to sit between, one whose links disagree,
+//     and one TMDB cannot be matched to for certain are all listed and left to be
+//     asked for.
 //   - Authorization: films come along only with a request that said so (the button
 //     named them). That request remembers it (store.Request.FilmAuto) together with the
 //     seasons it covered, by AniList id (FilmSeasons). Later films are acquired only
-//     for such a request and only between two seasons on that list: a season announced,
+//     for such a request and only between two seasons on that list (or continuing a
+//     latest season that is on it): a season announced,
 //     split or renumbered afterwards has an id that is not on it, so it widens nothing
 //     until somebody requests again. Owning the seasons authorizes nothing.
 //   - No duplicates: a film in the library (by AniList or TMDB id), already requested,
@@ -102,7 +109,7 @@ type storyCache struct {
 type placedFilm struct {
 	Film     metadata.StoryFilm
 	After    int    // season number shown after; 0 before the first; -1 apart
-	Between  [2]int // the AniList ids of the two seasons, when eligible
+	Between  [2]int // when eligible: the AniList ids of the two seasons, or the latest season and 0
 	Eligible bool
 	Note     string
 }
@@ -211,6 +218,7 @@ func placeFilms(g *metadata.StoryGraph, seasons []Season, lastAir string) []plac
 	var out []placedFilm
 	for _, f := range g.Films {
 		gaps := map[[2]int]bool{}
+		sequelOf := map[int]bool{} // the seasons that name the film as their own sequel
 		other := ""
 		touches := false
 		for _, l := range f.Links {
@@ -220,6 +228,7 @@ func placeFilms(g *metadata.StoryGraph, seasons []Season, lastAir string) []plac
 			touches = true
 			switch l.Relation {
 			case "SEQUEL":
+				sequelOf[l.Season] = true
 				gaps[[2]int{l.Season, next(l.Season)}] = true
 			case "PREQUEL":
 				gaps[[2]int{prev(l.Season), l.Season}] = true
@@ -278,6 +287,9 @@ func placeFilms(g *metadata.StoryGraph, seasons []Season, lastAir string) []plac
 		default:
 			a, b := gap[0], gap[1]
 			between := a != 0 && b != 0 && dated && !at.Before(start[a]) && !at.After(start[b])
+			// The story goes on in a film: the latest season's own sequel, out after it began.
+			_, began := start[a]
+			goesOn := b == 0 && a != 0 && number[a] == lastNumber && sequelOf[a] && dated && began && !at.Before(start[a])
 			switch {
 			case a != 0 && b != 0 && !between:
 				p.Note = "Can't tell where it fits"
@@ -301,6 +313,8 @@ func placeFilms(g *metadata.StoryGraph, seasons []Season, lastAir string) []plac
 				p.Note = "Recap"
 			case between:
 				p.Eligible, p.Between = true, gap
+			case goesOn:
+				p.Eligible, p.Between, p.Note = true, gap, ""
 			}
 		}
 		out = append(out, p)
@@ -568,16 +582,22 @@ func (s *Service) RequestWithFilms(ctx context.Context, tmdbID int, user *model.
 		return nil, err
 	}
 	for _, f := range chosen {
-		if contains(r.FilmSeasons, f.between[0]) && contains(r.FilmSeasons, f.between[1]) {
+		if coversFilm(r.FilmSeasons, f.between) {
 			s.requestFilm(ctx, r, f.TMDBID, f.AniListID, user)
 		}
 	}
 	return r, nil
 }
 
+// coversFilm: a request that covered these seasons covers an eligible film: both seasons
+// it sits between, or (between[1] 0) the latest season it continues.
+func coversFilm(seasons []int, between [2]int) bool {
+	return between[0] != 0 && contains(seasons, between[0]) && (between[1] == 0 || contains(seasons, between[1]))
+}
+
 // AcquireStoryFilms brings the films announced since a request was made: for every sent
 // series request that asked for films (FilmAuto), each eligible film between two of the
-// seasons that request covered. Run after RetryPending, every 10 minutes; AniList is
+// seasons that request covered or continuing the latest season if it covered that. Run after RetryPending, every 10 minutes; AniList is
 // read at most once a day per series.
 func (s *Service) AcquireStoryFilms(ctx context.Context) {
 	if !s.RequestsEnabled("movie") {
@@ -589,7 +609,7 @@ func (s *Service) AcquireStoryFilms(ctx context.Context) {
 	}
 	for i := range all {
 		r := all[i]
-		if r.MediaType != "tv" || r.Status != "sent" || !r.FilmAuto || len(r.FilmSeasons) < 2 {
+		if r.MediaType != "tv" || r.Status != "sent" || !r.FilmAuto || len(r.FilmSeasons) == 0 {
 			continue
 		}
 		det, err := s.Detail(ctx, "tv", r.TMDBID)
@@ -602,7 +622,7 @@ func (s *Service) AcquireStoryFilms(ctx context.Context) {
 		}
 		for _, p := range placeFilms(sc.Graph, det.Seasons, det.lastAir) {
 			m := sc.TMDB[p.Film.ID]
-			if !p.Eligible || m.ID == 0 || !contains(r.FilmSeasons, p.Between[0]) || !contains(r.FilmSeasons, p.Between[1]) {
+			if !p.Eligible || m.ID == 0 || !coversFilm(r.FilmSeasons, p.Between) {
 				continue
 			}
 			s.requestFilm(ctx, &r, m.ID, p.Film.ID, nil)
