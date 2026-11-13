@@ -485,9 +485,16 @@ fun PhoneDiscoverDetail(
     var films by remember(type, tmdbId) { mutableStateOf<tv.roxy.tv.api.DiscoverFilms?>(null) }
     var filmsTick by remember { mutableStateOf(0) }
     val wantsFilms = type == "tv" && detail?.isAnime == true
+    // Answered: the look came back (with films, with none, or failed), or took too long.
+    var filmsAnswered by remember(type, tmdbId) { mutableStateOf(false) }
     LaunchedEffect(type, tmdbId, wantsFilms, filmsTick, detail?.request?.status) {
-        if (wantsFilms) runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }.onFailure { Timber.w(it, "discover films") }
+        if (wantsFilms) {
+            runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }.onFailure { Timber.w(it, "discover films") }
+            filmsAnswered = true
+        }
     }
+    LaunchedEffect(type, tmdbId, wantsFilms) { if (wantsFilms) { kotlinx.coroutines.delay(tv.roxy.tv.ui.FilmsWaitMs); filmsAnswered = true } }
+    val filmsPending = tv.roxy.tv.ui.filmsPending(wantsFilms, filmsAnswered)
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var setupPrompt by remember { mutableStateOf(false) }
@@ -604,7 +611,17 @@ fun PhoneDiscoverDetail(
                     }
                     if (d.seasons.isNotEmpty()) {
                         Column(modifier = Modifier.fillMaxWidth().padding(top = 22.dp)) {
-                            Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                            // The films are read apart from the page and how many will come is not
+                            // known: a loading circle beside the heading says they are on their way.
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Seasons", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground)
+                                if (filmsPending) {
+                                    Spacer(Modifier.width(12.dp))
+                                    tv.roxy.tv.ui.components.LoadingCircle(14.dp, tag = "films-pending")
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Looking for films", fontSize = 12.sp, color = RoxyColors.muted)
+                                }
+                            }
                             val placed = placeFilms(films?.films.orEmpty(), d.seasons.map { it.number })
                             val filmRows: @Composable (List<tv.roxy.tv.api.DiscoverFilm>) -> Unit = { list ->
                                 list.forEach { f ->
@@ -729,7 +746,7 @@ fun PhoneDiscoverDetail(
                     d.inLibrary && (d.seasons.isEmpty() || missing.isEmpty()) -> PlayButton("Watch", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
                     d.inLibrary -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         PlayButton("Watch", modifier = Modifier.weight(1f), height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand, onClick = openLibrary)
-                        GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}${filmsSuffix(mainFilms.size)}", modifier = Modifier.height(44.dp), onClick = { requestSeasons(missing.map { it.number }, mainFilms) })
+                        GreyButton(if (busy) "…" else "Request ${missing.size} season${if (missing.size == 1) "" else "s"}${filmsSuffix(mainFilms.size)}", modifier = Modifier.height(44.dp), loading = filmsPending && !busy, onClick = { if (!filmsPending) requestSeasons(missing.map { it.number }, mainFilms) })
                     }
                     d.request != null && d.request.status != "failed" && d.request.status != "declined" && missing.isEmpty() -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         PlayButton(if (d.request.status == "approval") "Waiting for approval" else "Requested", modifier = Modifier.weight(1f), icon = Icons.Filled.Check, height = 44.dp, pill = true, container = ButtonGrey, content = Color.White, onClick = {})
@@ -753,8 +770,10 @@ fun PhoneDiscoverDetail(
                             else -> "Request${filmsSuffix(mainFilms.size)}"
                         },
                         modifier = Modifier.fillMaxWidth(), icon = Icons.Outlined.AddCircleOutline, height = 44.dp, pill = true, container = RoxyColors.accent, content = OnBrand,
+                        // What this button sends is not known until the films are: no words yet, and no press.
+                        loading = filmsPending && !busy,
                         onClick = {
-                            if (busy) return@PlayButton
+                            if (busy || filmsPending) return@PlayButton
                             busy = true
                             requestError = null
                             scope.launch {

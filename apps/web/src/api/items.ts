@@ -192,10 +192,19 @@ export function nextToPlay(eps: Item[]): Item | null {
   return ordered.slice(lastWatched + 1).find((e) => !e.userData?.played) ?? ordered.find((e) => !e.userData?.played) ?? ordered[0] ?? null
 }
 
-export function playLabel(next: Item | null, loading = false): string {
-  if (!next) return loading ? 'Play' : 'Nothing to play yet'
+export function playLabel(next: Item | null): string {
+  if (!next) return 'Nothing to play yet'
   const resumable = (next.userData?.positionMs ?? 0) > 0
   const code = episodeCode(next)
   if (resumable) return isEpisode(next) ? `Resume ${code}` : 'Resume'
   return isEpisode(next) && code ? `Start watching ${code}` : 'Start watching'
+}
+
+/**
+ * A series page's Play label, or null while what plays next is still being read. The
+ * page then draws a faint line in the button: "Play" that becomes "Resume S1 E4" is
+ * words changing under the reader, and "Nothing to play yet" would be untrue.
+ */
+export function seriesPlayLabel(next: Item | null, loading: boolean): string | null {
+  return !next && loading ? null : playLabel(next)
 }

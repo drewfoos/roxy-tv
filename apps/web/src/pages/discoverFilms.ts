@@ -31,6 +31,24 @@ export function buttonFilms(films: DiscoverFilms | null | undefined): number[] {
   return (films?.films ?? []).filter((f) => f.withRequest && !!f.tmdbId).map((f) => f.tmdbId as number)
 }
 
+/** How long a page waits for the films before its Request button goes ahead without them. */
+export const FILMS_WAIT_MS = 20_000
+
+/**
+ * True while a series that can have films has no answer about them yet. The Request
+ * button then shows a turning circle and no words: "Request" turning into
+ * "Request + 2 films" under the pointer is words that change, and a press in between
+ * would send the series without its films.
+ */
+export function filmsPending(wantsFilms: boolean, answered: boolean): boolean {
+  return wantsFilms && !answered
+}
+
+/** A Request button's words, or null while the films that may join them are not known. */
+export function requestWords(words: string, films: number, pending: boolean): string | null {
+  return pending ? null : words + filmsSuffix(films)
+}
+
 /** " + 3 films" for the main button's label; nothing without films. */
 export function filmsSuffix(n: number): string {
   return n <= 0 ? '' : n === 1 ? ' + 1 film' : ` + ${n} films`

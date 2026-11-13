@@ -303,6 +303,8 @@ fun PlayButton(
     pill: Boolean = false,
     container: Color = Color.White,
     content: Color = Color.Black,
+    /** Something the words depend on is being read: the loading circle stands alone in the button until it is known. */
+    loading: Boolean = false,
     onClick: () -> Unit,
 ) {
     Row(
@@ -310,6 +312,10 @@ fun PlayButton(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
+        if (loading) {
+            tv.roxy.tv.ui.components.LoadingCircle(22.dp, color = content, tag = "button-loading")
+            return@Row
+        }
         Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(6.dp))
         if (text == null) Box(Modifier.width(154.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(content.copy(alpha = 0.22f)).testTag("play-words-pending"))
@@ -584,12 +590,17 @@ fun SaveButton(item: Item, api: RoxyApi, onSaved: () -> Unit = {}) {
 
 /** Netflix's grey secondary button. */
 @Composable
-fun GreyButton(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, onClick: () -> Unit) {
+fun GreyButton(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, loading: Boolean = false, onClick: () -> Unit) {
     Row(
         modifier = modifier.height(42.dp).clip(RoundedCornerShape(4.dp)).background(ButtonGrey).clickable(onClick = onClick).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
+        if (loading) {
+            // The words' usual room, so the button beside it does not move when they come.
+            Box(Modifier.width(132.dp), contentAlignment = Alignment.Center) { tv.roxy.tv.ui.components.LoadingCircle(20.dp, color = Color.White, tag = "button-loading") }
+            return@Row
+        }
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(6.dp))

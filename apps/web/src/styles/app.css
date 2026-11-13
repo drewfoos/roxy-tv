@@ -630,6 +630,14 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .bone--line { height: 14px; }
 .spinner { width: 40px; height: 40px; border: 3px solid rgba(62, 166, 255, 0.25); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* The same circle, small: beside a heading or in a button whose words are not known yet. */
+.spinner--small { display: inline-block; width: 16px; height: 16px; border-width: 2px; flex: none; }
+.spinner--inherit { border-color: color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor; }
+.btn__circle { display: inline-flex; align-items: center; justify-content: center; min-width: 76px; }
+/* Waiting, not unavailable: a button whose words are being read is not dimmed, so it does not brighten when they arrive. */
+.btn[aria-busy='true'][disabled] { opacity: 1; cursor: progress; }
+/* A button's words while they are still being read: a faint line where they will be. */
+.btn__pending { display: inline-block; width: 124px; height: 10px; border-radius: 5px; background: currentColor; opacity: 0.3; }
 .center { display: grid; place-items: center; min-height: 60vh; }
 
 /* ---------- menus ---------- */
@@ -1035,6 +1043,8 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .dseason__state--lib { color: var(--accent); }
 .dseason .chip { white-space: nowrap; flex: none; }
 .dfilm .dseason__toggle { padding-left: 30px; }
+.partof { padding: 0 var(--gutter); margin-top: 28px; }
+.dseasons__pending { display: inline-flex; align-items: center; gap: 8px; margin-left: 14px; font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); vertical-align: middle; }
 .dseasons__more { margin: 22px 0 4px; font-size: 14px; font-weight: 600; color: var(--muted); }
 .dseasons__auto { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
 .dseason .chip:hover { background: #444; }

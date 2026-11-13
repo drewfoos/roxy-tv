@@ -39,6 +39,8 @@ class TvDiscoverFilmsPageTest {
     private lateinit var server: HttpServer
     private val app get() = ApplicationProvider.getApplicationContext<RoxyApp>()
     private val opened = mutableListOf<String>()
+    /** Closed: the films answer is held back, as on a series' first look (the server reads AniList). */
+    private var filmsGate = java.util.concurrent.CountDownLatch(0)
 
     private fun HttpExchange.json(body: String) {
         val b = body.toByteArray()
@@ -55,6 +57,7 @@ class TvDiscoverFilmsPageTest {
         }
         server.createContext("/v1/discover/tv/7707/films") {
             hits += "GET films"
+            filmsGate.await(20, java.util.concurrent.TimeUnit.SECONDS)
             it.json("""{"requestsEnabled":true,"films":[
                 {"anilistId":1,"tmdbId":11,"title":"Between","year":2019,"afterSeason":1,"eligible":true,"withRequest":true},
                 {"anilistId":2,"tmdbId":12,"title":"Held","afterSeason":1,"eligible":true,"libraryItemId":"lib-12"},
@@ -70,7 +73,7 @@ class TvDiscoverFilmsPageTest {
         runBlocking { app.prefs.saveSession(Session(serverUrl = "http://127.0.0.1:${server.address.port}", token = "t", profileId = "p")) }
     }
 
-    @After fun stop() = server.stop(0)
+    @After fun stop() { filmsGate.countDown(); server.stop(0) }
 
     private fun waitFor(what: String, cond: () -> Boolean) {
         val until = System.currentTimeMillis() + 8_000
@@ -123,5 +126,31 @@ class TvDiscoverFilmsPageTest {
         compose.waitForIdle()
         assertEquals(listOf("library lib-12", "page movie 14"), opened)
         assertTrue("nothing was requested: $hits", hits.none { it.startsWith("POST") })
+    }
+
+    private fun tagged(tag: String) = compose.onAllNodes(androidx.compose.ui.test.hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+
+    /**
+     * While the films are being read the Request row shows the loading circle and no words
+     * (it said "Request" and then "Request + 1 film"), and OK on it sends nothing: that
+     * request would have left the films out.
+     */
+    @Test fun theRequestRowWaitsForTheFilms() {
+        filmsGate = java.util.concurrent.CountDownLatch(1)
+        compose.setContent { TvDiscoverTitle("tv", 7707, onOpenSeries = {}, onOpenMovie = {}, onOpenDiscover = { _, _ -> }) }
+        waitFor("the page is up and the films are asked for") { shown("S1") && hits.contains("GET films") }
+        assertTrue("the circle on the Request row", tagged("row-loading"))
+        assertTrue("no words on it yet", tagged("row-words-pending"))
+        assertTrue("the circle by the seasons", tagged("films-pending"))
+        assertTrue("says what it waits for", shown("Looking for this series' films."))
+        assertTrue("no Request words that would change", !shown("Request") && !shown("Request + 1 film"))
+        compose.onNode(androidx.compose.ui.test.hasTestTag("row-loading")).performClick()
+        compose.waitForIdle()
+        assertTrue("nothing was requested: $hits", hits.none { it.startsWith("POST") })
+
+        filmsGate.countDown()
+        waitFor("the row says what it sends") { shown("Request + 1 film") }
+        assertTrue("the circles are gone", !tagged("row-loading") && !tagged("films-pending") && !tagged("row-words-pending"))
+        assertTrue(shown("Sends the series to Sonarr and 1 film to Radarr."))
     }
 }

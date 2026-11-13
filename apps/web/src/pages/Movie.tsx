@@ -54,21 +54,7 @@ export function Movie() {
           </>
         }
       />
-      <TitleBelow item={movie}>
-        {partOf.length > 0 && (
-          <div className="muted" style={{ marginTop: 14 }}>
-            Part of{' '}
-            {partOf.map((p, i) => (
-              <span key={p.id}>
-                {i > 0 && ', '}
-                <Link className="link link--plain" to={`/series/${p.id}`}>
-                  {p.title}
-                </Link>
-              </span>
-            ))}
-          </div>
-        )}
-      </TitleBelow>
+      <TitleBelow item={movie} />
       <SectionTabs tabs={['Movie', 'More like this']} selected={tab} onSelect={setTab} />
       {tab === 0 ? (
         <>
@@ -104,6 +90,21 @@ export function Movie() {
                 <TitleCard key={it.id} item={it} />
               ))}
             </Row>
+          )}
+          {/* Read after the page: at the end, where arriving moves nothing already shown
+              (under the synopsis it pushed the tabs and the film down). */}
+          {partOf.length > 0 && (
+            <div className="muted partof">
+              Part of{' '}
+              {partOf.map((p, i) => (
+                <span key={p.id}>
+                  {i > 0 && ', '}
+                  <Link className="link link--plain" to={`/series/${p.id}`}>
+                    {p.title}
+                  </Link>
+                </span>
+              ))}
+            </div>
           )}
         </>
       ) : (

@@ -11,7 +11,7 @@ import { LoadError } from '../components/Connection'
 import { Footer } from '../components/Footer'
 import { PhoneTitleHeader } from '../components/PhoneChrome'
 import { IconCheck, IconCheckCircle, IconExpand, IconHistory, IconPlay, IconSettings } from '../components/Icons'
-import { buttonFilms, filmLine, filmState, filmsSuffix, placeFilms } from './discoverFilms'
+import { buttonFilms, filmLine, filmState, FILMS_WAIT_MS, filmsPending, placeFilms, requestWords } from './discoverFilms'
 import { DownloadBar, DownloadStatusCard, canSearchFor, effectiveState, episodeLine, isActive, isPending, stateColor } from '../components/DiscoverBits'
 
 /**
@@ -34,7 +34,16 @@ export function DiscoverTitle() {
   // which of them the Request button brings). Asked for apart from the page: the first
   // look reads AniList and can take a while, and the page does not wait for it.
   const filmsKey = !isMovie && d?.isAnime ? `discover:films:${tmdbId}` : null
-  const { data: films, reload: reloadFilms } = useAsync(filmsKey, () => api.discoverFilms(tmdbId), [filmsKey])
+  const { data: films, error: filmsError, reload: reloadFilms } = useAsync(filmsKey, () => api.discoverFilms(tmdbId), [filmsKey])
+  // Until the films have answered (a failed look is an answer, and so is waiting long
+  // enough), the Request buttons show a turning circle in place of their words.
+  const [filmsWaited, setFilmsWaited] = useState<string | null>(null)
+  useEffect(() => {
+    if (filmsKey == null) return
+    const t = setTimeout(() => setFilmsWaited(filmsKey), FILMS_WAIT_MS)
+    return () => clearTimeout(t)
+  }, [filmsKey])
+  const pending = filmsPending(filmsKey != null, films != null || filmsError != null || filmsWaited === filmsKey)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -143,8 +152,8 @@ export function DiscoverTitle() {
           <IconPlay size={20} /> Watch
         </button>
         {d.requestsEnabled ? (
-          <button className="btn btn--grey" disabled={busy} onClick={() => requestAll(missing.map((s) => s.number))}>
-            {busy ? 'Requesting…' : `Request ${plural(missing.length)}${filmsSuffix(withFilms.length)}`}
+          <button className="btn btn--grey" disabled={busy || pending} aria-busy={pending && !busy} onClick={() => requestAll(missing.map((s) => s.number))}>
+            {busy ? 'Requesting…' : (requestWords(`Request ${plural(missing.length)}`, withFilms.length, pending) ?? <ButtonCircle />)}
           </button>
         ) : (
           notSetUp
@@ -168,13 +177,13 @@ export function DiscoverTitle() {
     const label = busy
       ? 'Requesting…'
       : req?.status === 'failed' || req?.status === 'declined'
-        ? 'Request again'
+        ? requestWords('Request again', 0, pending)
         : missing.length > 0 && missing.length < mainSeasons.length
-          ? `Request ${missing.length} more season${missing.length === 1 ? '' : 's'}${filmsSuffix(withFilms.length)}`
-          : `Request${filmsSuffix(withFilms.length)}`
+          ? requestWords(`Request ${missing.length} more season${missing.length === 1 ? '' : 's'}`, withFilms.length, pending)
+          : requestWords('Request', withFilms.length, pending)
     actions = (
-      <button className="btn btn--brand" disabled={busy} onClick={() => requestAll()}>
-        {label}
+      <button className="btn btn--brand" disabled={busy || pending} aria-busy={label == null} onClick={() => requestAll()}>
+        {label ?? <ButtonCircle />}
       </button>
     )
   }
@@ -236,7 +245,14 @@ export function DiscoverTitle() {
 
       {seasons.length > 0 && (
         <section className="dseasons">
-          <h2 className="row__title">Seasons</h2>
+          <h2 className="row__title">
+            Seasons
+            {pending && (
+              <span className="dseasons__pending">
+                <span className="spinner spinner--small" /> Looking for films
+              </span>
+            )}
+          </h2>
           {filmRows(placed.before)}
           {seasons.map((sn) => (
             <Fragment key={sn.number}>
@@ -665,5 +681,14 @@ function DetailSkeleton() {
         ))}
       </div>
     </div>
+  )
+}
+
+/** In a Request button while the films that may come with it are being looked for. */
+function ButtonCircle() {
+  return (
+    <span className="btn__circle" role="status" aria-label="Looking for films">
+      <span className="spinner spinner--small spinner--inherit" />
+    </span>
   )
 }

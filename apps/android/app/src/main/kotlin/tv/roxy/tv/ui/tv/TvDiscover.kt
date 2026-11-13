@@ -298,9 +298,16 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
     var films by remember(type, tmdbId) { mutableStateOf<DiscoverFilms?>(null) }
     val wantsFilms = type == "tv" && detail?.isAnime == true
     var filmsTick by remember { mutableStateOf(0) }
+    // Answered: the look came back (with films, with none, or failed), or took too long.
+    var filmsAnswered by remember(type, tmdbId) { mutableStateOf(false) }
     LaunchedEffect(type, tmdbId, wantsFilms, reqNow?.id, reqNow?.status, filmsTick) {
-        if (wantsFilms) runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }
+        if (wantsFilms) {
+            runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }
+            filmsAnswered = true
+        }
     }
+    LaunchedEffect(type, tmdbId, wantsFilms) { if (wantsFilms) { kotlinx.coroutines.delay(tv.roxy.tv.ui.FilmsWaitMs); filmsAnswered = true } }
+    val filmsPending = tv.roxy.tv.ui.filmsPending(wantsFilms, filmsAnswered)
     val d = detail
     if (d == null) {
         if (error != null) PageMessage(error!!, color = RoxyColors.error) else DiscoverTitleSkeleton()
@@ -316,16 +323,18 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
     // A failed or declined request can be asked again (the server resets and re-sends it).
     val dead = req?.status == "failed" || req?.status == "declined"
     val live = req != null && !dead
-    val canRequest = !d.inLibrary && !live && d.requestsEnabled && !busy
+    // While the films are being read the Request rows carry the loading circle and no words:
+    // what they send is not known yet, and a press would send the series without its films.
+    val canRequest = !d.inLibrary && !live && d.requestsEnabled && !busy && !filmsPending
     val missing = d.missingSeasons
     // A series in the library (or already requested in part) can still ask for the seasons it lacks.
     val canRequestMissing = !d.isMovie && (d.inLibrary || live) && missing.isNotEmpty() && d.requestsEnabled
-    val label = when {
+    val label: String? = when {
         d.inLibrary -> "Open in library"
         busy && !canRequestMissing -> "Requesting…"
         live -> requestWord(d)
         dead && d.requestsEnabled -> "Request again"
-        d.requestsEnabled -> "Request" + filmsSuffix(mainFilms.size)
+        d.requestsEnabled -> tv.roxy.tv.ui.requestWords("Request", mainFilms.size, filmsPending)
         else -> "Requests aren't set up"
     }
     val icon = when {
@@ -347,6 +356,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
         !d.requestsEnabled && app.prefs.session.value.isAdmin -> "Set up ${if (d.isMovie) "Radarr" else "Sonarr"} on your phone or in the web app (Account, Sonarr & Radarr) to turn requests on."
         !d.requestsEnabled -> "Ask whoever runs this server to connect ${if (d.isMovie) "Radarr" else "Sonarr"}."
         d.isMovie -> "Sends the movie to Radarr."
+        filmsPending -> "Looking for this series' films."
         missing.isEmpty() || missing.size == d.seasons.count { !it.special } -> "Sends the series to Sonarr$filmsToRadarr."
         else -> "Sends " + missing.joinToString(", ") { "S${it.number}" } + " to Sonarr$filmsToRadarr."
     }
@@ -374,7 +384,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
             Text(d.overview.orEmpty(), color = TvCopy, fontSize = 16.sp, lineHeight = 22.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, style = TvShadowed)
             Spacer(Modifier.height(26.dp))
             TvListRow(
-                label = label, icon = icon, selected = true, height = TvDims.ListRowHeight,
+                label = label, icon = icon, selected = true, height = TvDims.ListRowHeight, loading = label == null,
                 trailing = if (dl != null && !d.inLibrary) dl.percentLabel() else null,
                 onClick = {
                     val libraryId = d.libraryItemId
@@ -392,16 +402,16 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
                         }
                     }
                 },
-                modifier = Modifier.width(360.dp).focusRequester(action).alpha(if (canRequest || d.inLibrary || live) 1f else 0.6f),
+                modifier = Modifier.width(360.dp).focusRequester(action).alpha(if (canRequest || d.inLibrary || live || (filmsPending && d.requestsEnabled && !busy)) 1f else 0.6f),
             )
             // Seasons the library (or the request) lacks: a second row, straight below the action.
             if (canRequestMissing) {
                 Spacer(Modifier.height(8.dp))
                 TvListRow(
-                    label = if (busy) "Requesting…" else "Request ${missing.size} missing season${if (missing.size == 1) "" else "s"}${filmsSuffix(mainFilms.size)}",
-                    icon = Icons.Outlined.Add, height = TvDims.ListRowHeight,
+                    label = if (busy) "Requesting…" else tv.roxy.tv.ui.requestWords("Request ${missing.size} missing season${if (missing.size == 1) "" else "s"}", mainFilms.size, filmsPending),
+                    icon = Icons.Outlined.Add, height = TvDims.ListRowHeight, loading = filmsPending && !busy,
                     onClick = {
-                        if (!busy) scope.launch {
+                        if (!busy && !filmsPending) scope.launch {
                             busy = true
                             error = null
                             runCatching { app.api.discoverRequest("tv", d.tmdbId, missing.map { it.number }, films = mainFilms) }.onFailure { error = it.message ?: "The request failed" }
@@ -445,7 +455,14 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
             }
             val anyFilm = placed.before.isNotEmpty() || placed.after.isNotEmpty() || placed.more.isNotEmpty()
             if (seasons.isNotEmpty() || anyFilm) {
-                Text(if (anyFilm) "SEASONS AND FILMS" else "SEASONS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (anyFilm) "SEASONS AND FILMS" else "SEASONS", color = RoxyColors.muted, fontSize = 13.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Medium)
+                    // How many films will come is not known: a loading circle says they are on their way.
+                    if (filmsPending) {
+                        Spacer(Modifier.width(12.dp))
+                        tv.roxy.tv.ui.components.LoadingCircle(14.dp, tag = "films-pending")
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     placed.before.forEach { f -> item(key = "f${f.anilistId}") { film(f) } }

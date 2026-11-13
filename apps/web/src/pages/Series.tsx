@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, isPlayable, nextToPlay, playLabel, runtimeLabel, sortEpisodes, timeLeftLabel } from '../api/items'
+import { audioBadge, episodeCode, isPlayable, nextToPlay, runtimeLabel, seriesPlayLabel, sortEpisodes, timeLeftLabel } from '../api/items'
 import type { Item, ItemsResponse } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { Art, CardMenu, ProgressBar, SaveButton, isWatched, useWatchedState, withPlayed } from '../components/Cards'
@@ -106,7 +106,7 @@ export function Series() {
   // data is null, never undefined, so the old fallback never ran: Play said "Nothing to
   // play yet" over a list of episodes).
   const next = nextError && nextRes == null ? nextToPlay(episodes) : nextRes
-  const label = playLabel(next, epsLoading || nextLoading || seasonsRes == null)
+  const label = seriesPlayLabel(next, epsLoading || nextLoading || seasonsRes == null)
   const seasonCount = series.seasonCount ?? seasons.filter((s) => !s.ids && !s.movie).length
 
   return (
@@ -118,8 +118,8 @@ export function Series() {
         extra={seasonCount > 0 ? (seasonCount === 1 ? '1 Season' : `${seasonCount} Seasons`) : null}
         actions={
           <>
-            <button className="btn btn--brand" disabled={!next} onClick={() => next && nav(`/watch/${next.id}`)}>
-              <IconPlay size={20} /> {label}
+            <button className="btn btn--brand" disabled={!next} aria-busy={label == null} onClick={() => next && nav(`/watch/${next.id}`)}>
+              <IconPlay size={20} /> {label ?? <span className="btn__pending" data-pending="play" />}
             </button>
             <SaveButton item={series} onChanged={() => reload(true)} />
           </>
@@ -132,6 +132,10 @@ export function Series() {
           <div className="seasonrow">
             {seasons.length > 0 ? (
               <SeasonSelect seasons={seasons} index={Math.min(seasonIndex, seasons.length - 1)} onSelect={setSeasonIndex} />
+            ) : !listReady && !listFailed ? (
+              // Not read yet: a line where the season's name will be, never the series'
+              // title that then turns into "Season 1".
+              <div className="bone bone--line" data-pending="season" style={{ width: 130, height: 20 }} />
             ) : (
               <span style={{ fontWeight: 700, fontSize: 17 }}>{series.title}</span>
             )}

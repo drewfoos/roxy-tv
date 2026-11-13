@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DiscoverFilm } from '../api/types'
-import { buttonFilms, filmLine, filmState, filmsSuffix, placeFilms } from './discoverFilms'
+import { buttonFilms, filmLine, filmState, filmsSuffix, placeFilms, filmsPending, requestWords } from './discoverFilms'
 
 const film = (over: Partial<DiscoverFilm>): DiscoverFilm => ({ anilistId: 1, title: 'A film', afterSeason: -1, eligible: false, withRequest: false, ...over })
 
@@ -63,5 +63,19 @@ describe('filmState', () => {
     expect(filmState(film({ tmdbId: 1 }), false)).toBe('none')
     expect(filmState(film({ tmdbId: 1, requestStatus: 'failed' }), false)).toBe('failed')
     expect(filmState(film({ tmdbId: 1, requestStatus: 'failed' }), true)).toBe('request')
+  })
+})
+
+describe('while the films are being looked for', () => {
+  it('waits only for a series that can have films, and only until they answer', () => {
+    expect(filmsPending(true, false)).toBe(true)
+    expect(filmsPending(true, true)).toBe(false)
+    expect(filmsPending(false, false)).toBe(false)
+  })
+  it('gives a Request button no words until then, so they never change', () => {
+    expect(requestWords('Request', 0, true)).toBeNull()
+    expect(requestWords('Request', 0, false)).toBe('Request')
+    expect(requestWords('Request', 2, false)).toBe('Request + 2 films')
+    expect(requestWords('Request 2 seasons', 1, false)).toBe('Request 2 seasons + 1 film')
   })
 })

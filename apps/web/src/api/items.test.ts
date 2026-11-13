@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, runtimeLabel, sortEpisodes, timeLeftLabel } from './items'
+import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, runtimeLabel, seriesPlayLabel, sortEpisodes, timeLeftLabel } from './items'
 import type { Item, MediaSource, MediaStream } from './types'
 
 const item = (p: Partial<Item>) => ({ id: 'x', type: 'episode', title: 'T', ...p }) as Item
@@ -41,6 +41,12 @@ describe('nextToPlay', () => {
     expect(playLabel(ep(1, 2))).toBe('Start watching S1 E2')
     expect(playLabel(item({ type: 'movie' }))).toBe('Start watching')
     expect(playLabel(null)).toBe('Nothing to play yet')
+  })
+  it('has no words for a series until what plays next is read', () => {
+    expect(seriesPlayLabel(null, true)).toBeNull() // not "Play", which then changed
+    expect(seriesPlayLabel(null, false)).toBe('Nothing to play yet')
+    expect(seriesPlayLabel(ep(1, 2), true)).toBe('Start watching S1 E2') // known from an earlier visit
+    expect(seriesPlayLabel(ep(1, 2, { positionMs: 1 }), false)).toBe('Resume S1 E2')
   })
 })
 

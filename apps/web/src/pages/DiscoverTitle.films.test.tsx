@@ -118,4 +118,63 @@ describe('films on a Discover series page', () => {
     await act(async () => button(/^Request$/).click())
     expect(api.discoverRequest).toHaveBeenCalledWith('tv', 500, undefined, undefined, [])
   })
+
+  // What is not read yet is a placeholder, never words that change: "Request" must not
+  // turn into "Request + 1 film" under the pointer, and a press in between would send
+  // the series without its films.
+  describe('while the films are being looked for', () => {
+    const mainButton = () => host.querySelector('.banner button.btn--brand') as HTMLButtonElement
+    const pendingNote = () => host.querySelector('.dseasons__pending')
+
+    it('shows a circle and no words on the Request button, which waits', async () => {
+      api.discoverDetail.mockResolvedValue(detail())
+      let answer: (v: DiscoverFilms) => void = () => undefined
+      api.discoverFilms.mockReturnValue(new Promise<DiscoverFilms>((r) => (answer = r)))
+      await open()
+      expect(mainButton().textContent).toBe('')
+      expect(mainButton().querySelector('.spinner')).toBeTruthy()
+      expect(mainButton().disabled).toBe(true)
+      expect(pendingNote()?.textContent).toContain('Looking for films')
+      await act(async () => mainButton().click())
+      expect(api.discoverRequest).not.toHaveBeenCalled()
+
+      await act(async () => answer(films([film({ anilistId: 1, tmdbId: 11, title: 'Between', afterSeason: 1, eligible: true, withRequest: true })])))
+      expect(mainButton().textContent).toBe('Request + 1 film')
+      expect(mainButton().disabled).toBe(false)
+      expect(pendingNote()).toBeNull()
+    })
+
+    it('takes a look that failed for an answer', async () => {
+      api.discoverDetail.mockResolvedValue(detail())
+      api.discoverFilms.mockRejectedValue(new Error('no'))
+      await open()
+      expect(mainButton().textContent).toBe('Request')
+      expect(mainButton().disabled).toBe(false)
+      expect(pendingNote()).toBeNull()
+    })
+
+    it('stops waiting after a while', async () => {
+      vi.useFakeTimers()
+      try {
+        api.discoverDetail.mockResolvedValue(detail())
+        api.discoverFilms.mockReturnValue(new Promise(() => undefined))
+        await open()
+        expect(mainButton().disabled).toBe(true)
+        await act(async () => { vi.advanceTimersByTime(19_000) })
+        expect(mainButton().disabled).toBe(true)
+        await act(async () => { vi.advanceTimersByTime(1_500) })
+        expect(mainButton().textContent).toBe('Request')
+        expect(mainButton().disabled).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('never waits on a series that is not anime', async () => {
+      api.discoverDetail.mockResolvedValue(detail({ isAnime: false }))
+      await open()
+      expect(mainButton().textContent).toBe('Request')
+      expect(pendingNote()).toBeNull()
+    })
+  })
 })

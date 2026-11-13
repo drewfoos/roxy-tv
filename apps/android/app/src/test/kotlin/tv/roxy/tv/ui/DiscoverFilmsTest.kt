@@ -2,6 +2,8 @@ package tv.roxy.tv.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import tv.roxy.tv.api.DiscoverFilm
 import tv.roxy.tv.api.DiscoverFilms
@@ -69,5 +71,20 @@ class DiscoverFilmsTest {
         assertEquals("Comes with the request", filmWord(film(1, with = true)))
         assertEquals("Side story", filmWord(film(1, note = "Side story")))
         assertEquals("Requested", filmWord(film(1, with = true).copy(requestStatus = "sent")))
+    }
+
+    @Test fun theFilmsArePendingOnlyWhileAskedForAndNotAnswered() {
+        assertTrue(filmsPending(wantsFilms = true, answered = false))
+        assertFalse(filmsPending(wantsFilms = true, answered = true))
+        // Not an anime series (or a film's page): nothing is asked for, nothing to wait for.
+        assertFalse(filmsPending(wantsFilms = false, answered = false))
+    }
+
+    @Test fun aRequestButtonHasNoWordsUntilItsFilmsAreKnown() {
+        // "Request" must not turn into "Request + 2 films" under the viewer's thumb.
+        assertNull(requestWords("Request", films = 0, pending = true))
+        assertEquals("Request + 2 films", requestWords("Request", films = 2, pending = false))
+        assertEquals("Request", requestWords("Request", films = 0, pending = false))
+        assertEquals("Request 2 missing seasons + 1 film", requestWords("Request 2 missing seasons", films = 1, pending = false))
     }
 }

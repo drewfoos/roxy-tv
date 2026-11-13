@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -557,7 +558,8 @@ val NoBringIntoView: BringIntoViewSpec = object : BringIntoViewSpec {
  */
 @Composable
 fun TvListRow(
-    label: String,
+    /** Null: the words are not known yet; a faint line holds their place. */
+    label: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
@@ -568,6 +570,8 @@ fun TvListRow(
     trailing: String? = null,
     checked: Boolean = false,
     onFocused: (() -> Unit)? = null,
+    /** Something this row's words depend on is being read: the loading circle takes the icon's place. */
+    loading: Boolean = false,
 ) {
     TvFocusable(onClick = onClick, modifier = modifier, focusedBackground = RoxyColors.accent, onFocused = onFocused) { focused ->
         val color = when {
@@ -576,11 +580,17 @@ fun TvListRow(
             else -> RoxyColors.muted
         }
         Row(modifier = Modifier.fillMaxWidth().height(height).padding(start = startPadding, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (icon != null) {
+            if (loading) {
+                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { tv.roxy.tv.ui.components.LoadingCircle(20.dp, color = color, tag = "row-loading") }
+                Spacer(Modifier.width(14.dp))
+            } else if (icon != null) {
                 Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(14.dp))
             }
-            Text(label, color = color, fontSize = fontSize, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (label == null) {
+                Box(Modifier.width(150.dp).height(12.dp).clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = 0.25f)).testTag("row-words-pending"))
+                Spacer(Modifier.weight(1f))
+            } else Text(label, color = color, fontSize = fontSize, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (trailing != null) Text(trailing, color = color, fontSize = fontSize, maxLines = 1)
             if (checked) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = color, modifier = Modifier.size(22.dp))
         }

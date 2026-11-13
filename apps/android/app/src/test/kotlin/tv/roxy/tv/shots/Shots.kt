@@ -38,6 +38,9 @@ import tv.roxy.tv.ui.phone.ContinueRow
 import tv.roxy.tv.ui.tv.ContinueCard
 import tv.roxy.tv.ui.tv.TvDims
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -78,6 +81,39 @@ class Shots {
             }
         }
         shot("phone-series-loading-rows")
+    }
+
+    // Discover while a series' films are being looked for: the Request button holds a
+    // turning circle and no words, then says what it brings.
+    @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")
+    fun phoneDiscoverFilmsPending() {
+        compose.setContent {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().background(Color.Black).padding(16.dp).padding(top = 40.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                tv.roxy.tv.ui.phone.PlayButton("Request", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = tv.roxy.tv.ui.theme.RoxyColors.accent, content = tv.roxy.tv.ui.phone.OnBrand, loading = true, onClick = {})
+                tv.roxy.tv.ui.phone.GreyButton("Request 2 seasons", loading = true, onClick = {})
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.Text("Seasons", color = Color.White, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    tv.roxy.tv.ui.components.LoadingCircle(14.dp)
+                    androidx.compose.material3.Text("Looking for films", color = tv.roxy.tv.ui.theme.RoxyColors.muted, fontSize = 12.sp)
+                }
+                tv.roxy.tv.ui.phone.PlayButton("Request + 2 films", modifier = Modifier.fillMaxWidth(), height = 44.dp, pill = true, container = tv.roxy.tv.ui.theme.RoxyColors.accent, content = tv.roxy.tv.ui.phone.OnBrand, onClick = {})
+                tv.roxy.tv.ui.phone.GreyButton("Request 2 seasons + 2 films", onClick = {})
+            }
+        }
+        shot("phone-discover-films-pending")
+    }
+
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvLoadingRows() {
+        compose.setContent {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().background(Color(0xFF101014)).padding(40.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                tv.roxy.tv.ui.tv.TvListRow(null, onClick = {}, modifier = Modifier.width(360.dp), loading = true)
+                tv.roxy.tv.ui.tv.TvListRow("Request + 2 films", onClick = {}, modifier = Modifier.width(360.dp))
+                tv.roxy.tv.ui.tv.TvListRow(null, onClick = {}, modifier = Modifier.width(360.dp), icon = androidx.compose.material.icons.Icons.Filled.PlayArrow)
+                tv.roxy.tv.ui.tv.TvListRow("Start watching S01E01", onClick = {}, modifier = Modifier.width(360.dp), icon = androidx.compose.material.icons.Icons.Filled.PlayArrow)
+            }
+        }
+        shot("tv-loading-rows")
     }
 
     @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")

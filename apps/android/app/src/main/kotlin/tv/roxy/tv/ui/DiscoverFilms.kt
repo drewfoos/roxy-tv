@@ -31,6 +31,24 @@ fun placeFilms(films: List<DiscoverFilm>, seasonNumbers: List<Int>): PlacedFilms
 /** The TMDB ids the page's main Request sends: exactly the films the server marked for it. */
 fun buttonFilms(films: DiscoverFilms?): List<Int> = films?.films.orEmpty().filter { it.withRequest }.mapNotNull { it.tmdbId }
 
+/**
+ * How long the page waits for the films before it goes on without them. The first look at
+ * a series reads AniList and takes about ten seconds; a look that hangs must not keep the
+ * Request button from being used.
+ */
+const val FilmsWaitMs = 20_000L
+
+/**
+ * The films are asked for and not answered yet. Until they are, the page does not know
+ * what its main Request will send, so the button shows a loading circle and no words
+ * (never "Request" that turns into "Request + 2 films"), and is not pressable: a press
+ * would send the series without its films. A failed look is an answer.
+ */
+fun filmsPending(wantsFilms: Boolean, answered: Boolean): Boolean = wantsFilms && !answered
+
+/** A Request button's words with its films, or null while the films are not known. */
+fun requestWords(words: String, films: Int, pending: Boolean): String? = if (pending) null else words + filmsSuffix(films)
+
 /** " + 3 films" for the main button's label; nothing without films. */
 fun filmsSuffix(n: Int): String = when {
     n <= 0 -> ""

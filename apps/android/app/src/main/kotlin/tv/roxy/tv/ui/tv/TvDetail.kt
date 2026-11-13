@@ -133,7 +133,7 @@ private val ContentFloor = 140.dp
 private val Fold = tween<Dp>(220)
 
 /** One text action under the synopsis: "Add to Watchlist", "CONTINUE: E2 ... 20m left". */
-private class TitleAction(val key: String, val label: String, val icon: ImageVector, val trailing: String? = null, val enabled: Boolean = true, val onClick: () -> Unit)
+private class TitleAction(val key: String, val label: String?, val icon: ImageVector, val trailing: String? = null, val enabled: Boolean = true, val onClick: () -> Unit)
 
 /** Series: episodes by season, details, and the franchise's films plus similar titles. */
 @Composable
@@ -154,27 +154,24 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
     fun play(item: Item) = scope.launch { playItem(context, item).onFailure { Timber.w(it, "play failed") } }
 
     val playable = state.episodes.filter { it.isPlayable }
-    // Across all seasons (the list below shows one); the season's own pick until it is known.
+    // Across all seasons (the list below shows one); the season's own pick if that cannot be had.
     val next = state.upNext ?: playable.firstOrNull { (it.userData?.positionMs ?: 0) > 0 }
         ?: playable.firstOrNull { it.userData?.played != true }
         ?: playable.firstOrNull()
+    val playLabel = tvSeriesPlayLabel(state, next)
     val actions = listOf(
         watchlistAction(app, series, scope),
         TitleAction(
             key = "play",
-            label = when {
-                next == null -> if (state.episodesLoading || state.loading) "Play" else "Nothing to play yet"
-                else -> continueLabel(next)
-            },
+            label = playLabel,
             icon = Icons.Outlined.PlayArrow,
-            trailing = next?.let { minutesLabel(it)?.takeIf { l -> l.endsWith("left") } },
-            enabled = next != null,
+            trailing = next?.takeIf { playLabel != null }?.let { minutesLabel(it)?.takeIf { l -> l.endsWith("left") } },
+            enabled = next != null || playLabel == null,
             onClick = { next?.let { play(it) } },
         ),
     )
     var tab by rememberSaveable(seriesId) { mutableStateOf(0) }
-    // An "Extras" tab only for a show with trailers, featurettes and the like.
-    val tabs = listOf("Episodes", "Details") + (if (state.extras.isNotEmpty()) listOf("Extras") else emptyList()) + "More like this"
+    val tabs = titleTabs("Episodes", extras = state.extras.isNotEmpty())
     TitlePage(title = series, play = next, api = app.api, actions = actions, tabs = tabs, tab = tab.coerceIn(0, tabs.lastIndex), onTab = { tab = it }) { first ->
         when (tabs[tab.coerceIn(0, tabs.lastIndex)]) {
             "Episodes" -> EpisodesTab(
@@ -192,6 +189,25 @@ fun TvSeries(seriesId: String, fallbackTitle: String, onOpenSeries: (Item) -> Un
         }
     }
 }
+
+/**
+ * The Play row's words on a series page, or null while what plays next is still being
+ * read (the row then holds a faint line). Never "Play" or the open season's first episode
+ * for a moment and then "CONTINUE: S2 E5": a row that says one thing and then another.
+ * The season's own pick stands only once the answer for the whole series cannot come.
+ */
+internal fun tvSeriesPlayLabel(state: tv.roxy.tv.ui.detail.SeriesUiState, next: Item?): String? = when {
+    (next == null || !state.upNextKnown) && (state.loading || state.episodesLoading) -> null
+    next == null -> "Nothing to play yet"
+    else -> continueLabel(next)
+}
+
+/**
+ * A title page's tabs. Extras exists only for a title with trailers or featurettes, and
+ * that is known a moment after the page opens: it goes LAST, so the tabs already there
+ * keep their places (it used to appear in the middle and push "More like this" along).
+ */
+internal fun titleTabs(first: String, extras: Boolean): List<String> = listOf(first, "Details", "More like this") + if (extras) listOf("Extras") else emptyList()
 
 /** Movie: the film itself under its tab, details, and the series it belongs to plus similar titles. */
 @Composable
@@ -218,7 +234,7 @@ fun TvMovie(movieId: String, fallbackTitle: String, onOpenSeries: (Item) -> Unit
         if (started) add(TitleAction(key = "restart", label = "Start over", icon = Icons.Filled.Replay, onClick = { play(fromStart = true) }))
     }
     var tab by rememberSaveable(movieId) { mutableStateOf(0) }
-    val tabs = listOf("Movie", "Details") + (if (state.extras.isNotEmpty()) listOf("Extras") else emptyList()) + "More like this"
+    val tabs = titleTabs("Movie", extras = state.extras.isNotEmpty())
     TitlePage(title = movie, play = movie, api = app.api, actions = actions, tabs = tabs, tab = tab.coerceIn(0, tabs.lastIndex), onTab = { tab = it }) { first ->
         when (tabs[tab.coerceIn(0, tabs.lastIndex)]) {
             "Movie" -> Row(modifier = Modifier.fillMaxSize()) {
