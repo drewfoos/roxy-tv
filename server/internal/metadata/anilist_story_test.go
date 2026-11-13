@@ -51,3 +51,46 @@ func TestStoryGraphKeepsTheLinks(t *testing.T) {
 		t.Errorf("films %v: a crossover says nothing about the story and is left out", got)
 	}
 }
+
+// The Quintessential Quintuplets: the film that ends the story hangs off a special, not
+// off the second season (season 2 -> "Specials" -> the film), and the film's own sequel
+// is another special. The chain walk takes TV entries and films only, so the graph had
+// no film at all. The film is season 2's sequel, with the way there kept; a film a side
+// story OVA leads to is not, and a link the season states itself is not doubled.
+func TestStoryGraphFollowsSpecialsToTheFilm(t *testing.T) {
+	const s1, s2, specials, movie, specials2, ova, ovaFilm, own = 1, 2, 3, 4, 5, 6, 7, 8
+	a, calls := fakeAniList(t, map[int]aniNode{
+		s1:        {"TV", "Quintuplets", 2019, map[string][]int{"SEQUEL": {s2}}},
+		s2:        {"TV", "Quintuplets 2", 2021, map[string][]int{"PREQUEL": {s1}, "SEQUEL": {specials, own}, "SIDE_STORY": {ova}}},
+		specials:  {"SPECIAL", "Specials", 2023, map[string][]int{"PREQUEL": {s2}, "SEQUEL": {movie, own}}},
+		movie:     {"MOVIE", "The Movie", 2022, map[string][]int{"PREQUEL": {specials}, "SEQUEL": {specials2}}},
+		specials2: {"SPECIAL", "Specials 2", 2024, map[string][]int{"PREQUEL": {movie}}},
+		ova:       {"OVA", "Honeymoon", 2025, map[string][]int{"PARENT": {s2}, "SEQUEL": {ovaFilm}}},
+		ovaFilm:   {"MOVIE", "Honeymoon Film", 2026, nil},
+		own:       {"MOVIE", "Named By The Season", 2022, nil},
+	})
+	g, err := a.StoryGraph(context.Background(), s1, "", 0)
+	if err != nil || g == nil {
+		t.Fatalf("%v, %v", g, err)
+	}
+	if len(g.Seasons) != 2 {
+		t.Fatalf("seasons %+v, want the two TV entries", g.Seasons)
+	}
+	got := map[int]string{}
+	for _, f := range g.Films {
+		b, _ := json.Marshal(f.Links)
+		got[f.ID] = f.Title + " " + string(b)
+	}
+	want := map[int]string{
+		movie: `The Movie [{"season":2,"relation":"SEQUEL","via":[3]}]`,
+		own:   `Named By The Season [{"season":2,"relation":"SEQUEL"}]`,
+	}
+	if len(got) != len(want) || got[movie] != want[movie] || got[own] != want[own] {
+		t.Errorf("films %v, want %v", got, want)
+	}
+	// Read: the two seasons, the film season 2 names (the chain walk looks past it for
+	// a third season) and one special. The side story OVA is not followed.
+	if *calls != 4 {
+		t.Errorf("%d queries, want 4", *calls)
+	}
+}

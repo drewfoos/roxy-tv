@@ -41,6 +41,9 @@ type StoryFilm struct {
 type StoryLink struct {
 	Season   int    `json:"season"`
 	Relation string `json:"relation"` // SEQUEL | PREQUEL | SIDE_STORY | SPIN_OFF | ALTERNATIVE | SUMMARY | COMPILATION | PARENT
+	// Via: the specials or OVAs the link passes through, when the season does not name
+	// the film itself (season -> SEQUEL special -> SEQUEL film).
+	Via []int `json:"via,omitempty"`
 }
 
 // StoryPath: season After leads to season Before only through films.
@@ -99,7 +102,81 @@ func (a *AniList) StoryGraph(ctx context.Context, anilistID int, title string, y
 	if err != nil {
 		return nil, err
 	}
+	if w.through, err = a.filmsThroughSpecials(ctx, w); err != nil {
+		return nil, err
+	}
 	return storyGraph(w), nil
+}
+
+// throughFilm is a film a season leads to only through specials or OVAs.
+type throughFilm struct {
+	season int
+	via    []int
+	edge   anilistRelationEdge // the film, as the last special names it
+}
+
+// filmsThroughSpecials follows each season's SEQUEL edges that go to a special or an
+// OVA, and on through SEQUEL edges to a film. AniList sometimes hangs the film that
+// continues a series off such an entry and not off the season: The Quintessential
+// Quintuplets' second season -> "Specials" -> the film that ends the story. The chain
+// walk takes TV entries and films only, so it never saw that film.
+//
+// Bounded: at most two specials deep, and maxLooks entries read in all.
+func (a *AniList) filmsThroughSpecials(ctx context.Context, w *chainWalk) ([]throughFilm, error) {
+	const maxDeep, maxLooks = 2, 6
+	isSpecial := func(e *anilistRelationEdge) bool {
+		return e.RelationType == "SEQUEL" && e.Node.Type == "ANIME" && (e.Node.Format == "SPECIAL" || e.Node.Format == "OVA")
+	}
+	var out []throughFilm
+	looks := 0
+	read := map[int]*anilistMedia{}
+	var follow func(season int, m *anilistMedia, via []int) error
+	follow = func(season int, m *anilistMedia, via []int) error {
+		for i := range m.Relations.Edges {
+			e := &m.Relations.Edges[i]
+			if len(via) > 0 && e.RelationType == "SEQUEL" && e.Node.Type == "ANIME" && e.Node.Format == "MOVIE" && !w.seen[e.Node.ID] {
+				out = append(out, throughFilm{season: season, via: append([]int(nil), via...), edge: *e})
+				continue
+			}
+			if !isSpecial(e) || w.seen[e.Node.ID] || len(via) >= maxDeep || containsInt(via, e.Node.ID) {
+				continue
+			}
+			sp := read[e.Node.ID]
+			if sp == nil {
+				if looks >= maxLooks {
+					continue
+				}
+				looks++
+				resp, err := a.query(ctx, anilistByIDQuery, map[string]any{"id": e.Node.ID})
+				if err != nil {
+					return err // a failed look must not pass for "no film": the graph is kept a day
+				}
+				if sp = resp.Data.Media; sp == nil {
+					continue
+				}
+				read[e.Node.ID] = sp
+			}
+			if err := follow(season, sp, append(append([]int(nil), via...), e.Node.ID)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, m := range w.chain {
+		if err := follow(m.ID, m, nil); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func containsInt(xs []int, x int) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // storyGraph is the pure part: a finished walk as a graph.
@@ -156,6 +233,22 @@ func storyGraph(w *chainWalk) *StoryGraph {
 			if rel := inverseRelation(e.RelationType); w.seen[e.Node.ID] && storyRelations[rel] {
 				link(f, e.Node.ID, rel)
 			}
+		}
+	}
+	// Films a season leads to through specials: the season's sequel all the same, with
+	// the way there kept. A link the season states itself stands as it is.
+	for _, t := range w.through {
+		f := film(t.edge.Node.ID)
+		if f.Title == "" {
+			f.Title, f.Romaji = t.edge.title(), t.edge.Node.Title.Romaji
+			f.Start, f.Year, f.Poster = t.edge.Node.StartDate.String(), t.edge.Node.StartDate.Year, t.edge.Node.CoverImage.ExtraLarge
+		}
+		stated := false
+		for _, l := range f.Links {
+			stated = stated || l.Season == t.season
+		}
+		if !stated {
+			f.Links = append(f.Links, StoryLink{Season: t.season, Relation: "SEQUEL", Via: t.via})
 		}
 	}
 	for _, p := range w.paths {

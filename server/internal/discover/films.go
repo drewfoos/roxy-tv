@@ -50,6 +50,11 @@ import (
 // storyGraphTTL: how long a series' AniList links are trusted before they are read again.
 const storyGraphTTL = 24 * time.Hour
 
+// storyGraphReading is raised when the way AniList is read changes what a graph holds
+// (2: films reached through specials). A copy saved by an older reading is read again
+// at once: otherwise a show looked at yesterday would keep yesterday's rules for a day.
+const storyGraphReading = 2
+
 // seasonPad: how far an AniList season's start may be from the season TMDB lists
 // (pre-airings, time zones) and still be that season.
 const seasonPad = 45 * 24 * time.Hour
@@ -101,8 +106,14 @@ type filmMatch struct {
 // storyCache is what is kept per series (setting "storygraph:<tmdb id>").
 type storyCache struct {
 	At    time.Time            `json:"at"`
+	Read  int                  `json:"read,omitempty"`  // storyGraphReading when it was saved
 	Graph *metadata.StoryGraph `json:"graph,omitempty"` // nil: AniList does not know the series
 	TMDB  map[int]filmMatch    `json:"tmdb,omitempty"`  // AniList film id -> TMDB
+}
+
+// fresh: saved recently, and by this reading of AniList.
+func (c *storyCache) fresh() bool {
+	return time.Since(c.At) < storyGraphTTL && c.Read == storyGraphReading
 }
 
 // placedFilm is where placeFilms put one film.
@@ -349,7 +360,7 @@ func (s *Service) story(ctx context.Context, det *Detail) (*storyCache, error) {
 	}
 	var saved storyCache
 	have, _ := s.store.GetSetting(ctx, storyKey(det.TMDBID), &saved)
-	if have && time.Since(saved.At) < storyGraphTTL {
+	if have && saved.fresh() {
 		return &saved, nil
 	}
 	// One series at a time: AniList is paced, and two pages opened together would
@@ -357,7 +368,7 @@ func (s *Service) story(ctx context.Context, det *Detail) (*storyCache, error) {
 	s.storyMu.Lock()
 	defer s.storyMu.Unlock()
 	var again storyCache
-	if ok, _ := s.store.GetSetting(ctx, storyKey(det.TMDBID), &again); ok && time.Since(again.At) < storyGraphTTL {
+	if ok, _ := s.store.GetSetting(ctx, storyKey(det.TMDBID), &again); ok && again.fresh() {
 		return &again, nil
 	}
 	anilistID := 0
@@ -374,7 +385,7 @@ func (s *Service) story(ctx context.Context, det *Detail) (*storyCache, error) {
 		}
 		return nil, err
 	}
-	fresh := storyCache{At: time.Now(), Graph: g, TMDB: map[int]filmMatch{}}
+	fresh := storyCache{At: time.Now(), Read: storyGraphReading, Graph: g, TMDB: map[int]filmMatch{}}
 	for _, p := range placeFilms(g, det.Seasons, det.lastAir) {
 		// A match made before stays: the same film is not looked up every day.
 		if m, ok := saved.TMDB[p.Film.ID]; ok && m.ID != 0 {

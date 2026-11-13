@@ -413,6 +413,8 @@ type chainWalk struct {
 	seen  map[int]bool          // the chain's ids
 	films map[int]*anilistMedia // films passed on the way, read in full
 	paths []StoryPath
+	// through: films a season leads to only through specials (StoryGraph fills it).
+	through []throughFilm
 }
 
 // walkChain walks PREQUEL edges back to the first TV entry, then SEQUEL edges forward.

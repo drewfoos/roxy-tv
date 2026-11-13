@@ -214,6 +214,22 @@ func TestPlaceFilmsDemonSlayer(t *testing.T) {
 		"Mugen Train | -1 | Alternate version")
 }
 
+// The Quintessential Quintuplets, as AniList links it: the film that ends the story is
+// the second season's sequel through a special (which came out after the film). It
+// continues the latest season like any film that season names itself.
+func TestPlaceFilmsQuintupletsFilmThroughASpecial(t *testing.T) {
+	via := metadata.StoryLink{Season: 109261, Relation: "SEQUEL", Via: []int{163327}}
+	g := &metadata.StoryGraph{
+		Seasons: []metadata.StorySeason{season(103572, "2019-01-11", "The Quintessential Quintuplets"), season(109261, "2021-01-08", "The Quintessential Quintuplets 2")},
+		Films:   []metadata.StoryFilm{film(131520, "2022-05-20", "The Quintessential Quintuplets Movie", via)},
+	}
+	got := placeFilms(g, listed("2019-01-11", "2021-01-08"), "2021-03-26")
+	wantPlaced(t, got, "The Quintessential Quintuplets Movie | 2 | eligible 109261-0")
+	if !coversFilm([]int{103572, 109261}, got[0].Between) || coversFilm([]int{103572}, got[0].Between) {
+		t.Fatal("the film comes with a request that covers season 2, and with no other")
+	}
+}
+
 // After the latest season, and still only listed: a film on a run that leaves the show
 // without the season naming it, a sequel dated before the season began or by year
 // only, a recap, a side story; and the sequel of a season that is not the latest (its
@@ -823,5 +839,29 @@ func TestFilmSavedBeforeSendAndRetried(t *testing.T) {
 	w.wantAdded("after the film request was deleted", dreamingGirl)
 	if f := w.films()[104157]; f.WithRequest {
 		t.Fatalf("a film whose request was deleted is back on the button: %+v", f)
+	}
+}
+
+// Links saved by an older reading of AniList (before films reached through specials
+// were followed) are read again at the next look, not kept for the rest of their day.
+func TestStoryLinksOfAnOlderReadingAreReadAgain(t *testing.T) {
+	w := newFilmWorld(t)
+	w.films()
+	w.films()
+	if w.reads != 1 {
+		t.Fatalf("%d reads, want 1: fresh links are kept", w.reads)
+	}
+	ctx := context.Background()
+	var sc storyCache
+	if ok, err := w.st.GetSetting(ctx, storyKey(100), &sc); err != nil || !ok {
+		t.Fatalf("no saved links: %v", err)
+	}
+	sc.Read = storyGraphReading - 1
+	if err := w.st.SetSetting(ctx, storyKey(100), sc); err != nil {
+		t.Fatal(err)
+	}
+	w.films()
+	if w.reads != 2 {
+		t.Fatalf("%d reads, want 2", w.reads)
 	}
 }
