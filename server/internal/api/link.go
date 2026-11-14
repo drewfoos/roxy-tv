@@ -39,10 +39,15 @@ const (
 	// code's last moment, the next poll found the code expired: the phone said "approved",
 	// the TV said "expired", and a signed-in device nobody held the token of stayed in
 	// the account's device list.
-	linkCollect  = 2 * time.Minute
-	linkWaitMax  = 25 * time.Second
-	linkCodeLen  = 6
-	linkAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O, 1/I
+	linkCollect = 2 * time.Minute
+	linkWaitMax = 25 * time.Second
+	linkCodeLen = 6
+	// Starting a code needs no sign-in, so the codes waiting are capped: per address
+	// (a TV asks for one every ten minutes; a few people may share a router) and in all.
+	// Without it anyone could fill the server's memory with codes at the rate limit.
+	linkMaxPerAddress = 20
+	linkMaxWaiting    = 2000
+	linkAlphabet      = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O, 1/I
 )
 
 type linkEntry struct {
@@ -116,6 +121,21 @@ func (ls *linkStore) sweep() {
 			abandoned(id)
 		}
 	}
+}
+
+// roomFor: whether one more code may wait for this address. Call with the lock held.
+func (ls *linkStore) roomFor(address string) bool {
+	now, all, own := ls.now(), 0, 0
+	for _, e := range ls.entries {
+		if e.expired(now) {
+			continue
+		}
+		all++
+		if e.client.Address == address {
+			own++
+		}
+	}
+	return all < linkMaxWaiting && own < linkMaxPerAddress
 }
 
 func linkKey(code string) string { return strings.ToUpper(strings.ReplaceAll(code, "-", "")) }
@@ -213,6 +233,12 @@ func (s *Server) linkStart(w http.ResponseWriter, r *http.Request) {
 		done:      make(chan struct{}),
 	}
 	s.links.mu.Lock()
+	if !s.links.roomFor(e.client.Address) {
+		s.links.mu.Unlock()
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "Too many sign-in codes are waiting. Try again in a minute.")
+		return
+	}
 	for {
 		e.code = randomString(linkAlphabet, linkCodeLen)
 		if _, taken := s.links.entries[e.code]; !taken {

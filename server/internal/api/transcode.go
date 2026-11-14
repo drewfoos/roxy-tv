@@ -90,7 +90,7 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/system/transcoding -> {encoder}: which encoder the server uses.
 func (s *Server) transcodingInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"encoder": s.transcoder.Encoder()})
+	writeJSON(w, 200, map[string]any{"encoder": s.transcoder.Encoder(), "ffmpeg": s.ff.Version})
 }
 
 // TranscodingSettings is the "transcoding" row of the settings table. When it is

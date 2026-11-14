@@ -71,7 +71,7 @@ it; the player plays with its own engine (the TV app: libmpv + libass). In memor
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/system/info` | `{product: "roxy", id, name, version, ffmpeg}`; public, and what the login screen's network sweep reads |
+| GET | `/v1/system/info` | `{product: "roxy", id, name, version}`; public, and what the login screen's network sweep reads |
 | GET | `/v1/libraries` | `{libraries: [{id, name, kind, root, animeMode}]}` |
 | POST | `/v1/libraries/scan` | async full rescan, 202 |
 | GET | `/v1/library/manage` | admin: `{scanning, lastScanAt?, lastScanError?, titles, queue}`. `lastScanError` names each library the last full scan failed on (the others were still scanned); gone after a clean scan |
@@ -134,8 +134,9 @@ as-is (MP4 `mov_text` becomes SRT), so it plays like direct play at a lower bitr
   only the ones below the file's own resolution; the file itself is shown as its
   resolution ("1080p", "4K"). A default per network (Wi-Fi, mobile data) lives in the
   app's settings and is skipped for a file whose bitrate is already below it.
-- `GET /v1/system/transcoding` -> `{encoder}`: the encoder in use (`nvenc`, `qsv`,
-  `vaapi`, `amf` or `software`).
+- `GET /v1/system/transcoding` -> `{encoder, ffmpeg}`: the encoder in use (`nvenc`, `qsv`,
+  `vaapi`, `amf` or `software`) and ffmpeg's version (signed in only: the public
+  `/v1/system/info` does not give it).
 
 ### Transcoding settings (admin)
 

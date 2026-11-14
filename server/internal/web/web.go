@@ -100,9 +100,31 @@ func handlerFor(sub fs.FS) http.Handler {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		// Not a route of the app: a dotfile (/.git/HEAD, /.env) or a file by name
+		// (/roxy.db, /backup.zip, /index.html.map). No route has a dot in its last part
+		// or a part that starts with one. The shell answered these with 200, which is
+		// not a leak (it is the same page every time) but tells every scanner, and
+		// anyone checking by status, that the file is there.
+		if looksLikeFile(p) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		// A route of the app (/series/abc, /watch/xyz): the shell, never cached.
 		w.Header().Set("Cache-Control", "no-cache")
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// looksLikeFile: the cleaned path names a file and not a page of the app: a part that
+// starts with a dot, or a last part with a dot in it.
+func looksLikeFile(p string) bool {
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return strings.Contains(parts[len(parts)-1], ".")
 }

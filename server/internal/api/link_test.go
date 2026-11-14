@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/model"
 )
 
@@ -163,5 +164,49 @@ func TestLinkApprovedButNeverCollectedSignsTheDeviceOut(t *testing.T) {
 	s.links.sweep()
 	if len(signedOut) != 1 {
 		t.Fatalf("a collected device was signed out: %v", signedOut)
+	}
+}
+
+// Starting a code needs no sign-in, and nothing capped how many could wait: anyone could
+// fill the server's memory with codes at the rate limit. An address at its cap is told to
+// wait; other addresses still get codes; a code that expires makes room again.
+func TestLinkCodesWaitingAreCapped(t *testing.T) {
+	s, _, now := linkFixture(t)
+	s.cfg = &config.Config{}
+	start := func(addr string) int {
+		req := httptest.NewRequest(http.MethodPost, "/v1/link/start", strings.NewReader(`{}`))
+		req.RemoteAddr = addr + ":40000"
+		rec := httptest.NewRecorder()
+		s.linkStart(rec, req)
+		return rec.Code
+	}
+	for i := 0; i < linkMaxPerAddress; i++ {
+		if code := start("203.0.113.9"); code != http.StatusOK {
+			t.Fatalf("code %d from one address = %d, want 200", i+1, code)
+		}
+	}
+	if code := start("203.0.113.9"); code != http.StatusTooManyRequests {
+		t.Fatalf("one more than the cap = %d, want 429", code)
+	}
+	if code := start("203.0.113.10"); code != http.StatusOK {
+		t.Fatalf("another address was refused too: %d", code)
+	}
+	*now = now.Add(linkTTL + time.Second)
+	if code := start("203.0.113.9"); code != http.StatusOK {
+		t.Fatalf("after the old codes expired = %d, want 200", code)
+	}
+}
+
+// The public answer names the server and nothing about what it runs on: ffmpeg's version
+// was in it, for anyone on the network to read.
+func TestSystemInfoSaysNothingOfFfmpeg(t *testing.T) {
+	w := newAuthWorld(t)
+	rec := httptest.NewRecorder()
+	w.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/system/info", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"product":"roxy"`) {
+		t.Fatalf("system info = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "ffmpeg") {
+		t.Fatalf("the public answer names ffmpeg: %s", rec.Body.String())
 	}
 }

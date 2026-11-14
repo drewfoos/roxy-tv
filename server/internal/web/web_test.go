@@ -103,3 +103,28 @@ func TestBuiltFilesAndAppRoutesAreServed(t *testing.T) {
 		}
 	}
 }
+
+// A path that names a file and is not in the build was answered with the app's page:
+// 200 for /.git/HEAD, /.env, /roxy.db. The same page every time, so nothing leaked, but
+// by status the file "was there". The app's routes have no such names.
+func TestAFileThatIsNotThereIsNotFound(t *testing.T) {
+	h := handlerFor(testBuild())
+	for _, p := range []string{"/.git/HEAD", "/.git/config", "/.env", "/roxy.db", "/config/roxy.db", "/index.html.map", "/backup.zip", "/.well-known/security.txt", "/a/.hidden/page", "/..%2f..%2fetc/passwd.txt"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", p, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "<title>Roxy</title>") {
+			t.Errorf("GET %s was answered with the app's page", p)
+		}
+	}
+	// The app's own pages still get the shell, a sign-in link among them.
+	for _, p := range []string{"/link/ABC234", "/discover/tv/1234", "/account/addresses"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<title>Roxy</title>") {
+			t.Errorf("GET %s = %d, want the app's page", p, rec.Code)
+		}
+	}
+}

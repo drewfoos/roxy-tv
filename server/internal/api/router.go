@@ -246,7 +246,8 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 		"id":      id,
 		"name":    s.store.ServerName(r.Context()),
 		"version": config.Version,
-		"ffmpeg":  s.ff.Version,
+		// Not ffmpeg's version: nobody signed out needs it, and it tells a stranger
+		// which decoder bugs to try. Signed in, /v1/system/transcoding has it.
 	})
 }
 
