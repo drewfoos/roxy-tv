@@ -96,4 +96,7 @@ func TestQueriesLookUpByParent(t *testing.T) {
 	if p := plan(`SELECT COUNT(*) FROM `+itemsByParent+` WHERE type IN (?) AND `+underParent, "episode", "x", "x", "x"); !strings.Contains(p, "SEARCH items USING INDEX items_parent") {
 		t.Errorf("a series' episodes are not found by parent:\n%s", p)
 	}
+	if p := plan(`SELECT i.id FROM `+seriesEpisodes+` WHERE se.parent_id = ? AND i.type = 'episode'`, "x"); !strings.Contains(p, "SEARCH se USING INDEX items_parent") || !strings.Contains(p, "SEARCH i USING INDEX items_parent") {
+		t.Errorf("a show's next episode is not looked for among its own episodes:\n%s", p)
+	}
 }

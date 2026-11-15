@@ -179,13 +179,18 @@ func keyLess(a, b [3]int) bool {
 	return false
 }
 
+// seriesEpisodes joins a series' seasons (se) to their episodes (i), both found by
+// parent. Left to SQLite, "the next episode" read every episode in the library for each
+// show on Continue Watching (it starts from the type index), one such read per show.
+const seriesEpisodes = `items se INDEXED BY items_parent JOIN items i INDEXED BY items_parent ON i.parent_id = se.id`
+
 // nextEpisodeAfter is the first real episode of a series after the one just finished
 // (afterID, at season/ep), in story order (storyKey: specials placed by their .nfo come in
 // between); with unplayedOnly, the first the profile has not watched.
 func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID, afterID string, season, ep int, unplayedOnly bool) (*model.Item, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id, COALESCE(se.index_aired, 0), COALESCE(i.index_aired, 0),
 		i.airs_before_season, i.airs_before_episode, i.airs_after_season, COALESCE(u.played, 0)
-		FROM items i JOIN items se ON se.id = i.parent_id
+		FROM `+seriesEpisodes+`
 		LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
 		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0`, scopeID, seriesID)
 	if err != nil {
@@ -239,8 +244,7 @@ func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID, afterID
 // of a series (so finishing one again is a rewatch).
 func (s *Store) allEpisodesPlayed(ctx context.Context, scopeID, seriesID string) (bool, error) {
 	var unplayed int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items i
-		JOIN items se ON se.id = i.parent_id
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+seriesEpisodes+`
 		LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
 		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0
 		  AND COALESCE(se.index_aired, 0) > 0 AND COALESCE(u.played, 0) = 0`, scopeID, seriesID).Scan(&unplayed)

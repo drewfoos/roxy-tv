@@ -29,10 +29,6 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		if items == nil {
 			items = []model.Item{}
 		}
-		s.fillSeriesRefs(ctx, items)
-		fillAvailability(items)
-		s.attachUserData(ctx, items)
-		s.fillAudioLanguages(ctx, items)
 		rows = append(rows, homeRow{Key: key, Title: title, Items: items})
 		return true
 	}
@@ -90,7 +86,31 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if !add("movies", "Movies", allMovies, err) {
 		return
 	}
+	s.fillRows(ctx, rows)
 	writeJSON(w, 200, map[string]any{"rows": rows})
+}
+
+// fillRows gives every card of every row its series, availability, watch state and
+// languages, reading each once for the whole screen. Done row by row, the same reads
+// ran five times over, and the languages of a title in two rows (a new film is in
+// "Recently Added Movies" and in "Movies") were worked out twice: most of what Home cost.
+func (s *Server) fillRows(ctx context.Context, rows []homeRow) {
+	n := 0
+	for i := range rows {
+		n += len(rows[i].Items)
+	}
+	all := make([]model.Item, 0, n)
+	for i := range rows {
+		all = append(all, rows[i].Items...)
+	}
+	s.fillSeriesRefs(ctx, all)
+	fillAvailability(all)
+	s.attachUserData(ctx, all)
+	s.fillAudioLanguages(ctx, all)
+	at := 0
+	for i := range rows {
+		at += copy(rows[i].Items, all[at:])
+	}
 }
 
 // fillAudioLanguages sets AudioLanguages on the series and movies in a batch, and IsAnime
