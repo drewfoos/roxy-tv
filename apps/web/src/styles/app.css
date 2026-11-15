@@ -1232,6 +1232,10 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .ctile__tags { margin-top: 12px; height: 24px; padding-right: 32px; font-size: 14px; line-height: 24px; color: #a0a0a0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctile__menu { position: absolute; right: 0; bottom: 0; color: #a0a0a0; }
 .ctile__cta { display: none; }
+/* The panel's own dots land exactly on the card's (the panel reaches 8 px past the card), so they do not jump. */
+.ctile .card__hover-actions { padding: 6px 8px 8px 12px; }
+.ctile .card__hover .icon-btn { width: 24px; height: 24px; color: #a0a0a0; }
+.ctile .card__hover .icon-btn:hover { color: #fff; background: none; }
 .ctile .card__menu { opacity: 1; }
 .ctile__menu button { width: 24px; height: 24px; color: #a0a0a0; }
 .ctile__menu button:hover { color: #fff; background: none; }
