@@ -55,7 +55,7 @@ export function KeysPage() {
       </div>
 
       <SectionHead>fanart.tv</SectionHead>
-      <Notice kind={fanart.data?.enabled ? 'ok' : 'info'}>{fanart.data == null ? '…' : fanart.data.enabled ? 'fanart.tv is on: logos and backgrounds come from it when TMDB has none.' : 'Off. Add a project key to get logos and backgrounds for the art picker.'}</Notice>
+      <Notice kind={fanart.data?.enabled ? 'ok' : 'info'}>{fanart.data == null ? '…' : fanart.data.enabled ? 'fanart.tv is on: posters, backgrounds and logos come from it when TMDB has none, and all of its art is in the art picker.' : 'Off. Add a project key to fill in posters, backgrounds and logos TMDB has none of, and to see fanart.tv art in the art picker.'}</Notice>
       <Field label="Project API key" hint="Free at fanart.tv under your account's API page. An empty key turns fanart.tv off.">
         <SecretInput label="fanart.tv key" value={fanartKey} onChange={setFanartKey} />
       </Field>

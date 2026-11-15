@@ -80,6 +80,11 @@ type Service struct {
 	airDates      func(ctx context.Context, tvdbID int) (map[[2]int]string, error)
 	airDatesTried map[string]time.Time
 	sonarrSeen    map[string]map[[2]int]string // series id -> Sonarr's last air dates (sonarrDates)
+
+	// fanart.tv, for art TMDB has none of (fanart.go). The key is a setting an admin can
+	// change while the server runs, so the client is made again when the key changes.
+	fanartClient *Fanart
+	fanartBase   string // tests: the API root to use instead of fanart.tv's
 }
 
 // UseEpisodeAirDates gives the service a source of episode air dates in TheTVDB's
@@ -205,6 +210,17 @@ type job struct {
 	// retry: re-queued by retryLater after a provider did not answer. It is not held
 	// back by s.failed (which the failure itself set), or the retry would do nothing.
 	retry bool
+	// art: not a lookup; only fill the title's missing art from fanart.tv (fillArt).
+	art bool
+}
+
+// key is what a waiting job is remembered by: an art job does not stand in for a lookup
+// of the same title, nor the other way round.
+func (j job) key() string {
+	if j.art {
+		return "art:" + j.itemID
+	}
+	return j.itemID
 }
 
 // TMDB exposes the TMDB client when it has a key (Discover), else nil.
@@ -254,6 +270,7 @@ func New(st *store.Store, cfg *config.Config) *Service {
 
 // Start launches the worker; it stops when ctx ends.
 func (s *Service) Start(ctx context.Context) {
+	go s.SweepArt(ctx)
 	go func() {
 		for {
 			select {
@@ -261,7 +278,7 @@ func (s *Service) Start(ctx context.Context) {
 				return
 			case j := <-s.queue:
 				s.mu.Lock()
-				delete(s.pending, j.itemID)
+				delete(s.pending, j.key())
 				s.mu.Unlock()
 				s.processSafe(ctx, j)
 			}
@@ -285,10 +302,10 @@ func (s *Service) RefreshImages(itemID string) {
 func (s *Service) enqueue(itemID string, force bool) { s.enqueueJob(job{itemID: itemID, force: force}) }
 
 func (s *Service) enqueueJob(j job) {
-	itemID, force := j.itemID, j.force
-	if itemID == "" {
+	if j.itemID == "" {
 		return
 	}
+	itemID, force := j.key(), j.force
 	s.mu.Lock()
 	if s.pending[itemID] && !force {
 		s.mu.Unlock()
@@ -312,6 +329,10 @@ func (s *Service) processSafe(ctx context.Context, j job) {
 			slog.Error("metadata: panic processing item", "item", j.itemID, "panic", r)
 		}
 	}()
+	if j.art {
+		s.fillArt(ctx, j.itemID)
+		return
+	}
 	if err := s.process(ctx, j); err != nil {
 		slog.Warn("metadata: lookup failed", "item", j.itemID, "err", err)
 	}
@@ -462,6 +483,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 		if err := s.store.UpdateItemMetadata(ctx, it.ID, meta); err != nil {
 			return err
 		}
+		s.fillFromFanart(ctx, it, merged)
 		for _, typ := range model.ImageTypes {
 			if u := merged.Images[typ]; u != "" {
 				s.fetchImage(ctx, it.ID, typ, u)

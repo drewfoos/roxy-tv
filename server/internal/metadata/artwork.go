@@ -119,12 +119,15 @@ func textlessOnly(list []fanartImage) []fanartImage {
 // backgrounds; everything it returns is already full size.
 type Fanart struct {
 	key    string
+	base   string // the API's root; a test points it at a server of its own
 	client *http.Client
 	lim    *limiter
 }
 
+const fanartAPI = "https://webservice.fanart.tv/v3/"
+
 func NewFanart(key string) *Fanart {
-	return &Fanart{key: strings.TrimSpace(key), client: &http.Client{Timeout: 20 * time.Second}, lim: newLimiter(4, time.Second)}
+	return &Fanart{key: strings.TrimSpace(key), base: fanartAPI, client: &http.Client{Timeout: 20 * time.Second}, lim: newLimiter(4, time.Second)}
 }
 
 func (f *Fanart) Enabled() bool { return f != nil && f.key != "" }
@@ -201,8 +204,72 @@ func (f *Fanart) Candidates(ctx context.Context, isMovie bool, id string, typ st
 	return out, nil
 }
 
+// Best is fanart.tv's pick for each kind of art a title can be missing (poster,
+// backdrop, logo, hero), in one request: what fills in where TMDB has nothing. Kinds it
+// has nothing for are left out. Series need the TVDB id, movies the TMDB id.
+func (f *Fanart) Best(ctx context.Context, isMovie bool, id string) (map[string]string, error) {
+	if !f.Enabled() || id == "" {
+		return nil, nil
+	}
+	var logos [][]fanartImage
+	var posters, backgrounds []fanartImage
+	if isMovie {
+		var m fanartMovie
+		if err := f.get(ctx, "movies/"+url.PathEscape(id), &m); err != nil {
+			return nil, err
+		}
+		logos, posters, backgrounds = [][]fanartImage{m.HDMovieLogo, m.MovieLogo}, m.MoviePoster, m.MovieBackground
+	} else {
+		var tv fanartTV
+		if err := f.get(ctx, "tv/"+url.PathEscape(id), &tv); err != nil {
+			return nil, err
+		}
+		logos, posters, backgrounds = [][]fanartImage{tv.HDTVLogo, tv.ClearLogo}, tv.TVPoster, tv.ShowBackground
+	}
+	out := map[string]string{}
+	for typ, u := range map[string]string{
+		// An English logo or poster first, then one with no words, then any at all; a
+		// background without words first (the client draws the logo over it).
+		"logo":     bestFanart(logos, "en", "", "*"),
+		"poster":   bestFanart([][]fanartImage{posters}, "en", "", "*"),
+		"backdrop": bestFanart([][]fanartImage{backgrounds}, "", "en", "*"),
+		"hero":     bestFanart([][]fanartImage{posters}, ""), // a textless poster or nothing
+	} {
+		if u != "" {
+			out[typ] = u
+		}
+	}
+	return out, nil
+}
+
+// bestFanart is the most-liked image in the first language of langs that has one ("" is
+// fanart's "no language", "*" any); within a language an earlier list (HD logos) wins.
+func bestFanart(lists [][]fanartImage, langs ...string) string {
+	for _, want := range langs {
+		for _, list := range lists {
+			best, bestLikes := "", -1.0
+			for _, im := range list {
+				lang := im.Lang
+				if lang == "00" {
+					lang = ""
+				}
+				if im.URL == "" || (want != "*" && lang != want) {
+					continue
+				}
+				if likes, _ := strconv.ParseFloat(im.Likes, 64); likes > bestLikes {
+					best, bestLikes = im.URL, likes
+				}
+			}
+			if best != "" {
+				return best
+			}
+		}
+	}
+	return ""
+}
+
 func (f *Fanart) get(ctx context.Context, path string, out any) error {
-	u := "https://webservice.fanart.tv/v3/" + path + "?api_key=" + url.QueryEscape(f.key)
+	u := f.base + path + "?api_key=" + url.QueryEscape(f.key)
 	err := getJSON(ctx, f.client, f.lim, http.MethodGet, u, nil, nil, out)
 	if err != nil {
 		// A missing title is a 404 from fanart.tv: nothing to offer, not a failure.

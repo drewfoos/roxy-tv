@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -57,6 +58,10 @@ func (s *Server) fanartSettingsPut(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetSetting(r.Context(), "fanart", body); err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	// A new key: fill the art the library is missing now, not at each title's next refresh.
+	if s.meta != nil && body.APIKey != "" && body.APIKey != cur.APIKey {
+		go s.meta.SweepArt(context.WithoutCancel(r.Context()))
 	}
 	writeJSON(w, 200, map[string]any{"apiKey": maskIf(body.APIKey), "enabled": body.APIKey != ""})
 }
