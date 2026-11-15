@@ -414,7 +414,8 @@ fun FactsLine(facts: List<String>, modifier: Modifier = Modifier, age: String? =
 
 /**
  * A title page's rating, on a line of its own between the facts and the genres: the
- * stars out of five in white, then how many ratings they come from in the facts' grey.
+ * stars out of five, then how many ratings they come from, in the same grey as the facts
+ * and the genres around it (white stars stood out as the one bright thing in the block).
  * "★ 3.8 (4K)". Nothing without a score.
  */
 @Composable
@@ -422,7 +423,7 @@ fun RatingLine(outOfTen: Double?, count: Int?, modifier: Modifier = Modifier) {
     val stars = tv.roxy.tv.ui.starScore(outOfTen) ?: return
     Text(
         buildAnnotatedString {
-            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = Color.White)) { append("★ $stars") }
+            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("★ $stars") }
             tv.roxy.tv.ui.ratingCountLabel(count)?.let { append(" $it") }
         },
         fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center, maxLines = 1,

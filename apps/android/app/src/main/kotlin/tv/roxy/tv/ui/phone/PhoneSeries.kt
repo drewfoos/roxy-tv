@@ -157,7 +157,9 @@ fun PhoneSeries(
     var extraSeasons by remember(series.id) { mutableStateOf<List<DiscoverSeason>>(emptyList()) }
     // The season count in TVDB's numbering (what Sonarr uses): TMDB merges some shows'
     // seasons into one (The Apothecary Diaries reads "1 Season" there).
-    var tvdbSeasons by remember(series.id) { mutableStateOf<Int?>(null) }
+    // Remembered per show (seasonCounts): the header says the card's count at first and this
+    // one when it is read; the second time the page opens it says the right one at once.
+    var tvdbSeasons by remember(series.id) { mutableStateOf(seasonCounts.get(series.id)) }
     // Episodes per season (TVDB numbering) for the Seasons page's counts.
     var seasonEpisodes by remember(series.id) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedExtra by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
@@ -169,7 +171,7 @@ fun PhoneSeries(
         runCatching { app.api.discoverDetail("tv", tmdbId) }
             .onSuccess { d ->
                 providerSeasons = d.seasons
-                tvdbSeasons = d.seasonCount.takeIf { it > 0 }
+                tvdbSeasons = d.seasonCount.takeIf { it > 0 }?.also { seasonCounts.put(series.id, it) }
                 seasonEpisodes = d.seasons.associate { it.number to it.episodes }
             }
     }
@@ -598,6 +600,9 @@ fun TitleBannerArt(url: String?, title: String, listState: LazyListState, warm: 
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, 0.35f to Color(0x99000000), 1f to Color.Transparent), startY = 0f, endY = fadePx)))
     }
 }
+
+/** A show's season count in TheTVDB's numbering as last read, by series id. */
+internal val seasonCounts = tv.roxy.tv.ui.detail.PageMemory<Int>(200)
 
 /** How far the logo block (and its fade) reaches up over the banner. */
 internal val LogoOverlap = 230.dp

@@ -36,6 +36,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -55,10 +56,12 @@ import tv.roxy.tv.ui.playItem
 import tv.roxy.tv.ui.theme.RoxyColors
 
 /**
- * The film page's tabs. "Part of" is only known once the film's relations are read, so it
- * comes last: it used to appear between the other two and push "More like this" aside.
+ * The film page's tabs: the same two whatever is read later. "Part of" (the series the
+ * film belongs to) is only known once its relations are read; as a tab it appeared in the
+ * strip a moment after the page did. It is a section at the foot of the Movie tab now,
+ * under the film and its extras, where arriving late moves nothing in sight.
  */
-internal fun movieTabs(partOf: Boolean): List<String> = listOf("Movie", "More like this") + if (partOf) listOf("Part of") else emptyList()
+internal val MovieTabs = listOf("Movie", "More like this")
 
 /** Netflix's phone movie page: backdrop, title and meta, Play, synopsis, the franchise it belongs to. */
 @Composable
@@ -105,7 +108,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
         // The series page's shape (Crunchyroll's): key art with the logo, facts and synopsis
         // centred, a tab strip, then the film as one row with its download and menu, and the
         // franchise it belongs to under a tab of its own when there is one.
-        val tabs = movieTabs(state.partOf.isNotEmpty())
+        val tabs = MovieTabs
         var tab by rememberSaveable(movie.id) { mutableStateOf(0) }
         val moreLike = tab == 1
         var similar by remember(movie.id) { mutableStateOf<List<DiscoverItem>?>(null) }
@@ -134,9 +137,6 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                         }
                     } }
                 }
-            } else if (tab == 2 && state.partOf.isNotEmpty()) {
-                item(key = "partof-top") { Spacer(Modifier.height(10.dp)) }
-                items(state.partOf.chunked(2)) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
             } else {
                 item(key = "movie-row") {
                     Spacer(Modifier.height(6.dp))
@@ -158,6 +158,10 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                         )
                     }
                 }
+                if (state.partOf.isNotEmpty()) {
+                    item(key = "partof-head") { SectionHeading("Part of", Modifier.testTag("part-of")) }
+                    items(state.partOf.chunked(2), key = { row -> "partof:" + row.joinToString("|") { it.id } }) { row -> RelatedGridRow(row.map { RelatedEntry(provider = "roxy", providerId = it.id, item = it, title = it.title, inLibrary = true) }, app.api, onOpen = { rel -> rel.item?.let(onOpenSeries) }) }
+                }
             }
         }
     }
@@ -165,6 +169,10 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
 
 /** "Extras" over a title's trailers, featurettes and the like. */
 @Composable
-internal fun ExtrasHeading() {
-    Text("Extras", color = RoxyColors.onBackground, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.padding(start = PhonePad, end = PhonePad, top = 22.dp, bottom = 6.dp))
+internal fun ExtrasHeading() = SectionHeading("Extras")
+
+/** A section's name inside a title page's tab ("Extras", "Part of"). */
+@Composable
+internal fun SectionHeading(text: String, modifier: Modifier = Modifier) {
+    Text(text, color = RoxyColors.onBackground, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = modifier.padding(start = PhonePad, end = PhonePad, top = 22.dp, bottom = 6.dp))
 }

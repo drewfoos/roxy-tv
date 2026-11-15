@@ -58,9 +58,19 @@ class TitlePageLoadingTest {
         assertEquals("Start watching ${e1.episodeCode}", seriesPlayLabel(opening.copy(loading = false, episodesLoading = false, episodes = listOf(e1)), e1))
     }
 
-    @Test fun partOfComesAfterTheTabsThatAreAlwaysThere() {
-        assertEquals(listOf("Movie", "More like this"), movieTabs(partOf = false))
-        assertEquals(movieTabs(false), movieTabs(partOf = true).take(2))
-        assertEquals("Part of", movieTabs(true).last())
+    @Test fun theFilmPagesTabsDoNotDependOnWhatIsReadLater() {
+        // "Part of" used to be a third tab that appeared once the film's relations were read.
+        assertEquals(listOf("Movie", "More like this"), MovieTabs)
+    }
+
+    @Test fun aPageRemembersWhatItReadLastTime() {
+        val memory = tv.roxy.tv.ui.detail.PageMemory<Int>(keep = 2)
+        assertNull(memory.get("a"))
+        memory.put("a", 1); memory.put("b", 2)
+        assertEquals(1, memory.get("a")) // read again: the most recent now
+        memory.put("c", 3) // the oldest ("b") goes
+        assertNull(memory.get("b"))
+        assertEquals(1, memory.get("a"))
+        assertEquals(3, memory.get("c"))
     }
 }
