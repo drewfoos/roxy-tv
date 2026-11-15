@@ -127,6 +127,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if p != nil && p.DeviceID != "" {
 		_ = s.store.DeleteDevice(r.Context(), p.DeviceID)
 		s.hub.Remove(p.DeviceID)
+		s.board.Forget(p.DeviceID)
 	}
 	auth.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)

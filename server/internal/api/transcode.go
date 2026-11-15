@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/activity"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/transcode"
 )
@@ -84,6 +85,11 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "the server is already transcoding as much as it can")
 		return
 	}
+	audioIndex := -1
+	if req.WebAudio != nil {
+		audioIndex = req.WebAudio.Index
+	}
+	defer s.streaming(r, src, activity.Stream{Method: activity.Transcode, AudioIndex: audioIndex, Web: req.Web, MaxHeight: height, BitrateK: bitrate, Encoder: string(s.transcoder.Encoder())})()
 	args := s.transcoder.Args(req)
 	s.pipeFFmpeg(w, r, "transcode", ffmpeg.LocalInputs(args), "source", src.ID, "encoder", s.transcoder.Encoder(), "height", height, "kbps", bitrate, "start", start)
 }

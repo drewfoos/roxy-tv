@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/activity"
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/transcode"
@@ -32,6 +33,7 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "the server is already remuxing as much as it can")
 		return
 	}
+	defer s.streaming(r, src, activity.Stream{Method: activity.Remux, AudioIndex: req.AudioIndex, Web: true})()
 	s.pipeFFmpeg(w, r, "remux", ffmpeg.LocalInputs(transcode.RemuxArgs(req)), "source", src.ID, "audio", req.AudioIndex, "codec", req.Codec, "start", req.StartSec)
 }
 

@@ -26,6 +26,10 @@ type RemuxRequest struct {
 // browserAudio lists the codecs every browser decodes; anything else becomes AAC.
 var browserAudio = map[string]bool{"aac": true, "opus": true, "flac": true, "vorbis": true, "mp3": true}
 
+// BrowserAudio reports whether every browser decodes the codec (a remux copies such a
+// track and converts any other to AAC).
+func BrowserAudio(codec string) bool { return browserAudio[strings.ToLower(codec)] }
+
 // RemuxArgs builds the ffmpeg command line: timestamps restart at zero, the video and the
 // chosen audio are mapped, subtitles and fonts are left out (the player fetches them from
 // the API), Matroska on stdout. Zero is NOT StartSec: the video is copied, so the stream

@@ -94,10 +94,8 @@ func audioArgs(r Request) []string {
 	var args []string
 	for i, a := range r.Audio {
 		n := strconv.Itoa(i)
-		codec := strings.ToLower(a.Codec)
-		small := a.Bitrate == 0 || a.Bitrate <= 640_000
 		if r.lowQuality() {
-			if (codec == "aac" || codec == "opus") && a.Channels > 0 && a.Channels <= 2 && (a.Bitrate == 0 || a.Bitrate <= 160_000) {
+			if r.copiesAudio(a) {
 				args = append(args, "-c:a:"+n, "copy")
 			} else {
 				args = append(args, "-c:a:"+n, "aac", "-ac:a:"+n, "2", "-b:a:"+n, "128k")
@@ -105,7 +103,7 @@ func audioArgs(r Request) []string {
 			continue
 		}
 		switch {
-		case small && (codec == "aac" || codec == "ac3" || codec == "eac3" || codec == "opus" || codec == "mp3"):
+		case r.copiesAudio(a):
 			args = append(args, "-c:a:"+n, "copy")
 		case a.Channels > 2:
 			args = append(args, "-c:a:"+n, "aac", "-ac:a:"+n, "6", "-b:a:"+n, "384k")
@@ -114,6 +112,26 @@ func audioArgs(r Request) []string {
 		}
 	}
 	return args
+}
+
+// copiesAudio: whether a track of the file goes out untouched (the rules above).
+func (r Request) copiesAudio(a AudioTrack) bool {
+	codec := strings.ToLower(a.Codec)
+	if r.lowQuality() {
+		return (codec == "aac" || codec == "opus") && a.Channels > 0 && a.Channels <= 2 && (a.Bitrate == 0 || a.Bitrate <= 160_000)
+	}
+	small := a.Bitrate == 0 || a.Bitrate <= 640_000
+	return small && (codec == "aac" || codec == "ac3" || codec == "eac3" || codec == "opus" || codec == "mp3")
+}
+
+// CopiesAudio reports whether a transcode at this height and bitrate sends an audio track
+// as it is in the file ("Now playing" says which tracks are converted). web: a browser's
+// stream, which keeps only what browsers decode.
+func CopiesAudio(maxHeight, bitrateK int, web bool, a AudioTrack) bool {
+	if web {
+		return BrowserAudio(a.Codec)
+	}
+	return Request{MaxHeight: maxHeight, BitrateK: bitrateK}.copiesAudio(a)
 }
 
 // Auto lets the server pick the first encoder that works.

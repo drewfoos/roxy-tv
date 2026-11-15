@@ -4,7 +4,7 @@ import { LANGUAGES, QUALITY_PREFS, SUB_MODES, usePrefs } from '../../api/prefs'
 import { useAsync } from '../../hooks/useAsync'
 import { useSession } from '../../app/useSession'
 import { Avatar } from '../../components/TopBar'
-import { IconChevronRight, IconHistory, IconLogout, IconPerson, IconSettings, IconSubtitles, IconSwap } from '../../components/Icons'
+import { IconChevronRight, IconHistory, IconLogout, IconPerson, IconPlay, IconSettings, IconSubtitles, IconSwap } from '../../components/Icons'
 import type { ReactNode } from 'react'
 
 /**
@@ -57,6 +57,7 @@ export function PhoneAccountIndex() {
 
       {s.isAdmin && (
         <Group title="Server">
+          <Row to="/account/now-playing" icon={<IconPlay size={22} />} label="Now Playing" value="Who is watching, and how the server is sending it" />
           <Row to="/account/requests" icon={<IconPerson size={22} />} label="Requests" value={waiting > 0 ? `${waiting} waiting for your approval` : 'Every request, approvals, downloads and problems'} />
           <Row to="/account/users" icon={<IconPerson size={22} />} label="Users" value="Accounts for other people: admin, requester or basic" />
           <Row to="/account/library" icon={<IconSettings size={22} />} label="Library" value="Scan, refresh metadata, fix matches and custom shows" />

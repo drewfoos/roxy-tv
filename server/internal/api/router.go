@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/roxy-media/roxy/server/internal/activity"
 	"github.com/roxy-media/roxy/server/internal/arrhook"
 	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/config"
@@ -41,8 +42,9 @@ type Server struct {
 	discover   *discover.Service // nil without TMDB
 	hooks      *arrhook.Service
 	transcoder *transcode.Detector
-	hub        *sessions.Hub // "Play on": connected players and their command queues
-	links      *linkStore    // TV sign-in codes waiting for a phone's approval
+	hub        *sessions.Hub   // "Play on": connected players and their command queues
+	board      *activity.Board // "Now playing": who is watching what, and how it is sent
+	links      *linkStore      // TV sign-in codes waiting for a phone's approval
 	start      time.Time
 }
 
@@ -59,6 +61,7 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 	s.hooks = arrhook.New(st, lib)
 	s.hub = sessions.New()
+	s.board = activity.New()
 	s.links = newLinkStore()
 	s.links.abandoned = func(deviceID string) {
 		// Approved, and the device never came for its token: nobody can be using it.
@@ -201,10 +204,12 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 			r.Get("/sessions/commands", s.sessionCommands)
 			r.Post("/sessions/state", s.sessionState)
 			r.Get("/sessions/players", s.sessionPlayers)
+			r.Get("/sessions/active", s.activeSessions)
 			r.Get("/devices", s.listDevices)
 			r.Delete("/devices/{id}", s.deleteDevice)
 			r.Post("/sessions/players/{device}/command", s.sessionCommand)
 			r.Post("/me/progress", s.progress)
+			r.Post("/me/playing", s.playingState)
 			r.Post("/me/played/{itemId}", s.played)
 			r.Delete("/me/played/{itemId}", s.played)
 			r.Post("/me/favorite/{itemId}", s.favorite)

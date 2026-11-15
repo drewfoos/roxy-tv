@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/activity"
 	"github.com/roxy-media/roxy/server/internal/sessions"
 )
 
@@ -82,7 +83,16 @@ func (s *Server) sessionState(w http.ResponseWriter, r *http.Request) {
 	if body.ItemID == "" {
 		now = nil
 	}
-	s.hub.SetNowPlaying(p.DeviceID, now, body.Seq)
+	// "Now playing" hears it too, unless the report was out of date: the apps say paused
+	// and stopped here, which their progress reports do not.
+	if s.hub.SetNowPlaying(p.DeviceID, now, body.Seq) {
+		if now == nil {
+			s.board.Stop(p.DeviceID, "")
+		} else if it, err := s.store.GetItemOrMoved(r.Context(), now.ItemID); err == nil && it != nil {
+			paused := now.Paused
+			s.board.Report(p.DeviceID, activity.Report{UserID: p.UserID, ScopeID: p.ScopeID, ItemID: it.ID, PositionMs: now.PositionMs, Paused: &paused})
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -202,6 +212,7 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.Remove(id) // gone from "Play on" at once, not after its poll goes stale
+	s.board.Forget(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

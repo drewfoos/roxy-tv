@@ -371,9 +371,9 @@ func (s *Service) Middleware(required bool) func(http.Handler) http.Handler {
 					mt = r.URL.Query().Get("mt")
 				}
 				if mt != "" {
-					if src, uid, err := s.verifyMediaToken(r.Context(), mt); err == nil && mediaPathFor(r.URL.Path, src) {
+					if src, uid, dev, err := s.verifyMediaToken(r.Context(), mt); err == nil && mediaPathFor(r.URL.Path, src) {
 						if u, err := s.store.GetUser(r.Context(), uid); err == nil && u != nil && !u.IsDisabled {
-							p = &model.Principal{UserID: u.ID, User: u, MediaSource: src}
+							p = &model.Principal{UserID: u.ID, User: u, MediaSource: src, MediaDevice: dev}
 						}
 					}
 				}

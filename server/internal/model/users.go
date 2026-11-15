@@ -76,4 +76,8 @@ type Principal struct {
 	// MediaSource is set when the caller came in with a media token (?mt=): it may only
 	// read that one source's stream and the files that play with it.
 	MediaSource string
+	// MediaDevice is the signed-in device a media token was made for (DeviceID stays empty
+	// for those callers: they may do nothing a device login may). "Now playing" uses it to
+	// tell whose stream this is.
+	MediaDevice string
 }

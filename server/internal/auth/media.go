@@ -77,46 +77,46 @@ func (s *Service) NewMediaToken(ctx context.Context, sourceID, userID, deviceID 
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + hex.EncodeToString(mac.Sum(nil)), exp, nil
 }
 
-// verifyMediaToken returns the source and user a token was issued for.
-func (s *Service) verifyMediaToken(ctx context.Context, tok string) (sourceID, userID string, err error) {
+// verifyMediaToken returns the source, user and device a token was issued for.
+func (s *Service) verifyMediaToken(ctx context.Context, tok string) (sourceID, userID, deviceID string, err error) {
 	key, err := s.mediaSecret(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	dot := strings.LastIndex(tok, ".")
 	if dot <= 0 {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(tok[:dot])
 	if err != nil {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
 	sig, err := hex.DecodeString(tok[dot+1:])
 	if err != nil {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write(raw)
 	if !hmac.Equal(sig, mac.Sum(nil)) {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
 	// source.user.device.expiry. Tokens from before they named their device (three
 	// fields) are refused: they could not be ended by signing the device out, and the
 	// last of them expired a day after 2026-11-03.
 	parts := strings.Split(string(raw), ".")
 	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
 	exp, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
 	// The device that asked must still be signed in, and for the token's user (logout,
 	// Device Management's sign out and a password change all end its streams too).
 	if ok, err := s.store.DeviceSignedIn(ctx, parts[1], parts[2]); err != nil || !ok {
-		return "", "", errBadMediaToken
+		return "", "", "", errBadMediaToken
 	}
-	return parts[0], parts[1], nil
+	return parts[0], parts[1], parts[2], nil
 }
 
 // mediaPathFor reports whether path is one of the routes a media token may open for

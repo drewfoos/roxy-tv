@@ -182,6 +182,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // The last report sent (item, position, tracks): the same report again is not sent (the
   // end of an episode was reported by 'ended' and again by the change to the next item).
   const lastSent = useRef('')
+  // What the player was doing at the last report (playing | paused | stopped).
+  const lastState = useRef('')
 
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -242,8 +244,11 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     return t
   }, [])
 
+  // closing: the player is going away (the item changed, the page was left). The report
+  // then says "stopped", so the admin's "Now playing" drops the session at once; any
+  // other says playing or paused.
   const report = useCallback(
-    (force = false, atSec?: number) => {
+    (force = false, atSec?: number, closing = false) => {
       const now = Date.now()
       if (!started.current) return
       if (!force && now - lastReport.current < REPORT_EVERY_MS) return
@@ -260,14 +265,25 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const sub = own.sub ? (subsOn ? (subIndex ?? undefined) : SUBTITLES_OFF) : undefined
       const audio = own.audio ? (audioIndex ?? undefined) : undefined
       const tracks = `${audio}/${sub}`
+      const el = videoRef.current
+      const state = closing ? 'stopped' : el && !el.paused && !el.ended ? 'playing' : 'paused'
       const sent = `${item.id}/${positionMs}/${tracks}`
-      if (sent === lastSent.current) return
+      if (sent === lastSent.current) {
+        // Nothing new to save (a second "finished" would count the episode twice): only
+        // what the player is doing changed, and only "Now playing" wants that.
+        if (state !== lastState.current) {
+          lastState.current = state
+          api.playState(item.id, state).catch(() => undefined)
+        }
+        return
+      }
       lastSent.current = sent
+      lastState.current = state
       const mono = performance.now()
       const lm = lastMoved.current
       if (Math.abs(pos - lm.pos) > MOVED_SEC || tracks !== lm.tracks) lastMoved.current = { pos, at: mono, tracks }
       const ageMs = Math.max(0, Math.round(mono - lastMoved.current.at))
-      api.progress(item.id, positionMs, audio, sub, ageMs, sourceId || undefined, duration > 0 ? Math.round(duration * 1000) : undefined).catch(() => undefined)
+      api.progress(item.id, positionMs, audio, sub, ageMs, sourceId || undefined, duration > 0 ? Math.round(duration * 1000) : undefined, state).catch(() => undefined)
     },
     [item.id, absTime, audioIndex, subIndex, subsOn, sourceId, duration],
   )
@@ -285,7 +301,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // up to 10 s of watching were lost. The report is sent with keepalive, so it outlives
   // the page.
   useEffect(() => {
-    const onHide = () => reportRef.current(true)
+    const onHide = () => reportRef.current(true, undefined, true)
     window.addEventListener('pagehide', onHide)
     return () => window.removeEventListener('pagehide', onHide)
   }, [])
@@ -486,7 +502,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       loadGen.current++ // a load still in flight for this item stops at its next await
       clearTimeout(t)
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
-      reportRef.current(true)
+      reportRef.current(true, undefined, true)
       subs.destroy()
       subsRef.current = null
       v.removeAttribute('src')

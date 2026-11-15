@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/activity"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/probe"
 	"github.com/roxy-media/roxy/server/internal/safefs"
@@ -73,6 +74,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	if r.Method == http.MethodGet {
+		defer s.streaming(r, src, activity.Stream{Method: activity.Direct, AudioIndex: -1})()
 	}
 	w.Header().Set("Content-Type", containerMime(src.Container))
 	w.Header().Set("Accept-Ranges", "bytes")

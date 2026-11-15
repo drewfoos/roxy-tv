@@ -17,6 +17,7 @@ import { UsersPage } from './Users'
 import { LibraryPage } from './Library'
 import { ArrPage } from './Arr'
 import { TranscodingPage } from './Transcoding'
+import { NowPlayingPage } from './NowPlaying'
 import { KeysPage } from './Keys'
 import { WebhooksPage } from './Webhooks'
 
@@ -36,6 +37,7 @@ const ACCOUNT: NavItem[] = [
   { to: 'logout', label: 'Log Out' },
 ]
 const SERVER: NavItem[] = [
+  { to: 'now-playing', label: 'Now Playing' },
   { to: 'requests', label: 'Requests' },
   { to: 'users', label: 'Users' },
   { to: 'library', label: 'Library' },
@@ -113,6 +115,7 @@ export function AccountSection() {
               <Route path="logout" element={<LogoutPage />} />
               {s.isAdmin && (
                 <>
+                  <Route path="now-playing" element={<NowPlayingPage />} />
                   <Route path="requests" element={<RequestsPage />} />
                   <Route path="users" element={<UsersPage />} />
                   <Route path="library" element={<LibraryPage />} />

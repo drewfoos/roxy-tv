@@ -3,7 +3,7 @@
 // profile; a 401 clears the session so the app returns to the login screen.
 import { session, deviceName } from './session'
 import { connection, connectionWords } from './connection'
-import type { AccountUser, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
+import type { AccountUser, ActiveSessions, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
 import type {
   DiscoverDetail,
   DiscoverEpisode,
@@ -287,6 +287,8 @@ export const api = {
   players: () => get<{ players: PlayerDevice[] }>('/v1/sessions/players'),
   /** Every device signed in with this login, not only the ones connected now. */
   devices: () => get<{ devices: SignedInDevice[] }>('/v1/devices'),
+  /** Admin: everything playing from the server right now, every login's. */
+  activeSessions: () => get<ActiveSessions>('/v1/sessions/active'),
   /** Sign one of this login's other devices out. */
   signOutDevice: (id: string) => del<void>(`/v1/devices/${id}`),
 
@@ -370,8 +372,11 @@ export const api = {
   // left paused cannot undo an episode finished on another device since.
   // sourceId: the version playing; its own length decides "watched".
   // durationMs: its length, by which the server finds the version if sourceId is gone.
-  progress: (itemId: string, positionMs: number, audioIndex?: number, subtitleIndex?: number, ageMs?: number, sourceId?: string, durationMs?: number) =>
-    request<void>('POST', '/v1/me/progress', { itemId, positionMs, audioIndex, subtitleIndex, ageMs, sourceId, durationMs }, true, true),
+  // state: what the player is doing, for the admin's "Now playing" ('stopped' = it closed).
+  progress: (itemId: string, positionMs: number, audioIndex?: number, subtitleIndex?: number, ageMs?: number, sourceId?: string, durationMs?: number, state?: 'playing' | 'paused' | 'stopped') =>
+    request<void>('POST', '/v1/me/progress', { itemId, positionMs, audioIndex, subtitleIndex, ageMs, sourceId, durationMs, state }, true, true),
+  /** What the player is doing, when there is no new position to save with it. */
+  playState: (itemId: string, state: 'playing' | 'paused' | 'stopped') => request<void>('POST', '/v1/me/playing', { itemId, state }, true, true),
   setPlayed: (itemId: string, on: boolean) => (on ? post<{ userData: UserData }>(`/v1/me/played/${itemId}`) : del<{ userData: UserData }>(`/v1/me/played/${itemId}`)),
   setFavorite: (itemId: string, on: boolean) => (on ? post<{ userData: UserData }>(`/v1/me/favorite/${itemId}`) : del<{ userData: UserData }>(`/v1/me/favorite/${itemId}`)),
 

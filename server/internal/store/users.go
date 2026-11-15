@@ -110,6 +110,24 @@ func (s *Store) GetDeviceByTokenHash(ctx context.Context, hash string) (*model.D
 	return &d, nil
 }
 
+// GetDevice: one signed-in device by its id, or nil.
+func (s *Store) GetDevice(ctx context.Context, id string) (*model.Device, error) {
+	var d model.Device
+	var name, client, ver, devID, seen, ip sql.NullString
+	var created string
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, name, client, client_version, device_id, last_seen, created_at, last_ip FROM devices WHERE id = ?`, id).
+		Scan(&d.ID, &d.UserID, &name, &client, &ver, &devID, &seen, &created, &ip)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	d.Name, d.Client, d.ClientVersion, d.DeviceID, d.LastIP = name.String, client.String, ver.String, devID.String, ip.String
+	d.LastSeen, d.CreatedAt = ParseTime(seen.String), ParseTime(created)
+	return &d, nil
+}
+
 // ListDevices: every device signed in with the user's login, most recently seen first.
 func (s *Store) ListDevices(ctx context.Context, userID string) ([]model.Device, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, name, client, client_version, device_id, last_seen, created_at, last_ip FROM devices WHERE user_id = ? ORDER BY last_seen DESC`, userID)

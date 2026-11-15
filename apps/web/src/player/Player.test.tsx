@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   transcodeUrl: (id: string, height: number) => `/v1/sources/${id}/transcode?h=${height}`,
   remuxStart: vi.fn(async (_id: string, start: number) => start),
   progress: vi.fn(async (..._args: unknown[]) => undefined),
+  playState: vi.fn(async (..._args: unknown[]) => undefined),
   trickplay: vi.fn(async () => null),
   trickplaySheetUrl: () => '',
 }))

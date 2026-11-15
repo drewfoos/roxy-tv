@@ -58,28 +58,28 @@ func TestMediaTokenLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src, uid, err := s.verifyMediaToken(ctx, tok); err != nil || src != "src1" || uid != u.ID {
+	if src, uid, dev, err := s.verifyMediaToken(ctx, tok); err != nil || src != "src1" || uid != u.ID || dev == "" {
 		t.Fatalf("a fresh token: %q %q %v", src, uid, err)
 	}
 	// Tampered: another source in the payload, the signature kept.
 	dot := strings.LastIndex(tok, ".")
 	raw, _ := base64.RawURLEncoding.DecodeString(tok[:dot])
 	forged := base64.RawURLEncoding.EncodeToString([]byte(strings.Replace(string(raw), "src1", "src2", 1))) + tok[dot:]
-	if _, _, err := s.verifyMediaToken(ctx, forged); err == nil {
+	if _, _, _, err := s.verifyMediaToken(ctx, forged); err == nil {
 		t.Error("a token whose source was changed was accepted")
 	}
 	// Expired: signed correctly, an hour past its expiry.
 	old := signMedia(t, s, "src1."+u.ID+"."+d.ID+"."+strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10))
-	if _, _, err := s.verifyMediaToken(ctx, old); err == nil {
+	if _, _, _, err := s.verifyMediaToken(ctx, old); err == nil {
 		t.Error("an expired media token was accepted")
 	}
 	// The old format, without a device (correctly signed, not expired), is refused: it
 	// could not be ended by signing out. So is one naming no device.
 	future := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
-	if _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+"."+future)); err == nil {
+	if _, _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+"."+future)); err == nil {
 		t.Error("an old-format media token (no device) was accepted")
 	}
-	if _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+".."+future)); err == nil {
+	if _, _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+".."+future)); err == nil {
 		t.Error("a media token naming no device was accepted")
 	}
 	if _, _, err := s.NewMediaToken(ctx, "src1", u.ID, ""); err == nil {
@@ -95,7 +95,7 @@ func TestMediaTokenLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+"."+bobDev.ID+"."+future)); err == nil {
+	if _, _, _, err := s.verifyMediaToken(ctx, signMedia(t, s, "src1."+u.ID+"."+bobDev.ID+"."+future)); err == nil {
 		t.Error("a media token naming another user's device was accepted")
 	}
 	if _, _, err := s.NewMediaToken(ctx, "src1", u.ID, bobDev.ID); err == nil {
@@ -108,7 +108,7 @@ func TestMediaTokenLifetime(t *testing.T) {
 	if err := st.DeleteDevice(ctx, d.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.verifyMediaToken(ctx, tok); err == nil {
+	if _, _, _, err := s.verifyMediaToken(ctx, tok); err == nil {
 		t.Error("a media token outlived its device's sign-out")
 	}
 }

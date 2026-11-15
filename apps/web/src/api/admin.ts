@@ -1,3 +1,5 @@
+import type { Item } from './types'
+
 // Types for the account and server-settings pages (what the phone's settings screens read).
 
 export interface AccountUser {
@@ -168,6 +170,75 @@ export interface ArrTest {
   rootFolders?: { path: string; freeSpace?: number; roxy?: string; roxyMatch?: 'yes' | 'maybe' | '' }[]
   qualityProfiles?: { id: number; name: string }[]
   tags?: { id: number; label: string }[]
+}
+
+/** What a converted track is sent as (GET /v1/sessions/active). */
+export interface ActiveOutput {
+  codec: string
+  height?: number
+  bitrateK?: number
+  channels?: number
+  /** What converts the video ("VAAPI (AMD / Intel on Linux)", "Software (CPU)"). */
+  encoder?: string
+  hardware?: boolean
+}
+
+/** One of the file's tracks as it plays; `to` is set when the server converts it. */
+export interface ActiveTrack {
+  codec: string
+  width?: number
+  height?: number
+  bitDepth?: number
+  range?: string
+  channels?: number
+  language?: string
+  title?: string
+  external?: boolean
+  sdh?: boolean
+  to?: ActiveOutput
+}
+
+export type PlayMethod = 'direct' | 'remux' | 'transcode' | ''
+
+/** How a session's file reaches its device. */
+export interface ActivePlay {
+  /** '' = no stream request seen for the session (the server restarted mid-play). */
+  method: PlayMethod
+  reason?: string
+  /** The server is answering a stream request for it right now. */
+  sending: boolean
+  container?: string
+  bitrate?: number
+  version?: string
+  video?: ActiveTrack
+  audio?: ActiveTrack
+  /** The viewer's subtitle choice when the player has said: a track, or off. */
+  subtitle?: ActiveTrack
+  subtitlesOff?: boolean
+}
+
+/** One device playing one item, any login's (admin's "Now playing"). */
+export interface ActiveSession {
+  id: string
+  state: 'playing' | 'paused'
+  positionMs: number
+  durationMs: number
+  /** How long ago the position was reported; a playing session is that much further on. */
+  ageMs: number
+  startedAt: string
+  item: Item
+  user: { id: string; name: string }
+  profile: { id: string; name: string }
+  device: { name: string; client?: string; version?: string; network?: string }
+  play: ActivePlay
+}
+
+export interface ActiveSessions {
+  sessions: ActiveSession[]
+  /** Transcodes being sent right now, and how many the server allows at once. */
+  converting: number
+  convertingMax: number
+  encoder: string
 }
 
 export interface TranscodingSettings {

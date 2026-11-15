@@ -103,6 +103,10 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		// the item was recreated: new item, new source ids): the version of that length is
 		// then taken, never the number itself.
 		DurationMs int64 `json:"durationMs"`
+		// What the player is doing, for "Now playing": playing | paused | stopped (the
+		// player closed). Left out by players that do not say; the position is saved the
+		// same either way.
+		State string `json:"state"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ItemID == "" {
 		writeError(w, 400, "invalid request body")
@@ -127,6 +131,7 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "item not found")
 		return
 	}
+	s.nowPlaying(p, it.ID, body.SourceID, body.PositionMs, body.DurationMs, body.AudioIndex, body.SubtitleIndex, body.State, body.At != 0)
 	runtime := int64(0)
 	if it.RuntimeMs != nil {
 		runtime = *it.RuntimeMs
