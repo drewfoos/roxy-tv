@@ -131,7 +131,7 @@ img { display: block; }
 .hero__pills { position: absolute; left: calc(var(--gutter) - 4px); bottom: 36px; display: flex; }
 .hero__pill { padding: 8px 4px; cursor: pointer; }
 /* A tall hero: the words sit just above the pills, not in the middle with the pills far below. */
-@media (min-height: 900px) { .hero__body { top: auto; bottom: 116px; transform: none; } }
+@media (min-height: 900px) { .hero { height: min(76vh, 1200px); } .hero__body { top: auto; bottom: 126px; transform: none; } }
 .hero__pill i { position: relative; display: block; width: 24px; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.5); overflow: hidden; transition: width 300ms; }
 .hero__pill--on i { width: 48px; }
 .hero__pill i::after { content: ""; position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left; }
