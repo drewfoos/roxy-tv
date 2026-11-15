@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
@@ -38,9 +39,39 @@ sealed interface HomeUiState {
  * [libraryVersion]: a count that moves when watched state, the Watchlist or artwork
  * changed in this app (ItemCache.version), so what was worked out before is not reused.
  */
-class HomeViewModel(private val api: RoxyApi, private val libraryVersion: () -> Long = { 0L }) : ViewModel() {
+class HomeViewModel(
+    private val api: RoxyApi,
+    private val libraryVersion: () -> Long = { 0L },
+    /** The least time the reload circle stays, so a fast answer is not a flicker. */
+    private val minRefreshMs: Long = 600,
+) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
+
+    /** A reload the viewer asked for (a pull down, a tap on Home while on Home) is running. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing
+    private var refreshBegan = 0L
+
+    /**
+     * Reads the rows again with the page left as it is, and says so while it does
+     * ([refreshing]). With nothing on the page yet it is an ordinary load.
+     */
+    fun refresh() {
+        if (_state.value !is HomeUiState.Ready) return load()
+        if (_refreshing.value) return
+        refreshBegan = System.nanoTime()
+        _refreshing.value = true
+        load(silent = true)
+    }
+
+    /** A load has put its answer (or kept the rows after a failure): a reload asked for ends. */
+    private fun settled() {
+        if (!_refreshing.value) return
+        val rest = minRefreshMs - (System.nanoTime() - refreshBegan) / 1_000_000
+        if (rest <= 0) _refreshing.value = false
+        else viewModelScope.launch { delay(rest); _refreshing.value = false }
+    }
 
     private var loadJob: Job? = null
 
@@ -81,9 +112,11 @@ class HomeViewModel(private val api: RoxyApi, private val libraryVersion: () -> 
                 val version = libraryVersion()
                 if (previous.isNotEmpty() && heroesOf == ready.rows to version) {
                     _state.value = ready.copy(heroes = previous)
+                    settled()
                     return@onSuccess
                 }
                 _state.value = ready.copy(heroes = previous)
+                settled() // the rows are in; the slides follow behind them
                 val heroes = resolveHeroes(ready.rows)
                 heroesOf = ready.rows to version
                 _state.value = ready.copy(heroes = heroes)
@@ -91,6 +124,7 @@ class HomeViewModel(private val api: RoxyApi, private val libraryVersion: () -> 
                 if (t is CancellationException) return@onFailure // the probe already decided
                 Timber.e(t, "home failed")
                 val unauthorized = t is ApiException && t.isUnauthorized
+                settled()
                 // A silent reload (back from the player) that fails keeps the rows on screen.
                 if (silent && !unauthorized && _state.value is HomeUiState.Ready) return@onFailure
                 val offline = t !is ApiException && !api.reachable()

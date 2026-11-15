@@ -71,8 +71,9 @@ import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
+import kotlinx.coroutines.flow.MutableSharedFlow
 
-private enum class Tab(val label: String, val route: Route) {
+internal enum class Tab(val label: String, val route: Route) {
     Home("Home", Route.Home),
     Discover("Discover", Route.Discover),
     Browse("Browse", Route.Browse),
@@ -122,6 +123,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
         nav.navigate(Route.LinkTv(c))
     }
     val entry by nav.currentBackStackEntryAsState()
+    val homeRetaps = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val dest = entry?.destination
     val currentTab = when {
         dest == null -> null
@@ -202,6 +204,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onOpenDownloadedTitle = { nav.navigate(Route.DownloadedTitle(it)) },
                             onUnauthorized = onUnauthorized,
                             bottomInset = bottomInset,
+                            retaps = homeRetaps,
                             onOpenDiscover = {
                                 nav.navigate(Tab.Discover.route) {
                                     popUpTo(nav.graph.findStartDestination().id) { saveState = true }
@@ -420,7 +423,11 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                         profileName = session.profileName.ifEmpty { session.userName },
                         avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarKey.ifEmpty { session.profileAvatarVersion.toString() }) },
                         onSelect = { tab ->
-                            if (tab == currentTab) return@BottomBar
+                            when (tabTap(currentTab, tab)) {
+                                TabTap.Stay -> return@BottomBar
+                                TabTap.ReloadHome -> { homeRetaps.tryEmit(Unit); return@BottomBar }
+                                TabTap.Go -> Unit
+                            }
                             nav.navigate(tab.route) {
                                 popUpTo(nav.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
@@ -483,6 +490,18 @@ private fun UpdateBar(state: UpdateState, onInstall: () -> Unit, onDismiss: () -
 }
 
 private val NavBarGrey = Color(0xFF23252B)
+
+internal enum class TabTap { Go, Stay, ReloadHome }
+
+/**
+ * What a tap in the bottom bar does: another tab opens; Home tapped while Home is the
+ * page reloads it (as the big apps do); any other tab tapped again does nothing.
+ */
+internal fun tabTap(current: Tab?, tapped: Tab): TabTap = when {
+    tapped != current -> TabTap.Go
+    tapped == Tab.Home -> TabTap.ReloadHome
+    else -> TabTap.Stay
+}
 
 /** Compact bottom bar: 26 dp icons, 11 sp labels, white tabs with the selected one in Roxy blue, the Account tab as the profile avatar. */
 @Composable

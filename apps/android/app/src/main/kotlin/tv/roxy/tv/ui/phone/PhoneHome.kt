@@ -50,7 +50,14 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.platform.testTag
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -106,6 +113,7 @@ private const val HERO_DWELL_MS = 8000
  * then rows. Same [HomeViewModel] as the TV screen; shows skeletons while loading and a
  * dedicated state when the server cannot be reached.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhoneHome(
     onOpenSeries: (Item) -> Unit,
@@ -118,12 +126,22 @@ fun PhoneHome(
     onOpenDiscover: () -> Unit = {},
     onOpenLibrarySettings: () -> Unit = {},
     onAddFolder: () -> Unit = {},
+    /** Home tapped in the bottom bar while Home is the page: back to the top, and reload. */
+    retaps: Flow<Unit> = emptyFlow(),
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: HomeViewModel = viewModel { HomeViewModel(app.api, libraryVersion = { app.items.version }) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+    LaunchedEffect(retaps) {
+        retaps.collect {
+            launch { listState.animateScrollToItem(0) }
+            vm.refresh()
+        }
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load(silent = state is HomeUiState.Ready) }
     OnUserDataChanged { vm.load(silent = true) }
@@ -163,7 +181,6 @@ fun PhoneHome(
             HomeHeader(alpha = 0f, onSearch = onSearch, modifier = Modifier.align(Alignment.TopCenter))
         }
         is HomeUiState.Ready -> {
-            val listState = rememberLazyListState()
             // The header fades to black over the first 160 dp of scroll and stays pinned.
             val fadePx = with(LocalDensity.current) { 160.dp.toPx() }
             val headerAlpha by remember {
@@ -171,7 +188,20 @@ fun PhoneHome(
                     if (listState.firstVisibleItemIndex > 0) 1f else (listState.firstVisibleItemScrollOffset / fadePx).coerceIn(0f, 1f)
                 }
             }
-            Box(modifier = Modifier.fillMaxSize()) {
+            val pull = rememberPullToRefreshState()
+            // The same pull-down reload as Browse; the circle comes out under the pinned header.
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { vm.refresh() },
+                state = pull,
+                modifier = Modifier.fillMaxSize(),
+                indicator = {
+                    PullToRefreshDefaults.Indicator(
+                        state = pull, isRefreshing = refreshing,
+                        modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 44.dp).testTag("home-reloading"),
+                    )
+                },
+            ) {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomInset + 16.dp)) {
                     item(key = "hero") {
                         HeroCarousel(

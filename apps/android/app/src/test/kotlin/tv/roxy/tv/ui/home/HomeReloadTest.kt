@@ -49,7 +49,7 @@ class HomeReloadTest {
     }
     private val prefs = Prefs(context, scope)
     private var version = 0L
-    private val vm = HomeViewModel(RoxyApi(prefs), libraryVersion = { version })
+    private val vm = HomeViewModel(RoxyApi(prefs), libraryVersion = { version }, minRefreshMs = 0)
 
     @Before fun start() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -130,5 +130,27 @@ class HomeReloadTest {
 
         assertEquals(looks, count("/v1/system/info"))
         assertTrue(vm.state.value is HomeUiState.Ready)
+    }
+
+    // A pull down, or Home tapped while on Home: the rows are read again behind the page,
+    // and the page says so until they are in.
+    @Test fun aReloadAskedForSaysSoUntilTheRowsAreIn() {
+        opened()
+        val before = paths()
+
+        vm.refresh()
+        assertTrue("reloading is shown at once", vm.refreshing.value)
+        assertTrue("with the page left as it is", vm.state.value is HomeUiState.Ready)
+        vm.refresh() // an impatient second tap asks nothing more
+
+        waitFor("the reload ends") { !vm.refreshing.value }
+        Thread.sleep(300)
+        assertEquals("the rows, once", listOf("/v1/home"), paths().drop(before.size))
+    }
+
+    @Test fun aReloadWithNoPageYetIsAnOrdinaryLoad() {
+        vm.refresh()
+        waitFor("the carousel is worked out") { heroes().size == 2 }
+        assertEquals(false, vm.refreshing.value)
     }
 }
