@@ -62,7 +62,7 @@ export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
         </button>
         <NavLink to="/" className="tile topbar__brand">
           <WitchHat size={30} />
-          <span>Roxy</span>
+          <span>Roxy TV</span>
         </NavLink>
         <nav className="topbar__nav">
           <NavLink to="/discover" className={link}>
