@@ -146,7 +146,7 @@ fun PhoneHome(
             // The server restarted or the Wi-Fi dropped: reload once it answers again.
             s.offline -> {
                 tv.roxy.tv.ui.components.OnServerBack { vm.load() }
-                val index by app.downloads.index.collectAsStateWithLifecycle()
+                val index by app.downloads.settled.collectAsStateWithLifecycle()
                 val titles = remember(index) { app.downloads.titles().filter { it.doneCount > 0 } }
                 OfflineState(serverUrl = app.api.baseUrl, titles = titles, bottomInset = bottomInset, onRetry = { vm.load() }, onDownloads = onDownloads, onOpenTitle = onOpenDownloadedTitle)
             }

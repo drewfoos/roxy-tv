@@ -80,7 +80,7 @@ val OfflineStripHeight = 26.dp
 fun rememberOfflineWords(): OfflineWords {
     val app = RoxyApp.get(LocalContext.current)
     val hasNetwork by app.server.hasNetwork.collectAsStateWithLifecycle()
-    val index by app.downloads.index.collectAsStateWithLifecycle()
+    val index by app.downloads.settled.collectAsStateWithLifecycle()
     return remember(hasNetwork, index) { offlineWords(hasNetwork, index.entries.values.count { it.isDone }) }
 }
 

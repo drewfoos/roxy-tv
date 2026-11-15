@@ -453,7 +453,9 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
     // offers Delete / Cancel instead of Download; a show with some episodes here offers the rest.
     val app = RoxyApp.get(context)
     val downloads = app.downloads
-    val index by downloads.index.collectAsStateWithLifecycle()
+    // Every card has this menu: closed, it follows the index without progress ticks; open,
+    // the live one (Cancel shows the percentage).
+    val index by (if (open) downloads.index else downloads.settled).collectAsStateWithLifecycle()
     val entry = if (item.isSeries) null else index.entries[item.id]
     val seriesHas = if (item.isSeries) index.entries.values.count { it.titleId == item.id } else 0
     var confirmDelete by remember { mutableStateOf(false) }

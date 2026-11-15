@@ -11,6 +11,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,8 +32,10 @@ import tv.roxy.tv.ui.theme.RoxyColors
 @Composable
 fun DownloadCorner(item: Item, modifier: Modifier = Modifier) {
     if (item.isSeries) return
-    val index by RoxyApp.get(LocalContext.current).downloads.index.collectAsStateWithLifecycle()
-    val entry = index.entries[item.id] ?: return
+    // This item's entry alone: a card is not redrawn by another download's progress.
+    val downloads = RoxyApp.get(LocalContext.current).downloads
+    val live by remember(downloads, item.id) { downloads.entryFlow(item.id) }.collectAsStateWithLifecycle(downloads.entry(item.id))
+    val entry = live ?: return
     Box(modifier = modifier.size(26.dp).clip(CircleShape).background(Color(0xB3000000)), contentAlignment = Alignment.Center) {
         when (entry.state) {
             DownloadState.Done -> Icon(Icons.Filled.OfflinePin, contentDescription = "Downloaded", tint = RoxyColors.accent, modifier = Modifier.size(22.dp))

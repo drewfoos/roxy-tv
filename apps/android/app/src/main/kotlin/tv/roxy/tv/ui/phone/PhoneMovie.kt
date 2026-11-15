@@ -74,7 +74,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
     val movie = state.movie
     // The server is away and the page could not load: the download on the phone stands in.
     val online by app.server.online.collectAsStateWithLifecycle()
-    val dlIndex by app.downloads.index.collectAsStateWithLifecycle()
+    val dlIndex by app.downloads.settled.collectAsStateWithLifecycle()
     if (movie == null && !state.loading && !online && dlIndex.entries[movieId]?.isDone == true) {
         tv.roxy.tv.ui.components.OnServerBack { vm.load() }
         PhoneDownloadedTitle(titleId = dlIndex.entries[movieId]?.titleId ?: movieId, onBack = onBack, offlineNote = true)

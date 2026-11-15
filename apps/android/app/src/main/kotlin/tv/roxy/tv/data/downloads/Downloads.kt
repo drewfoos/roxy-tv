@@ -11,7 +11,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -125,6 +128,9 @@ fun pendingAfter(queue: List<PendingProgress>, profile: String?, itemId: String,
 /** How soon a failed write of the progress journal is tried again. */
 const val JOURNAL_RETRY_MS = 5_000L
 
+/** How long the index waits after a change before it is written (changes in a burst are one write). */
+const val INDEX_WRITE_DELAY_MS = 400L
+
 /** How long an entry the server keeps refusing (a 500, say) is retried before it is let go. */
 const val PENDING_REFUSED_KEEP_MS = 24 * 60 * 60 * 1000L
 
@@ -165,6 +171,19 @@ data class DownloadIndex(
     val titles: Map<String, TitleSnapshot> = emptyMap(),
     val pendingProgress: List<PendingProgress> = emptyList(),
 )
+
+/**
+ * The index without what changes while a download runs: the bytes fetched so far of every
+ * unfinished entry, and the queue of playback reports (it has its own file). Two indexes
+ * that are equal this way differ only by progress ticks, which neither the file on disk
+ * (the byte counts are read from the part files at start, see [Downloads.load]) nor a page
+ * that shows no progress has a use for.
+ */
+fun DownloadIndex.withoutProgress(): DownloadIndex {
+    val moving = entries.values.any { !it.isDone && it.bytesDone != 0L }
+    if (!moving && pendingProgress.isEmpty()) return this
+    return copy(entries = if (moving) entries.mapValues { (_, e) -> if (e.isDone || e.bytesDone == 0L) e else e.copy(bytesDone = 0) } else entries, pendingProgress = emptyList())
+}
 
 /** A show on the Downloads page: its snapshot and the entries under it, in season / episode order. */
 data class DownloadedTitle(val id: String, val title: Item, val entries: List<DownloadEntry>) {
@@ -216,12 +235,27 @@ class Downloads(
     private val _index = MutableStateFlow(load())
     val index: StateFlow<DownloadIndex> get() = _index
 
+    /**
+     * [index] as a page that shows no progress wants it ([withoutProgress]): it changes when
+     * a download is added, finishes, fails, is paused or deleted, and not with every tick of
+     * a running one (several a second, each of which redrew every page reading [index]).
+     */
+    val settled: StateFlow<DownloadIndex> = _index.map { it.withoutProgress() }.stateIn(scope, SharingStarted.Eagerly, _index.value.withoutProgress())
+
+    /** One entry, live (its progress too); a card's corner reads this, so a tick redraws that card alone. */
+    fun entryFlow(itemId: String): Flow<DownloadEntry?> = _index.map { it.entries[itemId] }.distinctUntilChanged()
+
+    /** Writes of the index file (tests: a running download must not cause any). */
+    internal val indexWrites = java.util.concurrent.atomic.AtomicInteger()
+
     init {
-        // Persist every change, coalesced; progress ticks arrive several times a second.
+        // Persist every change but progress, coalesced. A running download ticks several
+        // times a second, and each tick used to rewrite the whole index and flush it to
+        // storage; the bytes fetched are read from the part file at start, so nothing on
+        // disk needs them. What is written is the index as it is then, byte counts included.
+        // The progress queue has its own file, written at once (ProgressJournal).
         @OptIn(FlowPreview::class)
-        // The progress queue has its own file, written at once (ProgressJournal): a change to
-        // it alone (every report) does not rewrite this one.
-        scope.launch(Dispatchers.IO) { _index.map { it.copy(pendingProgress = emptyList()) }.distinctUntilChanged().debounce(400).collect { save(it) } }
+        scope.launch(Dispatchers.IO) { settled.debounce(INDEX_WRITE_DELAY_MS).collect { save(_index.value.copy(pendingProgress = emptyList())) } }
         writeQueue() // an older install's queue (read from downloads.json) moves to its file
         watchNetwork()
         if (_index.value.entries.values.any { it.state == DownloadState.Queued }) kick()
@@ -676,6 +710,7 @@ class Downloads(
     }
 
     private suspend fun save(idx: DownloadIndex) = withContext(Dispatchers.IO) {
+        indexWrites.incrementAndGet()
         runCatching { writeIndexFile(indexFile, json.encodeToString(DownloadIndex.serializer(), idx)) }
             .onFailure { Timber.w(it, "could not save the downloads index") }
     }

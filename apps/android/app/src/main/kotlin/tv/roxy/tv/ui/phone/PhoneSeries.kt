@@ -134,7 +134,7 @@ fun PhoneSeries(
     // The server is away and the page (or its episode list) could not load: what is on the
     // phone stands in, like the big apps' "downloaded episodes only" title page.
     val online by app.server.online.collectAsStateWithLifecycle()
-    val dlIndex by app.downloads.index.collectAsStateWithLifecycle()
+    val dlIndex by app.downloads.settled.collectAsStateWithLifecycle()
     val hasDownloads = remember(dlIndex) { dlIndex.entries.values.any { it.titleId == seriesId && it.isDone } }
     if (!online && hasDownloads && ((series == null && !state.loading) || state.episodesError != null)) {
         tv.roxy.tv.ui.components.OnServerBack { vm.load(); vm.retryEpisodes() }

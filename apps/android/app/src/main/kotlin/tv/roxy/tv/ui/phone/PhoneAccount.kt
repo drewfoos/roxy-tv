@@ -115,7 +115,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: ()
     val app = RoxyApp.get(context)
     val settings by app.prefs.settings.collectAsStateWithLifecycle()
     val session by app.prefs.session.collectAsStateWithLifecycle()
-    val downloadIndex by app.downloads.index.collectAsStateWithLifecycle()
+    val downloadIndex by app.downloads.settled.collectAsStateWithLifecycle()
     val wifiOnly by app.prefs.downloadsWifiOnly.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var pick by remember { mutableStateOf<Pick?>(null) }
