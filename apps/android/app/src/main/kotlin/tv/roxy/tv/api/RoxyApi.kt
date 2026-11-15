@@ -1210,6 +1210,8 @@ data class Item(
     /** Content descriptors ("Sexual Content", "Violence"); on series and movies only. */
     val advisories: List<String> = emptyList(),
     val communityRating: Double? = null,
+    /** How many ratings [communityRating] comes from; null when the server does not know. */
+    val ratingCount: Int? = null,
     val officialRating: String? = null,
     val premiered: String? = null,
     val airDate: String? = null,

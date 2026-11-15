@@ -83,6 +83,22 @@ class Shots {
         shot("phone-series-loading-rows")
     }
 
+    // A title page's lines under the logo: the facts, the rating on its own line with how
+    // many ratings it comes from, the genres; then the TV's one line.
+    @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")
+    fun titleRatingLines() {
+        val item = tv.roxy.tv.api.Item(id = "x", type = "series", title = "Overgeared", communityRating = 7.6, ratingCount = 4037, officialRating = "TV-14", genres = listOf("Action", "Adventure", "Fantasy"))
+        compose.setContent {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().background(Color.Black).padding(vertical = 24.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                tv.roxy.tv.ui.phone.FactsLine(age = "14+", audio = "Dub | Sub", facts = listOf("2026", "1 Season"))
+                tv.roxy.tv.ui.phone.RatingLine(item.communityRating, item.ratingCount)
+                androidx.compose.material3.Text("Action, Adventure, Fantasy", fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.padding(top = 8.dp))
+                Box(Modifier.padding(top = 40.dp)) { tv.roxy.tv.ui.tv.FactsLine(item, item, rating = true) }
+            }
+        }
+        shot("title-rating-lines")
+    }
+
     // Discover while a series' films are being looked for: the Request button holds a
     // turning circle and no words, then says what it brings.
     @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")

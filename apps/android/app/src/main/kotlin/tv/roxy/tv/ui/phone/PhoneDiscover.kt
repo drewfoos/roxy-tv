@@ -585,7 +585,6 @@ fun PhoneDiscoverDetail(
             item(key = "info") {
                 TitleLogoColumn(logo = d.logo, title = d.title) {
                     FactsLine(
-                        rating = d.rating?.takeIf { it > 0 },
                         age = d.officialRating?.takeIf { it.isNotBlank() }?.let { ageLabel(it) },
                         facts = listOfNotNull(
                             d.year?.toString(),
@@ -593,6 +592,7 @@ fun PhoneDiscoverDetail(
                             d.runtimeMinutes.takeIf { it > 0 && d.isMovie }?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
                         ),
                     )
+                    RatingLine(d.rating, null)
                     val genres = d.genres.take(3).joinToString(", ")
                     if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = FactsGrey, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
                     if (!d.isMovie) {

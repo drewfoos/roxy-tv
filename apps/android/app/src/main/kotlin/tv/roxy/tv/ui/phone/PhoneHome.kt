@@ -441,7 +441,7 @@ private fun HeroSlide(hero: HeroPick, api: RoxyApi, onOpen: () -> Unit, onPlay: 
             } else {
                 Text(title.title, fontSize = 26.sp, lineHeight = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
             }
-            val badges = listOfNotNull(title.communityRating?.let { "★ %.1f".format(it) }, audioBadge(hero.play)).joinToString("  ")
+            val badges = listOfNotNull(tv.roxy.tv.ui.ratingLine(title.communityRating), audioBadge(hero.play)).joinToString("  ")
             val genres = title.genres.take(3).joinToString(", ") // three at most, so the line never ellipsises
             val meta = listOf(badges, genres).filter { it.isNotEmpty() }.joinToString("  •  ")
             if (meta.isNotEmpty()) {

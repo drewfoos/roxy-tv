@@ -159,7 +159,7 @@ internal fun DetailsSections(d: ItemDetails, onOpenPerson: (CastMember) -> Unit 
         DetailRow("Episodes", x?.episodes?.takeIf { it > 0 }?.toString())
         DetailRow(if (item.isMovie) "Runtime" else "Episode length", x?.runtimeMinutes?.takeIf { it > 0 }?.let { if (item.isMovie) "${it / 60}h ${it % 60}m".removePrefix("0h ") else "$it min" } ?: item.runtimeMinutes?.let { "$it min" })
         DetailRow("Genres", item.genres.joinToString(", "))
-        DetailRow("Rating", item.communityRating?.let { "★ %.1f on TMDB".format(it) })
+        DetailRow("Rating", tv.roxy.tv.ui.ratingLine(item.communityRating, item.ratingCount))
         DetailRow("Content rating", item.officialRating)
         DetailRow("Added to library", item.dateCreated?.take(10)?.takeIf { !it.startsWith("0001") }) // not in the library: no date
 

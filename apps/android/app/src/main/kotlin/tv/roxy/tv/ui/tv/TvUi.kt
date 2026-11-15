@@ -655,11 +655,17 @@ fun AgePill(text: String) {
 /**
  * Crunchyroll's facts line: the age box, then "Sub | Dub" and the genres, separated by
  * small diamonds. [play] is the item whose audio tracks decide the Sub / Dub wording.
+ * With [rating] (a title's own page) the stars and how many ratings they come from sit
+ * right after the age box: "16+ ◆ ★ 3.8 (4K) ◆ Dub | Sub ◆ Comedy, Romance".
  */
 @Composable
-fun FactsLine(title: Item, play: Item?, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 15.sp) {
+fun FactsLine(title: Item, play: Item?, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 15.sp, rating: Boolean = false) {
     val age = title.officialRating?.takeIf { it.isNotBlank() }?.let { ageLabel(it) }
-    val parts = listOfNotNull(audioBadge(play ?: title), title.genres.take(3).joinToString(", ").ifEmpty { null })
+    val parts = listOfNotNull(
+        if (rating) tv.roxy.tv.ui.ratingLine(title.communityRating, title.ratingCount) else null,
+        audioBadge(play ?: title),
+        title.genres.take(3).joinToString(", ").ifEmpty { null },
+    )
     if (age == null && parts.isEmpty()) return
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (age != null) AgePill(age)

@@ -614,15 +614,15 @@ private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints
 
 /**
  * The title block under (and reaching into) the banner, Crunchyroll's order: the logo
- * (or name) on the banner's faded foot with "14+  Dub | Sub" under it; then the star
- * rating with year and season count, the genres, the synopsis (tap to expand) and
+ * (or name) on the banner's faded foot with "14+  Dub | Sub", the year and the season
+ * count under it; then the star rating on its own line ("★ 3.8 (4K)"), the genres, the
+ * synopsis (tap to expand) and
  * "More details".
  */
 @Composable
 fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
     TitleLogoColumn(logo = api.imageUrl(item, "logo", widthPx(320.dp)), title = item.title) {
         FactsLine(
-            rating = item.communityRating,
             age = item.officialRating?.let { ageLabel(it) },
             audio = badge,
             facts = listOfNotNull(
@@ -631,6 +631,7 @@ fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra:
                 extra,
             ),
         )
+        RatingLine(item.communityRating, item.ratingCount)
         val genres = item.genres.take(3).joinToString(", ")
         if (genres.isNotEmpty()) Text(genres, fontSize = 13.sp, color = FactsGrey, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         item.overview?.takeIf { it.isNotBlank() }?.let {

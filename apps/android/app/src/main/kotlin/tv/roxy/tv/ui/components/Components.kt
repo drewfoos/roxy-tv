@@ -298,11 +298,11 @@ fun CenteredMessage(text: String, modifier: Modifier = Modifier, color: Color = 
     }
 }
 
-/** "2019 · Action, Comedy · 8.1" style line. */
+/** "2019 · Action, Comedy · ★ 4.1" style line. */
 fun Item.metaLine(): String = listOfNotNull(
     (year ?: premiered?.take(4)?.toIntOrNull())?.toString(),
     genres.take(3).joinToString(", ").ifEmpty { null },
-    communityRating?.let { "%.1f".format(it) },
+    tv.roxy.tv.ui.ratingLine(communityRating),
     officialRating,
     runtimeMinutes?.let { "$it min" },
 ).joinToString("  ·  ")

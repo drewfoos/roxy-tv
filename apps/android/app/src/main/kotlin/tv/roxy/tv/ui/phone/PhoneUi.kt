@@ -389,24 +389,20 @@ fun languageName(code: String): String {
  * as a single taper: title, tagline, genres, facts.
  */
 @Composable
-fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifier, age: String? = null, audio: String? = null) {
+fun FactsLine(facts: List<String>, modifier: Modifier = Modifier, age: String? = null, audio: String? = null) {
     val rest = facts.filter { it.isNotBlank() }
-    if (rating == null && rest.isEmpty() && age == null && audio == null) return
-    // The age badge leads the line, then the audio ("Dub | Sub"), then the stars:
-    // "14+ · Dub | Sub · ★ 8.7 · 2023".
+    if (rest.isEmpty() && age == null && audio == null) return
+    // The age badge leads the line, then the audio ("Dub | Sub"), then the facts:
+    // "14+ · Dub | Sub · 2023 · 2 Seasons". The stars have a line of their own (RatingLine).
     Row(modifier = modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
     if (age != null) {
         AgePill(age, small = true)
-        if (rating != null || rest.isNotEmpty() || audio != null) Text("  ·  ", fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f))
+        if (rest.isNotEmpty() || audio != null) Text("  ·  ", fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f))
     }
     Text(
         buildAnnotatedString {
             if (audio != null) {
                 append(audio) // same grey as the rest of the line
-                if (rating != null || rest.isNotEmpty()) append("  ·  ")
-            }
-            if (rating != null) {
-                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("★ %.1f".format(rating)) }
                 if (rest.isNotEmpty()) append("  ·  ")
             }
             append(rest.joinToString("  ·  "))
@@ -414,6 +410,24 @@ fun FactsLine(rating: Double?, facts: List<String>, modifier: Modifier = Modifie
         fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center,
     )
     }
+}
+
+/**
+ * A title page's rating, on a line of its own between the facts and the genres: the
+ * stars out of five in white, then how many ratings they come from in the facts' grey.
+ * "★ 3.8 (4K)". Nothing without a score.
+ */
+@Composable
+fun RatingLine(outOfTen: Double?, count: Int?, modifier: Modifier = Modifier) {
+    val stars = tv.roxy.tv.ui.starScore(outOfTen) ?: return
+    Text(
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = Color.White)) { append("★ $stars") }
+            tv.roxy.tv.ui.ratingCountLabel(count)?.let { append(" $it") }
+        },
+        fontSize = 13.sp, color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center, maxLines = 1,
+        modifier = modifier.padding(top = 8.dp).testTag("rating-line"),
+    )
 }
 
 /** A tab's header: its name at the left, Cast and Search at the right (Home's icons). */

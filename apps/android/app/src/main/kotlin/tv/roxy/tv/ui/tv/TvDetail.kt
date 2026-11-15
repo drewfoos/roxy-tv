@@ -349,7 +349,7 @@ private fun TitlePage(
                         else Text(title.title, fontSize = 34.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(12.dp))
-                    FactsLine(title, play, fontSize = 16.sp)
+                    FactsLine(title, play, fontSize = 16.sp, rating = true)
                     Spacer(Modifier.height(14.dp))
                     Text(title.overview.orEmpty(), color = TvCopy, fontSize = 16.sp, lineHeight = 20.sp, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, style = TvShadowed, modifier = Modifier.widthIn(max = 440.dp))
                     Spacer(Modifier.height(47.dp))
@@ -563,7 +563,7 @@ private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester, loadDeta
         item.studio?.takeIf { it.isNotBlank() }?.let { add("Studio" to it) }
         item.status?.takeIf { it.isNotBlank() }?.let { add("Status" to it.replaceFirstChar { c -> c.uppercase() }) }
         item.officialRating?.takeIf { it.isNotBlank() }?.let { add("Rating" to it) }
-        item.communityRating?.let { add("Score" to "%.1f".format(it)) }
+        tv.roxy.tv.ui.ratingLine(item.communityRating, item.ratingCount)?.let { add("Score" to it) }
         item.audioLanguages.takeIf { it.isNotEmpty() }?.let { add("Audio" to it.joinToString(", ") { l -> languageName(l) }) }
         item.seasonCount?.takeIf { it > 0 }?.let { add("Seasons" to it.toString()) }
         item.runtimeMinutes?.let { add("Runtime" to "$it min") }
