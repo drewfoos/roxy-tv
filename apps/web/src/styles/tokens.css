@@ -30,36 +30,43 @@
   --topbar-h: 60px;
 
   /*
-   * Breakpoints, so one layout scales from a phone to an ultrawide (Crunchyroll's site
-   * does the same with its own steps):
-   *   phone      <= 600     tablet     601 - 1023
-   *   desktop S  1024-1279  desktop M  1280-1599
-   *   desktop L  1600-2199  ultra      >= 2200
-   * --row-cols is how many posters a row shows, with a fraction so the next one peeks.
+   * Breakpoints: rows and gutters are Crunchyroll's, measured at every width (their steps
+   * are 568 / 800 / 980 / 1024 / 1440 / 1720 / 2160); the phone app's layout takes over at
+   * 600 and under. A row shows a whole number of cards, none cut off: the arrow in the
+   * gutter says there is more.
+   *   width        gutter  gap  posters  stills (Continue Watching)
+   *   601 - 799      40     20     4        2
+   *   800 - 979      40     20     5        3
+   *   980 - 1023     40     20     5        4
+   *   1024 - 1439    64     30     5        4
+   *   1440 - 1719    64     30     5        5
+   *   1720 - 2159    80     30     6        6
+   *   2160 and up    80     30     7        7
+   * Theirs stops there. Past it (Roxy's own): ultrawide screens (21:9, 32:9) are as wide
+   * as an ultra screen but no taller than a 16:9 one, so they get more, smaller cards.
    */
   --gutter: 64px;
   --card-gap: 30px;
-  --row-cols: 5.35;
+  --row-cols: 5;
+  --thumb-cols: 4;
   --grid-min: 190px;
   --thumb-min: 300px;
   --content-max: 1220px;
 }
 
-/* desktop L */
-@media (min-width: 1600px) { :root { --row-cols: 6.35; --grid-min: 210px; --thumb-min: 320px; --content-max: 1480px; } }
-/* ultra */
-@media (min-width: 2200px) { :root { --gutter: 96px; --card-gap: 36px; --row-cols: 7.35; --grid-min: 240px; --thumb-min: 360px; --content-max: 1800px; } }
-/* Ultrawide (21:9, 32:9): as wide as an ultra screen but no taller than a 16:9 one, so
-   cards sized by width alone grew taller than half the screen (2560x1080: 300x450 posters).
-   Wide aspect ratios get more, smaller cards across; very wide screens a tier of their own. */
-@media (min-width: 2200px) and (min-aspect-ratio: 2/1) { :root { --row-cols: 8.35; --grid-min: 210px; --thumb-min: 340px; } }
-@media (min-width: 2800px) { :root { --gutter: 112px; --card-gap: 40px; --row-cols: 8.35; --grid-min: 250px; --thumb-min: 380px; --content-max: 2200px; } }
-@media (min-width: 2800px) and (min-aspect-ratio: 2/1) { :root { --row-cols: 9.35; --grid-min: 230px; } }
-@media (min-width: 3800px) { :root { --row-cols: 10.35; --content-max: 2800px; } }
-@media (min-width: 3800px) and (min-aspect-ratio: 3/1) { :root { --row-cols: 12.35; --grid-min: 220px; } }
-/* desktop S */
-@media (max-width: 1279px) { :root { --gutter: 48px; --card-gap: 20px; --row-cols: 4.35; --grid-min: 170px; --thumb-min: 260px; } }
-/* tablet */
-@media (max-width: 1023px) { :root { --gutter: 32px; --card-gap: 16px; --row-cols: 3.4; --grid-min: 150px; --thumb-min: 240px; } }
+@media (min-width: 1440px) { :root { --thumb-cols: var(--row-cols); } }
+@media (min-width: 1600px) { :root { --grid-min: 210px; --thumb-min: 320px; --content-max: 1480px; } }
+@media (min-width: 1720px) { :root { --gutter: 80px; --row-cols: 6; } }
+@media (min-width: 2160px) { :root { --row-cols: 7; } }
+@media (min-width: 2200px) { :root { --grid-min: 240px; --thumb-min: 360px; --content-max: 1800px; } }
+@media (min-width: 2200px) and (min-aspect-ratio: 2/1) { :root { --row-cols: 8; --grid-min: 210px; --thumb-min: 340px; } }
+@media (min-width: 2800px) { :root { --gutter: 112px; --card-gap: 40px; --row-cols: 8; --grid-min: 250px; --thumb-min: 380px; --content-max: 2200px; } }
+@media (min-width: 2800px) and (min-aspect-ratio: 2/1) { :root { --row-cols: 9; --grid-min: 230px; } }
+@media (min-width: 3800px) { :root { --row-cols: 10; --content-max: 2800px; } }
+@media (min-width: 3800px) and (min-aspect-ratio: 3/1) { :root { --row-cols: 12; --grid-min: 220px; } }
+@media (max-width: 1279px) { :root { --grid-min: 170px; --thumb-min: 260px; } }
+@media (max-width: 1023px) { :root { --gutter: 40px; --card-gap: 20px; --grid-min: 150px; --thumb-min: 240px; } }
+@media (max-width: 979px) { :root { --thumb-cols: 3; } }
+@media (max-width: 799px) { :root { --row-cols: 4; --thumb-cols: 2; } }
 /* phone */
-@media (max-width: 600px) { :root { --gutter: 16px; --card-gap: 10px; --row-cols: 2.4; --grid-min: 110px; --thumb-min: 100%; } }
+@media (max-width: 600px) { :root { --gutter: 16px; --card-gap: 10px; --row-cols: 2.4; --thumb-cols: 1.3; --grid-min: 110px; --thumb-min: 100%; } }

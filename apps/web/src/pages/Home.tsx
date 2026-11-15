@@ -10,7 +10,7 @@ import { Hero, type HeroPick } from '../components/Hero'
 import { ContinueTile, Row, ThumbTile, TitleCard } from '../components/Cards'
 import { RowSkeleton, Spinner } from '../components/Skeleton'
 import { LoadError } from '../components/Connection'
-import { WitchHat } from '../components/Icons'
+import { IconChevronRight, WitchHat } from '../components/Icons'
 
 const MAX_HEROES = 6
 
@@ -124,21 +124,21 @@ export function Home() {
             </Row>
           )}
           {cont && (
-            <Row title="Continue Watching" thumbs>
+            <Row title="Continue Watching" thumbs more={<Link className="link desk-only" to="/lists?tab=history">View history <IconChevronRight size={20} /></Link>}>
               {cont.items.map((it) => (
                 <ContinueTile key={it.id} item={it} width={420} />
               ))}
             </Row>
           )}
           {series && (
-            <Row title="Series" more={<Link className="link" to="/browse">See all</Link>}>
+            <Row title="Series" more={<Link className="link" to="/browse">See all <IconChevronRight size={20} /></Link>}>
               {series.items.map((it) => (
                 <TitleCard key={it.id} item={it} />
               ))}
             </Row>
           )}
           {movies && (
-            <Row title="Movies" more={<Link className="link" to="/browse?type=movie">See all</Link>}>
+            <Row title="Movies" more={<Link className="link" to="/browse?type=movie">See all <IconChevronRight size={20} /></Link>}>
               {movies.items.map((it) => (
                 <TitleCard key={it.id} item={it} />
               ))}

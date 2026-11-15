@@ -216,14 +216,29 @@ img { display: block; }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
 
 /* ---------- rows and cards ---------- */
-.row { position: relative; margin-top: 56px; }
-.row__head { display: flex; align-items: baseline; gap: 18px; padding: 0 var(--gutter); margin-bottom: 18px; }
-.row__title { font-size: 26px; font-weight: 700; margin: 0; }
-@media (min-width: 2200px) { .row__title { font-size: 32px; } body { font-size: 16px; } .card__name { font-size: 16px; } }
+/* Rows are Crunchyroll's, measured: a 28/36 title (24/32 under 800) 16 px above the cards,
+   56 px from a row's cards to the next title (40 under 1024). The track adds 4 px above
+   the cards and 10 below, which the margins here take off again. */
+.row { position: relative; margin-top: 46px; }
+.row__head { display: flex; align-items: baseline; gap: 18px; padding: 0 var(--gutter); margin-bottom: 12px; }
+.row__title { font-size: 28px; font-weight: 700; margin: 0; }
+.row__head .link svg { display: none; }
+@media (min-width: 601px) {
+  .row__title { line-height: 36px; }
+  /* "View history >" at the row's right end, grey until pointed at. */
+  .row__head .link { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; align-self: center; color: #a0a0a0; font-size: 14px; line-height: 20px; letter-spacing: 0; white-space: nowrap; }
+  .row__head .link:hover { color: #fff; text-decoration: none; }
+  .row__head .link svg { display: block; }
+}
+@media (min-width: 601px) and (max-width: 1023px) { .row { margin-top: 30px; } }
+@media (min-width: 601px) and (max-width: 799px) { .row__title { font-size: 24px; line-height: 32px; } }
+@media (min-width: 2200px) { body { font-size: 16px; } }
+@media (min-width: 2800px) { .row__title { font-size: 32px; line-height: 40px; } .card__name { font-size: 16px; } }
 .row__scroller { position: relative; }
 .row__track {
   display: grid; grid-auto-flow: column; gap: var(--card-gap);
-  grid-auto-columns: calc((100% - 2 * var(--gutter) - (var(--row-cols) - 1) * var(--card-gap)) / var(--row-cols));
+  /* A percentage here is of the track inside its side padding, so the gutters are already out. */
+  grid-auto-columns: calc((100% - (var(--row-cols) - 1) * var(--card-gap)) / var(--row-cols));
   /* overflow-x: auto makes the browser scroll y too; y is hidden so a hover panel (8 px
      past the card) never turns the row into a vertical scroller. 8 px top padding, pulled
      back by the margin, keeps that panel's top edge from being clipped. */
@@ -238,13 +253,7 @@ img { display: block; }
 /* No hover panel on the cards a drag passes over (it shows again once the row is let go). */
 .row__track--dragging .card__hover { display: none; }
 .row__track > * { scroll-snap-align: start; }
-.row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 2.35 * var(--card-gap)) / 3.35); }
-@media (min-width: 1600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 3.35 * var(--card-gap)) / 4.35); } }
-@media (min-width: 2200px) and (min-aspect-ratio: 2/1) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 4.35 * var(--card-gap)) / 5.35); } }
-@media (min-width: 2800px) and (min-aspect-ratio: 2/1) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 5.35 * var(--card-gap)) / 6.35); } }
-@media (min-width: 3800px) and (min-aspect-ratio: 3/1) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 6.35 * var(--card-gap)) / 7.35); } }
-@media (max-width: 1023px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 1.3 * var(--card-gap)) / 2.3); } }
-@media (max-width: 600px) { .row__track--thumbs { grid-auto-columns: calc((100% - 2 * var(--gutter) - 0.3 * var(--card-gap)) / 1.3); } }
+.row__track--thumbs { grid-auto-columns: calc((100% - (var(--thumb-cols) - 1) * var(--card-gap)) / var(--thumb-cols)); }
 .row__arrow { position: absolute; top: 4px; height: var(--art-h, 60%); width: var(--gutter); display: grid; place-items: center; color: #f2f2f2; transition: color 150ms; z-index: 2; }
 .row__arrow:hover { color: #fff; }
 .row__arrow--right { right: 0; }
@@ -258,6 +267,11 @@ img { display: block; }
 .card__name { margin-top: 10px; font-size: 14px; font-weight: 700; line-height: 19px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card__sub { margin-top: 4px; font-size: 13px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
 .card__sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Under the art (theirs): the name 12 px down at 14/20, then "Sub | Dub" 8 px under it. */
+@media (min-width: 601px) {
+  .card__name { margin-top: 12px; line-height: 20px; }
+  .card__sub { margin-top: 8px; font-size: 14px; line-height: 20px; min-height: 20px; color: #a0a0a0; }
+}
 .card__menu { opacity: 0; transition: opacity 120ms; }
 .card:hover .card__menu { opacity: 1; }
 /* The hover panel (Crunchyroll's browse-card-hover): #151515 with an 8 px ring over the whole card. */
@@ -852,8 +866,9 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
   .controls__time { margin-left: 4px; font-size: 13px; }
   .controls__rate { min-width: 36px; padding: 0 4px; font-size: 13px; }
 }
-/* No arrows where there is a finger: a swipe moves the row. */
-@media (max-width: 1023px) { .row__arrow { display: none; } }
+/* No arrows on the phone layout: a swipe moves the row. Wider, a row shows whole cards
+   only, so the arrow in the gutter is what says there is more. */
+@media (max-width: 600px) { .row__arrow { display: none; } }
 /* Account settings on a tablet (601-1023): the link column stays beside the panel, only
    narrower. It used to turn into one scrolling strip of links above the panel, cut off at
    the edge with nothing saying it scrolled, the group names mixed in with the links. */
@@ -1197,7 +1212,12 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .page-error h1 { font-size: 24px; }
 .page-error__actions { display: flex; gap: 12px; }
 
-/* ---- Continue Watching (ContinueTile, as in the apps): all on the picture, square ---- */
+/* ---- Continue Watching (ContinueTile) ----
+   Phone (600 and under), as in the apps: all on the picture, square.
+   Wider, Crunchyroll's card: the still with a bare play mark in the middle, what is left
+   in a dark tag at its bottom-right and the bar along its bottom edge; under it the show
+   in small grey capitals, "S1 E2 - Title" in bold, then a line with Sub | Dub at the left
+   and the three dots at the right. */
 .ctile .ctile__art, .ctile .card__art--thumb { border-radius: 0; }
 .ctile__shade { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.35) 0%, transparent 25%, transparent 45%, rgba(0, 0, 0, 0.85) 100%); pointer-events: none; }
 .ctile__foot { position: absolute; left: 12px; right: 10px; bottom: 14px; display: flex; align-items: center; gap: 12px; color: #fff; }
@@ -1209,7 +1229,23 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .ctile__left { flex: none; font-size: 12px; font-weight: 600; background: rgba(0, 0, 0, 0.8); padding: 2px 6px; }
 .ctile__menu { position: absolute; top: 8px; right: 6px; color: #fff; }
 .ctile__menu button { color: #fff; }
-
+.ctile__center, .ctile__badge, .ctile__cap { display: none; }
+@media (min-width: 601px) {
+  .ctile__shade, .ctile__foot { display: none; }
+  .ctile__center { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; display: grid; place-items: center; color: #fff; filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.7)); }
+  .ctile__badge { display: block; position: absolute; right: 5px; bottom: 4px; padding: 3px 5px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 14px; line-height: 20px; font-weight: 700; letter-spacing: -0.4px; }
+  .ctile .progress { background: rgba(0, 0, 0, 0.6); }
+  /* Its own height, not the row's tallest card's: the dots sit under this card's own lines. */
+  .ctile { align-self: start; }
+  .ctile__cap { display: block; padding-top: 12px; }
+  .ctile__series { display: block; font-size: 10px; line-height: 16px; font-weight: 700; letter-spacing: -0.3px; text-transform: uppercase; color: #a0a0a0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctile__title { margin-top: 9px; font-size: 16px; line-height: 22px; font-weight: 700; letter-spacing: -0.3px; color: #fff; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .ctile__tags { margin-top: 12px; height: 24px; padding-right: 32px; font-size: 14px; line-height: 24px; color: #a0a0a0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctile__menu { top: auto; right: 0; bottom: 0; color: #a0a0a0; }
+  .ctile .card__menu { opacity: 1; }
+  .ctile__menu button { width: 24px; height: 24px; color: #a0a0a0; }
+  .ctile__menu button:hover { color: #fff; background: none; }
+}
 
 /* Server unreachable: the strip at the bottom of every page, and the page in place of
    content that could not load. */

@@ -179,10 +179,13 @@ export function PosterTile({ item, width = 200 }: { item: Item; width?: number }
  * "E2 — Title", the air date, the synopsis, then "Continue E2" and the three-dot menu.
  */
 /**
- * Continue Watching's card (Crunchyroll's, as in the apps): everything on the picture,
- * darkened along the bottom: a play button at the bottom-left beside the show's name and
- * "Episode N", what is left at the right of that line, the menu at the top-right and the
- * progress bar along the bottom edge. Square corners: the bar runs edge to edge.
+ * Continue Watching's card. On the phone layout, as in the apps: everything on the
+ * picture, darkened along the bottom (a play button beside the show's name and
+ * "Episode N", what is left at the right, the menu at the top-right). Wider, it is
+ * Crunchyroll's: the still with a play mark in the middle and what is left in a tag at
+ * its bottom-right; under it the show in small capitals, "S1 E2 - Title", then Sub | Dub
+ * and the menu; resting the mouse on it slides the episode panel over it. Both are in the
+ * markup and the stylesheet shows one (.ctile). Square corners: the bar runs edge to edge.
  */
 export function ContinueTile({ item, width = 420 }: { item: Item; width?: number }) {
   const movie = isMovie(item)
@@ -191,11 +194,17 @@ export function ContinueTile({ item, width = 420 }: { item: Item; width?: number
   const shown = useMemo(() => withPlayed(item, played), [item, played])
   const left = minutesLabel(shown)
   const name = movie ? item.title : (item.seriesTitle ?? item.title)
+  const hover = useHoverPanel()
+  const [menuOpen, setMenuOpen] = useState(false)
   return (
-    <div className="card ctile">
+    <div className="card ctile" onMouseEnter={hover.enter} onMouseLeave={hover.leave}>
       <Link to={itemPath(item)} className="card__art card__art--thumb ctile__art">
         <Art url={url} title="" />
         <div className="ctile__shade" />
+        <span className="ctile__center">
+          <IconPlay size={44} />
+        </span>
+        {left && <span className="ctile__badge">{left}</span>}
         <div className="ctile__foot">
           <span className="ctile__play">
             <IconPlay size={22} />
@@ -210,11 +219,25 @@ export function ContinueTile({ item, width = 420 }: { item: Item; width?: number
         </div>
         <ProgressBar item={shown} />
       </Link>
+      <div className="ctile__cap">
+        <span className="ctile__series">{movie ? (yearOf(item) ?? 'Movie') : name}</span>
+        <Link to={itemPath(item)} className="ctile__title" title={item.title}>
+          {continueTitle(item)}
+        </Link>
+        <div className="ctile__tags">{audioBadge(item)}</div>
+      </div>
       <span className="ctile__menu">
-        <CardMenu item={item} played={played} onPlayedChange={setPlayed} />
+        <CardMenu item={item} played={played} onPlayedChange={setPlayed} onOpenChange={setMenuOpen} />
       </span>
+      {(hover.on || menuOpen) && <EpisodeHover item={item} shown={shown} played={played} onPlayedChange={setPlayed} onMenuOpenChange={setMenuOpen} />}
     </div>
   )
+}
+
+/** "S1 E2 - If I Had One More Chance" under a Continue Watching still; a film's own name. */
+export function continueTitle(item: Item): string {
+  if (isMovie(item)) return item.title
+  return [episodeCode(item), item.title].filter(Boolean).join(' - ')
 }
 
 /** "Episode 2" and nothing else (no season, no title, specials alike); nothing for a film. */
@@ -236,11 +259,6 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
   // The panel stays while its menu is open (the menu floats outside the card).
   const [menuOpen, setMenuOpen] = useState(false)
   const name = movie ? item.title : (item.seriesTitle ?? item.title)
-  const epNo = movie ? null : episodeNumber(item)
-  const epLine = movie ? null : [epNo, item.title].filter(Boolean).join(' — ')
-  const date = formatAirDate(item.airDate ?? item.premiered)
-  const resuming = (shown.userData?.positionMs ?? 0) > 0
-  const cta = [resuming ? 'Continue' : watched ? 'Watch again' : 'Play', epNo].filter(Boolean).join(' ')
   return (
     <div className="card" onMouseEnter={hover.enter} onMouseLeave={hover.leave}>
       <Link to={itemPath(item)} className="card__art card__art--thumb">
@@ -265,26 +283,42 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
           <CardMenu item={item} played={played} onPlayedChange={setPlayed} />
         </span>
       </div>
-      {(hover.on || menuOpen) && (
-        <div className="card__hover card__hover--thumb">
-          <Link to={itemPath(item)} className="card__hover-body">
-            <h3>{name}</h3>
-            {epLine && <div className="card__hover-ep">{epLine}</div>}
-            {date && (
-              <div className="card__hover-meta card__hover-date">
-                <IconCalendar size={16} /> {date}
-              </div>
-            )}
-            {item.overview && <p>{item.overview}</p>}
-          </Link>
-          <div className="card__hover-actions card__hover-actions--split">
-            <Link to={itemPath(item)} className="card__hover-cta">
-              <IconPlay size={22} /> {cta}
-            </Link>
-            <CardMenu item={item} played={played} onPlayedChange={setPlayed} onOpenChange={setMenuOpen} />
+      {(hover.on || menuOpen) && <EpisodeHover item={item} shown={shown} played={played} onPlayedChange={setPlayed} onMenuOpenChange={setMenuOpen} />}
+    </div>
+  )
+}
+
+/**
+ * The dark panel that slides over an episode's (or a film's) still under the mouse: the
+ * show, "E2 — Title", the air date, the synopsis, then "Continue E2" and the three-dot
+ * menu. `shown` is the item as the card draws it (its own copy of watched).
+ */
+function EpisodeHover({ item, shown, played, onPlayedChange, onMenuOpenChange }: { item: Item; shown: Item; played: boolean; onPlayedChange: (v: boolean) => void; onMenuOpenChange: (open: boolean) => void }) {
+  const movie = isMovie(item)
+  const name = movie ? item.title : (item.seriesTitle ?? item.title)
+  const epNo = movie ? null : episodeNumber(item)
+  const epLine = movie ? null : [epNo, item.title].filter(Boolean).join(' — ')
+  const date = formatAirDate(item.airDate ?? item.premiered)
+  const resuming = (shown.userData?.positionMs ?? 0) > 0
+  const cta = [resuming ? 'Continue' : isWatched(shown) ? 'Watch again' : 'Play', epNo].filter(Boolean).join(' ')
+  return (
+    <div className="card__hover card__hover--thumb">
+      <Link to={itemPath(item)} className="card__hover-body">
+        <h3>{name}</h3>
+        {epLine && <div className="card__hover-ep">{epLine}</div>}
+        {date && (
+          <div className="card__hover-meta card__hover-date">
+            <IconCalendar size={16} /> {date}
           </div>
-        </div>
-      )}
+        )}
+        {item.overview && <p>{item.overview}</p>}
+      </Link>
+      <div className="card__hover-actions card__hover-actions--split">
+        <Link to={itemPath(item)} className="card__hover-cta">
+          <IconPlay size={22} /> {cta}
+        </Link>
+        <CardMenu item={item} played={played} onPlayedChange={onPlayedChange} onOpenChange={onMenuOpenChange} />
+      </div>
     </div>
   )
 }
