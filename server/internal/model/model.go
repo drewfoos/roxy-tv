@@ -61,16 +61,19 @@ type Item struct {
 
 	// Provider metadata (docs/api/native.md "Metadata and images"). Empty until the
 	// metadata service matched the item.
-	Tagline             string     `json:"tagline,omitempty"`
-	Genres              []string   `json:"genres,omitempty"`
-	Advisories          []string   `json:"advisories,omitempty"`      // "Sexual Content", "Violence", ... (series / movies)
-	CommunityRating     *float64   `json:"communityRating,omitempty"` // 0..10
-	OfficialRating      string     `json:"officialRating,omitempty"`
-	Premiered           string     `json:"premiered,omitempty"` // YYYY-MM-DD
-	AirDate             string     `json:"airDate,omitempty"`   // episodes: same value as Premiered
-	Status              string     `json:"status,omitempty"`    // series: Continuing | Ended
-	Studio              string     `json:"studio,omitempty"`
-	SeasonCount         *int       `json:"seasonCount,omitempty"`  // series: seasons the provider knows, specials excluded
+	Tagline         string   `json:"tagline,omitempty"`
+	Genres          []string `json:"genres,omitempty"`
+	Advisories      []string `json:"advisories,omitempty"`      // "Sexual Content", "Violence", ... (series / movies)
+	CommunityRating *float64 `json:"communityRating,omitempty"` // 0..10
+	OfficialRating  string   `json:"officialRating,omitempty"`
+	Premiered       string   `json:"premiered,omitempty"` // YYYY-MM-DD
+	AirDate         string   `json:"airDate,omitempty"`   // episodes: same value as Premiered
+	Status          string   `json:"status,omitempty"`    // series: Continuing | Ended
+	Studio          string   `json:"studio,omitempty"`
+	SeasonCount     *int     `json:"seasonCount,omitempty"` // series: seasons the provider knows, specials excluded
+	// EpisodeCount: a series' episodes that are in the library (specials too, placeholders
+	// for missing ones not); set where cards are filled (fillAudioLanguages), else nil.
+	EpisodeCount        *int       `json:"episodeCount,omitempty"`
 	RelatedCount        int        `json:"relatedCount,omitempty"` // series: linked movies / OVAs / side stories
 	MetadataRefreshedAt *time.Time `json:"metadataRefreshedAt,omitempty"`
 	// Images maps an image type (poster, backdrop, logo, thumb) to its relative URL

@@ -113,8 +113,8 @@ func (s *Server) fillRows(ctx context.Context, rows []homeRow) {
 	}
 }
 
-// fillAudioLanguages sets AudioLanguages on the series and movies in a batch, and IsAnime
-// on series, movies and episodes (an episode inherits its series'). Two queries; runs
+// fillAudioLanguages sets AudioLanguages on the series and movies in a batch, EpisodeCount
+// on series, and IsAnime on series, movies and episodes (an episode inherits its series'). Two queries; runs
 // after fillSeriesRefs so episodes know their series.
 func (s *Server) fillAudioLanguages(ctx context.Context, items []model.Item) {
 	var ids []string
@@ -140,11 +140,21 @@ func (s *Server) fillAudioLanguages(ctx context.Context, items []model.Item) {
 		return
 	}
 	anime, _ := s.store.AniListTagged(ctx, ids)
+	var series []string
+	for i := range items {
+		if items[i].Type == model.TypeSeries {
+			series = append(series, items[i].ID)
+		}
+	}
+	episodes, _ := s.store.EpisodeCountsFor(ctx, series) // the cards' hover panel: "8 Episodes"
 	for i := range items {
 		switch items[i].Type {
 		case model.TypeSeries, model.TypeMovie:
 			items[i].AudioLanguages = langs[items[i].ID]
 			items[i].IsAnime = anime[items[i].ID]
+			if n, ok := episodes[items[i].ID]; ok && items[i].Type == model.TypeSeries {
+				items[i].EpisodeCount = &n
+			}
 		case model.TypeEpisode:
 			items[i].IsAnime = anime[items[i].SeriesID]
 		}

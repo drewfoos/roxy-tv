@@ -285,6 +285,15 @@ img { display: block; }
 .card__hover-body h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 700; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .card__hover-meta { display: flex; gap: 12px; font-size: 14px; line-height: 20px; color: #bbb; }
 .card__hover-body p { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: rgba(255, 255, 255, 0.9); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+/* A title's panel, as theirs is laid out: the name, 11 px down "4.9 *" in light grey, 4 px
+   down the seasons and the episodes one to a line in bold darker grey, 8 px down the
+   synopsis; Play and Save 32 px squares 6 px apart, 8 px in from the panel's corner. */
+.card__hover--title .card__hover-body { gap: 0; }
+.card__hover-rating { display: flex; align-items: center; gap: 4px; margin-top: 11px; font-size: 14px; line-height: 20px; color: #bbb; }
+.card__hover-rating span { font-size: 16px; }
+.card__hover-facts { display: flex; flex-direction: column; margin-top: 4px; font-size: 14px; line-height: 20px; font-weight: 700; color: #8c8c8c; }
+.card__hover--title .card__hover-body p { margin-top: 8px; color: #fff; }
+.card__hover--title .card__hover-actions { gap: 6px; padding: 6px 8px 8px; }
 .card__hover-actions { position: relative; display: flex; align-items: center; gap: 14px; padding: 6px 12px 10px; }
 .card__hover-btn { width: 32px; height: 32px; display: grid; place-items: center; color: var(--accent); }
 .card__hover-btn:hover { color: var(--accent-light); }

@@ -99,8 +99,8 @@ export function ProgressBar({ item }: { item: Item }) {
 /**
  * Title card (Crunchyroll's): 2:3 poster with a folded corner when saved, the name, then
  * "Sub | Dub". With a mouse, resting on it for a moment slides a dark panel over the
- * card (theirs: #151515 with an 8 px ring) with the name, the rating, "3 Seasons", six
- * lines of synopsis, the poster showing faintly through, and Play / Save at the foot.
+ * card (theirs: #151515 with an 8 px ring) with the name, the rating, then "3 Seasons"
+ * and "36 Episodes" each on a line of its own in bold grey, six lines of synopsis, the poster showing faintly through, and Play / Save at the foot.
  * There is no three-dot menu on a mouse; the phone keeps its own.
  */
 export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; width?: number; sub?: string }) {
@@ -117,7 +117,10 @@ export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; wid
     setHover(false)
   }
   const rating = item.communityRating != null ? (item.communityRating / 2).toFixed(1) : null
-  const extent = isMovie(item) ? runtimeLabel(item) : item.seasonCount ? (item.seasonCount === 1 ? '1 Season' : `${item.seasonCount} Seasons`) : null
+  // Under the rating, one to a line (theirs): "2 Seasons", "24 Episodes"; a film's length.
+  const facts = isMovie(item)
+    ? [runtimeLabel(item)]
+    : [item.seasonCount ? (item.seasonCount === 1 ? '1 Season' : `${item.seasonCount} Seasons`) : null, item.episodeCount ? (item.episodeCount === 1 ? '1 Episode' : `${item.episodeCount} Episodes`) : null]
   return (
     <div className="card" onMouseEnter={enter} onMouseLeave={leave}>
       <Link to={itemPath(item)} className="card__art">
@@ -138,14 +141,20 @@ export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; wid
         </span>
       </div>
       {hover && (
-        <div className="card__hover">
+        <div className="card__hover card__hover--title">
           {api.imageUrl(item, 'poster', px(width)) && <img className="card__hover-art" src={api.imageUrl(item, 'poster', px(width)) ?? undefined} alt="" />}
           <Link to={itemPath(item)} className="card__hover-body">
             <h3>{item.title}</h3>
-            {(rating || extent) && (
-              <div className="card__hover-meta">
-                {rating && <span>★ {rating}</span>}
-                {extent && <span>{extent}</span>}
+            {rating && (
+              <div className="card__hover-rating">
+                {rating} <span aria-hidden="true">★</span>
+              </div>
+            )}
+            {facts.some(Boolean) && (
+              <div className="card__hover-facts">
+                {facts.filter(Boolean).map((f) => (
+                  <span key={f}>{f}</span>
+                ))}
               </div>
             )}
             {item.overview && <p>{item.overview}</p>}

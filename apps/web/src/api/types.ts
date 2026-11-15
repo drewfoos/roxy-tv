@@ -122,6 +122,8 @@ export interface Item {
   status?: string | null
   studio?: string | null
   seasonCount?: number | null
+  /** A series' episodes that are in the library (cards and the title's own answer). */
+  episodeCount?: number | null
   relatedCount?: number
   indexAired?: number | null
   /** An extra (type "extra"): trailer, featurette, behindthescenes, deleted, interview, scene, short, clip, theme or extra. */
