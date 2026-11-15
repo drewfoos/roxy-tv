@@ -1,5 +1,7 @@
 package tv.roxy.tv.ui
 
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
@@ -86,5 +88,28 @@ class DiscoverFilmsTest {
         assertEquals("Request + 2 films", requestWords("Request", films = 2, pending = false))
         assertEquals("Request", requestWords("Request", films = 0, pending = false))
         assertEquals("Request 2 missing seasons + 1 film", requestWords("Request 2 missing seasons", films = 1, pending = false))
+    }
+
+    // The page asks again when the request's state changes, which cancels the look in
+    // flight. That was taken for an answer: the Request button got its words back while
+    // the new look was still out, and a press sent the series without its films.
+    @Test fun aLookThatWasCancelledIsNotAnAnswer() = kotlinx.coroutines.runBlocking {
+        var answered = false
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val job = launch(kotlinx.coroutines.Dispatchers.Unconfined) {
+            lookForFilms { started.complete(Unit); kotlinx.coroutines.awaitCancellation() }
+            answered = true
+        }
+        started.await()
+        job.cancelAndJoin()
+        assertFalse("a cancelled look must not count as answered", answered)
+    }
+
+    @Test fun aLookThatFailedIsAnAnswerWithoutFilms() = kotlinx.coroutines.runBlocking {
+        var told: Throwable? = null
+        assertNull(lookForFilms({ told = it }) { throw java.io.IOException("no route") })
+        assertTrue(told is java.io.IOException)
+        val films = DiscoverFilms(films = emptyList(), requestsEnabled = true)
+        assertEquals(films, lookForFilms { films })
     }
 }

@@ -302,7 +302,7 @@ fun TvDiscoverTitle(type: String, tmdbId: Int, onOpenSeries: (Item) -> Unit, onO
     var filmsAnswered by remember(type, tmdbId) { mutableStateOf(false) }
     LaunchedEffect(type, tmdbId, wantsFilms, reqNow?.id, reqNow?.status, filmsTick) {
         if (wantsFilms) {
-            runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }
+            tv.roxy.tv.ui.lookForFilms { app.api.discoverFilms(tmdbId) }?.let { films = it }
             filmsAnswered = true
         }
     }

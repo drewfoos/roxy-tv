@@ -39,6 +39,23 @@ fun buttonFilms(films: DiscoverFilms?): List<Int> = films?.films.orEmpty().filte
 const val FilmsWaitMs = 20_000L
 
 /**
+ * One look for a series' films: the films, or null when the look failed (which is an
+ * answer: the page goes on without them). A look that was cancelled is NOT an answer and
+ * is thrown on. The page asks again whenever the request's state changes, which cancels
+ * the look in flight; taking that for "answered" gave the Request button its words back
+ * while the new look was still out, and a press then sent the series without its films.
+ */
+suspend fun lookForFilms(onFailure: (Throwable) -> Unit = {}, look: suspend () -> DiscoverFilms): DiscoverFilms? =
+    try {
+        look()
+    } catch (c: kotlinx.coroutines.CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        onFailure(t)
+        null
+    }
+
+/**
  * The films are asked for and not answered yet. Until they are, the page does not know
  * what its main Request will send, so the button shows a loading circle and no words
  * (never "Request" that turns into "Request + 2 films"), and is not pressable: a press

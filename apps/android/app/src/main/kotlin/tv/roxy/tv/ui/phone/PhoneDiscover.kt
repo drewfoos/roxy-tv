@@ -489,7 +489,7 @@ fun PhoneDiscoverDetail(
     var filmsAnswered by remember(type, tmdbId) { mutableStateOf(false) }
     LaunchedEffect(type, tmdbId, wantsFilms, filmsTick, detail?.request?.status) {
         if (wantsFilms) {
-            runCatching { app.api.discoverFilms(tmdbId) }.onSuccess { films = it }.onFailure { Timber.w(it, "discover films") }
+            tv.roxy.tv.ui.lookForFilms({ Timber.w(it, "discover films") }) { app.api.discoverFilms(tmdbId) }?.let { films = it }
             filmsAnswered = true
         }
     }
