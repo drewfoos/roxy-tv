@@ -108,7 +108,7 @@ export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; wid
   const [hover, setHover] = useState(false)
   const timer = useRef<number | null>(null)
   const enter = () => {
-    if (!window.matchMedia('(hover: hover) and (min-width: 601px)').matches) return
+    if (!window.matchMedia('(hover: hover)').matches) return
     timer.current = window.setTimeout(() => setHover(true), 40) // theirs is near-instant
   }
   const leave = () => {
@@ -183,7 +183,8 @@ export function PosterTile({ item, width = 200 }: { item: Item; width?: number }
  * is left in a tag at its bottom-right and the bar along its bottom edge; then the show in
  * small capitals, "S1 E2 - Title", Sub | Dub and the menu. From 601 px these sit under the
  * still and resting the mouse on it slides the episode panel over it; on the phone layout
- * they sit at the still's right, in a list of two (.ctile in the stylesheet).
+ * they sit at the still's right, in a list of two, and the mouse lifts the card onto a
+ * dark ground with "Continue E2" under the title instead (.ctile in the stylesheet).
  */
 export function ContinueTile({ item, width = 420 }: { item: Item; width?: number }) {
   const movie = isMovie(item)
@@ -211,6 +212,9 @@ export function ContinueTile({ item, width = 420 }: { item: Item; width?: number
         </Link>
         <div className="ctile__tags">{audioBadge(item)}</div>
       </div>
+      <Link to={itemPath(item)} className="ctile__cta" tabIndex={-1} aria-hidden="true">
+        <IconPlay size={24} /> <span>{playCta(item, shown)}</span>
+      </Link>
       <span className="ctile__menu">
         <CardMenu item={item} played={played} onPlayedChange={setPlayed} onOpenChange={setMenuOpen} />
       </span>
@@ -266,6 +270,12 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
   )
 }
 
+/** "Continue E2", "Play E2" or "Watch again E2" (no number for a film); `shown` is the item as the card draws it. */
+export function playCta(item: Item, shown: Item): string {
+  const resuming = (shown.userData?.positionMs ?? 0) > 0
+  return [resuming ? 'Continue' : isWatched(shown) ? 'Watch again' : 'Play', isMovie(item) ? null : episodeNumber(item)].filter(Boolean).join(' ')
+}
+
 /**
  * The dark panel that slides over an episode's (or a film's) still under the mouse: the
  * show, "E2 — Title", the air date, the synopsis, then "Continue E2" and the three-dot
@@ -277,8 +287,7 @@ function EpisodeHover({ item, shown, played, onPlayedChange, onMenuOpenChange }:
   const epNo = movie ? null : episodeNumber(item)
   const epLine = movie ? null : [epNo, item.title].filter(Boolean).join(' — ')
   const date = formatAirDate(item.airDate ?? item.premiered)
-  const resuming = (shown.userData?.positionMs ?? 0) > 0
-  const cta = [resuming ? 'Continue' : isWatched(shown) ? 'Watch again' : 'Play', epNo].filter(Boolean).join(' ')
+  const cta = playCta(item, shown)
   return (
     <div className="card__hover card__hover--thumb">
       <Link to={itemPath(item)} className="card__hover-body">
@@ -311,7 +320,7 @@ export function useHoverPanel() {
   return {
     on,
     enter: () => {
-      if (!window.matchMedia('(hover: hover) and (min-width: 601px)').matches) return
+      if (!window.matchMedia('(hover: hover)').matches) return
       timer.current = window.setTimeout(() => setOn(true), 40)
     },
     leave: () => {
