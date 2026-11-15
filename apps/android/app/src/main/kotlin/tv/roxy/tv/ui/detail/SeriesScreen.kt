@@ -255,13 +255,38 @@ class ApiSeriesSource(private val api: RoxyApi) : SeriesSource {
         api.allItems(type = "episode", parent = parentId, recursive = recursive, includeSources = true, sort = "index")
 }
 
-class SeriesViewModel(private val api: SeriesSource, private val seriesId: String, initial: Item? = null) : ViewModel() {
-    constructor(api: RoxyApi, seriesId: String, initial: Item? = null) : this(ApiSeriesSource(api), seriesId, initial)
+/** A series page as it stood when it was last settled, and where its entries' rows come from ([PageMemory]). */
+internal class SeriesPage(val state: SeriesUiState, val sources: Map<String, SectionSource>)
 
-    // Seeded from the list that opened the page, so the header paints at once and only the
-    // episode rows wait on the network.
-    private val _state = MutableStateFlow(SeriesUiState(series = initial, episodesLoading = initial != null))
+/** Series pages by "profile:series" (watch state is a profile's own), while the app runs. */
+internal val seriesPages = PageMemory<SeriesPage>()
+
+/**
+ * A page that can be shown again as it is: read, nothing loading or failed, a season's own
+ * rows on screen. Only such a page is remembered.
+ */
+internal fun SeriesUiState.settled(): Boolean =
+    !loading && error == null && series != null && !episodesLoading && episodesError == null && !episodesIncomplete && !showExtras && upNextKnown
+
+class SeriesViewModel internal constructor(
+    private val api: SeriesSource, private val seriesId: String, initial: Item? = null,
+    /** Where the page is remembered between visits, and under what name; null: it is not. */
+    private val memory: PageMemory<SeriesPage>? = null, private val memoryKey: String = seriesId,
+) : ViewModel() {
+    constructor(api: SeriesSource, seriesId: String, initial: Item? = null) : this(api, seriesId, initial, null)
+    /** The app's pages: remembered per profile, so a title opened again is there at once. */
+    constructor(api: RoxyApi, seriesId: String, initial: Item? = null, profile: String? = null) :
+        this(ApiSeriesSource(api), seriesId, initial, seriesPages, "${profile ?: "-"}:$seriesId")
+
+    private val remembered = memory?.get(memoryKey)
+
+    // Opened before: the page as it stood then (season, episodes, Play's words), read again
+    // behind it the way a return from the player is. Otherwise seeded from the list that
+    // opened the page, so the header paints at once and only the episode rows wait on the
+    // network.
+    private val _state = MutableStateFlow(remembered?.state ?: SeriesUiState(series = initial, episodesLoading = initial != null))
     val state: StateFlow<SeriesUiState> = _state
+
 
     fun load() = load(onFailed = null)
 
@@ -338,7 +363,7 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
     }
 
     /** Entries of the season list that are not seasons: where their rows come from. */
-    private var sources: Map<String, SectionSource> = emptyMap()
+    private var sources: Map<String, SectionSource> = remembered?.sources ?: emptyMap()
 
     /**
      * The page has not chosen its opening season yet (the next episode's: Crunchyroll). One
@@ -346,7 +371,7 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
      * while the first lookup runs starts a newer one, and the older answer (perhaps from
      * before a watch elsewhere, about a season list since replaced) is not acted on.
      */
-    private var opening = true
+    private var opening = remembered == null // a remembered page made its choice the first time
     private var relatedLoaded = false
 
     /**
@@ -469,6 +494,13 @@ class SeriesViewModel(private val api: SeriesSource, private val seriesId: Strin
                     Timber.e(t, "episodes load failed")
                 }
                 .let { result -> _state.value = _state.value.withEpisodes(result) { eps -> rowNumbersFor(source, eps) } }
+        }
+    }
+
+    // Last, once every field above is set: each settled page is what the next visit opens with.
+    init {
+        if (memory != null) viewModelScope.launch {
+            _state.collect { s -> if (s.settled()) memory.put(memoryKey, SeriesPage(s, sources)) }
         }
     }
 }

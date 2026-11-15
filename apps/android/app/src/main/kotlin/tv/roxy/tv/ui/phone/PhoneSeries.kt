@@ -124,7 +124,7 @@ fun PhoneSeries(
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
-    val vm: SeriesViewModel = viewModel(key = "series:$seriesId") { SeriesViewModel(app.api, seriesId, initial = app.items[seriesId]) }
+    val vm: SeriesViewModel = viewModel(key = "series:$seriesId") { SeriesViewModel(app.api, seriesId, initial = app.items[seriesId], profile = app.prefs.session.value.profileId) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.load() }
@@ -219,6 +219,7 @@ fun PhoneSeries(
                     badge = audioBadge(series) ?: audioBadge(playable.firstOrNull()),
                     // The provider's count (3 for KonoSuba) even when the library holds fewer; known from the list item, so it never pops in.
                     seasons = tvdbSeasons ?: series.seasonCount ?: state.seasons.size,
+                    pending = state.loading,
                     onMoreDetails = { onOpenDetails(series) },
                 )
             }
@@ -601,6 +602,10 @@ fun TitleBannerArt(url: String?, title: String, listState: LazyListState, warm: 
     }
 }
 
+/** The title block has nothing to say yet: the page is being read and the card that opened it carried only a name. */
+internal fun titleInfoPending(item: Item, pending: Boolean): Boolean =
+    pending && item.overview.isNullOrBlank() && item.genres.isEmpty() && item.communityRating == null && item.officialRating == null
+
 /** A show's season count in TheTVDB's numbering as last read, by series id. */
 internal val seasonCounts = tv.roxy.tv.ui.detail.PageMemory<Int>(200)
 
@@ -625,8 +630,21 @@ private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints
  * "More details".
  */
 @Composable
-fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, onMoreDetails: (() -> Unit)? = null) {
+fun TitleInfo(item: Item, api: RoxyApi, badge: String?, seasons: Int = 0, extra: String? = null, pending: Boolean = false, onMoreDetails: (() -> Unit)? = null) {
     TitleLogoColumn(logo = api.imageUrl(item, "logo", widthPx(320.dp)), title = item.title) {
+        // Opened with only a name to go by (a link, a suggestion's card) and not read yet:
+        // the lines' places are held, so they do not appear from nothing under the logo.
+        if (titleInfoPending(item, pending)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.testTag("title-info-pending")) {
+                BoneLine(width = 190.dp, height = 13.dp, modifier = Modifier.padding(top = 10.dp))
+                BoneLine(width = 84.dp, height = 13.dp, modifier = Modifier.padding(top = 11.dp))
+                BoneLine(width = 170.dp, height = 13.dp, modifier = Modifier.padding(top = 11.dp))
+                Spacer(Modifier.height(20.dp))
+                repeat(3) { BoneLine(width = if (it == 2) 220.dp else 320.dp, height = 12.dp, modifier = Modifier.padding(top = 8.dp)) }
+                Spacer(Modifier.height(38.dp))
+            }
+            return@TitleLogoColumn
+        }
         FactsLine(
             age = item.officialRating?.let { ageLabel(it) },
             audio = badge,

@@ -63,6 +63,14 @@ class TitlePageLoadingTest {
         assertEquals(listOf("Movie", "More like this"), MovieTabs)
     }
 
+    @Test fun aTitleOpenedByNameAloneHoldsItsLinesPlaces() {
+        val bare = Item(id = "x", type = "series", title = "Show")
+        assertTrue(titleInfoPending(bare, pending = true))
+        assertFalse(titleInfoPending(bare, pending = false)) // read: it simply has none of them
+        assertFalse(titleInfoPending(bare.copy(overview = "A show."), pending = true)) // the card had them
+        assertFalse(titleInfoPending(bare.copy(genres = listOf("Comedy")), pending = true))
+    }
+
     @Test fun aPageRemembersWhatItReadLastTime() {
         val memory = tv.roxy.tv.ui.detail.PageMemory<Int>(keep = 2)
         assertNull(memory.get("a"))

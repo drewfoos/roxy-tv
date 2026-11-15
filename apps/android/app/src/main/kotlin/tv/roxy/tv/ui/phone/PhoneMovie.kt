@@ -120,6 +120,7 @@ fun PhoneMovie(movieId: String, fallbackTitle: String, onBack: () -> Unit, onOpe
                     item = movie, api = app.api,
                     badge = audioBadge(movie),
                     extra = movie.runtimeMinutes?.let { "${it / 60}h ${it % 60}m".removePrefix("0h ") },
+                    pending = state.loading,
                     onMoreDetails = { onOpenDetails(movie) },
                 )
             }
