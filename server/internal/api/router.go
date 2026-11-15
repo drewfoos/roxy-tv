@@ -46,7 +46,16 @@ type Server struct {
 	start      time.Time
 }
 
+// NewRouter is NewRouterContext whose background work runs for the life of the process.
 func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service, segs *segments.Service) http.Handler {
+	return NewRouterContext(context.Background(), cfg, st, lib, ff, authSvc, meta, trick, segs)
+}
+
+// NewRouterContext builds the API. The work it starts in the background (Discover's
+// download tracker, pack sweep and ten-minute pass, the character lookups) stops when ctx
+// ends: the server passes the context it shuts down with, so none of it is still asking
+// Sonarr or writing to the database while that is being closed.
+func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, lib *library.Library, ff *ffmpeg.FFmpeg, authSvc *auth.Service, meta *metadata.Service, trick *trickplay.Service, segs *segments.Service) http.Handler {
 	s := &Server{cfg: cfg, store: st, lib: lib, ff: ff, authSvc: authSvc, meta: meta, trick: trick, segs: segs, start: time.Now()}
 	s.hooks = arrhook.New(st, lib)
 	s.hub = sessions.New()
@@ -70,8 +79,8 @@ func NewRouter(cfg *config.Config, st *store.Store, lib *library.Library, ff *ff
 		s.discover = discover.New(st, cfg, meta.TMDBProvider())
 		meta.UseEpisodeAirDates(s.discover.EpisodeAirDates) // specials' dates in Sonarr's numbering
 		s.discover.SetImportHook(s.hooks.IngestArrFiles)
-		s.discover.Start(context.Background())
-		s.startCharacterWorker(context.Background())
+		s.discover.Start(ctx)
+		s.startCharacterWorker(ctx)
 	}
 
 	r := chi.NewRouter()

@@ -205,7 +205,7 @@ func serve(cfg *config.Config, db *store.Store, lib *library.Library, ff *ffmpeg
 		return err
 	}
 	slog.Info("roxy server listening", "addr", cfg.Listen, "data", cfg.DataDir)
-	return serveHTTP(ctx, ln, api.NewRouter(cfg, db, lib, ff, authSvc, meta, trick, segs))
+	return serveHTTP(ctx, ln, api.NewRouterContext(ctx, cfg, db, lib, ff, authSvc, meta, trick, segs))
 }
 
 // recheckChapterSegments corrects skip markers an older build took from chapters, once

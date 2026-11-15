@@ -13,7 +13,10 @@ import (
 
 // ReplaceSource writes a probed media source with its parts, streams and attachments in
 // one transaction, replacing any previous rows for the same source id.
-func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probeJSON string) error {
+//
+// ffprobe's own output (the last argument) is no longer kept: it was stored with every
+// source and never read, and had grown to a third of the database (migration 0047).
+func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, _ string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -21,12 +24,12 @@ func (s *Store) ReplaceSource(ctx context.Context, src *model.MediaSource, probe
 	defer tx.Rollback()
 
 	now := Now()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO media_sources (id, item_id, name, container, size, duration_ms, bitrate, version_label, is_primary, probed_at, probe_json)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO media_sources (id, item_id, name, container, size, duration_ms, bitrate, version_label, is_primary, probed_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET item_id=excluded.item_id, name=excluded.name, container=excluded.container, size=excluded.size,
 		duration_ms=excluded.duration_ms, bitrate=excluded.bitrate, version_label=excluded.version_label, is_primary=excluded.is_primary,
-		probed_at=excluded.probed_at, probe_json=excluded.probe_json`,
-		src.ID, src.ItemID, nullStr(src.Name), nullStr(src.Container), src.Size, src.DurationMs, nullInt64(src.Bitrate), nullStr(src.VersionLabel), boolInt(src.IsPrimary), now, nullStr(probeJSON)); err != nil {
+		probed_at=excluded.probed_at`,
+		src.ID, src.ItemID, nullStr(src.Name), nullStr(src.Container), src.Size, src.DurationMs, nullInt64(src.Bitrate), nullStr(src.VersionLabel), boolInt(src.IsPrimary), now); err != nil {
 		return err
 	}
 	// Raise the sidecar high-water mark past every sidecar number this ingest gives out

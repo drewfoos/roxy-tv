@@ -40,10 +40,38 @@ func openUpTo(path, last string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	s.optimize(true)
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// Close closes the database. Before that SQLite looks once more at the tables this run
+// read (see optimize): what it learns is there for the next start.
+func (s *Store) Close() error {
+	s.optimize(false)
+	return s.db.Close()
+}
+
+// optimize lets SQLite gather the statistics its query planner chooses indexes by
+// (PRAGMA optimize). Without them it guesses from the schema alone, and a guess that
+// suits a small library can be the slow plan for a large one. atOpen looks at every table
+// (a database that never had statistics gets them at its first start); at close only the
+// tables that were read are looked at. Each look reads a bounded part of an index
+// (analysis_limit), and a table whose statistics still fit is skipped, so this costs
+// milliseconds. A failure is logged and nothing else: the planner goes on guessing.
+func (s *Store) optimize(atOpen bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	q := `PRAGMA optimize`
+	if atOpen {
+		q = `PRAGMA optimize = 0x10002`
+	}
+	for _, stmt := range []string{`PRAGMA analysis_limit = 400`, q} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			slog.Warn("store: gathering planner statistics", "stmt", stmt, "err", err)
+			return
+		}
+	}
+}
 
 func (s *Store) DB() *sql.DB { return s.db }
 
@@ -77,6 +105,7 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 		}
 	}
 	sort.Strings(names)
+	vacuum := false
 	for _, name := range names {
 		if last != "" && name > last {
 			break
@@ -117,6 +146,18 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 			return err
 		}
 		slog.Info("applied migration", "name", name)
+		vacuum = vacuum || strings.Contains(string(body), vacuumMark)
+	}
+	// A migration that emptied a large part of the database: its pages are free but the
+	// file is as large as before until it is rebuilt. VACUUM cannot run in a transaction,
+	// so it runs here, once, after the migration is recorded. If it fails (no room for the
+	// copy it makes) the data is whole and only the space is not given back.
+	if vacuum {
+		if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
+			slog.Warn("store: the database was not made smaller after a migration", "err", err)
+		} else {
+			slog.Info("store: database rebuilt to give back freed space")
+		}
 	}
 	if last == "" || last >= "0034_extras.sql" {
 		if err := s.ensureExtraType(ctx); err != nil {
@@ -125,6 +166,9 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 	}
 	return nil
 }
+
+// vacuumMark in a migration asks for the database file to be rebuilt once it has run.
+const vacuumMark = "-- roxy:vacuum"
 
 // reTypeCheck finds the items table's CHECK on type, however it is spaced or quoted.
 var reTypeCheck = regexp.MustCompile(`(?is)(CHECK\s*\(\s*"?type"?\s+IN\s*\()([^)]*)(\)\s*\))`)
