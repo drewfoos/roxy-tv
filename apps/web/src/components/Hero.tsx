@@ -6,6 +6,16 @@ import type { Item } from '../api/types'
 import { IconChevronLeft, IconChevronRight, IconPlay } from './Icons'
 import { SaveButton, itemPath } from './Cards'
 
+/**
+ * The hero button's words (Crunchyroll's pair): "Continue watching S1 E5" or "Start
+ * watching S1 E1". The title pages' short "Resume S1 E5" made the button a different
+ * width from slide to slide, jumping about above the pills; these two are near enough
+ * the same length that it stays put.
+ */
+export function heroPlayLabel(next: Parameters<typeof playLabel>[0]): string {
+  return playLabel(next).replace(/^Resume\b/, 'Continue watching')
+}
+
 /** One slide: the series or movie to show, and what Play starts. */
 export interface HeroPick {
   title: Item
@@ -66,7 +76,7 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
           const logo = api.imageUrl(t, 'logo', px(360))
           const genres = (t.genres ?? []).slice(0, 4).join(', ')
           const badge = audioBadge(h.play) ?? audioBadge(t)
-          const label = playLabel(h.play)
+          const label = heroPlayLabel(h.play)
           const playTo = isEpisode(h.play) || isMovie(h.play) ? `/watch/${h.play.id}` : itemPath(h.play)
           return (
             <div key={t.id} className={'hero__slide' + (i === index ? ' hero__slide--on' : '')} aria-hidden={i !== index}>

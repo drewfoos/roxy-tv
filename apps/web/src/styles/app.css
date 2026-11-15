@@ -144,9 +144,11 @@ img { display: block; }
 .hero__pill { padding: 8px 4px; margin-top: -8px; cursor: pointer; }
 .hero__pill i { position: relative; display: block; width: 24px; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.5); overflow: hidden; transition: width 300ms; }
 .hero__pill--on i { width: 48px; }
-.hero__pill i::after { content: ""; position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left; }
+/* The fill is a whole pill sliding in from the left (theirs), so its leading end is round;
+   stretching a flat bar gave it a square end that looked like a different, thicker bar. */
+.hero__pill i::after { content: ""; position: absolute; inset: 0; border-radius: 4px; background: var(--accent); transform: translateX(-100%); }
 .hero__pill--on i::after { animation: hero-fill var(--dwell, 10s) linear forwards; }
-@keyframes hero-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes hero-fill { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 /* No arrows where there is a finger (under 800): the pills and a tap move the carousel. */
 .hero__arrow { display: none; position: absolute; top: 50%; transform: translateY(-50%); width: var(--gutter); height: 100px; place-items: center; color: #f2f2f2; transition: color 150ms; z-index: 3; }
 .hero__arrow svg { max-width: 100%; }
