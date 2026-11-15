@@ -107,6 +107,18 @@ class RoxyApi(private val prefs: Prefs) {
     }
 
     val baseUrl: String get() = prefs.session.value.serverUrl.trimEnd('/')
+
+    /**
+     * What an image at [url] is kept under on disk: the server's id and the image's path,
+     * not the address it was asked at. Null for anything that is not this server's (or
+     * while its id is unknown): that keeps the address as its key.
+     */
+    fun imageCacheKey(url: String): String? {
+        val s = prefs.session.value
+        val u = url.toHttpUrlOrNull() ?: return null
+        if (s.serverId.isEmpty() || !ways(s).knows(u)) return null
+        return serverImageKey(u, s.serverId)
+    }
     private val token: String? get() = prefs.session.value.token
 
     // ---- auth ----
@@ -261,6 +273,12 @@ class RoxyApi(private val prefs: Prefs) {
      * that answers as this server: at home that is the home address even with Tailscale on,
      * away from home the Tailscale one, with nothing to change by hand. The first answer
      * waits [BETTER_WAIT_MS] for a better address still to answer, no longer.
+     *
+     * When the address in use answers, that is the answer, at once: the call that asked
+     * does not wait for a better address (on Tailscale that was 0.7 s on the first call
+     * after every quiet minute, for a home address that was never going to answer). The
+     * better addresses still out are heard in the background, and the app moves to one
+     * that answers, so coming home is still noticed by the same look.
      */
     fun reachableNow(): Boolean {
         val s = prefs.session.value
@@ -282,13 +300,25 @@ class RoxyApi(private val prefs: Prefs) {
             })
             call
         }
-        val best = firstBest(urls.size, BETTER_WAIT_MS, PROBE_MS + 500) { ms -> answers.poll(ms, TimeUnit.MILLISECONDS) }
+        val said = arrayOfNulls<Boolean>(urls.size)
+        val started = System.nanoTime() / 1_000_000
+        val best = firstBest(urls.size, BETTER_WAIT_MS, PROBE_MS + 500, inUse = urls.indexOf(current), said = said) { ms -> answers.poll(ms, TimeUnit.MILLISECONDS) }
+        fun move(i: Int) {
+            if (urls[i] == prefs.session.value.serverUrl.trim().trimEnd('/')) return
+            Timber.i("server address: now %s", if (ServerAddress.rank(urls[i]) == 1) "Tailscale" else "home network")
+            prefs.useAddress(urls[i])
+        }
+        if (best >= 0 && urls[best] == current && (0 until best).any { said[it] == null }) {
+            val left = PROBE_MS + 500 - (System.nanoTime() / 1_000_000 - started)
+            kotlin.concurrent.thread(isDaemon = true, name = "roxy-address") {
+                runCatching { betterLater(best, said, left, onBetter = ::move) { ms -> answers.poll(ms, TimeUnit.MILLISECONDS) } }
+                calls.forEach { it?.cancel() }
+            }
+            return true
+        }
         calls.forEach { it?.cancel() }
         if (best < 0) return false
-        if (urls[best] != current) {
-            Timber.i("server address: now %s", if (ServerAddress.rank(urls[best]) == 1) "Tailscale" else "home network")
-            prefs.useAddress(urls[best])
-        }
+        move(best)
         return true
     }
 
@@ -774,13 +804,20 @@ fun isThisServer(body: String, serverId: String, other: Boolean): Boolean {
  * ([next] waits up to the given milliseconds for one: index and whether it is the
  * server; null = nothing came). The first good answer waits [betterWaitMs] for a better
  * address still out; -1 when none answered within [totalMs].
+ *
+ * [inUse] (an index, or -1) is the address the app is at: its good answer ends the look
+ * at once, with the better addresses not heard from yet left to [betterLater]. [said]
+ * is filled with what each address answered (null = not heard from).
  */
-fun firstBest(n: Int, betterWaitMs: Long, totalMs: Long, now: () -> Long = { System.nanoTime() / 1_000_000 }, next: (Long) -> Pair<Int, Boolean>?): Int {
-    val said = arrayOfNulls<Boolean>(n)
+fun firstBest(
+    n: Int, betterWaitMs: Long, totalMs: Long, now: () -> Long = { System.nanoTime() / 1_000_000 },
+    inUse: Int = -1, said: Array<Boolean?> = arrayOfNulls(n), next: (Long) -> Pair<Int, Boolean>?,
+): Int {
     var best = -1
     val end = now() + totalMs
     var until = end
     while (true) {
+        if (best >= 0 && best == inUse) return best
         if (best >= 0 && (0 until best).all { said[it] == false }) return best
         if (said.all { it != null }) return best
         val wait = until - now()
@@ -794,6 +831,41 @@ fun firstBest(n: Int, betterWaitMs: Long, totalMs: Long, now: () -> Long = { Sys
         }
     }
 }
+
+/**
+ * After [firstBest] ended at the address in use ([best]): hears the better addresses that
+ * had not answered ([said] null) for up to [totalMs] more, and calls [onBetter] for each
+ * that answers as the server and is better than the best so far. Returns that best.
+ */
+fun betterLater(
+    best: Int, said: Array<Boolean?>, totalMs: Long, now: () -> Long = { System.nanoTime() / 1_000_000 },
+    onBetter: (Int) -> Unit, next: (Long) -> Pair<Int, Boolean>?,
+): Int {
+    var at = best
+    val end = now() + totalMs
+    while ((0 until at).any { said[it] == null }) {
+        val wait = end - now()
+        if (wait <= 0) break
+        val (i, ok) = next(wait) ?: break
+        if (i !in said.indices) continue
+        said[i] = ok
+        if (ok && i < at) { at = i; onBetter(i) }
+    }
+    return at
+}
+
+/**
+ * The disk-cache key of a server's image: the same at every address of that server (home
+ * network, Tailscale), so moving between them does not download every poster again, and
+ * different for another server. Null when the address carries a secret (a media token, a
+ * sign-in code): such an answer is not kept under a shared name.
+ */
+fun serverImageKey(url: HttpUrl, serverId: String): String? {
+    if (serverId.isEmpty() || url.queryParameterNames.any { it in SECRET_PARAMS }) return null
+    return "roxy:" + serverId + ":" + url.encodedPath + (url.encodedQuery?.let { "?$it" } ?: "")
+}
+
+private val SECRET_PARAMS = setOf("mt", "secret", "token", "api_key", "apikey")
 
 /** A session's addresses as URLs: which requests are for the server, and where they go now. */
 class Ways(current: String, known: List<String>) {

@@ -34,11 +34,18 @@ sealed interface HomeUiState {
     ) : HomeUiState
 }
 
-class HomeViewModel(private val api: RoxyApi) : ViewModel() {
+/**
+ * [libraryVersion]: a count that moves when watched state, the Watchlist or artwork
+ * changed in this app (ItemCache.version), so what was worked out before is not reused.
+ */
+class HomeViewModel(private val api: RoxyApi, private val libraryVersion: () -> Long = { 0L }) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
 
     private var loadJob: Job? = null
+
+    /** The rows (and library version) the carousel on show was worked out from. */
+    private var heroesOf: Pair<List<HomeRow>, Long>? = null
 
     fun load(silent: Boolean = false) {
         if (!silent) _state.value = HomeUiState.Loading
@@ -47,7 +54,10 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
             // A 3 s probe runs beside the real request so the offline state (and the way to
             // the downloads) shows up fast: a firewall that drops packets would otherwise
             // make the request sit out its full connect timeout.
+            // Not with rows on screen: nothing it could find changes them (a failed silent
+            // reload keeps them), and each look is a request to every address of the server.
             val probe = launch {
+                if (_state.value is HomeUiState.Ready) return@launch
                 if (!api.reachable() && _state.value !is HomeUiState.Ready) {
                     Timber.w("server unreachable; showing the offline state")
                     _state.value = HomeUiState.Error("Server unreachable", offline = true)
@@ -65,8 +75,18 @@ class HomeViewModel(private val api: RoxyApi) : ViewModel() {
             result.onSuccess { ready ->
                 // Keep the previous carousel while the new one resolves, so a silent reload does not blank it.
                 val previous = (_state.value as? HomeUiState.Ready)?.heroes.orEmpty()
+                // Back on Home with the same rows as last time: the carousel is the same too.
+                // Working it out again was up to twelve more requests (a series and its
+                // next episode per slide) on every return to the page.
+                val version = libraryVersion()
+                if (previous.isNotEmpty() && heroesOf == ready.rows to version) {
+                    _state.value = ready.copy(heroes = previous)
+                    return@onSuccess
+                }
                 _state.value = ready.copy(heroes = previous)
-                _state.value = ready.copy(heroes = resolveHeroes(ready.rows))
+                val heroes = resolveHeroes(ready.rows)
+                heroesOf = ready.rows to version
+                _state.value = ready.copy(heroes = heroes)
             }.onFailure { t ->
                 if (t is CancellationException) return@onFailure // the probe already decided
                 Timber.e(t, "home failed")

@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,13 +112,18 @@ fun TvOfflinePage(onRetry: () -> Unit, modifier: Modifier = Modifier, takeFocus:
 
 /**
  * A TV page's "could not load" under its own heading or tabs: the offline page while the
- * server is away, the error's own line otherwise.
+ * server is away; otherwise the error's own line with "Try again" under it. The page
+ * retries once by itself (OnServerBack); when that fails too, with the server there, the
+ * button is the only way to ask again short of leaving the page.
  */
 @Composable
 fun TvPageError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     val online by RoxyApp.get(LocalContext.current).server.online.collectAsStateWithLifecycle()
     if (!online) TvOfflinePage(onRetry, modifier = modifier, takeFocus = false)
-    else PageMessage(message, modifier = modifier, color = RoxyColors.error)
+    else Column(modifier = modifier) {
+        PageMessage(message, color = RoxyColors.error)
+        TvButton("Try again", onClick = onRetry, modifier = Modifier.padding(start = TvDims.ContentStart).testTag("page-retry"))
+    }
 }
 
 /**

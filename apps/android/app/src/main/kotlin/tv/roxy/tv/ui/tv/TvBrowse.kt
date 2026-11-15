@@ -83,13 +83,20 @@ private object LibraryCache {
     @Volatile var at = 0L
 }
 
+/** The library for Browse and Search: the titles, the error when they could not be read, and a way to ask again. */
+private class Library(val items: List<Item>?, val error: String?, val retry: () -> Unit) {
+    operator fun component1() = items
+    operator fun component2() = error
+    operator fun component3() = retry
+}
+
 /**
  * The library's series and movies. Shown from [LibraryCache] at once; asked again only when
  * that is a few minutes old. It used to be fetched on every resume, so each return from a
  * title page downloaded the whole library again.
  */
 @Composable
-private fun rememberLibrary(): Pair<List<Item>?, String?> {
+private fun rememberLibrary(): Library {
     val app = RoxyApp.get(LocalContext.current)
     // The page's own scope: leaving the page cancels the fetch instead of finishing it into nothing.
     val scope = rememberCoroutineScope()
@@ -111,12 +118,13 @@ private fun rememberLibrary(): Pair<List<Item>?, String?> {
     tv.roxy.tv.ui.components.OnServerBack { if (items == null) fetch() }
     // A film finished or marked: its "Watched" badge must not wait out the cache.
     tv.roxy.tv.ui.phone.OnUserDataChanged { LibraryCache.at = 0; fetch() }
-    return items to error
+    // Asked again by hand: the error goes (the page shows it is loading) until the answer.
+    return Library(items, error, retry = { error = null; fetch() })
 }
 
 @Composable
 fun TvBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
-    val (all, error) = rememberLibrary()
+    val (all, error, retry) = rememberLibrary()
     val memory = rememberFocusMemory()
     var selected by rememberSaveable { mutableStateOf("new") }
     RegisterPageEntry { memory.restore("cat/$selected") }
@@ -140,7 +148,7 @@ fun TvBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
     }
     Column(modifier = Modifier.fillMaxSize()) {
         PageTitle("Browse")
-        if (all == null && error != null) { tv.roxy.tv.ui.components.TvPageError(error, onRetry = {}); return@Column }
+        if (all == null && error != null) { tv.roxy.tv.ui.components.TvPageError(error, onRetry = retry); return@Column }
         Row(modifier = Modifier.fillMaxSize()) {
             LazyColumn(modifier = Modifier.width(CategoryStart + CategoryWidth).fillMaxHeight(), contentPadding = PaddingValues(start = CategoryStart, bottom = 24.dp)) {
                 items(cats, key = { it.key }) { c ->
@@ -162,7 +170,7 @@ fun TvBrowse(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
 /** A text field over the grid; typing filters the library's titles as you go. */
 @Composable
 fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
-    val (all, error) = rememberLibrary()
+    val (all, error, retry) = rememberLibrary()
     val memory = rememberFocusMemory()
     var query by rememberSaveable { mutableStateOf("") }
     val gridState = rememberLazyGridState()
@@ -195,7 +203,7 @@ fun TvSearch(onOpenSeries: (Item) -> Unit, onOpenMovie: (Item) -> Unit) {
         Spacer(Modifier.height(40.dp))
         TvTextField(query, { query = it }, placeholder = "Search series, movies, genres", imeAction = ImeAction.Search, modifier = Modifier.padding(start = 15.dp, end = 85.dp).width(520.dp).focusKey(memory, "search/field").focusProperties { gridTarget()?.let { down = memory.requester(it) } })
         Spacer(Modifier.height(24.dp))
-        if (all == null && error != null) { tv.roxy.tv.ui.components.TvPageError(error, onRetry = {}); return@Column }
+        if (all == null && error != null) { tv.roxy.tv.ui.components.TvPageError(error, onRetry = retry); return@Column }
         if (all != null && shown.isEmpty()) { PageMessage("No matches for \"${query.trim()}\"."); return@Column }
         // Six posters across at full card size: the Browse grid's five narrow posters sit beside
         // its category list; here the cells were wider than the posters and the focus frame

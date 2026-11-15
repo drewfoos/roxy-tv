@@ -121,7 +121,7 @@ fun PhoneHome(
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
-    val vm: HomeViewModel = viewModel { HomeViewModel(app.api) }
+    val vm: HomeViewModel = viewModel { HomeViewModel(app.api, libraryVersion = { app.items.version }) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 

@@ -18,6 +18,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import tv.roxy.tv.api.RecordingServer
 import tv.roxy.tv.api.RoxyApi
+import tv.roxy.tv.api.betterLater
 import tv.roxy.tv.api.firstBest
 import tv.roxy.tv.api.isThisServer
 
@@ -53,10 +54,10 @@ class ServerAddressesTest {
 
     // ---- which answer wins ----
 
-    private fun pick(n: Int, vararg answers: Triple<Long, Int, Boolean>): Pair<Int, Long> {
+    private fun pick(n: Int, vararg answers: Triple<Long, Int, Boolean>, inUse: Int = -1): Pair<Int, Long> {
         var clock = 0L
         val left = answers.toMutableList()
-        val best = firstBest(n, betterWaitMs = 700, totalMs = 3_500, now = { clock }) { wait ->
+        val best = firstBest(n, betterWaitMs = 700, totalMs = 3_500, now = { clock }, inUse = inUse) { wait ->
             val a = left.firstOrNull()
             if (a == null || a.first > clock + wait) { clock += wait; null } else { left.removeAt(0); clock = maxOf(clock, a.first); a.second to a.third }
         }
@@ -77,6 +78,29 @@ class ServerAddressesTest {
 
     @Test fun homeAnsweringALittleLaterStillWins() {
         assertEquals(0 to 300L, pick(2, Triple(80L, 1, true), Triple(300L, 0, true)))
+    }
+
+    // On Tailscale every first call after a quiet minute waited 700 ms for the home address,
+    // which cannot answer there: the address the app is at answering is answer enough.
+    @Test fun theAddressInUseAnsweringEndsTheLookAtOnce() {
+        assertEquals(1 to 80L, pick(2, Triple(80L, 1, true), inUse = 1))
+        assertEquals("another address answering first is still waited on", 0 to 300L, pick(3, Triple(80L, 2, true), Triple(300L, 0, true), inUse = 1))
+        assertEquals("the address in use gone: as before", 2 to 780L, pick(3, Triple(10L, 1, false), Triple(80L, 2, true), inUse = 1))
+    }
+
+    // Arriving home is still noticed: the better addresses are heard after the look ended.
+    @Test fun aBetterAddressAnsweringLaterIsMovedTo() {
+        fun later(said: Array<Boolean?>, vararg answers: Pair<Int, Boolean>): Pair<Int, List<Int>> {
+            val left = answers.toMutableList()
+            val moved = mutableListOf<Int>()
+            val at = betterLater(best = 2, said = said, totalMs = 3_000, now = { 0L }, onBetter = { moved += it }) { left.removeFirstOrNull() }
+            return at to moved
+        }
+        assertEquals(0 to listOf(1, 0), later(arrayOf(null, null, true), 1 to true, 0 to true))
+        assertEquals("home first: the one after it changes nothing", 0 to listOf(0), later(arrayOf(null, null, true), 0 to true, 1 to true))
+        assertEquals("not the server there: stay", 2 to emptyList<Int>(), later(arrayOf(null, null, true), 0 to false, 1 to false))
+        assertEquals("silence: stay", 2 to emptyList<Int>(), later(arrayOf(null, null, true)))
+        assertEquals("nothing better is out: nothing is waited for", 2 to emptyList<Int>(), later(arrayOf(false, false, true), 0 to true))
     }
 
     @Test fun nothingAnsweringIsAway() {
@@ -115,12 +139,61 @@ class ServerAddressesTest {
 
         assertTrue(runBlocking { api.reachable() })
 
-        assertEquals(a.url, prefs.session.value.serverUrl)
+        // The look may end at b's own answer; a's is then heard right after it.
+        movesTo(a.url)
         assertTrue("the address left is still known", b.url in prefs.session.value.knownAddresses)
         runBlocking { runCatching { api.item("e1") } }
         assertEquals(listOf("/v1/items/e1"), paths(a))
         assertEquals("Bearer t", a.seen.last().header("Authorization"))
         assertEquals(emptyList<String>(), paths(b))
+    }
+
+    private fun movesTo(url: String) {
+        val until = System.currentTimeMillis() + 3_000
+        while (prefs.session.value.serverUrl != url && System.currentTimeMillis() < until) Thread.sleep(10)
+        assertEquals(url, prefs.session.value.serverUrl)
+    }
+
+    // The better address is slow (or silent, as the home address is on Tailscale): the look
+    // answers from the address in use without waiting for it, and the app still moves when
+    // the better one does answer.
+    @Test fun theLookDoesNotWaitForABetterAddressWhenTheOneInUseAnswers() {
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val slow = RecordingServer { gate.await(5, java.util.concurrent.TimeUnit.SECONDS); 200 to """{"product":"roxy","id":"srv1"}""" }
+        try {
+            signIn(b.url, listOf(slow.url, b.url))
+            val began = System.nanoTime()
+            assertTrue(runBlocking { api.reachable() })
+            val took = (System.nanoTime() - began) / 1_000_000
+            assertTrue("answered in $took ms", took < 500)
+            assertEquals(b.url, prefs.session.value.serverUrl)
+
+            gate.countDown()
+            movesTo(slow.url)
+        } finally { gate.countDown(); slow.close() }
+    }
+
+    // Signed in at a name someone typed, moved to a listed address, and then the server's
+    // list arrives without that name: it was dropped, and the app could never go back to it.
+    @Test fun anAddressTheAppWasSignedInAtStaysKnownWhenTheServerDoesNotListIt() {
+        val typed = "https://roxy.example.org"
+        signIn(typed, listOf(home), serverId = "srv1")
+        prefs.useAddress(home)
+        assertEquals(home, prefs.session.value.serverUrl)
+
+        runBlocking { prefs.setAddresses(listOf(home, tail), "srv1") }
+
+        assertEquals(listOf(home, tail, typed), prefs.session.value.knownAddresses)
+        prefs.useAddress(typed)
+        assertEquals("and it can be gone back to", typed, prefs.session.value.serverUrl)
+        prefs.useAddress(home)
+        val until = System.currentTimeMillis() + 3_000
+        while (typed !in Prefs(context, scope).session.value.knownAddresses && System.currentTimeMillis() < until) Thread.sleep(20)
+        assertEquals("kept across a restart", listOf(home, tail, typed), Prefs(context, scope).session.value.knownAddresses)
+
+        runBlocking { prefs.clearSession() }
+        assertEquals(emptyList<String>(), prefs.session.value.ownAddresses)
+        assertEquals("signing out forgets it", emptyList<String>(), Prefs(context, scope).session.value.ownAddresses)
     }
 
     @Test fun awayFromHomeTheAppMovesToTheAddressThatStillAnswers() {

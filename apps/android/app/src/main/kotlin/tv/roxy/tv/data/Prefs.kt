@@ -48,6 +48,13 @@ data class Session(
     val addresses: List<String> = emptyList(),
     /** The server's id (auth/me): another address is only used if the server there has it. */
     val serverId: String = "",
+    /**
+     * Addresses this app was itself signed in at and then moved away from (see
+     * Prefs.useAddress). The server need not list them: a name someone typed, or an
+     * address taken off the server's list since. They stay known, or the app could never
+     * go back to the one it signed in at.
+     */
+    val ownAddresses: List<String> = emptyList(),
 ) {
     val isLoggedIn: Boolean get() = token != null && serverUrl.isNotEmpty()
 
@@ -60,7 +67,7 @@ data class Session(
     val knownAddresses: List<String>
         get() {
             val cur = serverUrl.trim().trimEnd('/')
-            val others = addresses.map { it.trim().trimEnd('/') }.filter { it == cur || ServerAddress.usableAlternate(it) }
+            val others = (addresses + ownAddresses).map { it.trim().trimEnd('/') }.filter { it == cur || ServerAddress.usableAlternate(it) }
             return (others + cur).filter { it.isNotEmpty() }.distinct().sortedBy { ServerAddress.rank(it) }
         }
     val hasProfile: Boolean get() = profileId != null
@@ -293,13 +300,14 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         _session.update { cur ->
             moved = null
             if (!cur.isLoggedIn || cur.serverUrl.trimEnd('/') == u || u !in cur.knownAddresses) return@update cur
-            cur.copy(serverUrl = u, addresses = (cur.addresses + cur.serverUrl.trimEnd('/')).distinct()).also { moved = it }
+            val left = cur.serverUrl.trimEnd('/')
+            cur.copy(serverUrl = u, addresses = (cur.addresses + left).distinct(), ownAddresses = (cur.ownAddresses - u + left).distinct().takeLast(MAX_OWN_ADDRESSES)).also { moved = it }
         }
         val next = moved ?: return
         scope.launch {
             write {
                 // Only if the file still holds this login: a sign-out since then wins.
-                if (it[KEY_TOKEN] == next.token) { it[KEY_SERVER] = next.serverUrl; it[KEY_ADDRESSES] = next.addresses.joinToString(ADDR_SEP) }
+                if (it[KEY_TOKEN] == next.token) { it[KEY_SERVER] = next.serverUrl; it[KEY_ADDRESSES] = next.addresses.joinToString(ADDR_SEP); it[KEY_OWN_ADDRESSES] = next.ownAddresses.joinToString(ADDR_SEP) }
             }
         }
     }
@@ -336,6 +344,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             if (s.lastProfileId == null) it.remove(KEY_LAST_PROFILE) else it[KEY_LAST_PROFILE] = s.lastProfileId
             if (s.addresses.isEmpty()) it.remove(KEY_ADDRESSES) else it[KEY_ADDRESSES] = s.addresses.joinToString(ADDR_SEP)
             if (s.serverId.isEmpty()) it.remove(KEY_SERVER_ID) else it[KEY_SERVER_ID] = s.serverId
+            if (s.ownAddresses.isEmpty()) it.remove(KEY_OWN_ADDRESSES) else it[KEY_OWN_ADDRESSES] = s.ownAddresses.joinToString(ADDR_SEP)
         }
     }
 
@@ -394,6 +403,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it.remove(KEY_SETUP)
             it.remove(KEY_ADDRESSES)
             it.remove(KEY_SERVER_ID)
+            it.remove(KEY_OWN_ADDRESSES)
         }
     }
 
@@ -433,6 +443,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         setupInProgress = this[KEY_SETUP] ?: false,
         addresses = this[KEY_ADDRESSES].orEmpty().split(ADDR_SEP).filter { it.isNotEmpty() },
         serverId = this[KEY_SERVER_ID].orEmpty(),
+        ownAddresses = this[KEY_OWN_ADDRESSES].orEmpty().split(ADDR_SEP).filter { it.isNotEmpty() },
     )
 
     private fun Preferences.toPins(): List<ServerPin> =
@@ -482,6 +493,8 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         val KEY_SERVER_ID = stringPreferencesKey("server_id")
         const val ADDR_SEP = "\n"
         const val MAX_ADDRESSES = 8
+        val KEY_OWN_ADDRESSES = stringPreferencesKey("own_addresses")
+        const val MAX_OWN_ADDRESSES = 4
         // "_v2": "auto" (zero-copy first) became the default on 2026-10-31; the old key held
         // the previous default, mediacodec-copy, for everyone who ever saved a setting.
         val KEY_HWDEC = stringPreferencesKey("hwdec_v2")

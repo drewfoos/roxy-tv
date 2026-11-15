@@ -94,7 +94,11 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     /** Coil loads images through the API's OkHttp client, so every image request carries the Bearer token. */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
-            .components { add(OkHttpNetworkFetcherFactory(callFactory = { api.http })) }
+            .components {
+                add(OkHttpNetworkFetcherFactory(callFactory = { api.http }))
+                // An image is the same image at each of the server's addresses: one copy on disk.
+                add(coil3.intercept.Interceptor { chain -> chain.withRequest(withServerImageKey(chain.request, api::imageCacheKey)).proceed() })
+            }
             // The fade-in is one animation per card as thumbnails land: a phone shrugs, a TV's processor stutters.
             .crossfade(!isTelevision(this))
             .build()
@@ -102,6 +106,18 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     companion object {
         fun get(context: Context): RoxyApp = context.applicationContext as RoxyApp
     }
+}
+
+/**
+ * [request] with its disk-cache key set by [keyOf] (see RoxyApi.imageCacheKey) when it
+ * asks for an address and has no key of its own. The memory cache keeps its own keys
+ * (they carry the size, and the placeholder lookups name them by address).
+ */
+fun withServerImageKey(request: coil3.request.ImageRequest, keyOf: (String) -> String?): coil3.request.ImageRequest {
+    if (request.diskCacheKey != null) return request
+    val url = when (val d = request.data) { is String -> d; is coil3.Uri -> d.toString(); else -> return request }
+    val key = keyOf(url) ?: return request
+    return request.newBuilder().diskCacheKey(key).build()
 }
 
 /**
