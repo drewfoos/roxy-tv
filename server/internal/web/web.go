@@ -5,11 +5,15 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"embed"
 	"io/fs"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 //go:embed all:dist
@@ -61,6 +65,7 @@ func handlerFor(sub fs.FS) http.Handler {
 	fileServer := http.FileServer(files)
 	_, statErr := fs.Stat(sub, "index.html")
 	haveIndex := statErr == nil
+	var zipped sync.Map // path -> []byte, the file gzipped (a build's files never change)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", CSP)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -83,6 +88,9 @@ func handlerFor(sub fs.FS) http.Handler {
 					}
 					if strings.HasPrefix(p, "/assets/") {
 						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					}
+					if serveGzipped(w, r, sub, p, &zipped) {
+						return
 					}
 					fileServer.ServeHTTP(w, r)
 					return
@@ -115,6 +123,66 @@ func handlerFor(sub fs.FS) http.Handler {
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// gzipTypes are the built files worth compressing, with the type each is sent as. The
+// app's script went out as 509 kB where 158 kB would do, on every deploy and over
+// whatever link the browser is on; fonts and images are compressed already.
+var gzipTypes = map[string]string{
+	".js":   "text/javascript; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".html": "text/html; charset=utf-8",
+	".svg":  "image/svg+xml",
+	".json": "application/json",
+	".wasm": "application/wasm",
+}
+
+// serveGzipped answers with the file gzipped when the browser takes gzip and asked for
+// the whole file. Each file is compressed once and kept. False: nothing was written,
+// and the file goes out as it is.
+func serveGzipped(w http.ResponseWriter, r *http.Request, sub fs.FS, p string, cache *sync.Map) bool {
+	ctype, ok := gzipTypes[path.Ext(p)]
+	if !ok {
+		return false
+	}
+	w.Header().Add("Vary", "Accept-Encoding")
+	if r.Header.Get("Range") != "" || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		return false
+	}
+	body, ok := cache.Load(p)
+	if !ok {
+		raw, err := fs.ReadFile(sub, strings.TrimPrefix(p, "/"))
+		if err != nil || len(raw) < 1024 {
+			return false
+		}
+		var buf bytes.Buffer
+		zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		if _, err := zw.Write(raw); err != nil || zw.Close() != nil || buf.Len() >= len(raw) {
+			return false
+		}
+		body, _ = cache.LoadOrStore(p, buf.Bytes())
+	}
+	b := body.([]byte)
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(b)
+	}
+	return true
+}
+
+// acceptsGzip: the Accept-Encoding header names gzip and does not refuse it (q=0).
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if strings.EqualFold(strings.TrimSpace(name), "gzip") {
+			q := strings.TrimSpace(params)
+			return q != "q=0" && q != "q=0.0" && q != "q=0.00" && q != "q=0.000"
+		}
+	}
+	return false
 }
 
 // looksLikeFile: the cleaned path names a file and not a page of the app: a part that

@@ -43,18 +43,28 @@ func (s *Store) AudioLanguagesFor(ctx context.Context, ids []string) (map[string
 		return out, nil
 	}
 	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
+	args := make([]any, 0, 3*len(ids))
+	for n := 0; n < 3; n++ {
+		for _, id := range ids {
+			args = append(args, id)
+		}
 	}
+	// The items that can hold media, listed first: the title itself, its children, its
+	// grandchildren, each found by parent. As one join with ORs this was most of the
+	// time Home took (a subquery per title, and far worse once SQLite has statistics).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT top.id, lower(ms.language)
-		FROM items top
-		JOIN items e ON e.id = top.id OR e.parent_id = top.id OR e.parent_id IN (SELECT id FROM items WHERE parent_id = top.id)
-		JOIN media_sources src ON src.item_id = e.id
+		WITH leaf(top, id) AS (
+			SELECT id, id FROM items WHERE id IN (`+ph+`)
+			UNION ALL
+			SELECT c.parent_id, c.id FROM items c INDEXED BY items_parent WHERE c.parent_id IN (`+ph+`)
+			UNION ALL
+			SELECT s.parent_id, e.id FROM items s INDEXED BY items_parent
+				JOIN items e INDEXED BY items_parent ON e.parent_id = s.id WHERE s.parent_id IN (`+ph+`))
+		SELECT DISTINCT leaf.top, lower(ms.language)
+		FROM leaf
+		JOIN media_sources src ON src.item_id = leaf.id
 		JOIN media_streams ms ON ms.source_id = src.id AND ms.type = 'audio' AND ms.language IS NOT NULL AND ms.language <> ''
-		WHERE top.id IN (`+ph+`)
-		GROUP BY top.id, lower(ms.language)`, args...)
+		ORDER BY 1, 2`, args...)
 	if err != nil {
 		return nil, err
 	}

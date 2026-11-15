@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -49,6 +50,11 @@ import (
 
 // storyGraphTTL: how long a series' AniList links are trusted before they are read again.
 const storyGraphTTL = 24 * time.Hour
+
+// storyRetryAfter: how long a look that failed (AniList not reached, or TMDB not asked
+// about a film) stands before the next one. Without it every page opened and every
+// background pass during an outage walked the whole chain again, one series at a time.
+const storyRetryAfter = 5 * time.Minute
 
 // storyGraphReading is raised when the way AniList is read changes what a graph holds
 // (2: films reached through specials). A copy saved by an older reading is read again
@@ -109,11 +115,18 @@ type storyCache struct {
 	Read  int                  `json:"read,omitempty"`  // storyGraphReading when it was saved
 	Graph *metadata.StoryGraph `json:"graph,omitempty"` // nil: AniList does not know the series
 	TMDB  map[int]filmMatch    `json:"tmdb,omitempty"`  // AniList film id -> TMDB
+	// Unasked: TMDB could not be asked about one of the films, so this copy is kept
+	// for a few minutes only (storyRetryAfter) and the films are then looked up again.
+	Unasked bool `json:"unasked,omitempty"`
 }
 
 // fresh: saved recently, and by this reading of AniList.
 func (c *storyCache) fresh() bool {
-	return time.Since(c.At) < storyGraphTTL && c.Read == storyGraphReading
+	life := storyGraphTTL
+	if c.Unasked {
+		life = storyRetryAfter
+	}
+	return time.Since(c.At) < life && c.Read == storyGraphReading
 }
 
 // placedFilm is where placeFilms put one film.
@@ -354,6 +367,8 @@ func storyKey(tmdbID int) string { return fmt.Sprintf("storygraph:%d", tmdbID) }
 // story is a series' AniList graph with its films matched to TMDB: the saved copy while
 // it is fresh, else read again (and the saved copy when AniList cannot be reached).
 // Nil without error: not an anime, or AniList does not know it.
+var errStoryNotRead = errors.New("discover: AniList was not reached a moment ago")
+
 func (s *Service) story(ctx context.Context, det *Detail) (*storyCache, error) {
 	if det == nil || det.Type != "tv" || !det.IsAnime || s.storyGraph == nil {
 		return nil, nil
@@ -377,14 +392,27 @@ func (s *Service) story(ctx context.Context, det *Detail) (*storyCache, error) {
 			anilistID, _ = strconv.Atoi(v)
 		}
 	}
+	if at, ok := s.storyFailed[det.TMDBID]; ok && time.Since(at) < storyRetryAfter {
+		if have {
+			return &saved, nil
+		}
+		return nil, errStoryNotRead
+	}
 	g, err := s.storyGraph(ctx, anilistID, det.Title, det.Year)
 	if err != nil {
+		if ctx.Err() == nil { // the caller going away says nothing about AniList
+			if s.storyFailed == nil {
+				s.storyFailed = map[int]time.Time{}
+			}
+			s.storyFailed[det.TMDBID] = time.Now()
+		}
 		if have {
 			slog.Warn("discover: AniList not reached, using the saved links", "title", det.Title, "err", err)
 			return &saved, nil
 		}
 		return nil, err
 	}
+	delete(s.storyFailed, det.TMDBID)
 	fresh := storyCache{At: time.Now(), Read: storyGraphReading, Graph: g, TMDB: map[int]filmMatch{}}
 	for _, p := range placeFilms(g, det.Seasons, det.lastAir) {
 		// A match made before stays: the same film is not looked up every day.
@@ -394,9 +422,15 @@ func (s *Service) story(ctx context.Context, det *Detail) (*storyCache, error) {
 		}
 		m, err := s.matchFilm(ctx, p.Film)
 		if err != nil {
+			// Not "no match": kept that way for a day, the film could not be requested
+			// long after TMDB was back.
 			m = filmMatch{Why: "TMDB could not be asked"}
+			fresh.Unasked = true
 		}
 		fresh.TMDB[p.Film.ID] = m
+	}
+	if fresh.Unasked && ctx.Err() != nil {
+		return &fresh, nil // the caller went away mid-look: nothing worth keeping
 	}
 	if err := s.store.SetSetting(ctx, storyKey(det.TMDBID), fresh); err != nil {
 		slog.Warn("discover: saving a series' film links", "title", det.Title, "err", err)
@@ -574,6 +608,11 @@ func (s *Service) RequestWithFilms(ctx context.Context, tmdbID int, user *model.
 	if err != nil || len(chosen) == 0 {
 		return r, err
 	}
+	// The series is asked for: its films follow whether or not the caller is still
+	// there. A phone that went away at this point left a request that never brought
+	// its films and no longer offered them.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
 	det, err := s.Detail(ctx, "tv", tmdbID)
 	if err != nil || det.Request == nil {
 		return r, nil
@@ -590,7 +629,9 @@ func (s *Service) RequestWithFilms(ctx context.Context, tmdbID int, user *model.
 	}
 	r.FilmAuto = true
 	if err := s.store.UpsertRequest(ctx, r); err != nil {
-		return nil, err
+		// The series went out all the same: saying it failed would be untrue.
+		slog.Warn("discover: saving which films a request covers", "title", r.Title, "err", err)
+		return r, nil
 	}
 	for _, f := range chosen {
 		if coversFilm(r.FilmSeasons, f.between) {
@@ -657,7 +698,13 @@ func (s *Service) requestFilm(ctx context.Context, series *store.Request, tmdbID
 	if err != nil || !won {
 		return false
 	}
-	release := func() { _ = s.store.DeleteSetting(ctx, marker) }
+	// Given back whatever became of ctx: with the caller's own context, an attempt cut
+	// short by the caller leaving kept its claim and the film was never asked for again.
+	release := func() {
+		c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_ = s.store.DeleteSetting(c, marker)
+	}
 	if existing, err := s.store.GetRequest(ctx, "movie", tmdbID); err != nil {
 		release()
 		return false

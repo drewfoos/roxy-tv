@@ -119,8 +119,11 @@ type Service struct {
 	// one series be read at a time; radarrHas remembers which films Radarr holds.
 	storyGraph func(ctx context.Context, anilistID int, title string, year int) (*metadata.StoryGraph, error)
 	storyMu    sync.Mutex
-	radarrHas  *ttlCache[bool]
-	arrCfg     ArrSettings
+	// storyFailed: when AniList last could not be read for a series (by TMDB id); under
+	// storyMu.
+	storyFailed map[int]time.Time
+	radarrHas   *ttlCache[bool]
+	arrCfg      ArrSettings
 	// prowlarr finds season packs Sonarr cannot parse (nil when not configured).
 	prowlarr *arr.Prowlarr
 	packs    packState

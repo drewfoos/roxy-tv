@@ -627,3 +627,38 @@ func TestARemakeReplacesTheOldSheets(t *testing.T) {
 		t.Error("queued again after the remake")
 	}
 }
+
+// Library > Refresh > Trickplay for the file whose previews are being made right now:
+// the run in progress is left to finish and the file is then made again. Before, the
+// source no longer counted as pending once its run began, so the refresh removed the
+// folder under the run and queued the file at once; the run then put its (older)
+// sheets in place and the queued attempt, finding sheets, did nothing.
+func TestARefreshDuringARunIsMadeAfterIt(t *testing.T) {
+	cfg, media := setup(t)
+	video := filepath.Join(media, "Film.mkv")
+	if err := os.WriteFile(video, []byte("not a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, id := service(t, cfg, fakeFFmpeg(t, "sleep 1; echo 'Invalid data found when processing input' >&2; exit 1"), video, 30_000)
+	if !s.Enqueue(id) {
+		t.Fatal("not queued")
+	}
+	<-s.queue // the worker takes it
+	done := make(chan struct{})
+	go func() { s.work(context.Background(), id); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	if !s.Pending(id) {
+		t.Fatal("a source being made is not reported as pending")
+	}
+	s.Regenerate(id)
+	if n := len(s.queue) + len(s.redo); n != 0 {
+		t.Fatalf("queued %d times while its run is in progress", n)
+	}
+	<-done
+	if n := len(s.queue) + len(s.redo); n != 1 {
+		t.Fatalf("queued %d times after the run, want 1: the refresh was asked for", n)
+	}
+	if !s.Pending(id) {
+		t.Fatal("not pending after being queued again")
+	}
+}

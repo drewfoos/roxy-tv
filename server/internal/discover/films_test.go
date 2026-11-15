@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -318,6 +319,11 @@ type filmWorld struct {
 	onAdd  func()               // runs inside Radarr's add
 	search map[string]string    // film title -> TMDB search results (JSON)
 	reads  int                  // times AniList was read
+	// What goes wrong: TMDB's film search answers 500, AniList is not reached, and
+	// onMovie runs when TMDB is asked for a film's own page.
+	failSearch bool
+	failGraph  bool
+	onMovie    func()
 }
 
 const bunnyTV = `{"id":100,"name":"Bunny Girl Senpai","first_air_date":"2018-10-04","last_air_date":"2025-09-27","original_language":"ja","genres":[{"id":16}],
@@ -358,7 +364,12 @@ func newFilmWorld(t *testing.T) *filmWorld {
 			rw.Write([]byte(w.tv))
 		case strings.HasPrefix(r.URL.Path, "/movie/"):
 			id := strings.TrimPrefix(r.URL.Path, "/movie/")
+			if w.onMovie != nil {
+				w.onMovie()
+			}
 			rw.Write([]byte(`{"id":` + id + `,"title":"Film ` + id + `","release_date":"2019-06-15","original_language":"ja","genres":[{"id":16}]}`))
+		case r.URL.Path == "/search/movie" && w.failSearch:
+			http.Error(rw, "down", 500)
 		case r.URL.Path == "/search/movie":
 			if res, ok := w.search[r.URL.Query().Get("query")]; ok {
 				rw.Write([]byte(res))
@@ -425,6 +436,9 @@ func newFilmWorld(t *testing.T) *filmWorld {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		w.reads++
+		if w.failGraph {
+			return nil, errors.New("AniList is away")
+		}
 		b, _ := json.Marshal(w.graph) // a copy, as a fresh read would be
 		var g metadata.StoryGraph
 		_ = json.Unmarshal(b, &g)
@@ -863,5 +877,100 @@ func TestStoryLinksOfAnOlderReadingAreReadAgain(t *testing.T) {
 	w.films()
 	if w.reads != 2 {
 		t.Fatalf("%d reads, want 2", w.reads)
+	}
+}
+
+// The phone went away (app closed, network changed) just after the series was asked
+// for: the films named on the button are requested all the same. Before, each film's
+// look was cut short with the caller's context, its one-time claim could not be given
+// back with that same dead context, and the film was never asked for again.
+func TestFilmsFollowARequestWhoseCallerWentAway(t *testing.T) {
+	w := newFilmWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.onMovie = cancel // the caller is gone by the time the first film is looked at
+	if _, err := w.s.RequestWithFilms(ctx, 100, w.admin, nil, []int{dreamingGirl, sisterOut, knapsackKid, dearFriend}); err != nil {
+		t.Fatal(err)
+	}
+	w.wantAdded("after the caller went away", dreamingGirl, sisterOut, knapsackKid, dearFriend)
+	saved, _ := w.st.GetRequest(context.Background(), "tv", 100)
+	if saved == nil || !saved.FilmAuto {
+		t.Fatalf("the series request does not remember it asked for films: %+v", saved)
+	}
+}
+
+// One film's attempt is cut short (the server is stopping): its claim is given back, so
+// the next run asks for it. A claim left behind meant "requested before", for good.
+func TestACutShortFilmGivesItsClaimBack(t *testing.T) {
+	bg := context.Background()
+	w := newFilmWorld(t)
+	series := &store.Request{ID: "r1", MediaType: "tv", TMDBID: 100, Title: "Bunny Girl", Status: "sent", UserID: "u-admin", UserName: "drewfoos"}
+	ctx, cancel := context.WithCancel(bg)
+	w.onMovie = cancel
+	if w.s.requestFilm(ctx, series, dreamingGirl, 104157, nil) {
+		t.Fatal("a film whose look was cut short counts as requested")
+	}
+	var holder string
+	if left, _ := w.st.GetSetting(bg, storyMarker(dreamingGirl), &holder); left {
+		t.Fatal("the claim was kept: this film would never be asked for again")
+	}
+	w.onMovie = nil
+	if !w.s.requestFilm(bg, series, dreamingGirl, 104157, nil) {
+		t.Fatal("the next run did not ask for the film")
+	}
+	w.wantAdded("on the next run", dreamingGirl)
+}
+
+// TMDB was down while a series' films were first matched: that is not "no match". A
+// few minutes on, with TMDB back, the films are matched and can be requested. Before,
+// the failed look was kept for a day.
+func TestFilmsTMDBCouldNotBeAskedAboutAreAskedAgain(t *testing.T) {
+	ctx := context.Background()
+	w := newFilmWorld(t)
+	w.mu.Lock()
+	w.failSearch = true
+	w.mu.Unlock()
+	if f := w.films()[104157]; f.TMDBID != 0 || f.WithRequest {
+		t.Fatalf("with TMDB down: %+v, want listed and not requestable", f)
+	}
+	w.mu.Lock()
+	w.failSearch = false
+	w.mu.Unlock()
+	var sc storyCache
+	if ok, err := w.st.GetSetting(ctx, storyKey(100), &sc); err != nil || !ok {
+		t.Fatalf("no saved links: %v", err)
+	}
+	sc.At = sc.At.Add(-storyRetryAfter - time.Minute)
+	if err := w.st.SetSetting(ctx, storyKey(100), sc); err != nil {
+		t.Fatal(err)
+	}
+	if f := w.films()[104157]; f.TMDBID != dreamingGirl || !f.WithRequest {
+		t.Fatalf("with TMDB back: %+v, want matched and on the button", f)
+	}
+	w.films()
+	if w.reads != 2 {
+		t.Fatalf("AniList read %d times, want 2: the good look is kept for its day", w.reads)
+	}
+}
+
+// AniList is away: one look says so, and the looks of the next minutes do not each
+// walk the chain again (every page opened, every background pass, one series at a time).
+func TestAniListAwayIsNotAskedAtEveryLook(t *testing.T) {
+	w := newFilmWorld(t)
+	w.failGraph = true
+	for i := 0; i < 3; i++ {
+		if _, err := w.s.Films(context.Background(), 100); err == nil {
+			t.Fatal("films listed with AniList away and nothing saved")
+		}
+	}
+	if w.reads != 1 {
+		t.Fatalf("AniList asked %d times in a row while away, want 1", w.reads)
+	}
+	w.s.storyMu.Lock()
+	w.s.storyFailed[100] = time.Now().Add(-storyRetryAfter - time.Second)
+	w.s.storyMu.Unlock()
+	w.failGraph = false
+	if fs := w.films(); len(fs) != 4 {
+		t.Fatalf("%d films once AniList is back, want 4", len(fs))
 	}
 }

@@ -1,6 +1,9 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -126,5 +129,69 @@ func TestAFileThatIsNotThereIsNotFound(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<title>Roxy</title>") {
 			t.Errorf("GET %s = %d, want the app's page", p, rec.Code)
 		}
+	}
+}
+
+// The app's script went out uncompressed: 509 kB where 158 kB would do. Built text
+// files are gzipped for a browser that takes gzip; everything else is as it was.
+func TestBuiltTextFilesAreGzipped(t *testing.T) {
+	script := []byte(strings.Repeat("function roxy(){return 'the same words again and again'}\n", 200))
+	font := []byte(strings.Repeat("wOF2 font bytes ", 200))
+	build := testBuild()
+	build["assets/app-abc.js"] = &fstest.MapFile{Data: script}
+	build["assets/font-abc.woff2"] = &fstest.MapFile{Data: font}
+	h := handlerFor(build)
+	get := func(p string, hdr map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for i := 0; i < 2; i++ { // the second answer comes from the kept copy
+		rec := get("/assets/app-abc.js", map[string]string{"Accept-Encoding": "gzip, deflate, br"})
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatalf("script: %d encoding %q, want gzip", rec.Code, rec.Header().Get("Content-Encoding"))
+		}
+		if rec.Body.Len() >= len(script)/4 {
+			t.Errorf("script went out as %d bytes of %d", rec.Body.Len(), len(script))
+		}
+		zr, err := gzip.NewReader(rec.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, _ := io.ReadAll(zr)
+		if !bytes.Equal(plain, script) {
+			t.Errorf("the gzipped script does not unpack to the file")
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+			t.Errorf("script type %q", ct)
+		}
+		if !strings.Contains(rec.Header().Get("Cache-Control"), "immutable") || !strings.Contains(rec.Header().Get("Vary"), "Accept-Encoding") {
+			t.Errorf("script headers: cache %q vary %q", rec.Header().Get("Cache-Control"), rec.Header().Get("Vary"))
+		}
+	}
+	plainCases := []struct {
+		name, path string
+		hdr        map[string]string
+		want       []byte
+	}{
+		{"no gzip asked", "/assets/app-abc.js", nil, script},
+		{"gzip refused", "/assets/app-abc.js", map[string]string{"Accept-Encoding": "br, gzip;q=0"}, script},
+		{"a font", "/assets/font-abc.woff2", map[string]string{"Accept-Encoding": "gzip"}, font},
+		{"a small file", "/assets/index-abc123.js", map[string]string{"Accept-Encoding": "gzip"}, []byte("console.log(1)")},
+	}
+	for _, c := range plainCases {
+		rec := get(c.path, c.hdr)
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "" || !bytes.Equal(rec.Body.Bytes(), c.want) {
+			t.Errorf("%s: %d encoding %q, %d bytes; want the file as it is", c.name, rec.Code, rec.Header().Get("Content-Encoding"), rec.Body.Len())
+		}
+	}
+	// A part of the file is a part of the file itself, never of its gzipped form.
+	rec := get("/assets/app-abc.js", map[string]string{"Accept-Encoding": "gzip", "Range": "bytes=0-9"})
+	if rec.Code != http.StatusPartialContent || rec.Header().Get("Content-Encoding") != "" || !bytes.Equal(rec.Body.Bytes(), script[:10]) {
+		t.Errorf("range: %d encoding %q body %q", rec.Code, rec.Header().Get("Content-Encoding"), rec.Body.String())
 	}
 }

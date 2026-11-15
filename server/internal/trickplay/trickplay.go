@@ -86,12 +86,14 @@ type Service struct {
 	queue   chan string // sources with no sheets
 	redo    chan string // sources whose sheets an older generator made: after the queue
 	mu      sync.Mutex
-	pending map[string]bool
+	pending map[string]bool // queued or being made
+	running string          // the source being made now
+	again   map[string]bool // Regenerate asked for while the source was being made
 	failed  map[string]time.Time
 }
 
 func New(st *store.Store, ff *ffmpeg.FFmpeg, cfg *config.Config) *Service {
-	return &Service{store: st, ff: ff, cfg: cfg, queue: make(chan string, queueSize), redo: make(chan string, redoSize), pending: map[string]bool{}, failed: map[string]time.Time{}}
+	return &Service{store: st, ff: ff, cfg: cfg, queue: make(chan string, queueSize), redo: make(chan string, redoSize), pending: map[string]bool{}, again: map[string]bool{}, failed: map[string]time.Time{}}
 }
 
 func (s *Service) dir(sourceID string) string {
@@ -127,12 +129,29 @@ func (s *Service) Start(ctx context.Context) {
 			if !ok {
 				return
 			}
-			s.mu.Lock()
-			delete(s.pending, id)
-			s.mu.Unlock()
-			s.attempt(ctx, id)
+			s.work(ctx, id)
 		}
 	}()
+}
+
+// work makes one queued source's thumbnails. The source stays pending until they are
+// done (pending is "queued or being made"), and a Regenerate that came meanwhile is
+// honoured afterwards: the run in progress started before it was asked for, maybe on
+// the file as it was before it was replaced.
+func (s *Service) work(ctx context.Context, id string) {
+	s.mu.Lock()
+	s.running = id
+	s.mu.Unlock()
+	s.attempt(ctx, id)
+	s.mu.Lock()
+	s.running = ""
+	delete(s.pending, id)
+	again := s.again[id]
+	delete(s.again, id)
+	s.mu.Unlock()
+	if again && ctx.Err() == nil {
+		s.Regenerate(id)
+	}
 }
 
 // next waits for the next source to work on: one with no sheets at all before one whose
@@ -318,11 +337,18 @@ func (s *Service) Regenerate(sourceID string) {
 		return
 	}
 	s.mu.Lock()
-	running := s.pending[sourceID]
+	queued := s.pending[sourceID]
+	if s.running == sourceID {
+		// Being made right now, from before this was asked: its sheets must not be
+		// removed under it, nor kept. Made again once it is done (work).
+		s.again[sourceID] = true
+		s.mu.Unlock()
+		return
+	}
 	delete(s.failed, sourceID)
 	s.mu.Unlock()
-	if running {
-		return // already being made
+	if queued {
+		return // waiting its turn: it will be made from the file as it is then
 	}
 	safefs.Remove(s.failurePath(sourceID))
 	safefs.RemoveAll(s.dir(sourceID))

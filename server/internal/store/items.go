@@ -257,7 +257,16 @@ type ItemQuery struct {
 	FavoriteOf string
 }
 
+// underParent matches everything under an item, up to three levels down (series ->
+// season -> episode); itemsByParent is the table to run it on. Three arguments, all the
+// parent's id.
+const (
+	underParent   = `parent_id IN (SELECT ? UNION ALL SELECT id FROM items WHERE parent_id = ? UNION ALL SELECT id FROM items WHERE parent_id IN (SELECT id FROM items WHERE parent_id = ?))`
+	itemsByParent = `items INDEXED BY items_parent`
+)
+
 func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, error) {
+	from := "items"
 	var where []string
 	var args []any
 	if q.LibraryID != 0 {
@@ -279,8 +288,11 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 	if q.ParentID != "" {
 		if q.Recursive {
 			// Up to three levels: series -> season -> episode.
-			where = append(where, `(parent_id = ? OR parent_id IN (SELECT id FROM items WHERE parent_id = ?) OR parent_id IN (SELECT id FROM items WHERE parent_id IN (SELECT id FROM items WHERE parent_id = ?)))`)
+			// One list of parents, looked up by parent (byParent below): as three ORed
+			// tests SQLite read every item of the type, whatever the size of the series.
+			where = append(where, underParent)
 			args = append(args, q.ParentID, q.ParentID, q.ParentID)
+			from = itemsByParent
 		} else {
 			where = append(where, "parent_id = ?")
 			args = append(args, q.ParentID)
@@ -302,7 +314,7 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 		sqlWhere = " WHERE " + strings.Join(where, " AND ")
 	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items`+sqlWhere, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+from+sqlWhere, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	order := "date_created"
@@ -331,7 +343,7 @@ func (s *Store) ListItems(ctx context.Context, q ItemQuery) ([]model.Item, int, 
 	// id last: items equal on the sort (two files of one episode number, unnumbered ones,
 	// a scan's batch created in the same millisecond) otherwise came back in any order,
 	// and a page boundary between them repeated one item and skipped another.
-	query := fmt.Sprintf(`SELECT %s FROM items%s ORDER BY %s%s, id%s LIMIT %d OFFSET %d`, itemCols, sqlWhere, order, dir, dir, limit, q.Offset)
+	query := fmt.Sprintf(`SELECT %s FROM %s%s ORDER BY %s%s, id%s LIMIT %d OFFSET %d`, itemCols, from, sqlWhere, order, dir, dir, limit, q.Offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
@@ -498,8 +510,12 @@ func (s *Store) DeleteVirtualChildren(ctx context.Context, seriesID string, keep
 // "Show - 03.mkv" gets the GUID abs0003, the placeholder s01e0003, so the GUIDs never
 // meet and both rows would show), or a number inside a multi-episode file's range
 // (S01E01-E03 covers E2 and E3).
+//
+// The real episodes are looked up by season (INDEXED BY items_parent): left to itself,
+// with no statistics, SQLite read every real row for every placeholder (0.7 s on a
+// 5000-item library, as a write, on each scan of each library and each import).
 const shadowedPlaceholders = `is_virtual = 1 AND type = 'episode' AND EXISTS (
-	SELECT 1 FROM items r WHERE r.is_virtual = 0 AND r.type = 'episode' AND r.parent_id = items.parent_id
+	SELECT 1 FROM items r INDEXED BY items_parent WHERE r.parent_id = items.parent_id AND r.is_virtual = 0 AND r.type = 'episode'
 	AND items.index_aired BETWEEN COALESCE(r.index_aired, r.index_absolute)
 		AND MAX(COALESCE(r.index_aired, r.index_absolute), COALESCE(r.index_aired_end, 0)))`
 
