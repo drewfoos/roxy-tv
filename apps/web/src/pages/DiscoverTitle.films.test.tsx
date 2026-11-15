@@ -92,6 +92,25 @@ describe('films on a Discover series page', () => {
     expect(api.discoverRequest).toHaveBeenCalledWith('tv', 500, undefined, undefined, [11])
   })
 
+  // The button let go as soon as the request was sent, while the page still showed
+  // "Request" until its reload answered: a second press sent a second request.
+  it('sends one request however often the button is pressed before the page has caught up', async () => {
+    let answer: (d: DiscoverDetail) => void = () => undefined
+    api.discoverDetail.mockResolvedValueOnce(detail({ isAnime: false })).mockReturnValue(new Promise<DiscoverDetail>((r) => (answer = r)))
+    await open()
+    await act(async () => button(/^Request$/).click())
+    await act(async () => {})
+    expect(api.discoverRequest).toHaveBeenCalledTimes(1)
+    await act(async () => button(/^Request$/)?.click())
+    await act(async () => {})
+    expect(api.discoverRequest).toHaveBeenCalledTimes(1)
+    // The page has caught up: the button works again.
+    await act(async () => answer(detail({ isAnime: false })))
+    await act(async () => {})
+    await act(async () => button(/^Request$/).click())
+    expect(api.discoverRequest).toHaveBeenCalledTimes(2)
+  })
+
   it('requests a listed film only by its own button, as a film', async () => {
     api.discoverDetail.mockResolvedValue(detail())
     api.discoverFilms.mockResolvedValue(films([film({ anilistId: 3, tmdbId: 13, title: 'Aside', note: 'Side story' })]))

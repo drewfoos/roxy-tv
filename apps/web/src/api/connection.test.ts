@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, NetworkError } from './client'
-import { connection, connectionWords, PROBE_DELAYS_MS } from './connection'
+import { connection, connectionWords, PROBE_DELAYS_MS, PROBE_LIMIT_MS } from './connection'
 import { session } from './session'
 
 const S = { token: 't', userId: 'u', userName: 'drew', isAdmin: false, profileId: 'p', profileName: 'Drew', profileHasAvatar: false, profileAvatarKey: '' }
@@ -145,6 +145,35 @@ describe('a server that cannot be reached', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(up).toHaveBeenCalledTimes(1)
     expect(connection.get()).toBe('ok')
+  })
+
+  // A link that takes the connection and then says nothing: the look never ended, and
+  // since only one look runs at a time, no other was ever made.
+  it('gives up on a look that gets no answer, and looks again', async () => {
+    vi.stubGlobal('fetch', vi.fn(dead))
+    await api.item('x').catch(() => undefined)
+    const silent = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))),
+    )
+    vi.stubGlobal('fetch', silent)
+    const first = connection.check()
+    await vi.advanceTimersByTimeAsync(PROBE_LIMIT_MS)
+    expect(await first).toBe(false)
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ status: 'ok' })))
+    expect(await connection.check()).toBe(true)
+    expect(connection.get()).toBe('ok')
+  })
+
+  it('does not keep asking from a tab that is not shown', async () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    const probe = vi.fn(dead)
+    vi.stubGlobal('fetch', probe)
+    await api.item('x').catch(() => undefined)
+    probe.mockClear()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(probe).not.toHaveBeenCalled()
+    hidden.mockRestore()
   })
 
   it('claims nothing about the internet, which it cannot know', () => {

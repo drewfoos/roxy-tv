@@ -44,6 +44,14 @@ let timer: ReturnType<typeof setTimeout> | null = null
 let attempt = 0
 let probing: Promise<boolean> | null = null
 
+/** How long one look at the server may take. */
+export const PROBE_LIMIT_MS = 5000
+function probeLimit(): AbortSignal {
+  const c = new AbortController()
+  setTimeout(() => c.abort(), PROBE_LIMIT_MS)
+  return c.signal
+}
+
 const hasNetwork = () => typeof navigator === 'undefined' || navigator.onLine !== false
 
 function set(next: Link) {
@@ -60,6 +68,8 @@ function schedule() {
   attempt++
   timer = setTimeout(() => {
     timer = null
+    // A tab that is not shown does not keep asking; it looks at once when shown again.
+    if (typeof document !== 'undefined' && document.hidden) return
     void connection.check()
   }, wait)
 }
@@ -98,7 +108,9 @@ export const connection = {
     if (probing) return probing
     // Roxy's own answer, not just any: a proxy in front of a stopped server, or a Wi-Fi
     // sign-in page, also answers this address.
-    probing = fetch('/healthz', { cache: 'no-store' })
+    // With a limit: a look that never ends (a link that takes the connection and then
+    // says nothing) held `probing` for good, and no later look was ever made.
+    probing = fetch('/healthz', { cache: 'no-store', signal: probeLimit() })
       .then((r) => (r.ok ? (r.json() as Promise<{ status?: string }>) : null))
       .then(
         (j) => j?.status === 'ok',

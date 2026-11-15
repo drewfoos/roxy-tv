@@ -9,7 +9,7 @@ import { WitchHat } from './Icons'
  * Explore / Resources / Account columns, and a thin legal strip underneath.
  */
 export function Footer() {
-  const { data: info } = useAsync('system-info', () => api.systemInfo())
+  const { data: info } = useAsync('system-info', () => api.systemInfo(), [], 5 * 60_000)
   return (
     <footer className="footer">
       <div className="footer__main">

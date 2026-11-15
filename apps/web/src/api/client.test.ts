@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError } from './client'
+import { api, ApiError, NetworkError, orEmpty } from './client'
 import { session } from './session'
 
 const S = { token: 't', userId: 'u', userName: 'drew', isAdmin: false, profileId: 'p', profileName: 'Drew', profileHasAvatar: false, profileAvatarKey: '' }
@@ -107,5 +107,16 @@ describe('a request the server refuses because its profile is gone', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ error: 'already requested' }) })))
     await expect(api.item('x')).rejects.toBeInstanceOf(ApiError)
     expect(session.get()).toEqual(S)
+  })
+})
+
+// A side load a page can do without used to be remembered as empty whatever went wrong,
+// so a row lost to a dropped connection stayed away after the server was back.
+describe('orEmpty', () => {
+  it('gives the empty value for an error the server answered with', () => {
+    expect(orEmpty({ items: [] })(new ApiError(404, 'not found'))).toEqual({ items: [] })
+  })
+  it('throws on when there was no answer at all', () => {
+    expect(() => orEmpty({ items: [] })(new NetworkError("Can't reach your Roxy server"))).toThrow(NetworkError)
   })
 })

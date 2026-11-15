@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, px } from '../api/client'
+import { api, orEmpty, px } from '../api/client'
 import { audioBadge, isPlayable, runtimeLabel, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { Art, ProgressBar, Row, SaveButton, TitleCard, isWatched } from '../components/Cards'
 import { IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
-import { Spinner } from '../components/Skeleton'
+import { GridSkeleton, Spinner } from '../components/Skeleton'
 import { LoadError } from '../components/Connection'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
@@ -19,7 +19,7 @@ export function Movie() {
   const { id = '' } = useParams()
   const nav = useNavigate()
   const { data: movie, error, loading, reload } = useAsync(`item:${id}`, () => api.item(id), [id])
-  const { data: related } = useAsync(`related:${id}`, () => api.related(id).catch(() => ({ related: [], partOf: [] })), [id])
+  const { data: related } = useAsync(`related:${id}`, () => api.related(id).catch(orEmpty({ related: [], partOf: [] })), [id])
   const [tab, setTab] = useState(0)
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
 
@@ -109,7 +109,13 @@ export function Movie() {
         </>
       ) : (
         <div style={{ marginTop: 28 }}>
-          <DiscoverGrid items={similar?.items ?? []} />
+          {!similar ? (
+            <GridSkeleton count={12} />
+          ) : similar.items.length === 0 ? (
+            <div className="empty">Nothing to suggest for this title yet.</div>
+          ) : (
+            <DiscoverGrid items={similar.items} />
+          )}
         </div>
       )}
       <Footer />

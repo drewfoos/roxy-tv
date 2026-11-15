@@ -12,7 +12,8 @@ export interface AsyncState<T> {
    * never starts from (and saves back) settings older than the server's.
    */
   fresh: boolean
-  reload: (silent?: boolean) => void
+  /** Resolves once this reload has answered (or failed): for a button that must stay busy until the page shows what it did. */
+  reload: (silent?: boolean) => Promise<void>
 }
 
 /**
@@ -99,17 +100,17 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   const fnRef = useRef(fn)
   fnRef.current = fn
   const gen = useRef(0)
-  const again = useRef<(silent: boolean) => void>(() => undefined)
+  const again = useRef<(silent: boolean) => Promise<void>>(() => Promise.resolve())
 
   const run = useCallback(
-    (silent = false) => {
-      if (key == null) return
+    (silent = false): Promise<void> => {
+      if (key == null) return Promise.resolve()
       const my = ++gen.current
       const myEpoch = epoch
       if (!silent && !cache.has(key)) {
         setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, loading: true } : { key, epoch: myEpoch, data: null, error: null, loading: true, fresh: false }))
       }
-      fnRef
+      return fnRef
         .current()
         .then((d) => {
           if (my !== gen.current) return

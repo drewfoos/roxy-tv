@@ -54,6 +54,18 @@ export class NetworkError extends ApiError {
   }
 }
 
+/**
+ * For a side load a page can do without (extras, related titles): any answer that is an
+ * error gives `empty`, but no answer at all is thrown on, so the row is not remembered as
+ * empty and loads by itself when the server is back.
+ */
+export function orEmpty<T>(empty: T): (e: unknown) => T {
+  return (e) => {
+    if (e instanceof NetworkError) throw e
+    return empty
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown, auth = true, keepalive = false): Promise<T> {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'

@@ -25,7 +25,9 @@ export function LibraryPage() {
   const busy = !!manage.data && (manage.data.scanning || manage.data.queue > 0)
   useEffect(() => {
     if (!busy) return
-    const t = setInterval(() => manage.reload(true), 3000)
+    const t = setInterval(() => {
+      if (!document.hidden) manage.reload(true)
+    }, 3000)
     return () => clearInterval(t)
   }, [busy, manage])
 

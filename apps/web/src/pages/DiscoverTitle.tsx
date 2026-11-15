@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
 import type { DiscoverDetail, DiscoverEpisode, DiscoverFilm, DiscoverSeason, Item, ItemDetails } from '../api/types'
@@ -76,8 +76,10 @@ export function DiscoverTitle() {
   }, [pollMs, reload])
 
   /** Runs a change, then reloads the page (and lets Discover's rows ask again). */
+  const acting = useRef(false)
   const act = async (fn: () => Promise<unknown>, after?: () => void) => {
-    if (busy) return
+    if (acting.current) return
+    acting.current = true
     setBusy(true)
     try {
       await fn()
@@ -86,8 +88,11 @@ export function DiscoverTitle() {
       setNotice(e instanceof Error ? e.message : String(e))
     }
     markStale('discover')
-    reload(true)
     reloadFilms(true)
+    // Busy until the page shows what was done: let go before that, the button still said
+    // "Request" for as long as the reload took, and a second press sent a second request.
+    await reload(true)
+    acting.current = false
     setBusy(false)
   }
 

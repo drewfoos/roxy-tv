@@ -21,11 +21,11 @@ const api = vi.hoisted(() => ({
   extras: vi.fn(),
   imageUrl: vi.fn(() => null),
 }))
-vi.mock('../api/client', () => ({ api, px: (n: number) => n, ApiError: class extends Error {} }))
+vi.mock('../api/client', () => ({ api, px: (n: number) => n, ApiError: class extends Error {}, orEmpty: (v: unknown) => () => v }))
 vi.mock('../components/TopBar', () => ({ TopBar: () => null }))
 vi.mock('../components/Footer', () => ({ Footer: () => null }))
 vi.mock('../components/Extras', () => ({ ExtrasRow: () => null }))
-vi.mock('../components/DiscoverBits', () => ({ DiscoverGrid: () => null }))
+vi.mock('../components/DiscoverBits', () => ({ DiscoverGrid: ({ items }: { items: unknown[] }) => <div className="dgrid">{items.length}</div> }))
 vi.mock('../components/Cards', () => ({
   Art: () => null,
   CardMenu: () => null,
@@ -40,7 +40,15 @@ vi.mock('../components/Cards', () => ({
 vi.mock('../components/TitlePage', () => ({
   TitleBanner: ({ actions }: { actions?: unknown }) => <div className="banner">{actions as never}</div>,
   TitleBelow: ({ children }: { children?: unknown }) => <div className="below">{children as never}</div>,
-  SectionTabs: () => <div className="tabs" />,
+  SectionTabs: ({ tabs, onSelect }: { tabs: string[]; onSelect: (i: number) => void }) => (
+    <div className="tabs">
+      {tabs.map((t, i) => (
+        <button key={t} className="tab" onClick={() => onSelect(i)}>
+          {t}
+        </button>
+      ))}
+    </div>
+  ),
 }))
 
 import { clearAsyncCache } from '../hooks/useAsync'
@@ -119,5 +127,34 @@ describe("a film's \"Part of\" line", () => {
     expect(line).toBeTruthy()
     expect(host.querySelector('.below')?.contains(line)).toBe(false)
     expect(film.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+// The tab drew nothing at all until the answer came, and nothing for a film with no
+// suggestions: an empty page either way. The series page already said both.
+describe('a film\'s "More like this"', () => {
+  const openTab = async () => {
+    api.item.mockResolvedValue(item({ id: 'm', type: 'movie', title: 'A film', availability: 'available' } as Partial<Item>))
+    api.related.mockResolvedValue({ related: [], partOf: [] })
+    await open('/movie/m')
+    const tab = [...host.querySelectorAll('button.tab')].find((b) => b.textContent === 'More like this') as HTMLButtonElement
+    await act(async () => tab.click())
+    for (let i = 0; i < 4; i++) await act(async () => {})
+  }
+
+  it('shows placeholders while it is read, then the titles', async () => {
+    const similar = later<{ items: unknown[] }>()
+    api.similar.mockReturnValue(similar.promise)
+    await openTab()
+    expect(host.querySelector('.dgrid')).toBeNull()
+    expect(host.querySelector('.skeleton, .bone, [class*="skel"]')).toBeTruthy()
+    await similar.answer({ items: [{ tmdbId: 1 }, { tmdbId: 2 }] })
+    expect(host.querySelector('.dgrid')?.textContent).toBe('2')
+  })
+
+  it('says so when there is nothing to suggest', async () => {
+    api.similar.mockResolvedValue({ items: [] })
+    await openTab()
+    expect(host.querySelector('.empty')?.textContent).toMatch(/Nothing to suggest/)
   })
 })

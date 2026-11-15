@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import { api, px } from '../api/client'
+import { api, orEmpty, px } from '../api/client'
 import { runtimeLabel } from '../api/items'
 import { useAsync } from '../hooks/useAsync'
 import { Art, Row } from './Cards'
@@ -20,7 +20,7 @@ const KIND: Record<string, string> = {
 
 /** A film's or show's extras (trailers, featurettes, deleted scenes...), each opening the player. Nothing when it has none. */
 export function ExtrasRow({ id }: { id: string }) {
-  const { data } = useAsync(`extras:${id}`, () => api.extras(id).catch(() => ({ items: [] })), [id])
+  const { data } = useAsync(`extras:${id}`, () => api.extras(id).catch(orEmpty({ items: [] })), [id])
   const items = data?.items ?? []
   if (items.length === 0) return null
   return (
