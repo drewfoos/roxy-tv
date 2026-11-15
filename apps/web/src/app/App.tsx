@@ -4,22 +4,28 @@ import { Login } from "../pages/Login";
 import { Profiles } from "../pages/Profiles";
 import { Home } from "../pages/Home";
 import { Browse } from "../pages/Browse";
-import { Discover } from "../pages/Discover";
-import { DiscoverTitle } from "../pages/DiscoverTitle";
 import { Lists } from "../pages/Lists";
-import { AccountSection } from "../pages/account/AccountLayout";
 import { Series } from "../pages/Series";
 import { Movie } from "../pages/Movie";
-import { Watch } from "../pages/Watch";
-import { Legal } from "../pages/Legal";
-import { LinkEnter, LinkTv } from "../pages/LinkTv";
 import { SetupWizard, setupInProgressFor } from "../pages/Setup";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { lazyPage, preloadPages } from "./lazyPage";
 import { api } from "../api/client";
 import { session } from "../api/session";
 import { Spinner } from "../components/Skeleton";
 import { useScrollVar } from "../hooks/useScrollVar";
 import { PageErrorBoundary } from "../components/PageErrorBoundary";
+
+// Loaded when first opened (and fetched ahead once the first page is idle): the player
+// with its subtitle renderer, the account and admin pages, Discover, and the small pages
+// few visits need. Home, Browse and the title pages stay in the first script.
+const Watch = lazyPage(() => import("../pages/Watch"), (m) => m.Watch);
+const AccountSection = lazyPage(() => import("../pages/account/AccountLayout"), (m) => m.AccountSection);
+const Discover = lazyPage(() => import("../pages/Discover"), (m) => m.Discover);
+const DiscoverTitle = lazyPage(() => import("../pages/DiscoverTitle"), (m) => m.DiscoverTitle);
+const Legal = lazyPage(() => import("../pages/Legal"), (m) => m.Legal);
+const LinkEnter = lazyPage(() => import("../pages/LinkTv"), (m) => m.LinkEnter);
+const LinkTv = lazyPage(() => import("../pages/LinkTv"), (m) => m.LinkTv);
 
 /** Signed out -> login; signed in without a profile -> "Who's watching?"; else the app. */
 export default function App() {
@@ -62,6 +68,10 @@ export default function App() {
       live = false;
     };
   }, [s?.token, profileId]);
+  const signedIn = cookieFor != null && cookieFor === s?.token;
+  useEffect(() => {
+    if (signedIn) preloadPages();
+  }, [signedIn]);
   // Bumped when the setup wizard finishes, so this reads its flag again.
   const [, setSetupDone] = useState(0);
 
@@ -85,6 +95,9 @@ export default function App() {
   const pageKey = loc.pathname.startsWith("/watch/") ? "/watch" : loc.pathname;
   return (
     <PageErrorBoundary key={pageKey} resetKey={loc.pathname}>
+      {/* A page whose script is still coming shows what the pages themselves show while
+          their data is: the spinner, in the same place. */}
+      <Suspense fallback={<Spinner />}>
       <Routes>
         <Route path="/profiles" element={<Profiles />} />
         <Route path="/" element={<Home />} />
@@ -101,6 +114,7 @@ export default function App() {
         <Route path="/link/:code" element={<LinkTv />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </PageErrorBoundary>
   );
 }

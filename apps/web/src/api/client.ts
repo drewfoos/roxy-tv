@@ -87,18 +87,28 @@ export function callLimitMs(method: string, path: string): number {
  * browser cared to, minutes, with the page on its skeleton and nothing telling the app
  * the server was gone. Now it is given up on after its limit, as a call that got no
  * answer: the app shows it is waiting for the server and looks for it.
+ *
+ * `left`: the caller's own signal, for a call nobody waits for any more (the page that
+ * made it is gone). The call ends at once with an AbortError; that says nothing about
+ * the server, so the connection is not marked.
  */
-async function request<T>(method: string, path: string, body?: unknown, auth = true, keepalive = false): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, auth = true, keepalive = false, left?: AbortSignal): Promise<T> {
   const limit = new AbortController()
   const timer = setTimeout(() => limit.abort(), callLimitMs(method, path))
+  const leave = () => limit.abort()
+  if (left?.aborted) leave()
+  else left?.addEventListener('abort', leave)
   try {
-    return await send<T>(method, path, body, auth, keepalive, limit.signal)
+    return await send<T>(method, path, body, auth, keepalive, limit.signal, left)
   } finally {
     clearTimeout(timer)
+    left?.removeEventListener('abort', leave)
   }
 }
 
-async function send<T>(method: string, path: string, body: unknown, auth: boolean, keepalive: boolean, signal: AbortSignal): Promise<T> {
+const leftError = () => new DOMException('The page that asked is gone.', 'AbortError')
+
+async function send<T>(method: string, path: string, body: unknown, auth: boolean, keepalive: boolean, signal: AbortSignal, left?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const s = session.get()
@@ -111,6 +121,7 @@ async function send<T>(method: string, path: string, body: unknown, auth: boolea
   try {
     res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive, signal })
   } catch {
+    if (left?.aborted) throw leftError()
     // The browser's own text here is "Failed to fetch" / "NetworkError when attempting…":
     // say what happened instead, and let the app show it is waiting for the server.
     connection.failed()
@@ -147,6 +158,7 @@ async function send<T>(method: string, path: string, body: unknown, auth: boolea
   } catch (e) {
     // The answer began and never ended within the limit: no answer, as far as the page goes.
     if (!signal.aborted) throw e
+    if (left?.aborted) throw leftError()
     connection.failed()
     throw new NetworkError(connectionWords('away').title)
   }
@@ -243,8 +255,9 @@ export const api = {
   linkStart: () =>
     request<{ code: string; secret: string; url: string; expiresIn: number }>('POST', '/v1/link/start', { client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false),
   /** Long-polls up to ~25 s; "done" carries this browser's own token. */
-  linkWait: (code: string, secret: string) =>
-    request<{ status: 'pending' } | ({ status: 'done' } & LoginResponse)>('GET', '/v1/link/' + encodeURIComponent(code) + '/wait?secret=' + encodeURIComponent(secret), undefined, false),
+  /** `left` ends the wait when the page showing the code is gone (the server holds it open for 25 s). */
+  linkWait: (code: string, secret: string, left?: AbortSignal) =>
+    request<{ status: 'pending' } | ({ status: 'done' } & LoginResponse)>('GET', '/v1/link/' + encodeURIComponent(code) + '/wait?secret=' + encodeURIComponent(secret), undefined, false, false, left),
   linkQrUrl: (code: string, secret: string) => '/v1/link/' + encodeURIComponent(code) + '/qr.png?secret=' + encodeURIComponent(secret),
   // ---- signing a TV in from this device (the TV shows a code as a QR) ----
   /** network: where the device asking is, per the server (absent on older servers). */

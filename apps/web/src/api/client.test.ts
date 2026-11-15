@@ -211,3 +211,36 @@ describe('a call that gets no answer', () => {
     expect(vi.getTimerCount()).toBe(before)
   })
 })
+
+// A call the page that made it no longer waits for (the sign-in code's wait, held open
+// by the server for 25 s): leaving ends it, and that says nothing about the server.
+describe('a call whose page is gone', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    session.set(null)
+    connection.reset()
+  })
+  afterEach(() => {
+    connection.reset()
+    vi.unstubAllGlobals()
+  })
+
+  it('ends at once, without the server being taken for away', async () => {
+    let sent: AbortSignal | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        sent = init?.signal ?? undefined
+        return new Promise<never>((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))))
+      }),
+    )
+    const left = new AbortController()
+    const wait = api.linkWait('ABCDEF', 's', left.signal).catch((e) => e)
+    left.abort()
+    const e = await wait
+    expect(sent?.aborted).toBe(true)
+    expect(e).not.toBeInstanceOf(NetworkError)
+    expect((e as Error).name).toBe('AbortError')
+    expect(connection.get()).toBe('ok')
+  })
+})

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api/client'
 import { isEpisode, isMovie, isSeries } from '../api/items'
@@ -19,8 +19,10 @@ const MAX_HEROES = 6
  * show, then the newest arrivals, then the library's series. Episodes resolve to their
  * series for the art and logo; the episode stays what Play starts.
  */
-async function resolveHeroes(rows: HomeRow[]): Promise<HeroPick[]> {
-  const picks = new Map<string, { item: Item; continuing: boolean }>()
+type Pick = { item: Item; continuing: boolean }
+
+function heroPicks(rows: HomeRow[]): Pick[] {
+  const picks = new Map<string, Pick>()
   for (const key of ['continue', 'recentEpisodes', 'recentMovies', 'series']) {
     for (const it of rows.find((r) => r.key === key)?.items ?? []) {
       if (picks.size >= MAX_HEROES) break
@@ -28,8 +30,25 @@ async function resolveHeroes(rows: HomeRow[]): Promise<HeroPick[]> {
       if (!picks.has(k)) picks.set(k, { item: it, continuing: key === 'continue' })
     }
   }
+  return Array.from(picks.values())
+}
+
+/**
+ * Which slides the rows ask for. Home is read again each time the tab gets focus (what
+ * was watched elsewhere), and every read used to look the slides up again, two calls a
+ * slide, for the same slides nearly every time: they are looked up again only when this
+ * changes. Watching an episode changes it (the show's entry in Continue Watching moves
+ * on), so a slide's Play does not go stale.
+ */
+export function heroPicksKey(rows: HomeRow[]): string {
+  return heroPicks(rows)
+    .map((p) => `${p.item.id}${p.continuing ? '+' : ''}`)
+    .join(',')
+}
+
+async function resolveHeroes(rows: HomeRow[]): Promise<HeroPick[]> {
   const out = await Promise.all(
-    Array.from(picks.values()).map(async ({ item, continuing }): Promise<HeroPick | null> => {
+    heroPicks(rows).map(async ({ item, continuing }): Promise<HeroPick | null> => {
       if (!isEpisode(item)) return { title: item, play: item }
       if (!item.seriesId) return null
       try {
@@ -53,14 +72,17 @@ export function Home() {
   const { data, error, loading, reload } = useAsync('home', () => api.home())
   const [heroes, setHeroes] = useState<HeroPick[]>([])
 
+  const picksKey = data ? heroPicksKey(data.rows) : null
+  const rowsRef = useRef<HomeRow[]>([])
+  rowsRef.current = data?.rows ?? []
   useEffect(() => {
-    if (!data) return
+    if (picksKey == null) return
     let live = true
-    resolveHeroes(data.rows).then((h) => live && setHeroes(h))
+    resolveHeroes(rowsRef.current).then((h) => live && setHeroes(h))
     return () => {
       live = false
     }
-  }, [data])
+  }, [picksKey])
 
   useEffect(() => {
     const onFocus = () => reload(true)

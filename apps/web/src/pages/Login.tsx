@@ -378,7 +378,7 @@ function Help() {
 }
 
 /** The QR / code sign-in: ask for a link code, show it three ways, wait for a phone to approve it. */
-function PhoneSignIn({ terms, onBack }: { terms: Terms; onBack: () => void }) {
+export function PhoneSignIn({ terms, onBack }: { terms: Terms; onBack: () => void }) {
   const [link, setLink] = useState<{ code: string; secret: string; expiresAt: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -391,6 +391,9 @@ function PhoneSignIn({ terms, onBack }: { terms: Terms; onBack: () => void }) {
 
   useEffect(() => {
     let stop = false
+    // The wait is held open by the server for 25 s at a time: leaving this page ends the
+    // one in flight (it used to stay open, one per visit to this page).
+    const left = new AbortController()
     setLink(null)
     setError(null)
     ;(async () => {
@@ -402,7 +405,7 @@ function PhoneSignIn({ terms, onBack }: { terms: Terms; onBack: () => void }) {
         // Long-poll until the phone approves or the code runs out (then a fresh code).
         while (!stop && Date.now() < expiresAt) {
           try {
-            const r = await api.linkWait(l.code, l.secret)
+            const r = await api.linkWait(l.code, l.secret, left.signal)
             if (stop) return
             if (r.status === 'done') {
               if (terms.needed) await recordTerms(r.token, terms.version)
@@ -422,6 +425,7 @@ function PhoneSignIn({ terms, onBack }: { terms: Terms; onBack: () => void }) {
     })()
     return () => {
       stop = true
+      left.abort()
     }
   }, [attempt])
 
