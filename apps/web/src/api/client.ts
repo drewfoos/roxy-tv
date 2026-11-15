@@ -66,7 +66,39 @@ export function orEmpty<T>(empty: T): (e: unknown) => T {
   }
 }
 
+/** How long a read may go without its whole answer before it is given up on. */
+export const CALL_LIMIT_MS = 30_000
+/**
+ * The same for calls that are slow by their nature: every change (the server may be
+ * waiting on Sonarr or Radarr, and giving up here would not undo it), Discover (it asks
+ * TMDB and AniList: a first look for a series' films takes ten seconds and more) and the
+ * sign-in code's wait (held open by the server for 25 s on purpose).
+ */
+export const SLOW_CALL_LIMIT_MS = 120_000
+
+export function callLimitMs(method: string, path: string): number {
+  if (method !== 'GET' || path.startsWith('/v1/discover/') || path.startsWith('/v1/link/')) return SLOW_CALL_LIMIT_MS
+  return CALL_LIMIT_MS
+}
+
+/**
+ * A call had no limit: against a server that took the connection and then said nothing (a
+ * frozen host, a link that drops packets without closing) it waited for as long as the
+ * browser cared to, minutes, with the page on its skeleton and nothing telling the app
+ * the server was gone. Now it is given up on after its limit, as a call that got no
+ * answer: the app shows it is waiting for the server and looks for it.
+ */
 async function request<T>(method: string, path: string, body?: unknown, auth = true, keepalive = false): Promise<T> {
+  const limit = new AbortController()
+  const timer = setTimeout(() => limit.abort(), callLimitMs(method, path))
+  try {
+    return await send<T>(method, path, body, auth, keepalive, limit.signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function send<T>(method: string, path: string, body: unknown, auth: boolean, keepalive: boolean, signal: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const s = session.get()
@@ -77,7 +109,7 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
   // keepalive lets a small request (a progress report) outlive the page that sent it.
   let res: Response
   try {
-    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive })
+    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive, signal })
   } catch {
     // The browser's own text here is "Failed to fetch" / "NetworkError when attempting…":
     // say what happened instead, and let the app show it is waiting for the server.
@@ -109,7 +141,15 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
     throw new ApiError(res.status, msg)
   }
   if (res.status === 204) return undefined as T
-  const text = await res.text()
+  let text: string
+  try {
+    text = await res.text()
+  } catch (e) {
+    // The answer began and never ended within the limit: no answer, as far as the page goes.
+    if (!signal.aborted) throw e
+    connection.failed()
+    throw new NetworkError(connectionWords('away').title)
+  }
   return (text ? JSON.parse(text) : undefined) as T
 }
 

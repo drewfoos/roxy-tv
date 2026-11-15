@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError, NetworkError, orEmpty } from './client'
+import { api, ApiError, CALL_LIMIT_MS, callLimitMs, NetworkError, orEmpty, SLOW_CALL_LIMIT_MS } from './client'
+import { connection } from './connection'
 import { session } from './session'
 
 const S = { token: 't', userId: 'u', userName: 'drew', isAdmin: false, profileId: 'p', profileName: 'Drew', profileHasAvatar: false, profileAvatarKey: '' }
@@ -118,5 +119,95 @@ describe('orEmpty', () => {
   })
   it('throws on when there was no answer at all', () => {
     expect(() => orEmpty({ items: [] })(new NetworkError("Can't reach your Roxy server"))).toThrow(NetworkError)
+  })
+})
+
+// A server that takes the connection and then says nothing. A call had no limit and
+// waited as long as the browser did (minutes), the page on its skeleton all the while.
+describe('a call that gets no answer', () => {
+  const silent = () =>
+    vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<never>((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))),
+    )
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    session.set(S)
+    connection.reset()
+  })
+  afterEach(() => {
+    connection.reset()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    session.set(null)
+  })
+
+  it('is given up on after its limit, as a server that is away', async () => {
+    vi.stubGlobal('fetch', silent())
+    let outcome: unknown = 'waiting'
+    api.item('x').then(
+      () => (outcome = 'answered'),
+      (e) => (outcome = e),
+    )
+    await vi.advanceTimersByTimeAsync(CALL_LIMIT_MS - 1)
+    expect(outcome).toBe('waiting')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(outcome).toBeInstanceOf(NetworkError)
+    expect(connection.get()).toBe('away')
+  })
+
+  it('also when the answer began and its body never came', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: () => new Promise<string>((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))),
+      })),
+    )
+    const call = api.item('x').catch((e) => e)
+    await vi.advanceTimersByTimeAsync(CALL_LIMIT_MS)
+    expect(await call).toBeInstanceOf(NetworkError)
+    expect(connection.get()).toBe('away')
+  })
+
+  it('waits longer for the calls that are slow by nature', async () => {
+    const fetchMock = silent()
+    vi.stubGlobal('fetch', fetchMock)
+    let films: unknown = 'waiting'
+    api.discoverFilms(1).then(
+      () => (films = 'answered'),
+      (e) => (films = e),
+    )
+    let change: unknown = 'waiting'
+    api.linkApprove('ABCD').then(
+      () => (change = 'answered'),
+      (e) => (change = e),
+    )
+    await vi.advanceTimersByTimeAsync(SLOW_CALL_LIMIT_MS - 1)
+    expect(films).toBe('waiting')
+    expect(change).toBe('waiting')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(films).toBeInstanceOf(NetworkError)
+    expect(change).toBeInstanceOf(NetworkError)
+  })
+
+  it('knows which calls those are', () => {
+    expect(callLimitMs('GET', '/v1/items/x')).toBe(CALL_LIMIT_MS)
+    expect(callLimitMs('GET', '/v1/home')).toBe(CALL_LIMIT_MS)
+    expect(callLimitMs('GET', '/v1/discover/tv/1/films')).toBe(SLOW_CALL_LIMIT_MS)
+    expect(callLimitMs('GET', '/v1/link/ABCD/wait?secret=s')).toBe(SLOW_CALL_LIMIT_MS)
+    expect(callLimitMs('POST', '/v1/discover/requests')).toBe(SLOW_CALL_LIMIT_MS)
+    expect(callLimitMs('PUT', '/v1/settings/arr')).toBe(SLOW_CALL_LIMIT_MS)
+    expect(CALL_LIMIT_MS).toBeLessThan(SLOW_CALL_LIMIT_MS)
+  })
+
+  it('leaves no timer behind once a call is answered', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => '{"id":"x"}' })))
+    const before = vi.getTimerCount()
+    await api.item('x')
+    expect(vi.getTimerCount()).toBe(before)
   })
 })
