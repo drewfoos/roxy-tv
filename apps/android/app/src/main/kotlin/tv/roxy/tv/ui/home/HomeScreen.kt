@@ -54,13 +54,21 @@ class HomeViewModel(
     private var refreshBegan = 0L
 
     /**
+     * The reload running was asked for by a tap on Home in the bottom bar: the bar's Home
+     * icon turns into the circle. A pull down shows its own circle at the top of the page.
+     */
+    private val _reloadingByTab = MutableStateFlow(false)
+    val reloadingByTab: StateFlow<Boolean> = _reloadingByTab
+
+    /**
      * Reads the rows again with the page left as it is, and says so while it does
      * ([refreshing]). With nothing on the page yet it is an ordinary load.
      */
-    fun refresh() {
+    fun refresh(byTab: Boolean = false) {
         if (_state.value !is HomeUiState.Ready) return load()
         if (_refreshing.value) return
         refreshBegan = System.nanoTime()
+        _reloadingByTab.value = byTab
         _refreshing.value = true
         load(silent = true)
     }
@@ -69,8 +77,12 @@ class HomeViewModel(
     private fun settled() {
         if (!_refreshing.value) return
         val rest = minRefreshMs - (System.nanoTime() - refreshBegan) / 1_000_000
-        if (rest <= 0) _refreshing.value = false
-        else viewModelScope.launch { delay(rest); _refreshing.value = false }
+        if (rest <= 0) endRefresh() else viewModelScope.launch { delay(rest); endRefresh() }
+    }
+
+    private fun endRefresh() {
+        _refreshing.value = false
+        _reloadingByTab.value = false
     }
 
     private var loadJob: Job? = null

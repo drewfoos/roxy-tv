@@ -72,6 +72,9 @@ import tv.roxy.tv.ui.nav.Route
 import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
 import kotlinx.coroutines.flow.MutableSharedFlow
+import tv.roxy.tv.ui.components.LoadingCircle
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 internal enum class Tab(val label: String, val route: Route) {
     Home("Home", Route.Home),
@@ -124,6 +127,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
     }
     val entry by nav.currentBackStackEntryAsState()
     val homeRetaps = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    var homeReloading by remember { mutableStateOf(false) }
     val dest = entry?.destination
     val currentTab = when {
         dest == null -> null
@@ -205,6 +209,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                             onUnauthorized = onUnauthorized,
                             bottomInset = bottomInset,
                             retaps = homeRetaps,
+                            onReloadingByTab = { homeReloading = it },
                             onOpenDiscover = {
                                 nav.navigate(Tab.Discover.route) {
                                     popUpTo(nav.graph.findStartDestination().id) { saveState = true }
@@ -420,6 +425,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                     OfflineStrip()
                     BottomBar(
                         current = currentTab,
+                        homeReloading = homeReloading,
                         profileName = session.profileName.ifEmpty { session.userName },
                         avatarUrl = session.profileId?.takeIf { session.profileHasAvatar }?.let { app.api.profileAvatarUrl(it, widthPx(22.dp) * 3, session.profileAvatarKey.ifEmpty { session.profileAvatarVersion.toString() }) },
                         onSelect = { tab ->
@@ -505,7 +511,7 @@ internal fun tabTap(current: Tab?, tapped: Tab): TabTap = when {
 
 /** Compact bottom bar: 26 dp icons, 11 sp labels, white tabs with the selected one in Roxy blue, the Account tab as the profile avatar. */
 @Composable
-private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
+internal fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, modifier: Modifier = Modifier, homeReloading: Boolean = false, onSelect: (Tab) -> Unit) {
     Row(
         // Crunchyroll-style gray bar over the black page, so the tabs read at a glance; the accent stays Roxy blue.
         modifier = modifier.fillMaxWidth().background(NavBarGrey).navigationBarsPadding().height(BarHeight),
@@ -522,6 +528,11 @@ private fun BottomBar(current: Tab, profileName: String, avatarUrl: String?, mod
                 if (tab == Tab.Account) {
                     Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(if (selected) RoxyColors.accent else Color.Transparent), contentAlignment = Alignment.Center) {
                         AvatarCircle(name = profileName, imageUrl = avatarUrl, size = if (selected) 24.dp else 26.dp)
+                    }
+                } else if (tab == Tab.Home && selected && homeReloading) {
+                    // Home tapped while on Home: its icon is the reload circle until the rows are in.
+                    Box(modifier = Modifier.size(26.dp), contentAlignment = Alignment.Center) {
+                        LoadingCircle(size = 20.dp, tag = "home-tab-reloading")
                     }
                 } else {
                     val icon: ImageVector = when (tab) {

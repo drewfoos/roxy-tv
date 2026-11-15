@@ -140,12 +140,25 @@ class HomeReloadTest {
 
         vm.refresh()
         assertTrue("reloading is shown at once", vm.refreshing.value)
+        assertEquals("a pull has its own circle, not the bar's", false, vm.reloadingByTab.value)
         assertTrue("with the page left as it is", vm.state.value is HomeUiState.Ready)
         vm.refresh() // an impatient second tap asks nothing more
 
         waitFor("the reload ends") { !vm.refreshing.value }
         Thread.sleep(300)
         assertEquals("the rows, once", listOf("/v1/home"), paths().drop(before.size))
+    }
+
+    // Home tapped in the bar while on Home: the bar's Home icon is the circle meanwhile.
+    @Test fun aReloadFromTheBarIsShownOnTheBar() {
+        opened()
+
+        vm.refresh(byTab = true)
+        assertTrue(vm.refreshing.value)
+        assertTrue("the bar shows it", vm.reloadingByTab.value)
+
+        waitFor("the reload ends") { !vm.refreshing.value }
+        assertEquals("and the icon is back", false, vm.reloadingByTab.value)
     }
 
     @Test fun aReloadWithNoPageYetIsAnOrdinaryLoad() {

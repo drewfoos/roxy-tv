@@ -128,18 +128,24 @@ fun PhoneHome(
     onAddFolder: () -> Unit = {},
     /** Home tapped in the bottom bar while Home is the page: back to the top, and reload. */
     retaps: Flow<Unit> = emptyFlow(),
+    /** A reload asked for by that tap is running: the bar shows it on its Home icon. */
+    onReloadingByTab: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val vm: HomeViewModel = viewModel { HomeViewModel(app.api, libraryVersion = { app.items.version }) }
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val byTab by vm.reloadingByTab.collectAsStateWithLifecycle()
+    LaunchedEffect(byTab) { onReloadingByTab(byTab) }
+    // The circle at the top of the page is the pull's; a tap on Home has the bar's icon.
+    val pulled = refreshing && !byTab
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     LaunchedEffect(retaps) {
         retaps.collect {
             launch { listState.animateScrollToItem(0) }
-            vm.refresh()
+            vm.refresh(byTab = true)
         }
     }
 
@@ -191,13 +197,13 @@ fun PhoneHome(
             val pull = rememberPullToRefreshState()
             // The same pull-down reload as Browse; the circle comes out under the pinned header.
             PullToRefreshBox(
-                isRefreshing = refreshing,
+                isRefreshing = pulled,
                 onRefresh = { vm.refresh() },
                 state = pull,
                 modifier = Modifier.fillMaxSize(),
                 indicator = {
                     PullToRefreshDefaults.Indicator(
-                        state = pull, isRefreshing = refreshing,
+                        state = pull, isRefreshing = pulled,
                         modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 44.dp).testTag("home-reloading"),
                     )
                 },
