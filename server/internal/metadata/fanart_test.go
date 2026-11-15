@@ -44,6 +44,7 @@ func newFakeFanart(t *testing.T) *fakeFanart {
 			"hdtvlogo":  [{"url":"` + u + `logo-ja.png","lang":"ja","likes":"9"}],
 			"clearlogo": [{"url":"` + u + `logo-en-1.png","lang":"en","likes":"1"},{"url":"` + u + `logo-en-5.png","lang":"en","likes":"5"}],
 			"showbackground": [{"url":"` + u + `bg-en.jpg","lang":"en","likes":"7"},{"url":"` + u + `bg-none.jpg","lang":"00","likes":"2"}],
+			"seasonposter": [{"url":"` + u + `s1-ja.jpg","lang":"ja","likes":"9","season":"1"},{"url":"` + u + `s1-en.jpg","lang":"en","likes":"1","season":"1"},{"url":"` + u + `s2.jpg","lang":"en","likes":"1","season":"2"},{"url":"` + u + `all.jpg","lang":"en","likes":"9","season":"all"}],
 			"tvposter": [{"url":"` + u + `poster-none.jpg","lang":"00","likes":"8"},{"url":"` + u + `poster-en.jpg","lang":"en","likes":"3"}]
 		}`))
 	}))
@@ -176,5 +177,35 @@ func TestFanartSweepFillsStoredTitlesOnce(t *testing.T) {
 	f.svc.SweepArt(f.ctx)
 	if n := drain(); n != 0 {
 		t.Errorf("a second sweep with the same key queued %d titles", n)
+	}
+}
+
+// Seasons without a poster get fanart.tv's for their number (English first); a season
+// that has one keeps it, and a series whose seasons all have posters is not asked about.
+func TestFanartSeasonPosters(t *testing.T) {
+	f, ff := fanartFixture(t)
+	f.realSeason(1, 1)
+	f.realSeason(2, 1)
+	f.realSeason(3, 1) // fanart.tv has none for it
+	if err := f.st.SetItemImage(f.ctx, store.ItemImage{ItemID: "season2", Type: "poster", Path: "/nowhere/s2.jpg", SourceURL: "https://image.tmdb.org/t/p/original/s2.jpg"}); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.fillSeasonPosters(f.ctx, f.series, "555")
+	if img, _ := f.st.GetItemImage(f.ctx, "season1", "poster"); img == nil || img.SourceURL != ff.srv.URL+"/img/s1-en.jpg" {
+		t.Errorf("season 1: %+v", img)
+	}
+	if img, _ := f.st.GetItemImage(f.ctx, "season2", "poster"); img == nil || !strings.Contains(img.SourceURL, "tmdb") {
+		t.Errorf("season 2's own poster was replaced: %+v", img)
+	}
+	if img, _ := f.st.GetItemImage(f.ctx, "season3", "poster"); img != nil {
+		t.Errorf("season 3 got a poster fanart.tv does not have: %+v", img)
+	}
+	asks := ff.asks.Load()
+	if err := f.st.SetItemImage(f.ctx, store.ItemImage{ItemID: "season3", Type: "poster", Path: "/nowhere/s3.jpg", SourceURL: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.fillSeasonPosters(f.ctx, f.series, "555")
+	if ff.asks.Load() != asks {
+		t.Errorf("fanart.tv was asked although every season has a poster")
 	}
 }

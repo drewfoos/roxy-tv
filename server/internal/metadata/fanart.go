@@ -17,6 +17,7 @@ import (
 // 16:9 background beats.
 
 // fanartKinds are the kinds of art fanart.tv can fill in for a series or a film.
+// Seasons get their posters from it too (fillSeasonPosters).
 var fanartKinds = []string{"poster", "backdrop", "logo", "hero"}
 
 const anilistBanner = "anilistcdn/media/anime/banner"
@@ -140,6 +141,53 @@ func (s *Service) fillArt(ctx context.Context, itemID string) {
 	if len(kinds) > 0 {
 		slog.Info("metadata: art from fanart.tv", "item", it.Title, "kinds", kinds)
 	}
+	s.fillSeasonPosters(ctx, it, it.ProviderIDs["tvdb"])
+}
+
+// fillSeasonPosters gives a series' seasons that have no poster fanart.tv's, by season
+// number. Roxy numbers seasons as TMDB does, fanart.tv as TheTVDB does: the same for
+// nearly every show; where they differ a season can get a neighbour's poster, which the
+// art picker or a poster from TMDB (it wins at any refresh) puts right. Nothing is asked
+// when every season has a poster.
+func (s *Service) fillSeasonPosters(ctx context.Context, series *model.Item, tvdbID string) {
+	if series.Type != model.TypeSeries || tvdbID == "" {
+		return
+	}
+	seasons, err := s.store.Children(ctx, series.ID, model.TypeSeason)
+	if err != nil {
+		return
+	}
+	var bare []model.Item
+	for _, se := range seasons {
+		if se.IndexAired == nil {
+			continue
+		}
+		if img, err := s.store.GetItemImage(ctx, se.ID, "poster"); err == nil && img == nil {
+			bare = append(bare, se)
+		}
+	}
+	if len(bare) == 0 {
+		return
+	}
+	f := s.fanart(ctx)
+	if f == nil {
+		return
+	}
+	posters, err := f.SeasonPosters(ctx, tvdbID)
+	if err != nil {
+		slog.Warn("metadata: fanart.tv did not answer", "item", series.Title, "err", err)
+		return
+	}
+	var filled []int
+	for _, se := range bare {
+		if u := posters[*se.IndexAired]; u != "" {
+			s.fetchImage(ctx, se.ID, "poster", u)
+			filled = append(filled, *se.IndexAired)
+		}
+	}
+	if len(filled) > 0 {
+		slog.Info("metadata: season posters from fanart.tv", "item", series.Title, "seasons", filled)
+	}
 }
 
 // SweepArt queues every series and film for fillArt, once per fanart.tv key: at start
@@ -151,7 +199,9 @@ func (s *Service) SweepArt(ctx context.Context) {
 		return
 	}
 	sum := sha256.Sum256([]byte(f.key))
-	mark := hex.EncodeToString(sum[:6])
+	// The number is what the sweep covers: raise it when it learns to fill something new
+	// (2: season posters), so the library is gone over once more.
+	mark := "2:" + hex.EncodeToString(sum[:6])
 	var done string
 	if _, err := s.store.GetSetting(ctx, "fanart:swept", &done); err == nil && done == mark {
 		return

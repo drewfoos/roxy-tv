@@ -133,9 +133,10 @@ func NewFanart(key string) *Fanart {
 func (f *Fanart) Enabled() bool { return f != nil && f.key != "" }
 
 type fanartImage struct {
-	URL   string `json:"url"`
-	Lang  string `json:"lang"`
-	Likes string `json:"likes"`
+	URL    string `json:"url"`
+	Lang   string `json:"lang"`
+	Likes  string `json:"likes"`
+	Season string `json:"season"` // season posters only: "1", "0" (specials) or "all"
 }
 
 type fanartTV struct {
@@ -143,6 +144,7 @@ type fanartTV struct {
 	ClearLogo      []fanartImage `json:"clearlogo"`
 	ShowBackground []fanartImage `json:"showbackground"`
 	TVPoster       []fanartImage `json:"tvposter"`
+	SeasonPoster   []fanartImage `json:"seasonposter"`
 }
 
 type fanartMovie struct {
@@ -237,6 +239,31 @@ func (f *Fanart) Best(ctx context.Context, isMovie bool, id string) (map[string]
 	} {
 		if u != "" {
 			out[typ] = u
+		}
+	}
+	return out, nil
+}
+
+// SeasonPosters is fanart.tv's pick of a poster for each season of a series it has one
+// for: season number (TheTVDB's; 0 = specials) -> URL, chosen as Best chooses a poster.
+func (f *Fanart) SeasonPosters(ctx context.Context, tvdbID string) (map[int]string, error) {
+	if !f.Enabled() || tvdbID == "" {
+		return nil, nil
+	}
+	var tv fanartTV
+	if err := f.get(ctx, "tv/"+url.PathEscape(tvdbID), &tv); err != nil {
+		return nil, err
+	}
+	bySeason := map[int][]fanartImage{}
+	for _, im := range tv.SeasonPoster {
+		if n, err := strconv.Atoi(strings.TrimSpace(im.Season)); err == nil && n >= 0 {
+			bySeason[n] = append(bySeason[n], im)
+		}
+	}
+	out := map[int]string{}
+	for n, list := range bySeason {
+		if u := bestFanart([][]fanartImage{list}, "en", "", "*"); u != "" {
+			out[n] = u
 		}
 	}
 	return out, nil

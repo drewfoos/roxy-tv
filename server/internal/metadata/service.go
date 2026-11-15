@@ -507,6 +507,14 @@ func (s *Service) process(ctx context.Context, j job) error {
 		}
 	}
 	if it.Type == model.TypeSeries {
+		// After the providers' season posters (and the placeholders' seasons) are in.
+		defer func() {
+			tvdb := it.ProviderIDs["tvdb"]
+			if tvdb == "" {
+				tvdb = merged.ProviderIDs["tvdb"]
+			}
+			s.fillSeasonPosters(ctx, it, tvdb)
+		}()
 		n, unanswered := s.applySeries(ctx, it, primary, secondary, onlyNewEpisodes, sonarr)
 		if unanswered {
 			// A provider did not answer for a season (a timeout, a 429 mid-series): its
