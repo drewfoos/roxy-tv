@@ -160,7 +160,8 @@ img { display: block; }
 @media (min-width: 568px) {
   .hero__body { grid-column: 3 / span 8; }
   .hero__actions { width: auto; justify-content: center; margin-top: 32px; }
-  .hero__actions .btn--brand { flex: none; }
+  /* Never narrower than a full row of six pills (48 + 5 x 24 + 5 x 8), which sits under it. */
+  .hero__actions .btn--brand { flex: none; min-width: 208px; }
   .hero__pills { padding-top: 48px; }
   .hero + .row { margin-top: 72px; }
 }

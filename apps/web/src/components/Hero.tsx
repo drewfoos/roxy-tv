@@ -7,13 +7,14 @@ import { IconChevronLeft, IconChevronRight, IconPlay } from './Icons'
 import { SaveButton, itemPath } from './Cards'
 
 /**
- * The hero button's words (Crunchyroll's pair): "Continue watching S1 E5" or "Start
- * watching S1 E1". The title pages' short "Resume S1 E5" made the button a different
- * width from slide to slide, jumping about above the pills; these two are near enough
- * the same length that it stays put.
+ * The hero button's words (Crunchyroll's pair): "Continue watching E5" or "Start watching
+ * E1"; the season is named only past the first ("S2 E1"). The title pages' "Resume S1 E5"
+ * / "Start watching S1 E11" made the button a different width from slide to slide; with
+ * these it is about as wide as the row of pills under it, as theirs is (the stylesheet
+ * keeps it from being any narrower: .hero__actions .btn--brand).
  */
 export function heroPlayLabel(next: Parameters<typeof playLabel>[0]): string {
-  return playLabel(next).replace(/^Resume\b/, 'Continue watching')
+  return playLabel(next).replace(/^Resume\b/, 'Continue watching').replace(/ S1 (E\d+)$/, ' $1')
 }
 
 /** One slide: the series or movie to show, and what Play starts. */
