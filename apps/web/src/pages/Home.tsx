@@ -124,7 +124,7 @@ export function Home() {
             </Row>
           )}
           {cont && (
-            <Row title="Continue Watching" thumbs more={<Link className="link desk-only" to="/lists?tab=history">View history <IconChevronRight size={20} /></Link>}>
+            <Row title="Continue Watching" thumbs more={<Link className="link" to="/lists?tab=history">View history <IconChevronRight size={20} /></Link>}>
               {cont.items.map((it) => (
                 <ContinueTile key={it.id} item={it} width={420} />
               ))}

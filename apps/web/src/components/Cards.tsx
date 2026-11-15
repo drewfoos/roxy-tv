@@ -179,13 +179,11 @@ export function PosterTile({ item, width = 200 }: { item: Item; width?: number }
  * "E2 — Title", the air date, the synopsis, then "Continue E2" and the three-dot menu.
  */
 /**
- * Continue Watching's card. On the phone layout, as in the apps: everything on the
- * picture, darkened along the bottom (a play button beside the show's name and
- * "Episode N", what is left at the right, the menu at the top-right). Wider, it is
- * Crunchyroll's: the still with a play mark in the middle and what is left in a tag at
- * its bottom-right; under it the show in small capitals, "S1 E2 - Title", then Sub | Dub
- * and the menu; resting the mouse on it slides the episode panel over it. Both are in the
- * markup and the stylesheet shows one (.ctile). Square corners: the bar runs edge to edge.
+ * Continue Watching's card (Crunchyroll's): the still with a play mark in the middle, what
+ * is left in a tag at its bottom-right and the bar along its bottom edge; then the show in
+ * small capitals, "S1 E2 - Title", Sub | Dub and the menu. From 601 px these sit under the
+ * still and resting the mouse on it slides the episode panel over it; on the phone layout
+ * they sit at the still's right, in a list of two (.ctile in the stylesheet).
  */
 export function ContinueTile({ item, width = 420 }: { item: Item; width?: number }) {
   const movie = isMovie(item)
@@ -200,23 +198,10 @@ export function ContinueTile({ item, width = 420 }: { item: Item; width?: number
     <div className="card ctile" onMouseEnter={hover.enter} onMouseLeave={hover.leave}>
       <Link to={itemPath(item)} className="card__art card__art--thumb ctile__art">
         <Art url={url} title="" />
-        <div className="ctile__shade" />
         <span className="ctile__center">
           <IconPlay size={44} />
         </span>
         {left && <span className="ctile__badge">{left}</span>}
-        <div className="ctile__foot">
-          <span className="ctile__play">
-            <IconPlay size={22} />
-          </span>
-          <span className="ctile__text">
-            <span className="ctile__name">{name}</span>
-            <span className="ctile__line">
-              <span className="ctile__ep">{continueLine(item)}</span>
-              {left && <span className="ctile__left">{left}</span>}
-            </span>
-          </span>
-        </div>
         <ProgressBar item={shown} />
       </Link>
       <div className="ctile__cap">
@@ -238,13 +223,6 @@ export function ContinueTile({ item, width = 420 }: { item: Item; width?: number
 export function continueTitle(item: Item): string {
   if (isMovie(item)) return item.title
   return [episodeCode(item), item.title].filter(Boolean).join(' - ')
-}
-
-/** "Episode 2" and nothing else (no season, no title, specials alike); nothing for a film. */
-export function continueLine(item: Item): string {
-  if (isMovie(item)) return ''
-  const n = item.indexAired ?? item.indexAbsolute
-  return n != null ? `Episode ${n}` : ''
 }
 
 export function ThumbTile({ item, width = 320, big = false }: { item: Item; width?: number; big?: boolean }) {
