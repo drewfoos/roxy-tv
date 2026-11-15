@@ -65,6 +65,7 @@ type Item struct {
 	Genres          []string `json:"genres,omitempty"`
 	Advisories      []string `json:"advisories,omitempty"`      // "Sexual Content", "Violence", ... (series / movies)
 	CommunityRating *float64 `json:"communityRating,omitempty"` // 0..10
+	RatingCount     *int     `json:"ratingCount,omitempty"`     // how many ratings CommunityRating comes from; nil = unknown
 	OfficialRating  string   `json:"officialRating,omitempty"`
 	Premiered       string   `json:"premiered,omitempty"` // YYYY-MM-DD
 	AirDate         string   `json:"airDate,omitempty"`   // episodes: same value as Premiered

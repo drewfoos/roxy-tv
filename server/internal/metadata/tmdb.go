@@ -138,6 +138,7 @@ type tmdbMovie struct {
 	ReleaseDate   string           `json:"release_date"`
 	Status        string           `json:"status"`
 	VoteAverage   float64          `json:"vote_average"`
+	VoteCount     int              `json:"vote_count"`
 	PosterPath    string           `json:"poster_path"`
 	BackdropPath  string           `json:"backdrop_path"`
 	Genres        []tmdbGenre      `json:"genres"`
@@ -163,6 +164,7 @@ type tmdbTV struct {
 	FirstAirDate string        `json:"first_air_date"`
 	Status       string        `json:"status"`
 	VoteAverage  float64       `json:"vote_average"`
+	VoteCount    int           `json:"vote_count"`
 	PosterPath   string        `json:"poster_path"`
 	BackdropPath string        `json:"backdrop_path"`
 	Genres       []tmdbGenre   `json:"genres"`
@@ -241,6 +243,7 @@ func (t *TMDB) movieResult(m *tmdbMovie) *Result {
 		Overview:        strings.TrimSpace(m.Overview),
 		Tagline:         strings.TrimSpace(m.Tagline),
 		CommunityRating: round1(m.VoteAverage),
+		RatingCount:     m.VoteCount,
 		Premiered:       m.ReleaseDate,
 		Status:          m.Status,
 		ProviderIDs:     map[string]string{"tmdb": strconv.Itoa(m.ID)},
@@ -282,6 +285,7 @@ func (t *TMDB) tvResult(s *tmdbTV) *Result {
 		Overview:        strings.TrimSpace(s.Overview),
 		Tagline:         strings.TrimSpace(s.Tagline),
 		CommunityRating: round1(s.VoteAverage),
+		RatingCount:     s.VoteCount,
 		Premiered:       s.FirstAirDate,
 		Status:          tmdbStatus(s.Status),
 		ProviderIDs:     map[string]string{"tmdb": strconv.Itoa(s.ID)},

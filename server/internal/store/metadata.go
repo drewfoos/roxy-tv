@@ -25,6 +25,7 @@ type ItemMetadata struct {
 	Genres          []string
 	Advisories      []string
 	CommunityRating float64 // 0 = unknown
+	RatingCount     int     // how many ratings CommunityRating comes from; 0 = unknown
 	OfficialRating  string
 	Premiered       string // YYYY-MM-DD
 	Status          string
@@ -40,7 +41,8 @@ func sortTitleArg(p *string) string {
 	return strings.TrimSpace(*p)
 }
 
-// UpdateItemMetadata applies provider metadata and stamps metadata_refreshed_at.
+// UpdateItemMetadata applies provider metadata and stamps metadata_refreshed_at. A new
+// rating brings its own count (or none): a count is never left over from another rating.
 func (s *Store) UpdateItemMetadata(ctx context.Context, id string, m ItemMetadata) error {
 	var genres, advisories sql.NullString
 	if len(m.Genres) > 0 {
@@ -54,10 +56,10 @@ func (s *Store) UpdateItemMetadata(ctx context.Context, id string, m ItemMetadat
 	now := Now()
 	_, err := s.db.ExecContext(ctx, `UPDATE items SET
 		title = COALESCE(?, title), sort_title = CASE WHEN ? THEN NULLIF(?, '') ELSE sort_title END, year = COALESCE(?, year), overview = COALESCE(?, overview), tagline = COALESCE(?, tagline),
-		genres = COALESCE(?, genres), community_rating = COALESCE(?, community_rating), official_rating = COALESCE(?, official_rating),
+		genres = COALESCE(?, genres), community_rating = COALESCE(?, community_rating), rating_count = CASE WHEN ? IS NULL THEN rating_count ELSE ? END, official_rating = COALESCE(?, official_rating),
 		premiere_date = COALESCE(?, premiere_date), status = COALESCE(?, status), studio = COALESCE(?, studio),
 		season_count = COALESCE(?, season_count), advisories = COALESCE(?, advisories), metadata_refreshed_at = ?, date_modified = ? WHERE id = ?`,
-		nullStr(m.Title), m.SortTitle != nil, sortTitleArg(m.SortTitle), intPtrNull(m.Year), nullStr(m.Overview), nullStr(m.Tagline), genres, nullFloat(m.CommunityRating),
+		nullStr(m.Title), m.SortTitle != nil, sortTitleArg(m.SortTitle), intPtrNull(m.Year), nullStr(m.Overview), nullStr(m.Tagline), genres, nullFloat(m.CommunityRating), nullFloat(m.CommunityRating), nullInt(m.RatingCount),
 		nullStr(m.OfficialRating), nullStr(m.Premiered), nullStr(m.Status), nullStr(m.Studio), nullInt(m.SeasonCount), advisories, now, now, id)
 	if err != nil {
 		return err

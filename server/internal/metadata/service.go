@@ -384,7 +384,7 @@ func (s *Service) process(ctx context.Context, j job) error {
 	if !j.force {
 		// .nfo files or artwork added or changed next to the media since the last lookup
 		// count as a reason to look again, so "Scan for new files" picks them up.
-		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval && !s.localChangedSince(ctx, it, *it.MetadataRefreshedAt) && !s.bannerBackdrop(ctx, it) {
+		if it.MetadataRefreshedAt != nil && time.Since(*it.MetadataRefreshedAt) < refreshInterval && !s.localChangedSince(ctx, it, *it.MetadataRefreshedAt) && !s.bannerBackdrop(ctx, it) && !needsRatingCount(it) {
 			if it.Type != model.TypeSeries {
 				return nil
 			}
@@ -666,6 +666,7 @@ func merge(a, b *Result) *Result {
 	out.Advisories = mergeAdvisories(a.Advisories, b.Advisories)
 	if out.CommunityRating == 0 {
 		out.CommunityRating = b.CommunityRating
+		out.RatingCount = b.RatingCount // the count goes with the rating it is of
 	}
 	if out.OfficialRating == "" {
 		out.OfficialRating = b.OfficialRating
@@ -707,6 +708,16 @@ func (s *Service) bannerBackdrop(ctx context.Context, it *model.Item) bool {
 	return strings.Contains(img.SourceURL, "anilistcdn/media/anime/banner")
 }
 
+// ratingCountSince is when lookups began to keep how many ratings a rating comes from.
+var ratingCountSince = time.Date(2026, 11, 15, 18, 54, 0, 0, time.UTC)
+
+// needsRatingCount reports a title rated by a lookup made before the count was kept: a
+// reason to look again once, so "4.9 * (42.9K)" does not wait for the weekly refresh. A
+// title looked up since then with still no count has none to give and is left alone.
+func needsRatingCount(it *model.Item) bool {
+	return it.CommunityRating != nil && it.RatingCount == nil && it.MetadataRefreshedAt != nil && it.MetadataRefreshedAt.Before(ratingCountSince)
+}
+
 // tmdbBackdrop returns the first TMDB backdrop among the results, or "".
 func tmdbBackdrop(rs ...*Result) string {
 	for _, r := range rs {
@@ -739,6 +750,7 @@ func itemMetadata(r *Result, t model.ItemType) store.ItemMetadata {
 		Genres:          r.Genres,
 		Advisories:      r.Advisories,
 		CommunityRating: r.CommunityRating,
+		RatingCount:     r.RatingCount,
 		OfficialRating:  r.OfficialRating,
 		Premiered:       r.Premiered,
 		Studio:          r.Studio,

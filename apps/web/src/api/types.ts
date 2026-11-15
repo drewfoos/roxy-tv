@@ -116,6 +116,8 @@ export interface Item {
   genres?: string[]
   advisories?: string[]
   communityRating?: number | null
+  /** How many ratings communityRating comes from; absent when unknown. */
+  ratingCount?: number | null
   officialRating?: string | null
   premiered?: string | null
   airDate?: string | null

@@ -51,6 +51,7 @@ const anilistMediaFields = `
 	genres
 	tags { name category rank isMediaSpoiler }
 	averageScore
+	stats { scoreDistribution { amount } }
 	startDate { year month day }
 	status
 	format
@@ -115,13 +116,18 @@ type anilistMedia struct {
 		Rank     int    `json:"rank"`
 		Spoiler  bool   `json:"isMediaSpoiler"`
 	} `json:"tags"`
-	AverageScore *int        `json:"averageScore"`
-	StartDate    anilistDate `json:"startDate"`
-	Status       string      `json:"status"`
-	Format       string      `json:"format"`
-	Episodes     *int        `json:"episodes"`
-	Duration     *int        `json:"duration"`
-	Studios      struct {
+	AverageScore *int `json:"averageScore"`
+	Stats        struct {
+		ScoreDistribution []struct {
+			Amount int `json:"amount"`
+		} `json:"scoreDistribution"`
+	} `json:"stats"`
+	StartDate anilistDate `json:"startDate"`
+	Status    string      `json:"status"`
+	Format    string      `json:"format"`
+	Episodes  *int        `json:"episodes"`
+	Duration  *int        `json:"duration"`
+	Studios   struct {
 		Nodes []struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
@@ -226,6 +232,9 @@ func (a *AniList) mediaResult(m *anilistMedia) *Result {
 	}
 	if m.AverageScore != nil && *m.AverageScore > 0 {
 		r.CommunityRating = float64(*m.AverageScore) / 10
+		for _, d := range m.Stats.ScoreDistribution { // how many scores the average is of
+			r.RatingCount += d.Amount
+		}
 	}
 	if m.IDMal != nil && *m.IDMal > 0 {
 		r.ProviderIDs["mal"] = strconv.Itoa(*m.IDMal)

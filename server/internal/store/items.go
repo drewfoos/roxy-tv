@@ -17,7 +17,7 @@ import (
 var itemColNames = []string{"id", "guid", "library_id", "type", "parent_id", "title", "sort_title", "year", "overview",
 	"index_aired", "season_aired", "index_absolute", "runtime_ms", "date_created", "date_modified",
 	"tagline", "genres", "community_rating", "official_rating", "premiere_date", "status", "studio", "metadata_refreshed_at", "is_virtual",
-	"season_count", "related_count", "advisories", "index_aired_end", "airs_before_season", "airs_before_episode", "airs_after_season", "extra_type"}
+	"season_count", "related_count", "advisories", "index_aired_end", "airs_before_season", "airs_before_episode", "airs_after_season", "extra_type", "rating_count"}
 
 var itemCols = strings.Join(itemColNames, ", ")
 
@@ -33,13 +33,13 @@ func itemColsFor(alias string) string {
 func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, error) {
 	var it model.Item
 	var parent, sortTitle, overview, tagline, genres, official, premiered, status, studio, refreshed, advisories, extraType sql.NullString
-	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount, idxEnd, beforeSeason, beforeEp, afterSeason sql.NullInt64
+	var year, idxAired, seasonAired, idxAbs, runtime, seasonCount, relatedCount, idxEnd, beforeSeason, beforeEp, afterSeason, ratingCount sql.NullInt64
 	var rating sql.NullFloat64
 	var created, modified string
 	var virtual int
 	dest := []any{&it.ID, &it.GUID, &it.LibraryID, &it.Type, &parent, &it.Title, &sortTitle, &year, &overview,
 		&idxAired, &seasonAired, &idxAbs, &runtime, &created, &modified,
-		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd, &beforeSeason, &beforeEp, &afterSeason, &extraType}
+		&tagline, &genres, &rating, &official, &premiered, &status, &studio, &refreshed, &virtual, &seasonCount, &relatedCount, &advisories, &idxEnd, &beforeSeason, &beforeEp, &afterSeason, &extraType, &ratingCount}
 	dest = append(dest, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return nil, err
@@ -68,6 +68,7 @@ func scanItem(sc interface{ Scan(...any) error }, extra ...any) (*model.Item, er
 		r := rating.Float64
 		it.CommunityRating = &r
 	}
+	it.RatingCount = ptrInt(ratingCount)
 	it.OfficialRating = official.String
 	it.Premiered = premiered.String
 	if it.Type == model.TypeEpisode {

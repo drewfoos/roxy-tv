@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, minutesLabel, progressFraction, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
+import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, minutesLabel, progressFraction, ratingCountLabel, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
 import { IconBookmark, IconBookmarkOutline, IconCalendar, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
@@ -148,6 +148,7 @@ export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; wid
             {rating && (
               <div className="card__hover-rating">
                 {rating} <span aria-hidden="true">★</span>
+                {ratingCountLabel(item.ratingCount)}
               </div>
             )}
             {facts.some(Boolean) && (

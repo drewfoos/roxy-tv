@@ -208,3 +208,11 @@ export function playLabel(next: Item | null): string {
 export function seriesPlayLabel(next: Item | null, loading: boolean): string | null {
   return !next && loading ? null : playLabel(next)
 }
+
+/** "(42.9K)" beside a rating: how many ratings it comes from, as Crunchyroll writes it; null when unknown. */
+export function ratingCountLabel(n: number | null | undefined): string | null {
+  if (!n || n <= 0) return null
+  if (n < 1000) return `(${n})`
+  if (n < 1_000_000) return `(${(Math.floor(n / 100) / 10).toFixed(1).replace(/\.0$/, '')}K)`
+  return `(${(Math.floor(n / 100_000) / 10).toFixed(1).replace(/\.0$/, '')}M)`
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, runtimeLabel, seriesPlayLabel, sortEpisodes, timeLeftLabel } from './items'
+import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, ratingCountLabel, runtimeLabel, seriesPlayLabel, sortEpisodes, timeLeftLabel } from './items'
 import type { Item, MediaSource, MediaStream } from './types'
 
 const item = (p: Partial<Item>) => ({ id: 'x', type: 'episode', title: 'T', ...p }) as Item
@@ -143,5 +143,14 @@ describe('minutesLabel', () => {
   it('says the length of an episode not started', () => expect(minutesLabel(ep(0, 1_440_000))).toBe('24m'))
   it('says what is left part-way', () => expect(minutesLabel(ep(60_000, 1_440_000))).toBe('23m left'))
   it('says nothing without a length', () => expect(minutesLabel(ep(0))).toBeNull())
+
+  it('writes how many ratings a rating comes from', () => {
+    expect(ratingCountLabel(null)).toBeNull()
+    expect(ratingCountLabel(0)).toBeNull()
+    expect(ratingCountLabel(87)).toBe('(87)')
+    expect(ratingCountLabel(42950)).toBe('(42.9K)')
+    expect(ratingCountLabel(2000)).toBe('(2K)')
+    expect(ratingCountLabel(1_250_000)).toBe('(1.2M)')
+  })
 })
 
