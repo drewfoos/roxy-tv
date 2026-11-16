@@ -251,8 +251,11 @@ class MpvPlayer(
         // mpv already turns on ffmpeg's HTTP reconnect; this covers resets and timeouts too.
         opt("stream-lavf-o", "reconnect_on_network_error=1")
 
-        // Subtitles: render ASS exactly as authored, never override styles; fonts from our dir.
-        opt("sub-fonts-dir", fontsDir.path)
+        // Subtitles: render ASS exactly as authored, never override styles. The bundled
+        // fonts are found through fontconfig (writeFontsConf lists their folder), which
+        // opens a font only when a subtitle asks for it. They are NOT given as
+        // sub-fonts-dir: libass then read all of them (39 MB) into memory before every
+        // file could start, about 0.4 s on the TV.
         opt("sub-ass-override", "no")
         // mpv's default sid=auto only picks a track that is flagged default/forced or
         // matches slang; fansub MKVs often flag nothing, so prefer English subs explicitly.
@@ -1053,7 +1056,7 @@ class MpvPlayer(
         }, "mpv-destroy").start()
     }
 
-    /** fontconfig fallback so libass can also find fonts via fontconfig if sub-fonts-dir is ignored. */
+    /** How libass finds the bundled fonts and the system's: through fontconfig, by name, on demand. */
     private fun writeFontsConf(configDir: File, cacheDir: File): File {
         val conf = File(configDir, "fonts.conf")
         val fcCache = File(cacheDir, "fontconfig").apply { mkdirs() }
