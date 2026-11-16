@@ -394,8 +394,10 @@ img { display: block; }
 
 /* ---------- watch page (Crunchyroll's: a full-width dark band with the 16:9 player in it, the text column under it, Next episode at the right) ---------- */
 .watch__band { background: #000; display: grid; place-items: center; }
-.player { position: relative; width: 100%; height: min(calc(100vw * 9 / 16), calc(100vh - var(--topbar-h) - 140px)); min-height: 200px; background: #000; user-select: none; container-type: size; }
-.player:fullscreen { width: 100%; height: 100%; }
+/* The box is the page's width and the picture's shape (--shape, set by the player; 16:9
+   until known), so the picture fills it; only the height limit can leave bands at the sides. */
+.player { position: relative; width: 100%; aspect-ratio: var(--shape, 16 / 9); max-height: calc(100vh - var(--topbar-h) - 140px); min-height: 200px; background: #000; user-select: none; container-type: size; }
+.player:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; max-height: none; }
 .player--hidden { cursor: none; }
 .player--empty { display: grid; place-items: center; color: var(--muted); }
 .player video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { ageLabel, pickSignsSubtitle, pickSubtitle, primarySource } from '../api/items'
 import { lang3, prefs } from '../api/prefs'
+import { pictureShape } from './shape'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
@@ -186,6 +187,22 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const lastState = useRef('')
 
   const [error, setError] = useState<string | null>(null)
+  // The box takes the picture's shape, so no black bands sit above and below it. Known at
+  // once from the file's video track; the element corrects it when it knows better (a
+  // picture with non-square pixels).
+  const streamShape = useMemo(() => {
+    const v = (source?.streams ?? []).find((s) => s.type === 'video')
+    return pictureShape(v?.width, v?.height)
+  }, [source])
+  const [shape, setShape] = useState(streamShape)
+  useEffect(() => {
+    setShape(streamShape)
+    const v = videoRef.current
+    if (!v) return
+    const seen = () => setShape(pictureShape(v.videoWidth, v.videoHeight) ?? streamShape)
+    v.addEventListener('resize', seen)
+    return () => v.removeEventListener('resize', seen)
+  }, [streamShape, sourceId])
   const [playing, setPlaying] = useState(false)
   const [waiting, setWaiting] = useState(false)
   const [current, setCurrent] = useState(0)
@@ -720,7 +737,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   if (!source) return <div className="player player--empty">No media for this title.</div>
 
   return (
-    <div ref={boxRef} className={'player' + (hidden ? ' player--hidden' : '')} onMouseMove={poke} onMouseLeave={() => playing && menu === 'none' && setVisible(false)}>
+    <div ref={boxRef} className={'player' + (hidden ? ' player--hidden' : '')} style={shape ? ({ '--shape': shape } as React.CSSProperties) : undefined} onMouseMove={poke} onMouseLeave={() => playing && menu === 'none' && setVisible(false)}>
       <video ref={videoRef} playsInline preload="metadata" onClick={togglePlay} onDoubleClick={toggleFullscreen} />
       {waiting && !error && (
         <div className="player__wait">
