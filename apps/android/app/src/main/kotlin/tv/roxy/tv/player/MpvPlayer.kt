@@ -273,6 +273,11 @@ class MpvPlayer(
         opt("keep-open", "always")
         opt("save-position-on-quit", "no")
         opt("ytdl", "no")
+        // mpv's own Lua scripts (its on-screen controls, stats page, console, menus):
+        // the app draws its own and sends mpv no script command, yet each one started
+        // a thread and a Lua state with every player.
+        for (name in BUILTIN_SCRIPTS) opt(name, "no")
+        opt("load-scripts", "no")
         opt("input-default-bindings", "no")
         // Verbose logs cost a JNI call and a logcat line each, and mpv's own lines carry the
         // stream URL with its media token; only the stats overlay asks for them.
@@ -1145,3 +1150,6 @@ class MpvPlayer(
 internal fun loadCacheOptions(url: String): List<Pair<String, String>> =
     if (url.startsWith("http://") || url.startsWith("https://")) listOf("cache" to "yes", "cache-pause-initial" to "yes")
     else listOf("cache" to "auto", "cache-pause-initial" to "no")
+
+/** The mpv options that each load one of its built-in Lua scripts. */
+internal val BUILTIN_SCRIPTS = listOf("osc", "load-stats-overlay", "load-console", "load-auto-profiles", "load-select", "load-positioning", "load-commands", "load-context-menu")

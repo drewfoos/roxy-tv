@@ -1249,7 +1249,10 @@ data class Item(
         val streams: List<MediaStream> = emptyList(),
         val attachments: List<Attachment> = emptyList(),
         val segments: List<MediaSegment> = emptyList(),
-    )
+    ) {
+        /** The same file as `/v1/sources/{id}` answers it: the server fills both from one read. */
+        fun asMediaSource() = MediaSource(id, container, size, durationMs, streams, attachments, segments)
+    }
 
     val isPlayable: Boolean get() = hasMedia && availability != "missing" && availability != "unaired"
     val isEpisode: Boolean get() = type == "episode"

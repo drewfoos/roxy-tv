@@ -699,7 +699,12 @@ class PlayerSession(
         } else if (sourceId != null && app.prefs.session.value.isLoggedIn) {
             // What the server knows about the file: skippable segments (intro/outro), its
             // size and length for the Quality menu, and whether a preferred quality helps.
-            val source = scope.async { runCatching { app.api.source(sourceId) }.onFailure { Timber.w(it, "source %s", sourceId) }.getOrNull() }
+            // The play request read it with the item a moment ago: then nothing is asked,
+            // and the file does not wait for an answer.
+            val known = app.fetchedSources.take(sourceId)
+            val source = if (known != null) kotlinx.coroutines.CompletableDeferred<tv.roxy.tv.api.MediaSource?>(known)
+                else scope.async { runCatching { app.api.source(sourceId) }.onFailure { Timber.w(it, "source %s", sourceId) }.getOrNull() }
+            Timber.i("file facts for %s: %s", sourceId, if (known != null) "from the play request" else "asked")
             scope.launch {
                 val src = source.await() ?: return@launch
                 if (this@PlayerSession.sourceId != sourceId) return@launch

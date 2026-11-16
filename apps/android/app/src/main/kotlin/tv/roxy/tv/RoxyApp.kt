@@ -51,6 +51,9 @@ class RoxyApp : Application(), SingletonImageLoader.Factory {
     /** Items the lists have shown, so a detail page can draw its header before its own fetch lands. */
     val items = ItemCache()
 
+    /** What a play request just read about its file, for the player it opens (see FetchedSources). */
+    val fetchedSources = tv.roxy.tv.data.FetchedSources()
+
     /** "Play on": this device as a player others drive, and as a remote for them. */
     lateinit var remote: RemotePlay
         private set

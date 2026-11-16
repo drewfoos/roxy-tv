@@ -73,6 +73,8 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
         else -> fresh ?: item
     }
     val source = full.primarySource ?: return Result.failure(IllegalStateException("No media source for ${full.title}"))
+    // The server's own answer of a moment ago: the player opens on it without asking again.
+    if (fresh != null && local == null) app.fetchedSources.put(source.asMediaSource())
     // Where to start, from the newest information at hand, never the largest number: a
     // rewind or a restart is a smaller position that is still the latest. In order: the
     // server's watch state when it answered; for a download without it, the newest report
