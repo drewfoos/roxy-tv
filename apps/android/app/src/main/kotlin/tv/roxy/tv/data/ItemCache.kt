@@ -36,7 +36,5 @@ class ItemCache {
         items.put(item.id, item)
     }
 
-    fun putAll(list: List<Item>) = list.forEach { put(it) }
-
     operator fun get(id: String): Item? = items.get(id)
 }

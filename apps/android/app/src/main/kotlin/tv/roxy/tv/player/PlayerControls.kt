@@ -935,14 +935,6 @@ fun langName(code: String): String = when (code.lowercase()) {
     else -> code
 }
 
-private val clockFormat: java.text.DateFormat get() = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
-
-/** Current wall-clock time in the device's locale and zone ("3:07 AM"). */
-fun clockNow(): String = clockFormat.format(java.util.Date())
-
-/** Wall-clock time [remainingSec] from now ("3:30 AM"). */
-fun endsAt(remainingSec: Double): String = clockFormat.format(java.util.Date(System.currentTimeMillis() + (remainingSec * 1000).toLong()))
-
 fun fmtTime(d: Double): String {
     val s = d.toLong().coerceAtLeast(0)
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)

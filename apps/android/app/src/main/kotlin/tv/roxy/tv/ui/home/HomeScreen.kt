@@ -28,8 +28,6 @@ sealed interface HomeUiState {
     data class Ready(
         val hero: Item?,
         val rows: List<HomeRow>,
-        val composedLocally: Boolean,
-        val note: String? = null,
         /** Resolved carousel slides (phone); empty until [HomeViewModel.resolveHeroes] finishes. */
         val heroes: List<HeroPick> = emptyList(),
     ) : HomeUiState
@@ -108,12 +106,6 @@ class HomeViewModel(
                 }
             }
             val result = runCatching { fromHomeEndpoint() }
-                .recoverCatching { t ->
-                    if (t is ApiException && t.isNotFound) {
-                        Timber.w("GET /v1/home is 404: composing rows from /v1/items instead")
-                        composeRows()
-                    } else throw t
-                }
             probe.cancel()
             result.onSuccess { ready ->
                 // Keep the previous carousel while the new one resolves, so a silent reload does not blank it.
@@ -147,7 +139,7 @@ class HomeViewModel(
 
     private suspend fun fromHomeEndpoint(): HomeUiState.Ready {
         val rows = api.home().rows.filter { it.items.isNotEmpty() }
-        return HomeUiState.Ready(hero = pickHero(rows), rows = rows, composedLocally = false)
+        return HomeUiState.Ready(hero = pickHero(rows), rows = rows)
     }
 
     /**
@@ -187,30 +179,6 @@ class HomeViewModel(
     }
 
     private companion object { const val MAX_HEROES = 6 }
-
-    /** Fallback for a server without `/v1/home`: five parallel-ish list calls. */
-    private suspend fun composeRows(): HomeUiState.Ready {
-        val notes = mutableListOf<String>()
-        val resume = runCatching { api.resume(20).items }.getOrElse { t ->
-            if (t is ApiException && t.isNotFound) notes += "/v1/me/resume" else Timber.w(t, "resume failed")
-            emptyList()
-        }
-        val episodes = api.items(type = "episode", recursive = true, sort = "date_created", desc = true, limit = 40, includeSources = true).items
-            .distinctBy { it.seriesId ?: it.seriesTitle ?: it.id } // one per series, like the server's row
-            .take(20)
-        val recentMovies = api.items(type = "movie", recursive = true, sort = "date_created", desc = true, limit = 20).items
-        val series = api.items(type = "series", sort = "date_created", desc = true, limit = 50).items
-        val movies = api.items(type = "movie", recursive = true, sort = "title", limit = 50).items
-        val rows = listOf(
-            HomeRow("continue", "Continue Watching", resume),
-            HomeRow("recentEpisodes", "New Episodes", episodes),
-            HomeRow("recentMovies", "New Movies", recentMovies),
-            HomeRow("series", "Series", series),
-            HomeRow("movies", "Movies", movies),
-        ).filter { it.items.isNotEmpty() }
-        val note = "Rows composed from /v1/items (server has no /v1/home" + (if (notes.isNotEmpty()) ", " + notes.joinToString() else "") + " yet)"
-        return HomeUiState.Ready(hero = pickHero(rows), rows = rows, composedLocally = true, note = note)
-    }
 
     private fun pickHero(rows: List<HomeRow>): Item? =
         rows.firstOrNull { it.key == "continue" }?.items?.firstOrNull()

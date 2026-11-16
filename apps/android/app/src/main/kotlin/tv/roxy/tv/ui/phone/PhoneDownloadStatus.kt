@@ -103,27 +103,6 @@ internal fun stateWord(state: String): String = when (state) {
 
 private fun pct(p: Double) = "${(p * 100).toInt()}%"
 
-/** "Downloading S1 E5 · 45%", "Downloading 3 episodes · 45%", "Downloading 45%" for a poster. */
-internal fun DownloadStatus.shortLine(isMovie: Boolean): String = when (state) {
-    "downloading", "stalled", "importing" -> {
-        val active = activeEpisodes
-        val what = when {
-            isMovie || active.isEmpty() -> null
-            active.size == 1 -> "S${active[0].season} E${active[0].episode}"
-            else -> "${active.size} eps"
-        }
-        // Short: the poster's ring already says "downloading". "S1 E5 · 45%", "3 eps · 40%",
-        // "Stalled · 37%", "Adding to library".
-        when {
-            state == "importing" -> stateWord(state)
-            state == "stalled" -> "Stalled · ${pct(progress)}"
-            what != null -> "$what · ${pct(progress)}"
-            else -> "Downloading · ${pct(progress)}"
-        }
-    }
-    else -> stateWord(state)
-}
-
 /**
  * The poster's corner box while something downloads: which episodes and how far,
  * "S1 E5 · 45%", "S1 E1–E9 · 41%", or "45%" for a movie. Amber when stalled.

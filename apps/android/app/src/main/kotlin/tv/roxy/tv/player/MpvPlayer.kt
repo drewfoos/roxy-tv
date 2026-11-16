@@ -404,18 +404,11 @@ class MpvPlayer(
     /** Exact relative seek (the default for relative seeks lands on a keyframe, 7 or 13 s for a "10"). */
     fun seekRelative(seconds: Int) = cmd("seek", seconds.toString(), "relative+exact")
 
-    fun cycleSubtitle() = cmd("cycle", "sub")
-
-    fun cycleAudio() = cmd("cycle", "audio")
-
     // ---- direct control (used by the on-screen controls) ----
 
     fun setPaused(paused: Boolean) { if (!destroyed) mpv.setPropertyBoolean("pause", paused) }
 
     fun seekTo(seconds: Double) = cmd("seek", "%.3f".format(java.util.Locale.ROOT, seconds), "absolute")
-
-    /** Fast seek to the keyframe before [seconds]: the picture follows a scrub without decoding every frame. */
-    fun seekToKeyframe(seconds: Double) = cmd("seek", "%.3f".format(java.util.Locale.ROOT, seconds), "absolute+keyframes")
 
     /** mpv subtitle id (1-based) or 0 for off. */
     fun setSubtitleTrack(id: Int) {
@@ -458,9 +451,6 @@ class MpvPlayer(
     fun setFill(fill: Boolean) { if (!destroyed) mpv.setPropertyDouble("panscan", if (fill) 1.0 else 0.0) }
 
     fun isFill(): Boolean = (dbl("panscan") ?: 0.0) > 0.5
-
-    /** Display aspect (width/height) of the current video, or null before it is known. */
-    fun videoAspect(): Double? = dbl("video-params/aspect")?.takeIf { it > 0.0 }
 
     fun speed(): Double = dbl("speed") ?: 1.0
 

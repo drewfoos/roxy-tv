@@ -482,7 +482,6 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun identify(itemId: String, provider: String, providerId: String) =
         postNoBody("/v1/items/$itemId/identify", json.encodeToString(IdentifyChoice.serializer(), IdentifyChoice(provider, providerId)))
     suspend fun editMetadata(itemId: String, edit: MetadataEdit): Item = putJson("/v1/items/$itemId/metadata", json.encodeToString(MetadataEdit.serializer(), edit))
-    suspend fun refreshItem(itemId: String) = postNoBody("/v1/items/$itemId/refresh", "")
     /** Redo any mix of parts for some titles, or all of them (Library > Refresh). */
     suspend fun libraryRefresh(ids: List<String>, all: Boolean, parts: RefreshParts) = postNoBody(
         "/v1/library/refresh",
@@ -589,8 +588,6 @@ class RoxyApi(private val prefs: Prefs) {
 
     // ---- watch state ----
 
-    suspend fun resume(limit: Int = 20): ItemsResponse = get("/v1/me/resume?limit=$limit")
-
     /** What this profile played, newest first (My Lists > History). */
     suspend fun history(limit: Int = 100): ItemsResponse = get("/v1/me/history?limit=$limit")
 
@@ -680,9 +677,6 @@ class RoxyApi(private val prefs: Prefs) {
     }
 
     // ---- player helpers ----
-
-    /** Subtitle streams of one source, with the server's sniffed language (tags lie). */
-    suspend fun subtitleStreams(sourceId: String): List<SubtitleInfo> = subtitleInfos(source(sourceId).streams)
 
     /** Label + stream summary + direct-play URL for an item that carries `mediaSources`. */
     fun Item.toEpisode(): Episode {
@@ -1412,8 +1406,6 @@ data class DownloadStatus(
      * listed the episodes yet (older servers said "complete" then): treat it as searching.
      */
     val state: String get() = if (rawState == "complete" && wanted == 0 && have == 0 && upcoming == 0) "searching" else rawState
-    /** Same as [state]; named for call sites that want to be explicit. */
-    val effectiveState: String get() = state
     /** Episodes in the download client right now (downloading, stalled, importing, queued). */
     val activeEpisodes: List<EpisodeDownload> get() = episodes.filter { it.state in setOf("downloading", "stalled", "importing", "queued") }
     /** Something is moving in the download client (a ring on the poster). */

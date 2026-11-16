@@ -661,14 +661,6 @@ fun WatchedCheck(modifier: Modifier = Modifier, size: Dp = 16.dp) {
     Icon(Icons.Filled.CheckCircle, contentDescription = "Watched", tint = Color.White, modifier = modifier.size(size))
 }
 
-/** Roxy's app mark: a small rounded accent square with an R, drawn over the hero. */
-@Composable
-fun RoxyMark(modifier: Modifier = Modifier, size: Dp = 28.dp) {
-    Box(modifier = modifier.size(size).clip(RoundedCornerShape(size / 4)).background(RoxyColors.accent), contentAlignment = Alignment.Center) {
-        Text("R", color = Color.White, fontSize = (size.value * 0.62f).sp, fontWeight = FontWeight.Black)
-    }
-}
-
 /* ---------- Skeletons ----------
  * Shimmering placeholders shaped like the content they stand in for, so a screen never
  * says "Loading…". They will change as the layouts change; keep each next to the screen

@@ -105,7 +105,7 @@ data class PlayerSettings(
      */
     val subMode: String = "full",
     val showStats: Boolean = false,
-    /** Play the next episode when one ends. Always on; kept as a field for the queue logic. */
+    /** Play the next episode when one ends. Off = the next-episode card waits for a press. */
     val autoplay: Boolean = true,
     /** Jump over intro/outro segments automatically instead of showing a Skip button. */
     val autoSkip: Boolean = false,
@@ -199,8 +199,6 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
     val dismissedUpdate: StateFlow<Int> get() = _dismissedUpdate
     private val _dismissedUpdate: MutableStateFlow<Int>
 
-    /** Servers signed in to before (see [ServerPin]); a handful at most. */
-    val serverPins: StateFlow<List<ServerPin>> get() = _serverPins
     private val _serverPins: MutableStateFlow<List<ServerPin>>
 
     /** Remember [id] as the server at [url] called [name]; replaces an older pin for that address or id. */

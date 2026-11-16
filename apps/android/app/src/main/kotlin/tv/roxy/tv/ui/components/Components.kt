@@ -1,25 +1,18 @@
 package tv.roxy.tv.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -45,12 +38,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Border
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import tv.roxy.tv.isTelevision
@@ -63,12 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import coil3.request.ImageRequest
 import coil3.compose.LocalPlatformContext
-import tv.roxy.tv.api.Item
-import tv.roxy.tv.api.RoxyApi
 import tv.roxy.tv.ui.theme.RoxyColors
-
-/** Horizontal margin that keeps content inside TV overscan. */
-val ScreenPadding = 48.dp
 
 /**
  * tv-material clickables (Surface, Button, Card) only fire on D-pad Enter; they ignore pointer
@@ -170,52 +155,6 @@ fun widthPx(width: Dp): Int {
     return remember(width, density) { with(density) { width.roundToPx() } }
 }
 
-/** A focus-scaling card: poster 2:3 for series/movies/seasons, 16:9 thumb with series + SxxEyy for episodes. */
-@Composable
-fun MediaCard(item: Item, api: RoxyApi, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val isThumb = item.isEpisode
-    val width = if (isThumb) ThumbWidth else PosterWidth
-    val imageType = if (isThumb) "thumb" else "poster"
-    val url = api.imageUrl(item, imageType, widthPx(width) * 2)
-    Column(modifier = modifier.width(width)) {
-        Card(
-            onClick = onClick,
-            shape = CardDefaults.shape(RoundedCornerShape(6.dp)),
-            scale = CardDefaults.scale(focusedScale = 1.1f),
-            border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, RoxyColors.focusBorder), shape = RoundedCornerShape(6.dp))),
-            colors = CardDefaults.colors(containerColor = RoxyColors.surfaceHigh),
-            modifier = Modifier.width(width).aspectRatio(if (isThumb) 16f / 9f else 2f / 3f).tapClick(onClick),
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                RoxyImage(url, if (isThumb) item.episodeCode.ifEmpty { item.title } else item.title, modifier = Modifier.fillMaxSize())
-                ProgressBar(item.progressFraction, modifier = Modifier.align(Alignment.BottomCenter))
-            }
-        }
-        if (isThumb) {
-            Text(item.seriesTitle ?: item.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-            Text(listOf(item.episodeCode, item.title).filter { it.isNotEmpty() }.joinToString("  "), fontSize = 12.sp, color = RoxyColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        } else {
-            Text(item.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-        }
-    }
-}
-
-/** Titled horizontal row of [MediaCard]s. Vertical padding leaves room for the focus scale. */
-@Composable
-fun MediaRow(title: String, items: List<Item>, api: RoxyApi, onClick: (Item) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = ScreenPadding, bottom = 8.dp))
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = ScreenPadding, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            items(items, key = { it.id }) { item ->
-                MediaCard(item, api, onClick = { onClick(item) })
-            }
-        }
-    }
-}
-
 /** Accent-coloured primary action (Play, Connect). */
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
@@ -230,31 +169,6 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
             focusedContentColor = RoxyColors.background,
         ),
     ) { Text(text, fontWeight = FontWeight.SemiBold) }
-}
-
-/** Neutral secondary action. [selected] draws it as the chosen option of a choice row. */
-@Composable
-fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.tapClick(onClick),
-        colors = ButtonDefaults.colors(
-            containerColor = if (selected) RoxyColors.accent.copy(alpha = 0.35f) else RoxyColors.surfaceHigh,
-            contentColor = RoxyColors.onBackground,
-            focusedContainerColor = Color.White,
-            focusedContentColor = RoxyColors.background,
-        ),
-        border = if (selected) ButtonDefaults.border(border = Border(BorderStroke(1.dp, RoxyColors.accent))) else ButtonDefaults.border(),
-    ) { Text(text) }
-}
-
-/** Label + row of options; the selected one is highlighted. */
-@Composable
-fun ChoiceRow(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-        Text(label, modifier = Modifier.width(200.dp), color = RoxyColors.muted)
-        options.forEach { opt -> SecondaryButton(opt, onClick = { onSelect(opt) }, selected = opt == selected) }
-    }
 }
 
 /** Dark single-line text field with a visible focus border (tv-material has no TextField). */
@@ -290,19 +204,3 @@ fun RoxyTextField(
         )
     }
 }
-
-@Composable
-fun CenteredMessage(text: String, modifier: Modifier = Modifier, color: Color = RoxyColors.muted) {
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text, color = color, textAlign = TextAlign.Center, modifier = Modifier.padding(ScreenPadding))
-    }
-}
-
-/** "2019 · Action, Comedy · ★ 4.1" style line. */
-fun Item.metaLine(): String = listOfNotNull(
-    (year ?: premiered?.take(4)?.toIntOrNull())?.toString(),
-    genres.take(3).joinToString(", ").ifEmpty { null },
-    tv.roxy.tv.ui.ratingLine(communityRating),
-    officialRating,
-    runtimeMinutes?.let { "$it min" },
-).joinToString("  ·  ")

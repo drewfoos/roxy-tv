@@ -308,27 +308,6 @@ fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: 
     }
 }
 
-/** Movie page: a grey Download button that turns into progress, then "Downloaded". */
-@Composable
-fun MovieDownloadButton(movie: Item, modifier: Modifier = Modifier, onDownload: () -> Unit) {
-    val app = RoxyApp.get(LocalContext.current)
-    val index by app.downloads.index.collectAsStateWithLifecycle()
-    val entry = index.entries[movie.id]
-    val label = when (entry?.state) {
-        null -> "Download" + (movie.primarySource?.size?.takeIf { it > 0 }?.let { "  ·  ${formatBytes(it)}" } ?: "")
-        DownloadState.Done -> "Downloaded"
-        DownloadState.Failed -> "Download failed  ·  Retry"
-        DownloadState.Paused -> "Download paused  ·  ${(entry.fraction * 100).toInt()}%"
-        DownloadState.WaitingForWifi -> "Waiting for Wi-Fi"
-        DownloadState.Queued if entry.error != null -> "${queuedWord(entry)}  ·  ${(entry.fraction * 100).toInt()}%"
-        else -> "Downloading  ·  ${(entry.fraction * 100).toInt()}%"
-    }
-    Row(modifier = modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(4.dp)).background(ButtonGrey), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-        DownloadButton(movie, onDownload = onDownload, size = 22.dp)
-        Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 14.dp))
-    }
-}
-
 /**
  * The Downloads page: shows and movies on this device, newest first, with what is still
  * coming in; the storage bar at the bottom. Works entirely from the local index.

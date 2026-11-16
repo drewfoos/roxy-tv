@@ -71,7 +71,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Exported so tools/spike-*.ps1 can launch it with extras over adb (diagnostics). -->
+        <!-- Not exported: only the app itself starts the player. -->
         <activity
             android:name=".player.PlayerActivity"
             android:exported="false"

@@ -158,14 +158,8 @@ suspend fun playItem(context: Context, item: Item, fromStart: Boolean = false, s
 
 /**
  * The episode after [itemId] in its series (season order, specials last), as a
- * [PlayRequest], or null for movies, the last episode, or when nothing playable follows.
- * Online it asks the server for the series' episodes; away from it, the downloads of the
- * same show are the list, and only downloaded episodes count.
- */
-suspend fun nextEpisode(context: Context, itemId: String): PlayRequest? = nextEpisodeLookup(context, itemId).getOrNull()
-
-/**
- * [nextEpisode], telling "nothing follows" (success, null) from "could not find out"
+ * [PlayRequest]. It tells "nothing follows" (success, null: a movie, the last episode,
+ * nothing playable after it) from "could not find out"
  * (failure): the server not answering while a streamed episode plays. The player closes on
  * the first and asks again on the second; a Wi-Fi blip at the start of an episode closed
  * the player at its end instead of playing the next one. Away from the server, playing a

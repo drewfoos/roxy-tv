@@ -231,7 +231,6 @@ fun PhoneHome(
                     }
                     item(key = "footer") {
                         if (s.rows.isEmpty()) Text("The library is empty. Scan a library on the server first.", color = RoxyColors.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(32.dp))
-                        s.note?.let { Text(it, color = RoxyColors.muted.copy(alpha = 0.6f), fontSize = 11.sp, modifier = Modifier.padding(horizontal = PhonePad, vertical = 12.dp)) }
                         Spacer(Modifier.height(8.dp))
                     }
                 }

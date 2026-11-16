@@ -189,7 +189,6 @@ fun DownloadIndex.withoutProgress(): DownloadIndex {
 data class DownloadedTitle(val id: String, val title: Item, val entries: List<DownloadEntry>) {
     val bytes: Long get() = entries.sumOf { if (it.isDone) it.bytesTotal else it.bytesDone }
     val doneCount: Int get() = entries.count { it.isDone }
-    val activeCount: Int get() = entries.count { it.state.isActive }
 }
 
 /**

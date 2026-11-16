@@ -63,7 +63,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.Settings
@@ -935,20 +934,6 @@ private fun EpisodeRow(e: DiscoverEpisode, special: Boolean, onRequest: () -> Un
 private fun SmallAction(label: String, onClick: () -> Unit) {
     Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp))
 }
-
-/** TMDB's status phrases, shortened so the facts line stays on one line. */
-private fun statusWord(status: String): String? = when (status.trim().lowercase()) {
-    "returning series" -> "Airing"
-    "ended" -> "Ended"
-    "canceled", "cancelled" -> "Cancelled"
-    "in production", "planned", "post production" -> "Upcoming"
-    "released" -> null
-    "" -> null
-    else -> status
-}
-
-@Suppress("unused")
-private val playIcon = Icons.Filled.PlayArrow
 
 /**
  * Shown instead of sending a request while Sonarr (series) or Radarr (movies) is not

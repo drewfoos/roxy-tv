@@ -108,7 +108,6 @@ object TvDims {
     val RailWidth = 80.dp
     /** The rail with its labels, over the dimmed page. */
     val RailExpandedWidth = 264.dp
-    val RailIcon = 24.dp
     val RailRow = 52.dp
     /** Where text starts on a page with the rail (hero copy, row titles). */
     val ContentStart = 85.dp
