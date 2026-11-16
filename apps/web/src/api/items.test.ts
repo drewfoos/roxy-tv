@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, ratingCountLabel, runtimeLabel, seriesPlayLabel, sortEpisodes, timeLeftLabel } from './items'
+import { ageLabel, audioBadge, episodeCode, languageName, minutesLabel, nextToPlay, pickSignsSubtitle, pickSubtitle, playLabel, progressFraction, ratingCountLabel, runtimeLabel, seriesPlayLabel, sortEpisodes, starScore, timeLeftLabel } from './items'
 import type { Item, MediaSource, MediaStream } from './types'
 
 const item = (p: Partial<Item>) => ({ id: 'x', type: 'episode', title: 'T', ...p }) as Item
@@ -151,6 +151,14 @@ describe('minutesLabel', () => {
     expect(ratingCountLabel(42950)).toBe('(42.9K)')
     expect(ratingCountLabel(2000)).toBe('(2K)')
     expect(ratingCountLabel(1_250_000)).toBe('(1.2M)')
+  })
+
+  it('writes a score out of ten as stars out of five', () => {
+    expect(starScore(7.6)).toBe('3.8')
+    expect(starScore(10)).toBe('5.0')
+    expect(starScore(0)).toBe('0.0')
+    expect(starScore(null)).toBeNull()
+    expect(starScore(undefined)).toBeNull()
   })
 })
 

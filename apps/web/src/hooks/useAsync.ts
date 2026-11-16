@@ -170,3 +170,13 @@ export function clearAsyncCache() {
 export function markStale(key: string) {
   fetchedAt.delete(key)
 }
+
+/** Back from another tab (something was watched there): reload, keeping what is shown. */
+export function useReloadOnFocus(...reloads: Array<(silent?: boolean) => Promise<void>>) {
+  useEffect(() => {
+    const onFocus = () => reloads.forEach((reload) => void reload(true))
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, reloads)
+}

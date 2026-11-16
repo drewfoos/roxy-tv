@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { api } from '../api/client'
 import { isEpisode, isMovie, isSeries } from '../api/items'
 import type { HomeRow, Item } from '../api/types'
-import { useAsync } from '../hooks/useAsync'
+import { useAsync, useReloadOnFocus } from '../hooks/useAsync'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { Hero, type HeroPick } from '../components/Hero'
@@ -84,11 +84,7 @@ export function Home() {
     }
   }, [picksKey])
 
-  useEffect(() => {
-    const onFocus = () => reload(true)
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [reload])
+  useReloadOnFocus(reload)
 
   const rows = (data?.rows ?? []).filter((r) => r.items.length)
   const empty = data && rows.length === 0

@@ -26,14 +26,6 @@ export interface SignedInDevice {
   nowPlaying?: { title?: string } | null
 }
 
-export interface PlayerDevice {
-  deviceId: string
-  name: string
-  client?: string
-  lastSeen?: string
-  nowPlaying?: { itemId?: string; title?: string; positionMs?: number } | null
-}
-
 export interface RequestDownload {
   state?: string
   progress?: number

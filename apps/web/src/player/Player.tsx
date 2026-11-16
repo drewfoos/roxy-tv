@@ -806,5 +806,3 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     </div>
   )
 }
-
-export { fmt as formatTime }

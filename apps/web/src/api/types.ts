@@ -13,13 +13,6 @@ export interface LoginResponse {
   deviceId?: string
 }
 
-export interface Me {
-  id?: string
-  name?: string
-  isAdmin?: boolean
-  apiKey?: boolean
-  profileId?: string | null
-}
 
 export interface Profile {
   id: string
@@ -230,8 +223,6 @@ export interface DiscoverItem {
   rating?: number | null
   genres?: string[]
   isAnime?: boolean
-  /** Not sent by the server: "in the library" is `libraryItemId` being set. */
-  inLibrary?: boolean
   libraryItemId?: string | null
   /** pending | sent | failed | approval | declined when someone asked for it. */
   requestStatus?: string | null

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { ageLabel, audioBadge, isEpisode, isMovie, playLabel } from '../api/items'
+import { ageLabel, audioBadge, isEpisode, isMovie, playLabel, starScore } from '../api/items'
 import type { Item } from '../api/types'
 import { IconChevronLeft, IconChevronRight, IconPlay } from './Icons'
 import { SaveButton, itemPath } from './Cards'
@@ -73,7 +73,7 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
           const art = api.imageUrl(t, 'backdrop', px(1800)) ?? api.imageUrl(t, 'hero', px(1800)) ?? api.imageUrl(h.play, 'thumb', px(1800)) ?? api.imageUrl(t, 'poster', px(900))
           // Under 800 px the art is a tall poster: textless key art, else the poster, else the still.
           const tall = api.imageUrl(t, 'hero', px(800)) ?? api.imageUrl(t, 'poster', px(800)) ?? api.imageUrl(h.play, 'thumb', px(800))
-          const rating = t.communityRating != null ? (t.communityRating / 2).toFixed(1) : null
+          const rating = starScore(t.communityRating)
           const logo = api.imageUrl(t, 'logo', px(360))
           const genres = (t.genres ?? []).slice(0, 4).join(', ')
           const badge = audioBadge(h.play) ?? audioBadge(t)

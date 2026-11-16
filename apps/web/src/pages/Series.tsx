@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { api, px } from '../api/client'
 import { audioBadge, episodeCode, isPlayable, nextToPlay, runtimeLabel, seriesPlayLabel, sortEpisodes, timeLeftLabel } from '../api/items'
 import type { Item, ItemsResponse } from '../api/types'
-import { useAsync } from '../hooks/useAsync'
+import { useAsync, useReloadOnFocus } from '../hooks/useAsync'
 import { Art, CardMenu, ProgressBar, SaveButton, isWatched, useWatchedState, withPlayed } from '../components/Cards'
 import { IconChevronLeft, IconChevronRight, IconExpand, IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
@@ -92,12 +92,8 @@ export function Series() {
 
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
 
-  useEffect(() => {
-    // Back from another tab (watched there): the show and what Play plays.
-    const onFocus = () => { reload(true); reloadNext(true) }
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [reload, reloadNext])
+  // Back from another tab (watched there): the show and what Play plays.
+  useReloadOnFocus(reload, reloadNext)
 
   if (loading && !series) return <Spinner />
   if (!series) return <div className="page"><TopBar /><LoadError error={error ?? 'Not found'} onRetry={() => reload()} /></div>

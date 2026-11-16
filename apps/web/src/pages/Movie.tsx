@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api, orEmpty, px } from '../api/client'
 import { audioBadge, isPlayable, runtimeLabel, timeLeftLabel } from '../api/items'
 import type { Item } from '../api/types'
-import { useAsync } from '../hooks/useAsync'
+import { useAsync, useReloadOnFocus } from '../hooks/useAsync'
 import { Art, ProgressBar, Row, SaveButton, TitleCard, isWatched } from '../components/Cards'
 import { IconPlay, IconReplay } from '../components/Icons'
 import { SectionTabs, TitleBanner, TitleBelow } from '../components/TitlePage'
@@ -23,11 +23,7 @@ export function Movie() {
   const [tab, setTab] = useState(0)
   const { data: similar } = useAsync(tab === 1 ? `similar:${id}` : null, () => api.similar(id), [id])
 
-  useEffect(() => {
-    const onFocus = () => reload(true)
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [reload])
+  useReloadOnFocus(reload)
 
   if (loading && !movie) return <Spinner />
   if (!movie) return <div className="page"><TopBar /><LoadError error={error ?? 'Not found'} onRetry={() => reload()} /></div>

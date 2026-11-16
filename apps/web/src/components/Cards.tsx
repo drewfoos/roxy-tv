@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
-import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, minutesLabel, progressFraction, ratingCountLabel, runtimeLabel, timeLeftLabel, yearOf } from '../api/items'
+import { audioBadge, episodeCode, episodeNumber, isEpisode, isMovie, isSeries, minutesLabel, progressFraction, ratingCountLabel, runtimeLabel, starScore, timeLeftLabel, yearOf } from '../api/items'
 import type { Item } from '../api/types'
 import { IconBookmark, IconBookmarkOutline, IconCalendar, IconCheckCircle, IconChevronLeft, IconChevronRight, IconMore, IconPlay, IconReplay, WitchHat } from './Icons'
 
@@ -34,15 +34,15 @@ export async function playPath(id: string, type: string): Promise<string> {
 }
 
 /** A Play button for a library title (see playPath). */
-export function PlayButton({ id, type, className, children, label = 'Play' }: { id: string; type: string; className: string; children: ReactNode; label?: string }) {
+export function PlayButton({ id, type, className, children }: { id: string; type: string; className: string; children: ReactNode }) {
   const nav = useNavigate()
   const [busy, setBusy] = useState(false)
   return (
     <button
       type="button"
       className={className}
-      aria-label={label}
-      title={label}
+      aria-label="Play"
+      title="Play"
       disabled={busy}
       onClick={async () => {
         setBusy(true)
@@ -65,7 +65,7 @@ export function PlayButton({ id, type, className, children, label = 'Play' }: { 
  * Art with the designed fallback: a gradient tinted per title, a faint hat and the name,
  * so a row of posterless titles is not a row of grey boxes.
  */
-export function Art({ url, title, className = 'card__img', textSize = 13 }: { url: string | null; title: string; className?: string; textSize?: number }) {
+export function Art({ url, title }: { url: string | null; title: string }) {
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [url])
   const hue = useMemo(() => {
@@ -75,7 +75,7 @@ export function Art({ url, title, className = 'card__img', textSize = 13 }: { ur
   }, [title])
   if (!url || failed) {
     return (
-      <div className="art-fallback" style={{ background: `linear-gradient(to bottom, hsl(${hue} 55% 30%), hsl(${hue} 45% 11%))`, fontSize: textSize }}>
+      <div className="art-fallback" style={{ background: `linear-gradient(to bottom, hsl(${hue} 55% 30%), hsl(${hue} 45% 11%))`, fontSize: 13 }}>
         <div>
           <WitchHat size={40} />
           <div>{title.replace(/([-_.])(?=\S)/g, '$1​')}</div>
@@ -83,7 +83,7 @@ export function Art({ url, title, className = 'card__img', textSize = 13 }: { ur
       </div>
     )
   }
-  return <img className={className} src={url} alt="" loading="lazy" onError={() => setFailed(true)} />
+  return <img className="card__img" src={url} alt="" loading="lazy" onError={() => setFailed(true)} />
 }
 
 export function ProgressBar({ item }: { item: Item }) {
@@ -105,18 +105,8 @@ export function ProgressBar({ item }: { item: Item }) {
  */
 export function TitleCard({ item, width = 260, sub: subLine }: { item: Item; width?: number; sub?: string }) {
   const sub = subLine ?? audioBadge(item) ??[yearOf(item), isMovie(item) ? 'Movie' : null].filter(Boolean).join('  ·  ')
-  const [hover, setHover] = useState(false)
-  const timer = useRef<number | null>(null)
-  const enter = () => {
-    if (!window.matchMedia('(hover: hover)').matches) return
-    timer.current = window.setTimeout(() => setHover(true), 40) // theirs is near-instant
-  }
-  const leave = () => {
-    if (timer.current) window.clearTimeout(timer.current)
-    timer.current = null
-    setHover(false)
-  }
-  const rating = item.communityRating != null ? (item.communityRating / 2).toFixed(1) : null
+  const { on: hover, enter, leave } = useHoverPanel()
+  const rating = starScore(item.communityRating)
   // Under the rating, one to a line (theirs): "2 Seasons", "24 Episodes"; a film's length.
   const facts = isMovie(item)
     ? [runtimeLabel(item)]
@@ -239,7 +229,7 @@ export function continueTitle(item: Item): string {
   return [episodeCode(item), item.title].filter(Boolean).join(' - ')
 }
 
-export function ThumbTile({ item, width = 320, big = false }: { item: Item; width?: number; big?: boolean }) {
+export function ThumbTile({ item, width = 320 }: { item: Item; width?: number }) {
   const movie = isMovie(item)
   const url = movie ? (api.imageUrl(item, 'backdrop', px(width)) ?? api.imageUrl(item, 'poster', px(width))) : api.imageUrl(item, 'thumb', px(width))
   const badge = audioBadge(item)
@@ -260,8 +250,8 @@ export function ThumbTile({ item, width = 320, big = false }: { item: Item; widt
             <IconReplay size={48} />
           </div>
         ) : (
-          <div className={'play-ring' + (big ? ' play-ring--big' : '')}>
-            <IconPlay size={big ? 32 : 28} />
+          <div className="play-ring">
+            <IconPlay size={28} />
           </div>
         )}
         {badge && <span className="badge badge--tl">{badge}</span>}
@@ -331,7 +321,7 @@ export function useHoverPanel() {
     on,
     enter: () => {
       if (!window.matchMedia('(hover: hover)').matches) return
-      timer.current = window.setTimeout(() => setOn(true), 40)
+      timer.current = window.setTimeout(() => setOn(true), 40) // theirs is near-instant
     },
     leave: () => {
       if (timer.current) window.clearTimeout(timer.current)

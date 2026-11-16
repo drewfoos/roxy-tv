@@ -1,13 +1,13 @@
 /** Shimmer placeholders shaped like the content (never the word "Loading"). */
-export function RowSkeleton({ thumbs = false }: { thumbs?: boolean }) {
+export function RowSkeleton() {
   return (
     <section className="row">
       <div className="row__head">
         <div className="bone bone--line" style={{ width: 180, height: 20 }} />
       </div>
-      <div className={'row__track' + (thumbs ? ' row__track--thumbs' : '')}>
+      <div className="row__track">
         {Array.from({ length: 8 }).map((_, i) => (
-          <div key={i} className="bone" style={{ aspectRatio: thumbs ? '16 / 9' : '2 / 3', borderRadius: 8 }} />
+          <div key={i} className="bone" style={{ aspectRatio: '2 / 3', borderRadius: 8 }} />
         ))}
       </div>
     </section>

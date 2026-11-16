@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, px } from '../api/client'
-import { ageLabel, languageName, primarySource } from '../api/items'
+import { ageLabel, languageName, primarySource, starScore } from '../api/items'
 import type { Item } from '../api/types'
 import { IconMore } from './Icons'
 import { PhoneTitleHeader } from './PhoneChrome'
@@ -31,7 +31,7 @@ export function TitleBanner({ item, badge, extra, actions, menu }: { item: Item;
         <div className="title__facts">
           {item.officialRating && <span className="age">{ageLabel(item.officialRating)}</span>}
           {badge && <span>• {badge}</span>}
-          {item.communityRating != null && <span className="phone-only">• ★ {(item.communityRating / 2).toFixed(1)}</span>}
+          {item.communityRating != null && <span className="phone-only">• ★ {starScore(item.communityRating)}</span>}
           {item.year != null && <span className="phone-only">• {item.year}</span>}
           {genres.length > 0 && (
             <span className="title__genres">
@@ -49,7 +49,7 @@ export function TitleBanner({ item, badge, extra, actions, menu }: { item: Item;
         {item.communityRating != null && (
           <div className="title__facts title__facts--stars desk-only">
             <Stars value={item.communityRating / 2} />
-            <b>Average rating: {(item.communityRating / 2).toFixed(1)}</b>
+            <b>Average rating: {starScore(item.communityRating)}</b>
             {item.year && <span className="muted">• {item.year}</span>}
           </div>
         )}

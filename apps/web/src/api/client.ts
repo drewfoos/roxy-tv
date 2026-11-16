@@ -3,7 +3,7 @@
 // profile; a 401 clears the session so the app returns to the login screen.
 import { session, deviceName } from './session'
 import { connection, connectionWords } from './connection'
-import type { AccountUser, ActiveSessions, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, PlayerDevice, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
+import type { AccountUser, ActiveSessions, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
 import type {
   DiscoverDetail,
   DiscoverEpisode,
@@ -17,7 +17,6 @@ import type {
   LegalDoc,
   RequestRow,
   LoginResponse,
-  Me,
   MediaSource,
   MediaTokenResponse,
   Profile,
@@ -38,12 +37,6 @@ export class ApiError extends Error {
     message: string,
   ) {
     super(message)
-  }
-  get unauthorized() {
-    return this.status === 401
-  }
-  get notFound() {
-    return this.status === 404
   }
 }
 
@@ -200,6 +193,12 @@ export interface ItemsQuery {
  * page's, the read starts over (three tries); an item seen twice is kept once. Lists up to
  * the server's cap (20000, 5000 with sources) come in one request: one consistent read.
  */
+/** A plain fetch with the device token: for answers that are not the API's JSON. */
+function signedFetch(path: string): Promise<Response> {
+  const s = session.get()
+  return fetch(path, { headers: s ? { Authorization: 'Bearer ' + s.token } : {} })
+}
+
 export async function collectPages(fetch: (limit: number, offset: number) => Promise<ItemsResponse>, page = 20000): Promise<ItemsResponse> {
   let items: Item[] = []
   let total: number | undefined
@@ -250,7 +249,6 @@ export const api = {
   async login(username: string, password: string): Promise<LoginResponse> {
     return request<LoginResponse>('POST', '/v1/auth/login', { username, password, client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false)
   },
-  me: () => get<Me>('/v1/auth/me'),
   // ---- signing this browser in from a phone (the same flow a TV uses) ----
   linkStart: () =>
     request<{ code: string; secret: string; url: string; expiresIn: number }>('POST', '/v1/link/start', { client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false),
@@ -284,7 +282,6 @@ export const api = {
   // ---- account ----
   /** Signs the login out of every other device; 403 = wrong current password, 429 = throttled. */
   changePassword: (current: string, next: string) => post<void>('/v1/me/password', { current, new: next }),
-  players: () => get<{ players: PlayerDevice[] }>('/v1/sessions/players'),
   /** Every device signed in with this login, not only the ones connected now. */
   devices: () => get<{ devices: SignedInDevice[] }>('/v1/devices'),
   /** Admin: everything playing from the server right now, every login's. */
@@ -363,7 +360,6 @@ export const api = {
   similar: (id: string) => get<{ items: DiscoverItem[] }>(`/v1/items/${id}/similar`),
   /** The Watchlist: the profile's favourites, newest first (the same query as the phone). */
   favorites: (limit = 200) => get<ItemsResponse>(`/v1/items?type=series,movie&recursive=1&favorites=1&sort=date_created&desc=1&limit=${limit}`),
-  resume: (limit = 20) => get<ItemsResponse>(`/v1/me/resume?limit=${limit}`),
   history: (limit = 100) => get<ItemsResponse>(`/v1/me/history?limit=${limit}`),
 
   // ---- watch state ----
@@ -400,22 +396,19 @@ export const api = {
     (await get<{ startSec: number }>(`/v1/sources/${sourceId}/remux/start?start=${startSec.toFixed(3)}`)).startSec,
   /** Seek-preview sheets: the manifest, or null while the server is still generating them. */
   async trickplay(sourceId: string): Promise<TrickplayManifest | null> {
-    const s = session.get()
-    const res = await fetch(`/v1/sources/${sourceId}/trickplay`, { headers: s ? { Authorization: 'Bearer ' + s.token } : {} })
+    const res = await signedFetch(`/v1/sources/${sourceId}/trickplay`)
     if (res.status !== 200) return null
     return (await res.json()) as TrickplayManifest
   },
   trickplaySheetUrl: (sourceId: string, sheet: number) => `/v1/sources/${sourceId}/trickplay/${sheet}`,
   /** Subtitle and font bytes are fetched with the device token (fetch, not a URL the browser follows). */
   async subtitleText(sourceId: string, index: number): Promise<string> {
-    const s = session.get()
-    const res = await fetch(`/v1/sources/${sourceId}/subtitles/${index}`, { headers: s ? { Authorization: 'Bearer ' + s.token } : {} })
+    const res = await signedFetch(`/v1/sources/${sourceId}/subtitles/${index}`)
     if (!res.ok) throw new ApiError(res.status, `subtitle ${index}: ${res.status}`)
     return res.text()
   },
   async attachmentBytes(sourceId: string, index: number): Promise<Uint8Array> {
-    const s = session.get()
-    const res = await fetch(`/v1/sources/${sourceId}/attachments/${index}`, { headers: s ? { Authorization: 'Bearer ' + s.token } : {} })
+    const res = await signedFetch(`/v1/sources/${sourceId}/attachments/${index}`)
     if (!res.ok) throw new ApiError(res.status, `attachment ${index}: ${res.status}`)
     return new Uint8Array(await res.arrayBuffer())
   },

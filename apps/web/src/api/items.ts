@@ -6,7 +6,6 @@ import type { Item, MediaSource, MediaStream } from './types'
 export const isEpisode = (it: Item) => it.type === 'episode'
 export const isSeries = (it: Item) => it.type === 'series'
 export const isMovie = (it: Item) => it.type === 'movie'
-export const isSeason = (it: Item) => it.type === 'season'
 
 export const isPlayable = (it: Item) => (it.hasMedia ?? true) && it.availability !== 'missing' && it.availability !== 'unaired'
 
@@ -207,6 +206,11 @@ export function playLabel(next: Item | null): string {
  */
 export function seriesPlayLabel(next: Item | null, loading: boolean): string | null {
   return !next && loading ? null : playLabel(next)
+}
+
+/** "3.8": a provider's score out of ten as stars out of five; null when there is none. */
+export function starScore(rating: number | null | undefined): string | null {
+  return rating != null ? (rating / 2).toFixed(1) : null
 }
 
 /** "(42.9K)" beside a rating: how many ratings it comes from, as Crunchyroll writes it; null when unknown. */

@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import type { DiscoverItem, DownloadGroup, DownloadStatus, EpisodeDownload } from '../api/types'
+import { starScore } from '../api/items'
 import { Art, PlayButton, useHoverPanel } from './Cards'
 import { IconAdd, IconCheck, IconClose, IconDownload, IconHistory, IconPlay } from './Icons'
 
@@ -218,7 +219,7 @@ export function DiscoverCard({ item }: { item: DiscoverItem }) {
   const kind = item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : 'Series'
   const sub = [item.year, item.isAnime ? 'Anime' : item.type === 'movie' ? 'Movie' : null].filter(Boolean).join('  ·  ')
   const hover = useHoverPanel()
-  const rating = item.rating ? (item.rating / 2).toFixed(1) : null
+  const rating = item.rating ? starScore(item.rating) : null
   const rs = item.requestStatus
   const asked = rs && rs !== 'failed' && rs !== 'declined'
   return (
