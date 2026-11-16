@@ -86,13 +86,14 @@ class MainActivity : ComponentActivity() {
     /** The page's player tells us whether a video is playing, so swiping home shrinks it. */
     private var pipAutoEnter: Boolean? = null
     private var pipSource: android.graphics.Rect? = null
+    private var pipShape: Pair<Int, Int> = 16 to 9
 
     val pipSupported: Boolean by lazy {
         !isTelevision(this) && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     }
 
     private fun pipParams(autoEnter: Boolean): android.app.PictureInPictureParams {
-        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(16, 9))
+        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(pipShape.first, pipShape.second))
         pipSource?.let { b.setSourceRectHint(it) }
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             // Auto-enter makes the swipe-home transition a seamless shrink of the live
@@ -100,6 +101,14 @@ class MainActivity : ComponentActivity() {
             b.setAutoEnterEnabled(autoEnter).setSeamlessResizeEnabled(true)
         }
         return b.build()
+    }
+
+    /** The picture's shape (see playerBoxShape), so the PiP window has no bands either. */
+    fun setPipShape(shape: Pair<Int, Int>) {
+        if (pipShape == shape) return
+        pipShape = shape
+        if (!pipSupported || isDestroyed || pipAutoEnter == null) return
+        runCatching { setPictureInPictureParams(pipParams(autoEnter = pipAutoEnter == true)) }
     }
 
     /** Called by the page's player: keep the system's PiP parameters current. */
@@ -113,7 +122,7 @@ class MainActivity : ComponentActivity() {
     /** Leave PiP support behind when the page closes, so other screens never shrink. */
     fun clearPip() {
         if (!pipSupported || isDestroyed) return
-        pipAutoEnter = null; pipSource = null
+        pipAutoEnter = null; pipSource = null; pipShape = 16 to 9
         runCatching { setPictureInPictureParams(android.app.PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()) }
     }
 

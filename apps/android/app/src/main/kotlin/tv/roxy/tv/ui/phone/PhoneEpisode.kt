@@ -265,12 +265,17 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     val ep = episode
     val next = siblings.dropWhile { it.id != ep?.id }.drop(1).firstOrNull { it.isPlayable }
     val full = landscape || inPip
+    // The box under the status bar takes the picture's shape, so a film wider than 16:9 has
+    // no black bands above and below it (nor a 4:3 show at its sides). Known from the file
+    // before it plays, so the box does not change size under the picture.
+    val shape = playerBoxShape(ep?.primarySource?.streams?.firstOrNull { it.type == "video" })
+    LaunchedEffect(shape) { main?.setPipShape(shape) }
     Column(modifier = Modifier.fillMaxSize().background(if (full) Color.Black else RoxyColors.background).then(if (full) Modifier else Modifier.statusBarsPadding())) {
         // The player keeps its place in the tree in both orientations and in the PiP window,
         // so the surface and the stream survive; only its size changes. Fullscreen is the
         // whole screen; mpv fits the picture inside it (pillars on this phone's 21.7:9).
         Box(
-            modifier = (if (full) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)).onGloballyPositioned { c ->
+            modifier = (if (full) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(shape.first.toFloat() / shape.second)).onGloballyPositioned { c ->
                 val b = c.boundsInWindow()
                 val r = android.graphics.Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt())
                 if (r != videoBounds) videoBounds = r
@@ -478,3 +483,20 @@ internal fun rememberEpisodeStart(episodeId: String, fromStart: Boolean, startMs
             restore = { EpisodeStart(fromStart, startMs, currentId = it[0] as String, startUsed = it[1] as Boolean) },
         ),
     ) { EpisodeStart(fromStart, startMs, currentId = episodeId) }
+
+/**
+ * The shape (width to height) of the player's box on the portrait episode page: the
+ * picture's own, so it fills the box. Kept between 4:3 and 2.39:1: a taller box would push
+ * the page off the screen, a flatter one leaves no room for the controls (and the system
+ * takes no flatter picture-in-picture window). 16:9 when the size is not known.
+ */
+internal fun playerBoxShape(video: tv.roxy.tv.api.MediaStream?): Pair<Int, Int> = playerBoxShape(video?.width ?: 0, video?.height ?: 0)
+
+internal fun playerBoxShape(width: Int, height: Int): Pair<Int, Int> {
+    if (width <= 0 || height <= 0) return 16 to 9
+    return when {
+        width * 3L < height * 4L -> 4 to 3
+        width * 100L > height * 239L -> 239 to 100
+        else -> width to height
+    }
+}
