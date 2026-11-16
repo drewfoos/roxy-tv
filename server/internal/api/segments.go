@@ -14,10 +14,7 @@ import (
 func (s *Server) detectSegments(w http.ResponseWriter, r *http.Request) {
 	// Who may ask first, then whether it can be done: a non-admin used to learn the
 	// service's state (503) before being refused.
-	if p := userFrom(w, r); p == nil {
-		return
-	} else if !p.IsAdmin {
-		writeError(w, 403, "admin only")
+	if !s.requireAdmin(w, r) {
 		return
 	}
 	if s.segs == nil {

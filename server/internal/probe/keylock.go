@@ -41,13 +41,3 @@ func (k *keyLocks) lock(name string) (unlock func()) {
 		k.mu.Unlock()
 	}
 }
-
-// users is how many callers hold or wait for the name's lock.
-func (k *keyLocks) users(name string) int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if l := k.m[name]; l != nil {
-		return l.users
-	}
-	return 0
-}

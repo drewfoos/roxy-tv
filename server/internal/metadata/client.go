@@ -180,12 +180,6 @@ func retryAfter(h string) time.Duration {
 	return wait
 }
 
-// isRateLimited reports a 429 that survived the retries.
-func isRateLimited(err error) bool {
-	he, ok := err.(*httpError)
-	return ok && he.Status == http.StatusTooManyRequests
-}
-
 // isNotFound reports a 404 from the provider.
 func isNotFound(err error) bool {
 	he, ok := err.(*httpError)

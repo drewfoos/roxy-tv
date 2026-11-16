@@ -1,5 +1,5 @@
 // Package auth handles passwords, opaque device tokens, API keys, and request
-// authentication for both the native and Jellyfin-compatible APIs.
+// authentication for the API.
 package auth
 
 import (
@@ -149,13 +149,8 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (*model.APIKey,
 	return k, nil
 }
 
-// Resolve turns a bearer token into a Principal, or nil if unknown.
-func (s *Service) Resolve(ctx context.Context, token string) (*model.Principal, error) {
-	return s.ResolveFrom(ctx, token, "")
-}
-
-// ResolveFrom is Resolve for a request from ip, which a device token records as the
-// device's last address (Device Management).
+// ResolveFrom turns a bearer token into a Principal, or nil if unknown. The request came
+// from ip, which a device token records as the device's last address (Device Management).
 func (s *Service) ResolveFrom(ctx context.Context, token, ip string) (*model.Principal, error) {
 	if token == "" {
 		return nil, nil
@@ -208,7 +203,6 @@ func RemoteIP(r *http.Request) string {
 	return strings.Trim(a, "[]")
 }
 
-// TokenFromRequest extracts the credential from any of the places Jellyfin clients put it.
 // SessionCookie carries a device token for browser-fetched resources (Roxy Web). Set
 // by POST /v1/auth/cookie, cleared by logout, honoured for GET and HEAD only.
 const SessionCookie = "roxy_token"
@@ -225,6 +219,7 @@ func ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 }
 
+// TokenFromRequest extracts the credential from any of the places a client may put it.
 func TokenFromRequest(r *http.Request) (string, ClientInfo) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {

@@ -29,7 +29,6 @@ type Config struct {
 	MediaRoots  []string // ROXY_MEDIA_ROOTS, comma separated; each becomes a library
 	FFmpegPath  string   // ROXY_FFMPEG_PATH, default: search PATH then ~/tools/jellyfin-ffmpeg
 	FFprobePath string   // ROXY_FFPROBE_PATH
-	FontsDir    string   // ROXY_FONTS_DIR, extra fonts for burn-in / client fallback
 	ScanOnStart bool     // ROXY_SCAN_ON_START, default true
 	Watch       bool     // ROXY_WATCH, default true: rescan when files change in a library folder
 	Debug       bool     // ROXY_DEBUG
@@ -52,7 +51,7 @@ type Config struct {
 	TrustedProxies []string
 	// First-run admin account (only used when the users table is empty).
 	AdminUser     string // ROXY_ADMIN_USER, default roxy
-	AdminPassword string // ROXY_ADMIN_PASSWORD; unset = a random one, shown once in the log
+	AdminPassword string // ROXY_ADMIN_PASSWORD; unset = the setup wizard makes the admin
 }
 
 func Load() (*Config, error) {
@@ -83,7 +82,6 @@ func Load() (*Config, error) {
 		DataDir:              env("ROXY_DATA_DIR", "data"),
 		FFmpegPath:           env("ROXY_FFMPEG_PATH", ""),
 		FFprobePath:          env("ROXY_FFPROBE_PATH", ""),
-		FontsDir:             env("ROXY_FONTS_DIR", ""),
 		ScanOnStart:          envBool("ROXY_SCAN_ON_START", true),
 		Watch:                envBool("ROXY_WATCH", true),
 		Debug:                envBool("ROXY_DEBUG", false),
@@ -121,27 +119,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.DataDir = abs
-	// TMDB key resolution, in order: env, <DataDir>/tmdb.key (git-ignored, lives in the
-	// Docker volume), then a project default compiled in by CI (see DefaultTMDBAPIKey).
-	// Keys never live in the source tree.
+	// TMDB key resolution, in order: env, then <DataDir>/tmdb.key (git-ignored, lives in
+	// the Docker volume). Keys never live in the source tree.
 	if c.TMDBAPIKey == "" {
 		if b, err := os.ReadFile(filepath.Join(c.DataDir, "tmdb.key")); err == nil {
 			c.TMDBAPIKey = strings.TrimSpace(string(b))
 		}
 	}
-	if c.TMDBAPIKey == "" {
-		c.TMDBAPIKey = DefaultTMDBAPIKey
-	}
 	return c, nil
 }
-
-// DefaultTMDBAPIKey is the project key for release builds, injected by the build:
-//
-//	go build -ldflags "-X github.com/roxy-media/roxy/server/internal/config.DefaultTMDBAPIKey=<key>"
-//
-// It is empty in source so the repository never carries a credential (the CI secret
-// supplies it), which is how Jellyfin-style "no key needed" behaviour is achieved.
-var DefaultTMDBAPIKey = ""
 
 func (c *Config) DBPath() string         { return filepath.Join(c.DataDir, "roxy.db") }
 func (c *Config) CacheDir() string       { return filepath.Join(c.DataDir, "cache") }

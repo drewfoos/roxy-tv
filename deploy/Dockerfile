@@ -42,14 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build /out/roxy /usr/local/bin/roxy
 COPY deploy/entrypoint.sh /entrypoint.sh
-RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh && mkdir -p /config /fonts
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh && mkdir -p /config
 
 # /config holds roxy.db and the caches (ROXY_DATA_DIR). Media is mounted wherever you
 # like (TRaSH: /data) and listed in ROXY_MEDIA_ROOTS.
 ENV ROXY_DATA_DIR=/config \
     ROXY_FFMPEG_PATH=/usr/lib/jellyfin-ffmpeg/ffmpeg \
     ROXY_FFPROBE_PATH=/usr/lib/jellyfin-ffmpeg/ffprobe \
-    ROXY_FONTS_DIR=/fonts \
     ROXY_LISTEN=:8096 \
     ROXY_HWACCEL=auto \
     NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \

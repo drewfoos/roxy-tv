@@ -208,23 +208,6 @@ func (s *Store) GetItemImage(ctx context.Context, itemID, imageType string) (*It
 	return img, err
 }
 
-func (s *Store) ImagesForItem(ctx context.Context, itemID string) ([]ItemImage, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT item_id, type, path, width, height, source_url, fetched_at, locked FROM item_images WHERE item_id = ? ORDER BY type`, itemID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ItemImage
-	for rows.Next() {
-		img, err := scanImage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *img)
-	}
-	return out, rows.Err()
-}
-
 func scanImage(sc interface{ Scan(...any) error }) (*ItemImage, error) {
 	var img ItemImage
 	var w, h sql.NullInt64

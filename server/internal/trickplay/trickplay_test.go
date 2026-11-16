@@ -662,3 +662,10 @@ func TestARefreshDuringARunIsMadeAfterIt(t *testing.T) {
 		t.Fatal("not pending after being queued again")
 	}
 }
+
+// Pending reports whether generation is queued or running for the source.
+func (s *Service) Pending(sourceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pending[sourceID]
+}

@@ -14,8 +14,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/store"
 )
 
-// Native watch state (docs/api/native.md "Watch state"). Shares the store with the
-// Jellyfin-compatible session endpoints, so progress reported either way is one record.
+// Watch state (docs/api/native.md "Watch state").
 
 // playedThreshold: a position at or beyond this fraction of the runtime counts as
 // watched (Jellyfin's default MaxResumePct is 90).
@@ -173,18 +172,9 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// playedLength is the length of the version a report was made from: the source it names,
-// when that is one of the item's; else the item's version whose length matches the one
-// the player reported (within 5%, the closest); else none (the item's runtime decides).
-func (s *Server) playedLength(ctx context.Context, itemID, sourceID string, reportedMs int64) (int64, bool) {
-	if v := s.playedVersion(ctx, itemID, sourceID, reportedMs); v != nil {
-		return v.DurationMs, true
-	}
-	return 0, false
-}
-
-// playedVersion is the version a report was made from (see playedLength), with its
-// segments, or nil.
+// playedVersion is the version a report was made from, with its segments: the source it
+// names, when that is one of the item's; else the item's version whose length matches the
+// one the player reported (within 5%, the closest); else nil (the item's runtime decides).
 func (s *Server) playedVersion(ctx context.Context, itemID, sourceID string, reportedMs int64) *model.MediaSource {
 	if sourceID != "" {
 		if src, err := s.store.GetSource(ctx, sourceID); err == nil && src != nil && src.ItemID == itemID && src.DurationMs > 0 {

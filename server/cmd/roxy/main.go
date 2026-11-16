@@ -123,7 +123,6 @@ func bootstrapAdmin(ctx context.Context, db *store.Store, cfg *config.Config) er
 	if err := auth.ValidateNewPassword(pw); err != nil {
 		slog.Warn("ROXY_ADMIN_PASSWORD is weak; change it after signing in", "why", err)
 	}
-	generated := false
 	hash, err := auth.HashPassword(pw)
 	if err != nil {
 		return err
@@ -132,11 +131,7 @@ func bootstrapAdmin(ctx context.Context, db *store.Store, cfg *config.Config) er
 	if err := db.CreateUser(ctx, u); err != nil {
 		return err
 	}
-	if generated {
-		slog.Warn("created initial admin user with a random password; sign in and keep it safe (shown only now)", "name", u.Name, "password", pw)
-	} else {
-		slog.Warn("created initial admin user", "name", u.Name, "password_from_env", true)
-	}
+	slog.Warn("created initial admin user", "name", u.Name, "password_from_env", true)
 	return nil
 }
 

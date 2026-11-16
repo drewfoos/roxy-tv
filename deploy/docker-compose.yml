@@ -34,7 +34,6 @@ services:
     volumes:
       - ./config/roxy:/config        # roxy.db + caches (ROXY_DATA_DIR=/config in the image)
       - /data:/data:ro               # your library; Roxy only reads media
-      - ./fonts:/fonts:ro            # optional extra fonts (ROXY_FONTS_DIR)
     devices:
       # RX 550 (or Intel iGPU): VAAPI transcodes via jellyfin-ffmpeg's bundled radeonsi/iHD
       # drivers. The entrypoint joins the groups that own these nodes, so no group_add.

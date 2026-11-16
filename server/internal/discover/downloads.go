@@ -368,10 +368,6 @@ func inScope(r *store.Request, e arr.Episode) bool {
 	return contains(seasons, e.SeasonNumber)
 }
 
-func (s *Service) seriesStatus(r *store.Request, eps []arr.Episode, queue []arr.QueueItem, history []arr.HistoryRecord, now time.Time) *Download {
-	return s.seriesStatusWith(r, eps, queue, history, nil, now)
-}
-
 func (s *Service) seriesStatusWith(r *store.Request, eps []arr.Episode, queue []arr.QueueItem, history []arr.HistoryRecord, cmds []arr.Command, now time.Time) *Download {
 	d := &Download{UpdatedAt: now}
 	byID := map[int]arr.Episode{}
@@ -611,10 +607,6 @@ func codeSet(codes []string) map[string]bool {
 }
 
 func epCode(season, episode int) string { return fmt.Sprintf("S%dE%d", season, episode) }
-
-func (s *Service) movieStatus(r *store.Request, m *arr.Movie, queue []arr.QueueItem, history []arr.HistoryRecord, now time.Time) *Download {
-	return s.movieStatusWith(r, m, queue, history, nil, now)
-}
 
 func (s *Service) movieStatusWith(r *store.Request, m *arr.Movie, queue []arr.QueueItem, history []arr.HistoryRecord, cmds []arr.Command, now time.Time) *Download {
 	d := s.movieStatusBase(r, m, queue, history, now)

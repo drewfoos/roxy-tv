@@ -384,7 +384,7 @@ Ideas from earlier drafts, kept here so they are not mistaken for features:
 - A second Android engine (Media3/ExoPlayer).
 - Parental rating caps, per-library access and a remote bitrate cap (schema columns
   exist, unused).
-- Fallback fonts shipped in the image (`ROXY_FONTS_DIR` is read but not used yet).
+- Fallback fonts shipped in the image.
 - A filesystem watcher or a periodic reconciliation with Sonarr/Radarr.
 - OIDC sign-in, Prometheus metrics, a WebSocket push channel.
 - A published, multi-arch container image.

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 )
 
 // GetSetting decodes the JSON document stored under key into out; ok is false when none is saved.
@@ -74,13 +73,8 @@ func (s *Store) ServerID(ctx context.Context) (string, error) {
 	return id, s.SetSetting(ctx, "server_id", id)
 }
 
-// ServerName is what clients show for this server: the "server_name" setting, else
-// "Roxy on <host>".
-func (s *Store) ServerName(ctx context.Context) string {
-	var name string
-	if ok, err := s.GetSetting(ctx, "server_name", &name); err == nil && ok && strings.TrimSpace(name) != "" {
-		return strings.TrimSpace(name)
-	}
+// ServerName is what clients show for this server: "Roxy on <host>".
+func (s *Store) ServerName(_ context.Context) string {
 	if h, err := os.Hostname(); err == nil && h != "" {
 		return "Roxy on " + h
 	}

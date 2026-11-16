@@ -76,7 +76,8 @@ account token.
 `POST /v1/libraries/scan` and `POST /v1/segments/detect` are admin only.
 
 First run creates an admin user from `ROXY_ADMIN_USER` / `ROXY_ADMIN_PASSWORD`; with no
-password set, a random one is generated and printed once in the log.
+password set, no account is made and the first person to open the app on the home network
+creates the admin in the setup wizard.
 
 ## Metadata and images
 
@@ -86,9 +87,7 @@ within 7 days is skipped unless `POST /v1/items/{id}/refresh` forces it). One wo
 goroutine processes the queue; a bad item is logged, never fatal.
 
 - **TMDB** (v3 key or v4 read token; resolved from `ROXY_TMDB_API_KEY`, else
-  `<data dir>/tmdb.key`, else a project default injected at build time with
-  `-ldflags "-X .../internal/config.DefaultTMDBAPIKey=<key>"` from a CI secret, so no key
-  is ever committed): movies and series by provider
+  `<data dir>/tmdb.key`, so no key is ever committed): movies and series by provider
   id first (`tmdb` directly; `tvdb` / `imdb` from Sonarr/Radarr or `[tvdbid-…]` folder
   tags through `/find`), then title + year search. Seasons give episode titles,
   overviews, air dates and stills; absolute-numbered files are mapped through the

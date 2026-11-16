@@ -177,12 +177,6 @@ func (s *Store) DeviceSignedIn(ctx context.Context, userID, deviceID string) (bo
 	return n > 0, err
 }
 
-// DeleteDevicesExcept signs a user out everywhere but keepID (after a password change).
-func (s *Store) DeleteDevicesExcept(ctx context.Context, userID, keepID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE user_id = ? AND id <> ?`, userID, keepID)
-	return err
-}
-
 // ---- API keys ----
 
 func (s *Store) CreateAPIKey(ctx context.Context, k *model.APIKey) error {
@@ -225,11 +219,6 @@ func (s *Store) ListAPIKeys(ctx context.Context) ([]model.APIKey, error) {
 		out = append(out, k)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) DeleteAPIKeyByHash(ctx context.Context, hash string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE token_hash = ?`, hash)
-	return err
 }
 
 // AcceptedTerms is the terms version this user accepted ("" = never).

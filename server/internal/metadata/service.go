@@ -235,15 +235,6 @@ func (s *Service) TMDB() *TMDB {
 // set up once and come alive when a key is entered).
 func (s *Service) TMDBProvider() *TMDB { return s.tmdb }
 
-func (s *Service) tmdbFromProviders() *TMDB {
-	for _, p := range s.providers {
-		if t, ok := p.(*TMDB); ok {
-			return t
-		}
-	}
-	return nil
-}
-
 // AniList exposes the AniList client for non-matching uses (profile avatars).
 func (s *Service) AniList() *AniList { a, _ := s.anilist.(*AniList); return a }
 

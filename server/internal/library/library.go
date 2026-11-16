@@ -927,7 +927,6 @@ func (l *Library) detectSubtitleLanguages(ctx context.Context, path string, src 
 	}
 }
 
-// resolveItem maps a file to its item using folder structure and filename (fallback mode).
 // resolveForIngest is the item a file being ingested belongs to: an extra under its title
 // (extras.go), or the movie or episode its name and folders say.
 func (l *Library) resolveForIngest(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) (*model.Item, error) {
@@ -939,10 +938,8 @@ func (l *Library) resolveForIngest(ctx context.Context, lib model.Library, path 
 	return l.resolveItemHinted(ctx, lib, path, hint)
 }
 
-func (l *Library) resolveItem(ctx context.Context, lib model.Library, path string) (*model.Item, error) {
-	return l.resolveItemHinted(ctx, lib, path, nil)
-}
-
+// resolveItemHinted maps a file to its item using folder structure and filename, and the
+// arr app's season/episode for it when there is one.
 func (l *Library) resolveItemHinted(ctx context.Context, lib model.Library, path string, hint *EpisodeHint) (*model.Item, error) {
 	rel, err := filepath.Rel(lib.Root, path)
 	if err != nil {

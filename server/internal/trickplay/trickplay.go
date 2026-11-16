@@ -355,13 +355,6 @@ func (s *Service) Regenerate(sourceID string) {
 	s.Enqueue(sourceID)
 }
 
-// Pending reports whether generation is queued or running for the source.
-func (s *Service) Pending(sourceID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.pending[sourceID]
-}
-
 // SweepMissing enqueues every source without a manifest, and every one whose sheets an
 // older generator made (startup, after scans). Sources that are not tried again (they
 // failed as the file they still are) are not counted.

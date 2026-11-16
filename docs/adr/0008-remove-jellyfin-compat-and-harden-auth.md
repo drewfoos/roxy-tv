@@ -35,6 +35,7 @@ A review of how the app talks to the server also found:
 - Rate limit: per token (20/s, burst 60) and per address on top (3x that), so inventing
   tokens does not escape it.
 - First start without `ROXY_ADMIN_PASSWORD`: a random 20-character admin password, logged once.
+  (Replaced since: no account is made, and the setup wizard creates the admin.)
 - Media tokens: `GET /v1/sources/{id}/token` returns an HMAC-signed token for one source
   and one user, valid 24 h, accepted (as `?mt=`) only on that source's stream, transcode,
   subtitles, attachments and trickplay. Players get these URLs; the account token stays
