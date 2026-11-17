@@ -87,10 +87,12 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -295,8 +297,8 @@ fun PlayerControls(
         }
     }
     // Skip button lives outside the auto-hidden layer so it is there when you need it. On
-    // the TV it sits bottom-right at one height, clear of the bar, so it doesn't slide when
-    // the bar comes and goes; it takes focus when it appears so OK skips.
+    // the TV it has one place, just above the bar's end, so it doesn't move when the bar
+    // comes and goes; it takes focus when it appears so OK skips.
     val tv = !cr && !compact
     val skipFocus = remember { FocusRequester() }
     val skipSeg = state.skippableSegment?.takeIf { !state.autoSkip && !state.nextCardShown }
@@ -304,8 +306,10 @@ fun PlayerControls(
     state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
             if (tv) SkipButton(
-                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, focusRequester = skipFocus,
-                modifier = Modifier.fillMaxSize().padding(end = TvBarSide, bottom = if (visible) TvSkipBottom else TvSkipBottomHidden),
+                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, focusRequester = skipFocus, tag = "tv-skip",
+                // Over the controls' shade, which is drawn after it (it came out grey, as if behind
+                // the bar); under an open menu.
+                modifier = Modifier.fillMaxSize().zIndex(if (sheet == Sheet.None) 1f else 0f).padding(end = TvTimesSide, bottom = TvSkipBottom),
             )
             else SkipButton(seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, compact = compact, modifier = Modifier.fillMaxSize().padding(end = if (compact) 10.dp else 32.dp, bottom = if (compact) 44.dp else if (cr) 56.dp else if (visible) 118.dp else 40.dp))
         }
@@ -534,12 +538,13 @@ private val LocalCloseSheet = compositionLocalOf<() -> Unit> { {} }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
-private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd, focusRequester: FocusRequester? = null) {
+private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd, focusRequester: FocusRequester? = null, tag: String? = null) {
     var focused by remember { mutableStateOf(false) }
     Box(modifier = modifier, contentAlignment = align) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
+                .then(if (tag != null) Modifier.testTag(tag) else Modifier)
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .onFocusChanged { focused = it.isFocused }
                 .focusable()
@@ -693,15 +698,16 @@ private fun IconButton(icon: ImageVector, label: String, onClick: () -> Unit, on
     }
 }
 
-/** The TV player's side inset, and where Skip sits: above the bar whether it shows or not. */
+/** The TV player's side inset. */
 private val TvBarSide = 40.dp
-// Skip: just above the bar while the controls show; low in the corner while they are hidden
-// (it stayed at the bar's height then, a third of the way up an empty picture).
-private val TvSkipBottom = 150.dp
-private val TvSkipBottomHidden = 48.dp
-/** The TV's bar (Crunchyroll's TV app): its middle about 23% up the screen, the times 66 dp in. */
-private val TvBarBottom = 108.dp
-private val TvTimesSide = 66.dp
+/**
+ * The TV's bar sits low, the times 66 dp in. It was 108 dp up: Skip then had to sit a third
+ * of the way up the picture to clear it, and dropped to the corner when the controls hid.
+ */
+private val TvBarBottom = 52.dp
+/** Skip and the next-episode card: one place, just above the bar, ending where the bar's time ends. */
+internal val TvSkipBottom = 96.dp
+internal val TvTimesSide = 66.dp
 
 /** Big round centre button. */
 @Composable

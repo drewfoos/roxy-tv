@@ -96,7 +96,7 @@ fun PlayerSurface(session: PlayerSession, modifier: Modifier = Modifier) {
         )
         session.nextCard?.let { card ->
             NextEpisodeCard(
-                card = card, controlsVisible = session.controlsVisible,
+                card = card,
                 onPlayNow = { session.playNext() },
                 onDismiss = { session.dismissNextCard() },
                 compact = session.ui.fullscreen == false, pageHost = session.ui.fullscreen != null,

@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.Dp
@@ -62,7 +63,7 @@ data class NextCard(
  * D-pad: Play now has focus on arrival; Right moves to Watch credits.
  */
 @Composable
-fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> Unit, onDismiss: () -> Unit, compact: Boolean = false, pageHost: Boolean = false) {
+fun NextEpisodeCard(card: NextCard, onPlayNow: () -> Unit, onDismiss: () -> Unit, compact: Boolean = false, pageHost: Boolean = false) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
     // In the page's 16:9 box the card is one slim row: countdown and name, Play, dismiss.
@@ -87,9 +88,11 @@ fun NextEpisodeCard(card: NextCard, controlsVisible: Boolean, onPlayNow: () -> U
         }
         return
     }
-    Box(modifier = Modifier.fillMaxSize().padding(end = 32.dp, bottom = if (pageHost) 56.dp else if (controlsVisible) 118.dp else 40.dp), contentAlignment = Alignment.BottomEnd) {
+    // On the TV the card has one place, where Skip sits: just above the bar's end. It used
+    // to move between two heights as the controls came and went.
+    Box(modifier = Modifier.fillMaxSize().padding(end = if (pageHost) 32.dp else TvTimesSide, bottom = if (pageHost) 56.dp else TvSkipBottom), contentAlignment = Alignment.BottomEnd) {
         Column(
-            modifier = Modifier.width(340.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2141418)).border(BorderStroke(1.dp, Color(0x33FFFFFF)), RoundedCornerShape(8.dp)).padding(12.dp),
+            modifier = Modifier.testTag("next-card").width(340.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xF2141418)).border(BorderStroke(1.dp, Color(0x33FFFFFF)), RoundedCornerShape(8.dp)).padding(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.width(112.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(RoxyColors.surfaceHigh)) {

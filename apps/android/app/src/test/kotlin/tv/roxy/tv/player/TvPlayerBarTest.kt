@@ -3,8 +3,12 @@ package tv.roxy.tv.player
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.graphics.toPixelMap
+import org.robolectric.annotation.GraphicsMode
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -12,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -54,9 +59,10 @@ class TvPlayerBarTest {
         compose.onNodeWithText("Go to Details").assertIsDisplayed()
     }
 
-    // Found on the TV: the Skip button sat 180 dp up whether or not the controls showed. Now
-    // just above the bar while they show, low in the corner while they are hidden.
-    @Test fun skipSitsLow() {
+    // The bar sat 108 dp up (a fifth of the screen under it), so Skip had to sit a third of
+    // the way up to clear it and dropped to the corner when the controls hid. Now the bar is
+    // low, and Skip has one place: just above the bar's end, controls showing or not.
+    @Test fun skipHasOnePlaceAboveALowBar() {
         var visible by mutableStateOf(true)
         val state = PlayerUiState(title = "T", subtitle = "S  S01E14", positionSec = 95.0, durationSec = 1421.0, fullscreen = null,
             segments = listOf(tv.roxy.tv.api.MediaSegment("intro", 90_000, 180_000)))
@@ -67,12 +73,59 @@ class TvPlayerBarTest {
         }
         val screen = compose.onRoot().getUnclippedBoundsInRoot().bottom
         val time = compose.onNodeWithText("1:35").getUnclippedBoundsInRoot()
-        val shown = compose.onNodeWithText("Skip intro").getUnclippedBoundsInRoot()
+        val left = compose.onNodeWithText("22:06").getUnclippedBoundsInRoot()
+        val shown = compose.onNodeWithTag("tv-skip").getUnclippedBoundsInRoot()
+        assertTrue("the bar is low: ${screen - time.bottom} from the bottom", screen - time.bottom < 70.dp)
         assertTrue("above the bar: ${shown.bottom} vs ${time.top}", shown.bottom < time.top)
-        assertTrue("right above it, not far up: ${time.top - shown.bottom}", time.top - shown.bottom < 40.dp)
+        assertTrue("right above it, not far up: ${time.top - shown.bottom}", time.top - shown.bottom < 30.dp)
+        assertEquals("ends where the bar's time ends", left.right.value, shown.right.value, 0.5f)
         visible = false
         compose.waitForIdle()
-        val hidden = compose.onNodeWithText("Skip intro").getUnclippedBoundsInRoot()
-        assertTrue("low in the corner: ${screen - hidden.bottom} from the bottom", screen - hidden.bottom < 70.dp)
+        val hidden = compose.onNodeWithTag("tv-skip").getUnclippedBoundsInRoot()
+        assertEquals("does not move when the controls hide", shown, hidden)
+    }
+
+    // Seen in a drawn shot: with the controls showing, the focused (white) Skip button came
+    // out grey. The controls' dark layer was drawn over it, so it looked behind the bar.
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun skipIsDrawnOverTheControlsShade() {
+        val state = PlayerUiState(title = "T", subtitle = "S  S01E14", positionSec = 95.0, durationSec = 1421.0, fullscreen = null,
+            segments = listOf(tv.roxy.tv.api.MediaSegment("intro", 90_000, 180_000)))
+        compose.setContent {
+            Box(Modifier.fillMaxSize()) {
+                PlayerControls(state = state, visible = true, sheet = Sheet.None, onSheet = {}, onInteraction = {}, actions = actions)
+            }
+        }
+        compose.waitForIdle()
+        val b = compose.onNodeWithTag("tv-skip").getUnclippedBoundsInRoot()
+        val px = compose.onRoot().captureToImage().toPixelMap()
+        val scale = px.width / compose.onRoot().getUnclippedBoundsInRoot().right.value
+        // Inside the button, clear of its border and its words.
+        val c = px[((b.left.value + 8) * scale).toInt(), ((b.bottom.value - 6) * scale).toInt()]
+        assertEquals("the focused button is white, not shaded: $c", androidx.compose.ui.graphics.Color.White, c)
+    }
+
+    // The next-episode card moved between two heights as the controls came and went, and
+    // sat further right than Skip. It has Skip's place, whatever the controls do.
+    @Test fun nextCardHasSkipsPlace() {
+        var visible by mutableStateOf(true)
+        val state = PlayerUiState(title = "T", subtitle = "S  S01E14", positionSec = 95.0, durationSec = 1421.0, fullscreen = null,
+            segments = listOf(tv.roxy.tv.api.MediaSegment("intro", 90_000, 180_000)))
+        var card by mutableStateOf(false)
+        compose.setContent {
+            Box(Modifier.fillMaxSize()) {
+                PlayerControls(state = state.copy(nextCardShown = card), visible = visible, sheet = Sheet.None, onSheet = {}, onInteraction = {}, actions = actions)
+                if (card) NextEpisodeCard(NextCard("S01E15  Next", null, 8), onPlayNow = {}, onDismiss = {})
+            }
+        }
+        val skip = compose.onNodeWithTag("tv-skip").getUnclippedBoundsInRoot()
+        card = true
+        compose.waitForIdle()
+        val shown = compose.onNodeWithTag("next-card").getUnclippedBoundsInRoot()
+        assertEquals("ends where Skip ends", skip.right.value, shown.right.value, 0.5f)
+        assertEquals("stands where Skip stands", skip.bottom.value, shown.bottom.value, 0.5f)
+        visible = false
+        compose.waitForIdle()
+        assertEquals("does not move when the controls hide", shown, compose.onNodeWithTag("next-card").getUnclippedBoundsInRoot())
     }
 }

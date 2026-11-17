@@ -197,7 +197,7 @@ class Shots {
         shot(name)
     }
 
-    // The Skip button with the controls showing (above the bar) and hidden (low in the corner).
+    // The Skip button with the controls showing and hidden: the same place, just above the bar.
     @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
     fun tvSkipShown() = tvSkip("tv-skip-controls", true)
     @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
