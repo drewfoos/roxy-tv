@@ -114,8 +114,15 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
         setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, loading: true } : { key, epoch: myEpoch, data: null, error: null, loading: true, fresh: false }))
       }
       const overtaken = () => (latest.current === mine ? undefined : (latest.current ?? undefined))
-      const mine: Promise<void> = fnRef
-        .current()
+      // A load that throws before it returns a promise is a failed load like any other:
+      // thrown from here it would leave the load it overtook dropped, with nothing shown.
+      let asked: Promise<T>
+      try {
+        asked = fnRef.current()
+      } catch (e) {
+        asked = Promise.reject(e)
+      }
+      const mine: Promise<void> = asked
         .then((d) => {
           if (my !== gen.current) return overtaken()
           // Asked for the login / profile since left: drop it, and ask again for this one
