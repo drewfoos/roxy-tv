@@ -205,7 +205,7 @@ func service(t *testing.T, cfg *config.Config, ff *ffmpeg.FFmpeg, path string, d
 // generator works in).
 func fakeFFmpeg(t *testing.T, script string) *ffmpeg.FFmpeg {
 	t.Helper()
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS != "linux" {
 		t.Skip("needs a shell")
 	}
 	p := filepath.Join(t.TempDir(), "ffmpeg")
@@ -703,5 +703,60 @@ func TestAFileReplacedDuringARunIsMadeAgain(t *testing.T) {
 	s.mu.Unlock()
 	if failed {
 		t.Fatal("the old file's failure is held against the new file")
+	}
+}
+
+// A replacement of the same length that keeps the old file's time (a copy that carries
+// times over) is still another file: size and time alone called it the same one, and
+// the old file's previews were kept as the new file's.
+func TestAReplacementOfTheSameSizeAndTimeIsStillAnotherFile(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("file numbers are read on Linux only")
+	}
+	cfg, media := setup(t)
+	video := filepath.Join(media, "Film.mkv")
+	if err := os.WriteFile(video, []byte("not a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(video, when, when); err != nil {
+		t.Fatal(err)
+	}
+	s, id := service(t, cfg, fakeFFmpeg(t, "exit 1"), video, 30_000)
+	before := s.fileMark(context.Background(), id)
+	if before == "" {
+		t.Fatal("no mark for a file that is there")
+	}
+
+	// Rewritten in place, same length, time put back.
+	if err := os.WriteFile(video, []byte("NOT A VIDEO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(video, when, when); err != nil {
+		t.Fatal(err)
+	}
+	inPlace := s.fileMark(context.Background(), id)
+	if inPlace == before {
+		t.Fatal("a file rewritten in place with its time put back has the old file's mark")
+	}
+
+	// Another file moved onto the path, same length, same time.
+	next := filepath.Join(media, "Film.mkv.part")
+	if err := os.WriteFile(next, []byte("Not A Video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(next, when, when); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(next, video); err != nil {
+		t.Fatal(err)
+	}
+	if moved := s.fileMark(context.Background(), id); moved == inPlace || moved == before {
+		t.Fatal("a file moved onto the path with the same size and time has the old file's mark")
+	}
+
+	// Left alone, the mark does not change.
+	if a, b := s.fileMark(context.Background(), id), s.fileMark(context.Background(), id); a != b {
+		t.Fatalf("an untouched file's mark changed: %q then %q", a, b)
 	}
 }

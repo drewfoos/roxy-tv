@@ -212,8 +212,12 @@ func (s *Service) attempt(ctx context.Context, id string) {
 	}
 }
 
-// fileMark is the size and time of a source's file, "" when it cannot be read: what
-// tells a file from the one that replaced it at the same path.
+// fileMark is what tells a source's file from the one that replaced it at the same
+// path, "" when it cannot be read: its size and time, and where the system gives them
+// (fileSerial) its file number and change time. Size and time alone miss a replacement
+// of the same length whose time was carried over (a copy that keeps times, a download
+// client that sets the release's own). A file moved into place has another number; one
+// rewritten in place has a new change time, which no program can set.
 func (s *Service) fileMark(ctx context.Context, sourceID string) string {
 	src, err := s.store.GetSource(ctx, sourceID)
 	if err != nil || src == nil || len(src.Parts) == 0 {
@@ -227,7 +231,7 @@ func (s *Service) fileMark(ctx context.Context, sourceID string) string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().UnixNano())
+	return fmt.Sprintf("%d:%d:%s", fi.Size(), fi.ModTime().UnixNano(), fileSerial(fi))
 }
 
 // sourceError is a failure that is the media file's own (ffmpeg could not read it, or
