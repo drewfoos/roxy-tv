@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { retryFailedPages } from '../app/lazyPage'
 
 /**
  * Catches a page that throws while rendering. Without it React unmounts everything and
@@ -19,6 +20,8 @@ export class PageErrorBoundary extends Component<{ children: ReactNode; resetKey
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('page crashed', error, info.componentStack)
+    // A page whose script did not load is asked for again at its next visit.
+    retryFailedPages()
   }
 
   render() {

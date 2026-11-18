@@ -101,6 +101,9 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   fnRef.current = fn
   const gen = useRef(0)
   const again = useRef<(silent: boolean) => Promise<void>>(() => Promise.resolve())
+  // The newest load: one that was overtaken ends when this one does, so a caller waiting
+  // on `reload()` is not told "done" while the answer that will be shown is still out.
+  const latest = useRef<Promise<void> | null>(null)
 
   const run = useCallback(
     (silent = false): Promise<void> => {
@@ -110,10 +113,11 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
       if (!silent && !cache.has(key)) {
         setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, loading: true } : { key, epoch: myEpoch, data: null, error: null, loading: true, fresh: false }))
       }
-      return fnRef
+      const overtaken = () => (latest.current === mine ? undefined : (latest.current ?? undefined))
+      const mine: Promise<void> = fnRef
         .current()
         .then((d) => {
-          if (my !== gen.current) return
+          if (my !== gen.current) return overtaken()
           // Asked for the login / profile since left: drop it, and ask again for this one
           // (a component that stays on screen through the switch, like the footer).
           if (myEpoch !== epoch) return again.current(silent)
@@ -121,11 +125,13 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
           setHeld({ key, epoch: myEpoch, data: d, error: null, loading: false, fresh: true })
         })
         .catch((e: unknown) => {
-          if (my !== gen.current) return
+          if (my !== gen.current) return overtaken()
           if (myEpoch !== epoch) return again.current(silent)
           const error = e instanceof Error ? e.message : String(e)
           setHeld((h) => (h.key === key && h.epoch === myEpoch ? { ...h, error, loading: false } : { key, epoch: myEpoch, data: null, error, loading: false, fresh: false }))
         })
+      latest.current = mine
+      return mine
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key, ...deps],
@@ -179,4 +185,24 @@ export function useReloadOnFocus(...reloads: Array<(silent?: boolean) => Promise
     return () => window.removeEventListener('focus', onFocus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, reloads)
+}
+
+/**
+ * Reload every `ms` while the tab is shown (0 = not at all). A tick is skipped while the
+ * one before is still unanswered: each reload drops the one before it, so on a link
+ * slower than the interval no answer was ever shown.
+ */
+export function usePoll(reload: (silent?: boolean) => Promise<void>, ms: number) {
+  useEffect(() => {
+    if (!ms) return
+    let out = false
+    const h = window.setInterval(() => {
+      if (document.hidden || out) return
+      out = true
+      void reload(true).finally(() => {
+        out = false
+      })
+    }, ms)
+    return () => window.clearInterval(h)
+  }, [ms, reload])
 }

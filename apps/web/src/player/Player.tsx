@@ -556,7 +556,16 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       // The button stays for the window, or the whole segment when the window is 0.
       setSkip(seg && (p.skipWindowSec === 0 || ms < seg.startMs + p.skipWindowSec * 1000) ? seg : null)
     }
-    const onPlay = () => setPlaying(true)
+    const onPlay = () => {
+      setPlaying(true)
+      // Playing again after a pause that was reported: said at once (the state alone, no
+      // second report of the same position), or "Now playing" showed it paused until the
+      // next timed report, up to ten seconds later.
+      if (lastState.current === 'paused') {
+        lastState.current = 'playing'
+        api.playState(item.id, 'playing').catch(() => undefined)
+      }
+    }
     const onPause = () => {
       setPlaying(false)
       // A server stream that ran out pauses at the header's duration before 'ended': not

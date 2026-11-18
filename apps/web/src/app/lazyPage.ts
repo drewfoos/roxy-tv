@@ -1,6 +1,6 @@
 // Pages loaded when first opened, so the first script is the pages people land on and
 // not the player, the account pages and Discover as well.
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
+import { createElement, lazy, type ComponentType, type LazyExoticComponent } from 'react'
 
 /**
  * A page's script could not be loaded. The usual cause is a server updated while this tab
@@ -66,21 +66,44 @@ export async function loadPage<T>(
 
 type Page = ComponentType<object>
 const loaders: (() => Promise<unknown>)[] = []
+/** Pages whose script did not load, each with the way to have it asked for again. */
+const failed = new Set<() => void>()
+
+/**
+ * The page's error has been shown: the pages that failed are asked for again the next
+ * time one is opened. React keeps a lazy component's failure for good, so without this a
+ * page that failed once (the server was away for a moment) showed its error at every
+ * later visit until the tab was reloaded. Called by the error boundary once the error is
+ * on screen, never while React is still drawing: a new try during the failed draw would
+ * be drawn at once, fail again and go round.
+ */
+export function retryFailedPages() {
+  failed.forEach((again) => again())
+  failed.clear()
+}
 
 /** `pick` names the page in its module (the pages are named exports). */
-export function lazyPage<M>(load: () => Promise<M>, pick: (m: M) => Page): LazyExoticComponent<Page> {
+export function lazyPage<M>(load: () => Promise<M>, pick: (m: M) => Page): Page {
   // One import per page however often it is asked for: a failed one is asked again.
   let pending: Promise<{ default: Page }> | null = null
+  let current: LazyExoticComponent<Page>
   const once = () =>
     (pending ??= loadPage(load)
       .then((m) => ({ default: pick(m) }))
       .catch((e) => {
         pending = null
+        failed.add(renew)
         throw e
       }))
-  // Ahead of time, the script alone: a failure there must not reload a page in use.
-  loaders.push(() => load().catch(() => undefined))
-  return lazy(once)
+  const renew = () => {
+    current = lazy(once)
+  }
+  renew()
+  // Ahead of time, the script alone: a failure there must not reload a page in use. One
+  // that loads shows this build's scripts are there, so the next update's missing script
+  // gets its one reload again (the mark otherwise stayed for as long as the tab did).
+  loaders.push(() => load().then(flag.clear, () => undefined))
+  return (props: object) => createElement(current, props)
 }
 
 /**

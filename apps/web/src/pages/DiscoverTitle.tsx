@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
 import type { DiscoverDetail, DiscoverEpisode, DiscoverFilm, DiscoverSeason, Item, ItemDetails } from '../api/types'
-import { useAsync, markStale } from '../hooks/useAsync'
+import { useAsync, markStale, usePoll } from '../hooks/useAsync'
 import { useSession } from '../app/useSession'
 import { Art, Row } from '../components/Cards'
 import { TitleBanner, TitleBelow } from '../components/TitlePage'
@@ -67,13 +67,7 @@ export function DiscoverTitle() {
   const dl = d?.download
   const sent = d?.request?.status
   const pollMs = isActive(dl) || (burst && sent === 'sent') ? 5000 : sent === 'sent' && !dl ? 15000 : isPending(sent, dl) ? 45000 : 0
-  useEffect(() => {
-    if (!pollMs) return
-    const h = window.setInterval(() => {
-      if (!document.hidden) reload(true)
-    }, pollMs)
-    return () => window.clearInterval(h)
-  }, [pollMs, reload])
+  usePoll(reload, pollMs)
 
   /** Runs a change, then reloads the page (and lets Discover's rows ask again). */
   const acting = useRef(false)

@@ -151,6 +151,19 @@ describe('Player', () => {
     expect(lastReport()?.ms).toBe(20000)
   })
 
+  it('says playing at once after a pause, without a second report of the position', async () => {
+    await mount(item('a', 'aac'))
+    await act(async () => { await video().play() })
+    playTo(20)
+    st(video()).paused = true
+    fire('pause')
+    const saved = reports().length
+    api.playState.mockClear()
+    await act(async () => { await video().play() })
+    expect(api.playState.mock.calls).toEqual([['a', 'playing']])
+    expect(reports().length).toBe(saved)
+  })
+
   it('a stream lost for good is saved where it got to, also on leaving the page', async () => {
     await mount(item('a', 'ac3'))
     for (let i = 0; i < 4; i++) {

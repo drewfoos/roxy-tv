@@ -2,6 +2,7 @@
 import { act, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PageErrorBoundary } from '../components/PageErrorBoundary'
 import { lazyPage, loadPage, preloadPages } from './lazyPage'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -92,6 +93,51 @@ describe('a page loaded when first opened', () => {
     for (let i = 0; i < 10; i++) await Promise.resolve()
     expect(load).toHaveBeenCalled()
     expect(reload).not.toHaveBeenCalled()
+    expect(sessionStorage.length).toBe(0)
+    vi.unstubAllGlobals()
+  })
+
+  it('is asked for again at the next visit after it failed once', async () => {
+    // The server was away when the page was opened (the one reload already used).
+    sessionStorage.setItem('roxy:page-script-reload', '1')
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let there = false
+    const load = vi.fn(async () => {
+      if (!there) throw new TypeError('Failed to fetch dynamically imported module')
+      return { Page: () => <h1>Here</h1> }
+    })
+    const Page = lazyPage(load, (m) => m.Page)
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const show = (path: string) =>
+      act(async () => {
+        root.render(
+          <PageErrorBoundary resetKey={path}>
+            <Suspense fallback={<div className="spinner" />}>{path === '/page' && <Page />}</Suspense>
+          </PageErrorBoundary>,
+        )
+        for (let i = 0; i < 10; i++) await Promise.resolve()
+      })
+    await show('/page')
+    expect(host.textContent).toContain('could not be loaded')
+    const tries = load.mock.calls.length
+    // Somewhere else, the server returns, and back to the page.
+    await show('/')
+    there = true
+    await show('/page')
+    await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve() })
+    expect(load.mock.calls.length).toBe(tries + 1)
+    expect(host.textContent).toBe('Here')
+    act(() => root.unmount())
+    vi.restoreAllMocks()
+  })
+
+  it('fetched ahead of time, gives the next update its one reload back', async () => {
+    sessionStorage.setItem('roxy:page-script-reload', '1')
+    vi.stubGlobal('requestIdleCallback', (f: () => void) => f())
+    lazyPage(async () => ({ Page: () => null }), (m) => m.Page)
+    preloadPages()
+    for (let i = 0; i < 10; i++) await Promise.resolve()
     expect(sessionStorage.length).toBe(0)
     vi.unstubAllGlobals()
   })

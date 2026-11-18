@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { api, px } from '../../api/client'
 import type { ActiveSession, ActiveTrack } from '../../api/admin'
 import { episodeCode, isEpisode, isMovie } from '../../api/items'
-import { useAsync } from '../../hooks/useAsync'
+import { useAsync, usePoll } from '../../hooks/useAsync'
 import { Notice, PanelHead } from '../../components/Form'
 import { IconPause, IconPlay } from '../../components/Icons'
 import { Spinner } from '../../components/Skeleton'
@@ -31,10 +31,8 @@ export function NowPlayingPage() {
   useEffect(() => {
     gotAt.current = Date.now()
   }, [data])
+  usePoll(reload, REFRESH_MS)
   useEffect(() => {
-    const again = window.setInterval(() => {
-      if (!document.hidden) reload(true)
-    }, REFRESH_MS)
     const second = window.setInterval(() => {
       if (!document.hidden) setTick((n) => n + 1)
     }, 1000)
@@ -44,7 +42,6 @@ export function NowPlayingPage() {
     }
     document.addEventListener('visibilitychange', onShow)
     return () => {
-      window.clearInterval(again)
       window.clearInterval(second)
       document.removeEventListener('visibilitychange', onShow)
     }

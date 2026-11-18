@@ -80,7 +80,7 @@ export function Hero({ heroes }: { heroes: HeroPick[] }) {
           const label = heroPlayLabel(h.play)
           const playTo = isEpisode(h.play) || isMovie(h.play) ? `/watch/${h.play.id}` : itemPath(h.play)
           return (
-            <div key={t.id} className={'hero__slide' + (i === index ? ' hero__slide--on' : '')} aria-hidden={i !== index}>
+            <div key={t.id} className={'hero__slide' + (i === index ? ' hero__slide--on' : '')} aria-hidden={i !== index} inert={i !== index}>
               {art && (
                 <div className="hero__bg">
                   <picture>
