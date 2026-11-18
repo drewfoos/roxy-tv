@@ -183,8 +183,23 @@ func (s *Service) attempt(ctx context.Context, id string) {
 	if current(s.Manifest(id)) {
 		return // made while this waited in the queue (asked for twice)
 	}
+	before := s.fileMark(ctx, id)
 	err := s.generate(ctx, id)
-	if err == nil || ctx.Err() != nil { // stopping the server is not the file's fault
+	if ctx.Err() != nil { // stopping the server is not the file's fault
+		return
+	}
+	if after := s.fileMark(ctx, id); before != "" && after != before {
+		// The file was replaced while its previews were being made (a re-download at the
+		// same path): what was made shows the old file, or failed on a half-written one.
+		// Neither is kept or counted; it is made again from the file as it is now (work).
+		// Before, the old file's previews stayed for good: the new file's own request to
+		// be queued was refused, the run being "in progress".
+		s.mu.Lock()
+		s.again[id] = true
+		s.mu.Unlock()
+		return
+	}
+	if err == nil {
 		return
 	}
 	slog.Warn("trickplay: generation failed", "source", id, "err", err)
@@ -195,6 +210,24 @@ func (s *Service) attempt(ctx context.Context, id string) {
 	if errors.As(err, &bad) {
 		s.noteFailure(id, bad)
 	}
+}
+
+// fileMark is the size and time of a source's file, "" when it cannot be read: what
+// tells a file from the one that replaced it at the same path.
+func (s *Service) fileMark(ctx context.Context, sourceID string) string {
+	src, err := s.store.GetSource(ctx, sourceID)
+	if err != nil || src == nil || len(src.Parts) == 0 {
+		return ""
+	}
+	path, err := safefs.MediaPath(src.Parts[0].Path)
+	if err != nil {
+		return ""
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().UnixNano())
 }
 
 // sourceError is a failure that is the media file's own (ffmpeg could not read it, or

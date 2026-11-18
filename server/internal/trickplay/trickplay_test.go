@@ -669,3 +669,39 @@ func (s *Service) Pending(sourceID string) bool {
 	defer s.mu.Unlock()
 	return s.pending[sourceID]
 }
+
+// A file replaced at the same path while its previews are being made (a re-download):
+// the run in progress read the old file. Its result is not kept as the new file's, and
+// the previews are made again. Before, the new file's own "queue me" was refused (a run
+// was in progress), and the old file's previews stayed for good.
+func TestAFileReplacedDuringARunIsMadeAgain(t *testing.T) {
+	cfg, media := setup(t)
+	video := filepath.Join(media, "Film.mkv")
+	if err := os.WriteFile(video, []byte("not a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, id := service(t, cfg, fakeFFmpeg(t, "sleep 1; echo 'Invalid data found when processing input' >&2; exit 1"), video, 30_000)
+	if !s.Enqueue(id) {
+		t.Fatal("not queued")
+	}
+	<-s.queue
+	done := make(chan struct{})
+	go func() { s.work(context.Background(), id); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	if err := os.WriteFile(video, []byte("another file, of another size"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if s.Enqueue(id) { // what ingest does for the new file
+		t.Fatal("queued a second time while its run is in progress")
+	}
+	<-done
+	if n := len(s.queue) + len(s.redo); n != 1 {
+		t.Fatalf("queued %d times after the run, want 1: the file is another one now", n)
+	}
+	s.mu.Lock()
+	_, failed := s.failed[id]
+	s.mu.Unlock()
+	if failed {
+		t.Fatal("the old file's failure is held against the new file")
+	}
+}
