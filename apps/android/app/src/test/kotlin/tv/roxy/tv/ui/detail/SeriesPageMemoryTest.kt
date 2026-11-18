@@ -105,4 +105,33 @@ class SeriesPageMemoryTest {
         val vm = SeriesViewModel(FakeSeriesServer(), "show", initial = show)
         assertTrue(vm.state.value.seasons.isEmpty())
     }
+
+    // A series deleted on the server since the page was last read: the remembered page stayed
+    // up with its episodes (none of which could play), on every visit, with no error.
+    @Test fun aSeriesThatIsGoneIsNotShownFromMemory() {
+        val memory = PageMemory<SeriesPage>()
+        visited(memory)
+
+        val server = FakeSeriesServer()
+        val again = SeriesViewModel(server, "show", show, memory, "p:show")
+        again.load()
+        server.fail("item", error = tv.roxy.tv.api.ApiException(404, "Not found"))
+        assertNull("the page is not the remembered one", again.state.value.series)
+        assertTrue("it says why: ${again.state.value.error}", again.state.value.error != null)
+        assertNull("and it is forgotten", memory.get("p:show"))
+    }
+
+    // Any other failed re-read keeps the remembered page (a Wi-Fi drop is not a deletion).
+    @Test fun aFailedReReadKeepsTheRememberedPage() {
+        val memory = PageMemory<SeriesPage>()
+        visited(memory)
+
+        val server = FakeSeriesServer()
+        val again = SeriesViewModel(server, "show", show, memory, "p:show")
+        again.load()
+        server.fail("item")
+        assertEquals("show", again.state.value.series?.id)
+        assertEquals(listOf("s2-e1"), again.state.value.episodes.map { it.id })
+        assertTrue(memory.get("p:show") != null)
+    }
 }

@@ -72,6 +72,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
@@ -303,10 +304,16 @@ fun PlayerControls(
     val skipFocus = remember { FocusRequester() }
     val skipSeg = state.skippableSegment?.takeIf { !state.autoSkip && !state.nextCardShown }
     LaunchedEffect(skipSeg?.type, skipSeg?.startSec) { if (tv && skipSeg != null && sheet == Sheet.None) { withFrameNanos { }; runCatching { skipFocus.requestFocus() } } }
+    // Skip going away with the focus on it (pressed, or the intro ended) took the focus with
+    // it. Noted here, while composing, before the button is gone; see the effect below.
+    val tvSkipUp = tv && skipSeg != null
+    val skipFocused = remember { booleanArrayOf(false) }
+    val skipLeftFocused = remember { booleanArrayOf(false) }
+    if (!tvSkipUp && skipFocused[0]) { skipFocused[0] = false; skipLeftFocused[0] = true }
     state.skippableSegment?.let { seg ->
         if (!state.autoSkip && !state.nextCardShown) {
             if (tv) SkipButton(
-                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, focusRequester = skipFocus, tag = "tv-skip",
+                seg.label, onClick = { actions.seekTo(seg.endSec); onInteraction() }, large = true, focusRequester = skipFocus, tag = "tv-skip", endOfRow = true, onFocusChange = { skipFocused[0] = it },
                 // Over the controls' shade, which is drawn after it (it came out grey, as if behind
                 // the bar); under an open menu.
                 modifier = Modifier.fillMaxSize().zIndex(if (sheet == Sheet.None) 1f else 0f).padding(end = TvTimesSide, bottom = TvSkipBottom),
@@ -320,6 +327,14 @@ fun PlayerControls(
     // reaches the buttons. A phone (touch, or a keyboard) starts on play/pause.
     val seekFocus = remember { FocusRequester() }
     LaunchedEffect(visible, sheet) { if (sheet == Sheet.None && !(tv && skipSeg != null)) runCatching { (if (tv) seekFocus else playFocus).requestFocus() } }
+    // The seek bar takes the focus Skip left with (OK did nothing until the controls hid, or
+    // acted on whatever the system picked). Not when the next-episode card replaced Skip: the
+    // card takes it. Focus that was elsewhere stays where it was.
+    LaunchedEffect(tvSkipUp) {
+        if (tvSkipUp || !skipLeftFocused[0]) return@LaunchedEffect
+        skipLeftFocused[0] = false
+        if (sheet == Sheet.None && !state.nextCardShown) { withFrameNanos { }; runCatching { seekFocus.requestFocus() } }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxWidth().height(if (compact) 70.dp else if (tv) 190.dp else 140.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(0f to Color(0xB3000000), 1f to Color.Transparent)))
@@ -538,7 +553,7 @@ private val LocalCloseSheet = compositionLocalOf<() -> Unit> { {} }
 
 /** Netflix/YouTube-style "Skip intro" pill, bottom-right over the video. */
 @Composable
-private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd, focusRequester: FocusRequester? = null, tag: String? = null) {
+private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, compact: Boolean = false, large: Boolean = false, align: Alignment = Alignment.BottomEnd, focusRequester: FocusRequester? = null, tag: String? = null, endOfRow: Boolean = false, onFocusChange: (Boolean) -> Unit = {}) {
     var focused by remember { mutableStateOf(false) }
     Box(modifier = modifier, contentAlignment = align) {
         Row(
@@ -546,7 +561,10 @@ private fun SkipButton(label: String, onClick: () -> Unit, modifier: Modifier, c
             modifier = Modifier
                 .then(if (tag != null) Modifier.testTag(tag) else Modifier)
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .onFocusChanged { focused = it.isFocused }
+                // Nothing is to its right: without this, Right found the top bar's Next episode
+                // icon far above it, and OK there ended the episode.
+                .then(if (endOfRow) Modifier.focusProperties { right = FocusRequester.Cancel } else Modifier)
+                .onFocusChanged { focused = it.isFocused; onFocusChange(it.isFocused) }
                 .focusable()
                 .onOkPress { onClick() }
                 .clip(RoundedCornerShape(4.dp))

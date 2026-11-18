@@ -343,6 +343,14 @@ class SeriesViewModel internal constructor(
                 if (!pages.isLatest(page)) return@launch
                 val retry = pendingRetry.also { pendingRetry = null }
                 Timber.e(t, "series load failed")
+                // The server says there is no such series (deleted since the page was last
+                // read): a kept page would go on offering episodes that cannot play, on every
+                // visit. Any other failure keeps what is showing, as below.
+                if (t is tv.roxy.tv.api.ApiException && t.isNotFound) {
+                    memory?.remove(memoryKey)
+                    _state.value = SeriesUiState(loading = false, error = tv.roxy.tv.data.friendlyError(t, "this series"))
+                    return@launch
+                }
                 // A reload that fails (back from the player during a Wi-Fi drop) keeps the
                 // page that is showing; only a first load turns into the error.
                 // A retry's failure brings its problem back, unless a season was picked

@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -108,7 +109,8 @@ fun NextEpisodeCard(card: NextCard, onPlayNow: () -> Unit, onDismiss: () -> Unit
             }
             Row(modifier = Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CardButton("Play now", primary = true, focusRequester = playFocus, modifier = Modifier.weight(1f), onClick = onPlayNow)
-                CardButton("Watch credits", primary = false, modifier = Modifier.weight(1f), onClick = onDismiss)
+                // The card's last button: Right stays here (it found the top bar's Next episode icon).
+                CardButton("Watch credits", primary = false, modifier = Modifier.weight(1f).focusProperties { right = FocusRequester.Cancel }, onClick = onDismiss)
             }
         }
     }

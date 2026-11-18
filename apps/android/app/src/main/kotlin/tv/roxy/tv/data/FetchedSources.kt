@@ -11,8 +11,12 @@ import tv.roxy.tv.api.MediaSource
  * Only for a moment ([MAX_AGE_MS]) and only once: a next episode looked up at the start
  * of this one opens half an hour later, when the server may know more about it (an intro
  * found since), so that player asks as before.
+ *
+ * Age is counted on a clock that only runs forward ([System.nanoTime]), not the time of
+ * day: a clock set while the player opens (network time, a time zone) must not age the
+ * facts out, or keep them past their moment.
  */
-class FetchedSources(private val now: () -> Long = System::currentTimeMillis) {
+class FetchedSources(private val now: () -> Long = { System.nanoTime() / 1_000_000 }) {
     private val held = HashMap<String, Pair<MediaSource, Long>>()
 
     /** [source] as the server gave it just now. */

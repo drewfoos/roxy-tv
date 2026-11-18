@@ -22,6 +22,7 @@ internal class PageMemory<T : Any>(private val keep: Int = 40) {
     }
     @Synchronized fun get(id: String): T? = map[id]
     @Synchronized fun put(id: String, value: T) { map[id] = value }
+    @Synchronized fun remove(id: String) { map.remove(id) }
     @Synchronized fun clear() = map.clear()
 }
 

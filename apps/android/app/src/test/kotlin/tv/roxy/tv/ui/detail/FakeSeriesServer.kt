@@ -31,7 +31,7 @@ class FakeSeriesServer(private val ignoresCancel: Boolean = false) : SeriesSourc
     private fun take(key: String, newest: Boolean) = waiting.getValue(key).let { if (newest) it.removeLast() else it.removeFirst() }
     /** Answers the oldest waiting call of [key] (the newest with [newest]). */
     fun answer(key: String, value: Any?, newest: Boolean = false) = take(key, newest).complete(Result.success(value))
-    fun fail(key: String, newest: Boolean = false) = take(key, newest).complete(Result.failure(IOException("network down")))
+    fun fail(key: String, newest: Boolean = false, error: Throwable = IOException("network down")) = take(key, newest).complete(Result.failure(error))
 
     override suspend fun item(id: String): Item = call("item")
     override suspend fun seasons(seriesId: String): List<Item> = call("seasons")
