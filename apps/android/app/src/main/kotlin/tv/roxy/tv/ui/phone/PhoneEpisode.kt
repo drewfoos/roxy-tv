@@ -254,6 +254,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     // Stopped means off screen: the PiP window was dismissed, or the app was left while
     // paused. Entering PiP never stops the activity, so this always pauses.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { session?.let { it.reportProgress("stop"); it.player.setPaused(true) } }
+    // Back after a long time away (see Away): the page closes, to the show's page or Home,
+    // rather than a player paused since yesterday. The activity's own stops only: another
+    // page of the app over this one is not time away.
+    tv.roxy.tv.player.CloseAfterLongAbsence(owner = main ?: androidx.lifecycle.compose.LocalLifecycleOwner.current, inPip = { main?.inPip == true }, onClose = onBack)
     // The system back gesture in fullscreen drops back to the mini player, not off the page.
     BackHandler(enabled = landscape) { setFullscreen(false) }
     // Pin the session the effect was keyed on: the lambda must not read the state delegate

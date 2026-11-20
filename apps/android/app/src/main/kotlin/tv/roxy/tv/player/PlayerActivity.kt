@@ -426,6 +426,9 @@ class PlayerActivity : ComponentActivity() {
         if (::session.isInitialized) session.onStop()
         RoxyApp.get(this).remote.setForeground(false)
         RoxyApp.get(this).server.setForeground(false)
+        // The TV's player does not wait in the background (see Away): its place was just
+        // reported, and the TV comes back on the page under it.
+        if (Away.closesWhenStopped(isTv, isChangingConfigurations, isFinishing)) { Timber.i("player closed: no longer on screen"); finish() }
         super.onStop()
     }
 
