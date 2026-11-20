@@ -252,10 +252,12 @@ fun LoginScreen() {
     // The server at the address answers with another id than the one signed in to before
     // (same address or same name): a look-alike, or the server was reinstalled. Say so.
     var notPinned by remember { mutableStateOf(false) }
+    var compat by remember { mutableStateOf(tv.roxy.tv.data.Compat.Verdict.Ok) }
     LaunchedEffect(serverUrl) {
         setup = null
         reachable = null
         notPinned = false
+        compat = tv.roxy.tv.data.Compat.Verdict.Ok
         val url = serverUrl.trim().trimEnd('/').let { if (it.isEmpty() || it.startsWith("http")) it else "http://$it" }
         if (url.isEmpty()) return@LaunchedEffect
         kotlinx.coroutines.delay(500) // typing: wait for a pause
@@ -263,9 +265,11 @@ fun LoginScreen() {
         reachable = setup != null
         val who = runCatching { app.api.serverInfoAt(url) }.getOrNull()
         notPinned = who != null && app.prefs.pinConflict(url, who.id, who.name)
+        if (who != null && who.product == "roxy") compat = tv.roxy.tv.data.Compat.verdict(who.api)
     }
     val serverWarning = when {
         notPinned -> "This isn't the server you signed in to before. Only continue if you trust it."
+        compat != tv.roxy.tv.data.Compat.Verdict.Ok -> tv.roxy.tv.ui.compatSignInWarning(compat)
         ServerAddress.cleartextOutsideHome(serverUrl) -> "Not encrypted. Only use this on your home network."
         else -> null
     }

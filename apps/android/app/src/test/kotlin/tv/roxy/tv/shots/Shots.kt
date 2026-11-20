@@ -197,6 +197,22 @@ class Shots {
         shot(name)
     }
 
+    // The page in place of the app when it and the server do not match.
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneCompatUpdate() = compat("phone-compat-update", false, tv.roxy.tv.data.Compat.Verdict.AppTooOld, tv.roxy.tv.data.UpdateState.Available(tv.roxy.tv.data.AppUpdate(versionCode = 200, versionName = "0.7.0")))
+    @Test @Config(qualifiers = "w412dp-h915dp-port-xxhdpi")
+    fun phoneCompatDownloading() = compat("phone-compat-downloading", false, tv.roxy.tv.data.Compat.Verdict.AppTooOld, tv.roxy.tv.data.UpdateState.Downloading(tv.roxy.tv.data.AppUpdate(versionCode = 200, versionName = "0.7.0"), 0.42f))
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvCompatUpdate() = compat("tv-compat-update", true, tv.roxy.tv.data.Compat.Verdict.AppTooOld, tv.roxy.tv.data.UpdateState.Available(tv.roxy.tv.data.AppUpdate(versionCode = 200, versionName = "0.7.0")))
+    @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    fun tvCompatServer() = compat("tv-compat-server", true, tv.roxy.tv.data.Compat.Verdict.ServerTooOld, tv.roxy.tv.data.UpdateState.None)
+    private fun compat(name: String, onTv: Boolean, verdict: tv.roxy.tv.data.Compat.Verdict, update: tv.roxy.tv.data.UpdateState) {
+        val words = tv.roxy.tv.ui.compatWords(verdict, update, null, "0.6.47")!!
+        compose.setContent { tv.roxy.tv.ui.theme.RoxyTheme { Box(Modifier.fillMaxSize().background(tv.roxy.tv.ui.theme.RoxyColors.background)) { tv.roxy.tv.ui.CompatPage(tv = onTv, words = words, onAction = {}, onSignOut = {}) } } }
+        compose.waitForIdle()
+        shot(name)
+    }
+
     // The Skip button with the controls showing and hidden: the same place, just above the bar.
     @Test @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
     fun tvSkipShown() = tvSkip("tv-skip-controls", true)

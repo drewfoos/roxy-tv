@@ -97,21 +97,28 @@ class Updates(private val context: Context, private val api: RoxyApi, private va
     private val _checkNote = MutableStateFlow<String?>(null)
     val checkNote: StateFlow<String?> get() = _checkNote
 
+    /** How the last [checkNow] ended, for a page that must say more than the note does. */
+    enum class Checked { Checking, Current, Unreachable, Found }
+    private val _checked = MutableStateFlow<Checked?>(null)
+    val checked: StateFlow<Checked?> get() = _checked
+
     /**
      * A check the person asked for in Settings: always asks the server, says so when the
      * app is current, and offers a build they dismissed earlier again.
      */
     fun checkNow() {
         _checkNote.value = "Checking…"
+        _checked.value = Checked.Checking
         checkedAt = System.currentTimeMillis()
         scope.launch {
             val result = runCatching { api.latestAppBuild(BuildConfig.APPLICATION_ID) }
             val err = result.exceptionOrNull()
             val u = result.getOrNull()
             when {
-                err != null && !(err is ApiException && err.isNotFound) -> _checkNote.value = "Couldn't reach the server"
-                u == null || u.versionCode <= BuildConfig.VERSION_CODE -> _checkNote.value = "Up to date  ·  ${BuildConfig.VERSION_NAME}"
+                err != null && !(err is ApiException && err.isNotFound) -> { _checkNote.value = "Couldn't reach the server"; _checked.value = Checked.Unreachable }
+                u == null || u.versionCode <= BuildConfig.VERSION_CODE -> { _checkNote.value = "Up to date  ·  ${BuildConfig.VERSION_NAME}"; _checked.value = Checked.Current }
                 else -> {
+                    _checked.value = Checked.Found
                     _checkNote.value = "Roxy TV ${u.versionName} is available"
                     prefs.setDismissedUpdate(0)
                     _state.value = UpdateState.Available(u)

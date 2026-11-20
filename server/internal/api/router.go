@@ -94,6 +94,7 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 	r.Use(cors)
 	r.Use(securityHeaders)
 	r.Use(newRateLimiter(20, 60).middleware)
+	r.Use(clientCompat(MinClientLevel))
 
 	r.Get("/healthz", s.healthz)
 
@@ -260,6 +261,9 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) {
 		"id":      id,
 		"name":    s.store.ServerName(r.Context()),
 		"version": config.Version,
+		// Which apps this server works with (compat.go). An app reads it here, signed in
+		// or not, before it asks for anything else.
+		"api": compatInfo(),
 		// Not ffmpeg's version: nobody signed out needs it, and it tells a stranger
 		// which decoder bugs to try. Signed in, /v1/system/transcoding has it.
 	})

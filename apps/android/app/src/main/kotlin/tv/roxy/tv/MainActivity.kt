@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import tv.roxy.tv.ui.CompatGate
 import tv.roxy.tv.ui.Splash
 import tv.roxy.tv.ui.components.ServerBanner
 import kotlinx.coroutines.delay
@@ -214,7 +215,7 @@ class MainActivity : ComponentActivity() {
                 // would be another full-screen fill on every frame.
                 Surface(modifier = Modifier.fillMaxSize(), colors = SurfaceDefaults.colors(containerColor = RoxyColors.background)) {
                     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-                        AppRoot(tv)
+                        CompatGate(tv) { AppRoot(tv) }
                         // Above every page: "Can't reach Roxy" while the server is away. The phone
                         // says it its own way (a strip over the bottom bar, offline pages).
                         if (tv) ServerBanner(tv)

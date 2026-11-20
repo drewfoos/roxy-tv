@@ -18,6 +18,7 @@ import okio.buffer
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import timber.log.Timber
+import tv.roxy.tv.data.Compat
 import tv.roxy.tv.data.Prefs
 import tv.roxy.tv.data.ServerAddress
 import tv.roxy.tv.data.Session
@@ -71,6 +72,9 @@ class RoxyApi(private val prefs: Prefs) {
             // A request that names its profile keeps it: a queued report belongs to the profile
             // that made it, whichever is active by the time it is sent.
             if (req.header(PROFILE_HEADER) == null) s.profileId?.let { b.header(PROFILE_HEADER, it) }
+            // Which app this is, in the server's terms: one it no longer works with is told
+            // so (426) instead of being served answers it would misread.
+            b.header(Compat.HEADER, Compat.CLIENT_LEVEL.toString())
             val sent = b.build()
             // An answer from Roxy means the server is there; a failed connection (not one we
             // cancelled) tells ServerStatus to check, which drives the "Can't reach Roxy"
@@ -84,6 +88,8 @@ class RoxyApi(private val prefs: Prefs) {
             // device): the server refuses it instead of quietly using another profile. If it is
             // the active one, back to "Who's watching?".
             profileRefused(resp.code, resp.header(PROFILE_GONE_HEADER), sent.header(PROFILE_HEADER))?.let { prefs.forgetProfile(it) }
+            // The server no longer serves this version of the app: the "Update needed" page.
+            if (resp.code == Compat.REFUSED && Compat.refused(resp.code, runCatching { resp.peekBody(4096).string() }.getOrDefault(""))) onCompat?.invoke(Compat.Verdict.AppTooOld)
             // The answer can still die on its way (a long list over a link that drops): that
             // is a failed call too, though its first bytes said the server was there.
             resp.newBuilder().body(watched(resp.body) { if (!chain.call().isCanceled()) onReachability?.invoke(false) }).build()
@@ -92,6 +98,13 @@ class RoxyApi(private val prefs: Prefs) {
 
     /** Told whether each call to the server got an answer (set by ServerStatus; any thread). */
     @Volatile var onReachability: ((Boolean) -> Unit)? = null
+
+    /**
+     * Told whether this app and the server can work together, each time the server says:
+     * every look for it ([reachableNow]) and a refusal of this app's version (set by
+     * ServerStatus; any thread).
+     */
+    @Volatile var onCompat: ((Compat.Verdict) -> Unit)? = null
 
     /** Asked before each call to the server: true = it is away, fail the call at once (set by ServerStatus; any thread, may block for one probe). */
     @Volatile var awayGate: (() -> Boolean)? = null
@@ -293,7 +306,13 @@ class RoxyApi(private val prefs: Prefs) {
                 override fun onFailure(call: Call, e: IOException) { answers.put(i to false) }
                 override fun onResponse(call: Call, response: Response) {
                     val ok = runCatching {
-                        response.use { it.isSuccessful && isThisServer(it.peekBody(64 * 1024).string(), s.serverId, other = url != current) }
+                        response.use {
+                            val body = it.peekBody(64 * 1024).string()
+                            val ours = it.isSuccessful && isThisServer(body, s.serverId, other = url != current)
+                            // The same answer says which apps the server works with.
+                            if (ours) Compat.verdictOf(body)?.let { v -> onCompat?.invoke(v) }
+                            ours
+                        }
                     }.getOrDefault(false)
                     answers.put(i to ok)
                 }
@@ -957,7 +976,7 @@ data class LinkInfo(
 
 /** GET /v1/system/info: public, no sign-in. */
 @Serializable
-data class ServerIdentity(val id: String = "", val name: String = "", val product: String = "", val version: String = "")
+data class ServerIdentity(val id: String = "", val name: String = "", val product: String = "", val version: String = "", val api: Compat.Levels? = null)
 
 @Serializable
 data class LinkResult(val status: String, val token: String? = null, val user: User? = null, val deviceId: String? = null)

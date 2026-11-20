@@ -10,6 +10,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -49,6 +51,14 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
     private val _hasNetwork = MutableStateFlow(true)
     val hasNetwork: StateFlow<Boolean> get() = _hasNetwork
 
+    /**
+     * Whether this app and the server can work together (see [Compat]): what the server
+     * said last. Not Ok puts the "Update needed" / "The server needs updating" page over
+     * the app; the next look that finds them matching takes it away.
+     */
+    private val _compat = MutableStateFlow(Compat.Verdict.Ok)
+    val compat: StateFlow<Compat.Verdict> get() = _compat
+
     /** True while a player page is up on the phone: it shows its own "reconnecting" message. */
     val playerActive = MutableStateFlow(false)
 
@@ -69,6 +79,12 @@ class ServerStatus(private val context: Context, private val api: RoxyApi, priva
             if (!ok || !_online.value) { if (!ok && _online.value) blips.failed(); checkSoon() }
             else { gate.looked(true); blips.answered() }
         }
+        api.onCompat = { v ->
+            if (_compat.value != v) Timber.i("app and server: %s", v)
+            _compat.value = v
+        }
+        // Signed out: the next server is another question.
+        scope.launch { prefs.session.map { it.isLoggedIn }.distinctUntilChanged().collect { if (!it) _compat.value = Compat.Verdict.Ok } }
         api.awayGate = { prefs.session.value.isLoggedIn && gate.failNow(away = !_online.value) }
         watchNetwork()
     }

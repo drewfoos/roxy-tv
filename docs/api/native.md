@@ -72,7 +72,7 @@ it; the player plays with its own engine (the TV app: libmpv + libass). In memor
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/system/info` | `{product: "roxy", id, name, version}`; public, and what the login screen's network sweep reads |
+| GET | `/v1/system/info` | `{product: "roxy", id, name, version, api: {level, minClient}}` (see Compatibility); public, and what the login screen's network sweep reads |
 | GET | `/v1/libraries` | `{libraries: [{id, name, kind, root, animeMode}]}` |
 | POST | `/v1/libraries/scan` | async full rescan, 202 |
 | GET | `/v1/library/manage` | admin: `{scanning, lastScanAt?, lastScanError?, titles, queue}`. `lastScanError` names each library the last full scan failed on (the others were still scanned); gone after a clean scan |
@@ -551,6 +551,32 @@ version, body}`; `GET /v1/legal/status` → `{version, accepted, acceptedVersion
 the login; `POST /v1/legal/accept {version}` records acceptance (409 on a stale
 version). The app requires the "I agree" checkbox on the sign-in screen and records the
 acceptance after login; Account → About links both documents.
+
+## Compatibility (an app and a server that do not match)
+
+An app and a server are updated apart, so each says which API it speaks and the other
+decides whether it can work with it. Both are whole numbers that only go up.
+
+- The server states `api.level` (its own) and `api.minClient` (the oldest app level it
+  still serves) in `GET /v1/system/info`. A server from before this rule states nothing,
+  which counts as level 0.
+- An app sends its level in the header `X-Roxy-Api` with every call. A caller that sends
+  no header (the web app, which the server ships itself; scripts; apps from before this
+  rule) is never refused.
+- A call with a level below `api.minClient` gets `426` with
+  `{"error": ..., "code": "client_too_old", "api": {level, minClient}}`. A `426` without
+  that code is not the server's and says nothing.
+- Never refused, whatever the level, so an old app can still say why and update itself:
+  `/healthz`, `/v1/system/info`, `/v1/auth/login`, `/v1/auth/logout`, `/v1/auth/me` and
+  everything under `/v1/apps/` (see App updates). **These keep their shape for good:** an
+  app that cannot read them cannot be told to update.
+- The app keeps two numbers of its own: its level and the oldest server level it works
+  with. A server below that gets "The server needs updating"; an app below
+  `api.minClient` gets "Update needed", with the server's own update one press away.
+
+Raise `api.level` when the API gains something an app may need to know is there. Raise
+`api.minClient` only when an older app would break or do harm, and only once a build
+that speaks the new level is published under `/v1/apps/`.
 
 ## App updates
 
