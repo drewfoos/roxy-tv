@@ -27,6 +27,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import tv.roxy.tv.ui.castLanguageLabel
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +61,12 @@ import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.api.CastMember
 import tv.roxy.tv.api.ItemDetails
 import tv.roxy.tv.data.downloads.formatBytes
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import tv.roxy.tv.ui.shownCast
 import tv.roxy.tv.ui.components.RoxyImage
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.theme.RoxyColors
@@ -135,11 +145,8 @@ internal fun DetailsSections(d: ItemDetails, onOpenPerson: (CastMember) -> Unit 
             Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = RoxyColors.onBackground.copy(alpha = 0.9f))
         }
 
-        if (!x?.cast.isNullOrEmpty()) {
-            DetailSection("Cast")
-        }
     }
-    if (!x?.cast.isNullOrEmpty()) CastRow(x!!.cast, modifier = Modifier.padding(top = 4.dp), onClick = onOpenPerson)
+    CastSection(d, onOpenPerson = onOpenPerson) { DetailSection("Cast") }
     Column(modifier = Modifier.padding(horizontal = PhonePad)) {
         DetailSection("Details")
         DetailRow("Original title", x?.originalTitle)
@@ -198,11 +205,59 @@ internal fun DetailsSections(d: ItemDetails, onOpenPerson: (CastMember) -> Unit 
     }
 }
 
+/**
+ * A title's cast under its [heading]. An anime with more than one voice cast (Japanese
+ * and a dub) gets a switch beside the heading; it starts on the one the server names,
+ * the dub's for someone who listens to the dub. Nothing at all without a cast.
+ */
+/**
+ * Which language's cast is shown: the app's chip, a size down (it sits beside a heading,
+ * not in a row of its own), opening the list of every language the title has a cast in.
+ */
+@Composable
+private fun CastLanguagePicker(shown: tv.roxy.tv.ui.ShownCast, modifier: Modifier = Modifier, onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier.testTag("cast-languages").height(28.dp).clip(RoundedCornerShape(14.dp)).background(ChipGrey).clickable(onClickLabel = "Cast language") { open = true }.padding(start = 12.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(shown.name.ifBlank { shown.language }, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Icon(Icons.Filled.ArrowDropDown, null, tint = Color.White, modifier = Modifier.size(20.dp))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+            shown.groups.forEach { g ->
+                val on = g.language == shown.language
+                DropdownMenuItem(
+                    text = { Text(castLanguageLabel(g), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal) },
+                    modifier = Modifier.testTag("cast-language-" + g.language).semantics { selected = on },
+                    onClick = { open = false; onPick(g.language) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun CastSection(d: ItemDetails, onOpenPerson: (CastMember) -> Unit = {}, heading: @Composable () -> Unit) {
+    // The pick belongs to this title: another title starts on its own default.
+    var picked by rememberSaveable(d.item.id) { mutableStateOf<String?>(null) }
+    val shown = shownCast(d, picked)
+    if (shown.members.isEmpty()) return
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PhonePad), verticalAlignment = Alignment.Bottom) {
+        Box(modifier = Modifier.weight(1f)) { heading() }
+        if (shown.groups.isNotEmpty()) CastLanguagePicker(shown, modifier = Modifier.padding(start = 12.dp, bottom = 5.dp)) { picked = it }
+    }
+    CastRow(shown.members, modifier = Modifier.padding(top = 4.dp), language = shown.language, onClick = onOpenPerson)
+}
+
 /** The cast as round photos with name and role, scrolling sideways (More details, and a movie's player page). */
 @Composable
-internal fun CastRow(cast: List<CastMember>, modifier: Modifier = Modifier, onClick: (CastMember) -> Unit = {}) {
-    LazyRow(contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = modifier) {
-        items(cast, key = { it.name + it.character }) { c ->
+internal fun CastRow(cast: List<CastMember>, modifier: Modifier = Modifier, language: String = "", onClick: (CastMember) -> Unit = {}) {
+    // Another language's cast is another row: it starts at its first person.
+    val state = remember(language) { LazyListState() }
+    LazyRow(state = state, contentPadding = PaddingValues(horizontal = PhonePad), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = modifier) {
+        items(cast.distinctBy { it.name + "\u0000" + it.character }, key = { it.name + "\u0000" + it.character }) { c ->
             Column(modifier = Modifier.width(84.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = c.tmdbId > 0) { onClick(c) }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(72.dp).clip(CircleShape).background(RoxyColors.surfaceHigh), contentAlignment = Alignment.Center) {
                     if (c.photo != null) AsyncImage(model = c.photo, contentDescription = c.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())

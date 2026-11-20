@@ -99,6 +99,31 @@ class Shots {
         shot("title-rating-lines")
     }
 
+    // The cast of an anime with a dub: the switch beside the heading, as on "More details"
+    // and under a film's player.
+    @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")
+    fun phoneCastLanguages() {
+        fun people(vararg names: String) = names.mapIndexed { i, n -> tv.roxy.tv.api.CastMember(n, listOf("Sakuta Azusagawa", "Mai Sakurajima", "Tomoe Koga", "Rio Futaba", "Kaede Azusagawa")[i], tmdbId = i) }
+        val d = tv.roxy.tv.api.ItemDetails(
+            tv.roxy.tv.api.Item(id = "x", type = "series", title = "Bunny Girl Senpai"),
+            casts = listOf(
+                tv.roxy.tv.api.CastGroup("jpn", "Japanese", true, people("Kaito Ishikawa", "Asami Seto", "Nao Toyama", "Atsumi Tanezaki", "Yurika Kubo")),
+                tv.roxy.tv.api.CastGroup("eng", "English", false, people("Stephen Fu", "Erica Mendez", "Lizzie Freeman", "Jennifer Losi", "Kayli Mills")),
+                tv.roxy.tv.api.CastGroup("fra", "French", false, people("Un", "Deux", "Trois", "Quatre", "Cinq")),
+                tv.roxy.tv.api.CastGroup("deu", "German", false, people("Eins", "Zwei", "Drei", "Vier", "Fünf")),
+            ),
+            castLanguage = "eng",
+        )
+        compose.setContent {
+            tv.roxy.tv.ui.theme.RoxyTheme {
+                androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().background(tv.roxy.tv.ui.theme.RoxyColors.background).padding(vertical = 24.dp)) {
+                    tv.roxy.tv.ui.phone.CastSection(d) { androidx.compose.material3.Text("Cast", fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = Color.White, modifier = Modifier.padding(top = 22.dp, bottom = 8.dp)) }
+                }
+            }
+        }
+        shot("phone-cast-languages")
+    }
+
     // Discover while a series' films are being looked for: the Request button holds a
     // turning circle and no words, then says what it brings.
     @Test @Config(qualifiers = "w412dp-h915dp-xxhdpi")

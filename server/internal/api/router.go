@@ -45,6 +45,7 @@ type Server struct {
 	hub        *sessions.Hub   // "Play on": connected players and their command queues
 	board      *activity.Board // "Now playing": who is watching what, and how it is sent
 	links      *linkStore      // TV sign-in codes waiting for a phone's approval
+	voice      *voiceCasts     // anime casts per language (voicecast.go); nil without AniList
 	start      time.Time
 }
 
@@ -84,6 +85,9 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 		s.discover.SetImportHook(s.hooks.IngestArrFiles)
 		s.discover.Start(ctx)
 		s.startCharacterWorker(ctx)
+		if a := meta.AniList(); a != nil {
+			s.voice = &voiceCasts{read: a.VoiceCast, person: s.tmdbPerson}
+		}
 	}
 
 	r := chi.NewRouter()

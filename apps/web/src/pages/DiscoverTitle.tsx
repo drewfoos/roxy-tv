@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
+import { usePrefs } from '../api/prefs'
 import type { DiscoverDetail, DiscoverEpisode, DiscoverFilm, DiscoverSeason, Item, ItemDetails } from '../api/types'
 import { useAsync, markStale, usePoll } from '../hooks/useAsync'
 import { useSession } from '../app/useSession'
@@ -11,6 +12,7 @@ import { LoadError } from '../components/Connection'
 import { Footer } from '../components/Footer'
 import { PhoneTitleHeader } from '../components/PhoneChrome'
 import { IconCheck, IconCheckCircle, IconExpand, IconHistory, IconPlay, IconSettings } from '../components/Icons'
+import { shownCast } from './castChoice'
 import { buttonFilms, filmLine, filmState, FILMS_WAIT_MS, filmsPending, placeFilms, requestWords } from './discoverFilms'
 import { DownloadBar, DownloadStatusCard, canSearchFor, effectiveState, episodeLine, isActive, isPending, stateColor } from '../components/DiscoverBits'
 
@@ -27,9 +29,10 @@ export function DiscoverTitle() {
   const isMovie = type === 'movie'
   const nav = useNavigate()
   const admin = !!useSession()?.isAdmin
+  const { audioLang } = usePrefs()
   const { data: d, error, loading, reload } = useAsync(`discover:${type}:${tmdbId}`, () => api.discoverDetail(type, tmdbId), [type, tmdbId])
   // A movie has no seasons: its page carries the cast and the facts instead.
-  const { data: more } = useAsync(isMovie ? `discover:details:${type}:${tmdbId}` : null, () => api.discoverMoreDetails(type, tmdbId), [type, tmdbId])
+  const { data: more } = useAsync(isMovie ? `discover:details:${type}:${tmdbId}:${audioLang}` : null, () => api.discoverMoreDetails(type, tmdbId, audioLang), [type, tmdbId, audioLang])
   // An anime series' films, placed in its season list by the server (which also says
   // which of them the Request button brings). Asked for apart from the page: the first
   // look reads AniList and can take a while, and the page does not wait for it.
@@ -592,6 +595,8 @@ function SmallAction({ label, disabled, onClick }: { label: string; disabled: bo
 
 /** A film's cast and facts (what "More details" holds on the phone). */
 function MovieDetails({ details }: { details: ItemDetails | null }) {
+  // The cast the viewer switched to on this page; until then the server's choice.
+  const [castPick, setCastPick] = useState<string | null>(null)
   if (!details) {
     return (
       <section className="dmeta">
@@ -603,7 +608,8 @@ function MovieDetails({ details }: { details: ItemDetails | null }) {
     )
   }
   const t = details.tmdb
-  const cast = t?.cast ?? []
+  const shown = shownCast(details, castPick)
+  const cast = shown.members
   const facts: [string, string][] = []
   if (t?.originalTitle && t.originalTitle !== details.item.title) facts.push(['Original title', t.originalTitle])
   if (t?.firstAired) facts.push(['Released', t.firstAired])
@@ -615,9 +621,25 @@ function MovieDetails({ details }: { details: ItemDetails | null }) {
   return (
     <>
       {cast.length > 0 && (
-        <Row title="Cast">
+        <Row
+          title="Cast"
+          more={
+            shown.groups.length > 0 && (
+              <label className="castlang">
+                <select aria-label="Cast language" value={shown.language} onChange={(e) => setCastPick(e.target.value)}>
+                  {shown.groups.map((g) => (
+                    <option key={g.language} value={g.language}>
+                      {g.name + (g.original ? ' (original)' : '')}
+                    </option>
+                  ))}
+                </select>
+                <IconExpand size={18} />
+              </label>
+            )
+          }
+        >
           {cast.slice(0, 20).map((c, i) => (
-            <div key={`${c.name}:${i}`} className="card dcast">
+            <div key={`${shown.language}:${c.name}:${i}`} className="card dcast">
               <div className="card__art">
                 <Art url={c.photo ?? null} title={c.name} />
               </div>

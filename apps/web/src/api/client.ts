@@ -422,7 +422,9 @@ export const api = {
   discoverSearch: (query: string) => get<{ items: DiscoverItem[] }>('/v1/discover/search?q=' + encodeURIComponent(query)),
   discoverDetail: (type: string, tmdbId: number | string) => get<DiscoverDetail>(`/v1/discover/${type}/${tmdbId}`),
   /** Cast, studio, dates, keywords and links for a Discover title. */
-  discoverMoreDetails: (type: string, tmdbId: number | string) => get<ItemDetails>(`/v1/discover/${type}/${tmdbId}/details`),
+  /** `audio`: the viewer's audio language; the server picks which cast to show first by it. */
+  discoverMoreDetails: (type: string, tmdbId: number | string, audio?: string) =>
+    get<ItemDetails>(`/v1/discover/${type}/${tmdbId}/details${audio ? `?audio=${encodeURIComponent(audio)}` : ''}`),
   discoverEpisodes: (tmdbId: number | string, season: number) => get<{ episodes: DiscoverEpisode[] }>(`/v1/discover/tv/${tmdbId}/season/${season}`),
   /** "Your requests": the signed-in user's requests as Discover titles, with download status. */
   discoverRequests: () => get<{ items: DiscoverItem[] }>('/v1/discover/requests'),

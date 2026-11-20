@@ -226,6 +226,20 @@ func (s *Server) discoverMoreDetails(w http.ResponseWriter, r *http.Request) {
 			c.Seasons = d.SeasonCount
 			resp.TMDB = &c
 		}
+		if d.IsAnime {
+			ask := castAsk{movie: kind == "movie", tmdbID: id, title: d.Title, year: d.Year, want: r.URL.Query().Get("audio")}
+			if d.LibraryItemID != "" {
+				// In the library: its files say which cast is heard, as on its own page.
+				if lib, err := s.store.GetItem(r.Context(), d.LibraryItemID); err == nil && lib != nil {
+					ask.anilistID, _ = strconv.Atoi(lib.ProviderIDs["anilist"])
+				}
+				if f, err := s.store.ItemMediaFacts(r.Context(), d.LibraryItemID); err == nil && f != nil {
+					ask.audio = f.Audio
+				}
+			}
+			ask.byName, ask.byRole = creditMaps(resp.TMDB)
+			resp.Casts, resp.CastLanguage = s.casts(r.Context(), ask)
+		}
 	}
 	writeJSON(w, 200, resp)
 }

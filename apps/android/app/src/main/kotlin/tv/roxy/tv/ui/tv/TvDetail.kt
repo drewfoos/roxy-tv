@@ -567,7 +567,7 @@ private fun DetailsTab(item: Item, api: RoxyApi, first: FocusRequester, loadDeta
         item.audioLanguages.takeIf { it.isNotEmpty() }?.let { add("Audio" to it.joinToString(", ") { l -> languageName(l) }) }
         item.seasonCount?.takeIf { it > 0 }?.let { add("Seasons" to it.toString()) }
         item.runtimeMinutes?.let { add("Runtime" to "$it min") }
-        details?.tmdb?.cast?.takeIf { it.isNotEmpty() }?.let { add("Cast" to it.take(8).joinToString(", ") { c -> c.name }) }
+        tv.roxy.tv.ui.castLine(details)?.let { add(it) }
     }
     TvFocusable(onClick = {}, modifier = Modifier.fillMaxSize().focusRequester(first)) { _ ->
         Row(modifier = Modifier.fillMaxSize().padding(start = PageStart, top = 27.dp, end = PageStart)) {

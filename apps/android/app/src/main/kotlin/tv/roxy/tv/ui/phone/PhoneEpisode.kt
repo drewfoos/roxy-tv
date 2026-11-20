@@ -216,10 +216,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
             wait = (wait * 2).coerceAtMost(30_000L)
         }
     }
-    var cast by remember { mutableStateOf<List<CastMember>>(emptyList()) }
+    var castOf by remember { mutableStateOf<tv.roxy.tv.api.ItemDetails?>(null) }
     LaunchedEffect(episode?.id, episode?.isMovie) {
         val m = episode?.takeIf { it.isMovie } ?: return@LaunchedEffect
-        cast = runCatching { app.api.itemDetails(m.id).tmdb?.cast.orEmpty() }.getOrDefault(emptyList())
+        castOf = runCatching { app.api.itemDetails(m.id) }.getOrNull()
     }
     // Episodes carry no rating or advisories of their own; the series' stand for them.
     var series by remember { mutableStateOf<Item?>(null) }
@@ -343,9 +343,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                 }
                 // A film's cast (the series page keeps it under More details): the player
                 // page is where someone wonders who that voice is.
-                if (ep.isMovie && cast.isNotEmpty()) {
-                    Text("Cast", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 6.dp))
-                    CastRow(cast, modifier = Modifier.padding(top = 4.dp), onClick = onOpenPerson)
+                castOf?.takeIf { ep.isMovie && it.item.id == ep.id }?.let { d ->
+                    CastSection(d, onOpenPerson = onOpenPerson) { Text("Cast", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(vertical = 6.dp)) }
                 }
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {
                     Text(if (ep.isMovie) "Back to the movie" else "All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 16.dp, vertical = 8.dp))

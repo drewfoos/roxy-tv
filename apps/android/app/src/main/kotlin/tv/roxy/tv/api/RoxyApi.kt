@@ -386,10 +386,19 @@ class RoxyApi(private val prefs: Prefs) {
     suspend fun source(id: String): MediaSource = get("/v1/sources/$id")
 
     /** The "More details" page: item, library facts, TMDB extras, provider links. */
-    suspend fun itemDetails(id: String): ItemDetails = get("/v1/items/$id/details")
+    suspend fun itemDetails(id: String): ItemDetails = get("/v1/items/$id/details" + castAudio())
 
     /** "More details" for a Discover title (it may not be in the library). */
-    suspend fun discoverMoreDetails(type: String, tmdbId: Int): ItemDetails = get("/v1/discover/$type/$tmdbId/details")
+    suspend fun discoverMoreDetails(type: String, tmdbId: Int): ItemDetails = get("/v1/discover/$type/$tmdbId/details" + castAudio())
+
+    /**
+     * The language this viewer listens in, sent with a details call: the server answers an
+     * anime's voice cast in that language first when the title has it.
+     */
+    private fun castAudio(): String {
+        val lang = prefs.settings.value.audioLangs.firstOrNull()?.takeIf { l -> l.isNotBlank() && l.all { it.isLetterOrDigit() || it == '-' } } ?: return ""
+        return "?audio=$lang"
+    }
 
     // ---- discover (TMDB through the server; requests) ----
 
@@ -1042,8 +1051,16 @@ data class TmdbExtras(
     val tagline: String = "",
 )
 
+/** One language's voice cast of an anime: [language] is its code ("jpn", "eng"), [name] what to call it, [original] the language it was made in. */
 @Serializable
-data class ItemDetails(val item: Item, val facts: MediaFacts? = null, val tmdb: TmdbExtras? = null, val links: Map<String, String> = emptyMap(), val backdrop: String? = null)
+data class CastGroup(val language: String = "", val name: String = "", val original: Boolean = false, val members: List<CastMember> = emptyList())
+
+/** [casts] and [castLanguage] (the one to show first) are there for anime with more than one voice cast; without them the cast is [TmdbExtras.cast]. */
+@Serializable
+data class ItemDetails(
+    val item: Item, val facts: MediaFacts? = null, val tmdb: TmdbExtras? = null, val links: Map<String, String> = emptyMap(), val backdrop: String? = null,
+    val casts: List<CastGroup> = emptyList(), val castLanguage: String = "",
+)
 
 @Serializable
 data class ProfilesResponse(val profiles: List<Profile> = emptyList(), val current: String? = null)

@@ -43,6 +43,10 @@ type tmdbExtras struct {
 	Cast          []castMember `json:"cast,omitempty"`
 	Homepage      string       `json:"homepage,omitempty"`
 	Tagline       string       `json:"tagline,omitempty"`
+
+	// The whole credits list by folded actor name and by folded character name, for
+	// matching another site's cast to TMDB people (voicecast.go). Not sent.
+	byName, byRole map[string]int
 }
 
 type detailsResponse struct {
@@ -52,6 +56,10 @@ type detailsResponse struct {
 	Facts    *store.MediaFacts `json:"facts,omitempty"`
 	TMDB     *tmdbExtras       `json:"tmdb,omitempty"`
 	Links    map[string]string `json:"links,omitempty"` // tmdb, imdb, anilist, mal, tvdb -> URL
+	// Casts: an anime's cast per language, when there is more than the original's
+	// (voicecast.go). CastLanguage is the one to show first.
+	Casts        []castGroup `json:"casts,omitempty"`
+	CastLanguage string      `json:"castLanguage,omitempty"`
 }
 
 var (
@@ -103,6 +111,9 @@ func (s *Server) itemDetails(w http.ResponseWriter, r *http.Request) {
 	}
 	if tmdbID, err := strconv.Atoi(it.ProviderIDs["tmdb"]); err == nil && s.meta != nil && s.meta.TMDB() != nil {
 		resp.TMDB = s.tmdbExtras(ctx, it.Type == model.TypeMovie, tmdbID)
+		if ask, ok := itemCastAsk(it, tmdbID, resp.Facts, resp.TMDB, r.URL.Query().Get("audio")); ok {
+			resp.Casts, resp.CastLanguage = s.casts(ctx, ask)
+		}
 	}
 	writeJSON(w, 200, resp)
 }
@@ -222,9 +233,16 @@ func (s *Server) tmdbExtras(ctx context.Context, movie bool, tmdbID int) *tmdbEx
 	if len(x.Keywords) > 20 {
 		x.Keywords = x.Keywords[:20]
 	}
+	x.byName, x.byRole = map[string]int{}, map[string]int{}
 	for i, c := range d.Credits.Cast {
+		if k := foldName(c.Name); k != "" && x.byName[k] == 0 {
+			x.byName[k] = c.ID
+		}
+		if k := foldName(c.Character); k != "" && x.byRole[k] == 0 {
+			x.byRole[k] = c.ID
+		}
 		if i >= 15 {
-			break
+			continue
 		}
 		x.Cast = append(x.Cast, castMember{TMDBID: c.ID, Name: c.Name, Character: c.Character, Photo: t.ImageURL("w185", c.ProfilePath)})
 	}

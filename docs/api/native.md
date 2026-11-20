@@ -219,6 +219,34 @@ photo}], homepage, tagline}, links: {tmdb, imdb, anilist, mal, tvdb}}`. The TMDB
 cached 10 minutes. Profiles carry `avatarKey` (a hash of the picture's source); clients
 put it on the avatar URL so a changed picture is never served from an image cache.
 
+**Voice casts (anime).** TMDB's cast of an anime is the Japanese one, which says nothing
+to someone who watches the dub. For an anime series or film the answer may also carry
+`casts: [{language, name, original, members: [{name, character, photo, tmdbId}]}]`
+(`language` is ISO 639-2/T, `jpn` / `eng` / `fra` ...; `original` marks the language it was
+made in; the original is first, then every dub AniList lists, by name) and `castLanguage`,
+the cast to show first. They are read from AniList and kept a week.
+`casts` is sent only when there are two or more to choose from; a client shows
+`castLanguage`'s members in its one cast section, offers the others in a list beside the
+heading ("English ▾"; the original is marked "(original)"), and without `casts` shows
+`tmdb.cast` as before (which is never changed, so an older client is unaffected).
+
+- `?audio=<code>` is the language the viewer listens in (`eng`, `en`, `jpn`, ...; English
+  when left out). `castLanguage` is that language when AniList has its cast AND the
+  library's copy has an audio track in it (a Discover title that is not in the library
+  only needs the cast); otherwise the original.
+- A dub's cast is listed only with at least 3 people; a dub AniList does not list is not
+  there.
+- AniList's people have no TMDB id: the server matches them to TMDB by name (the title's
+  own TMDB credits first, then a person search that must match the name exactly). A member
+  without a match has `tmdbId` 0 and no page to open. A call waits only for the casts a
+  viewer is likely to look at (the original, English, `?audio`, the library copy's audio
+  languages); the other languages are matched behind the answer and have `tmdbId` 0 until
+  then.
+- The first details call for a title waits up to 3 s for AniList and then answers without
+  `casts`; the read finishes in the background and the next call has them. AniList or TMDB
+  being away never fails the call.
+- A series uses its own AniList entry, so a later season's new characters are not listed.
+
 ## Segments (skip intro / outro)
 
 `MediaSource.segments[]`: `{type: intro | outro | recap | preview, startMs, endMs,
@@ -426,7 +454,8 @@ the buttons):
 
 `GET /v1/discover/{type}/{tmdbId}/details` → the "More details" page for a Discover title,
 in the shape of `/v1/items/{id}/details` (TMDB cast, keywords, companies, dates, links;
-`backdrop` is an absolute image URL).
+`backdrop` is an absolute image URL). An anime carries `casts` / `castLanguage` and takes
+`?audio=` as there.
 
 Sonarr: a whole-series request sets `monitorNewItems: all` (seasons that air later are
 fetched too); a request for some seasons sets `none`. Test connection reports the arr

@@ -371,6 +371,16 @@ export interface CastMember {
   tmdbId?: number
 }
 
+/** An anime's cast in one language (AniList lists the dubs; TMDB only the original). */
+export interface CastGroup {
+  /** ISO 639-2/T: "jpn", "eng". */
+  language: string
+  /** "English" */
+  name: string
+  original?: boolean
+  members: CastMember[]
+}
+
 export interface TmdbExtras {
   originalTitle?: string
   firstAired?: string
@@ -395,6 +405,9 @@ export interface ItemDetails {
   tmdb?: TmdbExtras | null
   links?: Record<string, string>
   backdrop?: string | null
+  /** Sent when the title has more than one cast worth showing; `castLanguage` is the one to show first. */
+  casts?: CastGroup[]
+  castLanguage?: string
 }
 
 export interface DiscoverRow {
