@@ -93,6 +93,8 @@ class PlayerSession(
         fun playingChanged(playing: Boolean) {}
         /** The next episode took over the player (autoplay or Next): a page updates its text. */
         fun nowPlaying(req: PlayRequest) {}
+        /** The settings page lost the focus with a video playing: the app is being left (see MainActivity.pipLeaving). */
+        fun leaving() {}
         /** Page hosts: null when the player owns the screen; else whether it is fullscreen now. */
         val fullscreen: Boolean? get() = null
         fun toggleFullscreen() {}

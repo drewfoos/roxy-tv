@@ -122,7 +122,7 @@ fun PlayerSurface(
             onInteraction = { session.showControls() },
             actions = session.actions,
             trickplay = session.trickplay,
-            onLeaving = { session.hideControls() },
+            onLeaving = { session.hideControls(); session.host.leaving() },
         )
         session.nextCard?.let { card ->
             NextEpisodeCard(

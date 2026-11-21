@@ -36,6 +36,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -87,10 +88,11 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     val scope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
     val main = activity as? MainActivity
-    // In the PiP window, and on the way into it (the window is still whole then: the system
-    // shrinks it as it is, so the page keeps its layout and only drops the controls).
+    // In the PiP window, and on the way into it. On the way the window is still whole: the
+    // system shrinks it as it is, cropping to the picture as it goes, so the page keeps its
+    // layout and draws nothing but the picture (see MainActivity.pipLeaving).
     val inPip = main?.inPip == true
-    val goingToPip = main?.pipTransitioning == true
+    val goingToPip = main?.pipLeaving == true
     var videoBounds by remember { mutableStateOf<android.graphics.Rect?>(null) }
     val view = LocalView.current
     // Fullscreen is the window lying sideways, except in the PiP window, which always is.
@@ -159,7 +161,8 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
             override fun nowPlaying(req: PlayRequest) = nowPlaying.invoke(req)
             override val pipSupported: Boolean get() = mainActivity?.pipSupported == true
             // The player's own layers (controls, cards) go as soon as the way in starts.
-            override val inPip: Boolean get() = mainActivity?.inPip == true || mainActivity?.pipTransitioning == true
+            override val inPip: Boolean get() = mainActivity?.inPip == true || mainActivity?.pipLeaving == true
+            override fun leaving() { mainActivity?.pipLeavingNow(this) }
             override fun enterPip() { mainActivity?.enterPip() }
             override fun playingChanged(playing: Boolean) { mainActivity?.updatePip(this, playing, bounds()) }
         }
@@ -296,7 +299,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                 // PiP window, and where it grows back to. In the PiP window the picture is
                 // the whole small window, which is not that place: the last one is kept.
                 s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize(), shape = shape, onPictureBounds = { r ->
-                    if (main?.inPip != true && main?.pipTransitioning != true && activity?.isInPictureInPictureMode != true && r != videoBounds) videoBounds = r
+                    if (main?.inPip != true && main?.pipLeaving != true && activity?.isInPictureInPictureMode != true && r != videoBounds) videoBounds = r
                 })
                 error != null -> Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     Text(error ?: "", color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
@@ -304,7 +307,11 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                 ep != null -> RoxyImage(app.downloads.image(app.api, ep, "thumb", widthPx(420.dp) * 2) ?: app.api.imageUrl(ep, "backdrop", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             }
         }
-        if (!full) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
+        // Not drawn while the app is being left for the PiP window: the system shrinks the
+        // whole window and crops it to the picture only gradually, and the series' name and
+        // the episode's rode along under the picture, inside the small window, until then.
+        // Kept in the layout (and its scroll position) for when the app is not left after all.
+        if (!full) Column(modifier = Modifier.fillMaxSize().alpha(if (goingToPip) 0f else 1f).verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
             if (ep != null) {
                 Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 14.dp)) {
                     // Series name over an episode; "Movie" over a film.

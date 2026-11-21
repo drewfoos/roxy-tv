@@ -65,30 +65,55 @@ import tv.roxy.tv.ui.theme.RoxyTheme
 
 class MainActivity : ComponentActivity() {
 
+    private companion object {
+        /** How long after the window lost the focus the app looks at who has it (see [onWindowFocusChanged]). */
+        const val LEAVING_LOOK_MS = 50L
+    }
+
     /** True while the activity is the floating picture-in-picture window (the episode page's player). */
     var inPip by mutableStateOf(false)
         private set
 
     /**
-     * On the way into the PiP window: the system is shrinking the app's window as it is, and
-     * the window is not the small one yet. The player drops its controls so they are not
-     * part of the shrinking picture; the page keeps its layout (the system crops the window
-     * to where the picture is in it, so a page that rearranged itself now would be cropped
-     * to the wrong thing). Set by Android 15+'s own announcement and by the leave hint;
-     * cleared when the PiP window is there, or when the app is back in front without one.
+     * The app is being left with a video playing, as far as can be told: it is on its way
+     * into the PiP window, which the system makes by shrinking the app's window AS IT IS,
+     * cropping it little by little to where the picture is. Whatever else is in the window
+     * rides along until it is cropped away: the player's controls over the picture, and the
+     * page under it (the series' name and the episode's sat along the bottom of the small
+     * window for the last third of the way). So while this is set the page draws nothing
+     * but the picture; it keeps its layout, because the system crops to where the picture
+     * is in it.
+     *
+     * Set by whatever says so first: the window losing the focus to something that is not
+     * the app's own ([leavingLook]: the Home gesture's only sign), the activity pausing, the
+     * leave hint, Android 15's "transitioning". Cleared when the app is back: the window has
+     * the focus again, the activity resumes outside PiP, PiP ends, or the page is touched.
      */
-    var pipTransitioning by mutableStateOf(false)
+    var pipLeaving by mutableStateOf(false)
         private set
 
     override fun onPictureInPictureUiStateChanged(pipState: android.app.PictureInPictureUiState) {
         super.onPictureInPictureUiStateChanged(pipState)
-        if (android.os.Build.VERSION.SDK_INT >= 35 && pipState.isTransitioningToPip) pipTransitioning = true
+        if (android.os.Build.VERSION.SDK_INT >= 35 && pipState.isTransitioningToPip && pip.armed) pipLeaving = true
     }
 
     override fun onResume() {
         super.onResume()
         // Left towards PiP and back without one (the system did not make the window).
-        if (!isInPictureInPictureMode) pipTransitioning = false
+        if (!isInPictureInPictureMode) pipLeaving = false
+    }
+
+    override fun onPause() {
+        // Home by the button, another app over this one: with a video playing the PiP window
+        // is next. (Split screen on Android 9 pauses the app that is merely not in use.)
+        if (pip.armed && !isInMultiWindowMode) pipLeaving = true
+        super.onPause()
+    }
+
+    /** The page is in use after all: a touch in the app's own window. */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN && pipLeaving && !isInPictureInPictureMode) pipLeaving = false
+        return super.dispatchTouchEvent(ev)
     }
 
     /** What the system is told about the PiP window; the page with the player sets it. */
@@ -133,7 +158,7 @@ class MainActivity : ComponentActivity() {
     /** Leave PiP support behind when the page closes, so other screens never shrink. */
     fun clearPip(owner: Any) {
         if (!pip.clear(owner)) return
-        pipTransitioning = false
+        pipLeaving = false
         if (!pipSupported || isDestroyed) return
         runCatching { setPictureInPictureParams(android.app.PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()) }
     }
@@ -142,14 +167,44 @@ class MainActivity : ComponentActivity() {
      * The Home gesture gives the app nothing to go by while the launcher shrinks its window
      * (about a second: no pause, no leave hint; Android 15's "transitioning" arrives when the
      * shrinking is over). The one thing that does change, a tenth of a second in, is the
-     * window's focus. With a video playing that is taken as "may be about to become the PiP
-     * window", so the player's controls are not part of the shrinking picture. It is also
-     * what a pulled-down notification shade looks like: the controls go then too, which is
-     * what they do after three seconds anyway.
+     * window's focus. With a video playing that is taken as "being left for the PiP
+     * window": the player's controls go at once, and the rest of the page a moment later
+     * ([leavingLook]). It is also what a pulled-down notification shade looks like: the
+     * same happens under it, and is undone when the focus is back.
      */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) pip.leaving()
+        val decor = window?.decorView
+        decor?.removeCallbacks(leavingLook)
+        if (hasFocus) {
+            if (!isInPictureInPictureMode) pipLeaving = false
+            return
+        }
+        pip.leaving()
+        // A menu or sheet of the page's own is a window too and takes the focus the same
+        // way; its own "I have the focus" is a message or two behind this one. A moment for
+        // it to arrive, and a second look for a slow one.
+        decor?.postDelayed(leavingLook, LEAVING_LOOK_MS)
+        decor?.postDelayed(leavingLook, LEAVING_LOOK_MS * 5)
+    }
+
+    private val leavingLook = Runnable {
+        if (isInPictureInPictureMode || isDestroyed) return@Runnable
+        val own = ownWindowFocused()
+        if (own == true) pipLeaving = false
+        else if (pip.leftByFocus(hasWindowFocus(), isInMultiWindowMode, own)) pipLeaving = true
+    }
+
+    /** Whether another window of this app (a dialog, a menu) has the focus; null when it cannot be told. */
+    private fun ownWindowFocused(): Boolean? {
+        if (android.os.Build.VERSION.SDK_INT < 29) return null
+        val decor = window?.decorView
+        return runCatching { android.view.inspector.WindowInspector.getGlobalWindowViews().any { it !== decor && it.hasWindowFocus() } }.getOrNull()
+    }
+
+    /** The settings page (a window of its own) lost the focus with a video playing: it has closed itself, and the app is being left. */
+    fun pipLeavingNow(owner: Any) {
+        if (pip.owns(owner) && pip.armed && !isInPictureInPictureMode) pipLeaving = true
     }
 
     fun enterPip() {
@@ -161,14 +216,16 @@ class MainActivity : ComponentActivity() {
         super.onUserLeaveHint()
         if (!pipSupported || !pip.armed) return
         // The app is being left with a video playing: it is about to shrink.
-        pipTransitioning = true
+        pipLeaving = true
         // Android 12+ auto-enters through the params; older versions need the explicit call.
         if (android.os.Build.VERSION.SDK_INT < 31) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        pipTransitioning = false
+        // In the PiP window the page is the picture alone anyway; out of it, it is all there
+        // again from the first frame (the system grows the window back with the page in it).
+        pipLeaving = false
         inPip = isInPictureInPictureMode
     }
 

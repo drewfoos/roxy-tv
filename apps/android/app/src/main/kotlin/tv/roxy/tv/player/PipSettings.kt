@@ -32,6 +32,9 @@ class PipSettings {
     /** A video is playing: leaving the app now would shrink it into the PiP window. */
     val armed: Boolean get() = autoEnter == true
 
+    /** Whether the settings are [owner]'s. */
+    fun owns(owner: Any): Boolean = this.owner === owner
+
     /** A page with a player takes the settings over. [onLeaving]: see [leaving]. */
     fun claim(owner: Any, onLeaving: () -> Unit) {
         this.owner = owner
@@ -84,6 +87,17 @@ class PipSettings {
     fun leaving() {
         if (armed) onLeaving?.invoke()
     }
+
+    /**
+     * Whether the page's window having lost the focus means the app is being left for the
+     * PiP window. Only with a video playing. Not in split screen, where the other app
+     * having the focus is the normal state of things. And not when a window of the app's
+     * own has it ([ownWindowFocused]: a menu, the settings page, a sheet), which is the
+     * page still being used; null when that cannot be told (Android 9), and then the focus
+     * alone is not believed.
+     */
+    fun leftByFocus(hasFocus: Boolean, multiWindow: Boolean, ownWindowFocused: Boolean?): Boolean =
+        armed && !hasFocus && !multiWindow && ownWindowFocused == false
 
     private companion object {
         val DEFAULT_SHAPE = 16 to 9

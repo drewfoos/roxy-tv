@@ -135,6 +135,26 @@ class PipSettingsTest {
         assertEquals("the page has gone", 1, heard)
     }
 
+    /**
+     * The window lost the focus: is the app being left for the PiP window? The page then
+     * draws nothing but the picture, so "yes" must not be said of a menu or sheet of the
+     * page's own taking the focus, nor of split screen.
+     */
+    @Test fun aLostFocusMeansLeavingOnlyWhenNothingOfTheAppsOwnHasIt() {
+        val pip = PipSettings()
+        val page = Any()
+        pip.claim(page) {}
+        assertFalse("nothing playing", pip.leftByFocus(hasFocus = false, multiWindow = false, ownWindowFocused = false))
+        pip.playing(page, true, box, w, h)
+        assertTrue("the Home gesture: the launcher has the focus", pip.leftByFocus(hasFocus = false, multiWindow = false, ownWindowFocused = false))
+        assertFalse("the page's own menu or settings page has it", pip.leftByFocus(hasFocus = false, multiWindow = false, ownWindowFocused = true))
+        assertFalse("who has it cannot be told (Android 9)", pip.leftByFocus(hasFocus = false, multiWindow = false, ownWindowFocused = null))
+        assertFalse("split screen: the other app is in use", pip.leftByFocus(hasFocus = false, multiWindow = true, ownWindowFocused = false))
+        assertFalse("the focus is back", pip.leftByFocus(hasFocus = true, multiWindow = false, ownWindowFocused = false))
+        pip.playing(page, false, box, w, h)
+        assertFalse("paused: leaving makes no PiP window", pip.leftByFocus(hasFocus = false, multiWindow = false, ownWindowFocused = false))
+    }
+
     @Test fun thePageThatTookOverIsTheOneThatHearsLeaving() {
         val pip = PipSettings()
         val first = Any()
