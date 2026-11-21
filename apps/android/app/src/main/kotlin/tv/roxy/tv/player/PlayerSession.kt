@@ -206,21 +206,6 @@ class PlayerSession(
     private var hideJob: Job? = null
     var trickplay by mutableStateOf<TrickplayPreview?>(null); private set
     var doubleTapFlash by mutableStateOf(0); private set // -10 / +10 while the ripple shows
-    /** The SurfaceView the video draws into (set by [PlayerSurface]); null for a host without one yet. */
-    @Volatile var surfaceView: android.view.SurfaceView? = null
-
-    /**
-     * Pin the surface's buffer at its current size while the window animates (the
-     * picture-in-picture shrink and expand). The view may change size freely; the
-     * compositor scales the fixed buffer into it, the way a decoder-fed surface is
-     * scaled, and mpv never hears about a new size, so it never draws the one frame it
-     * otherwise draws into the previous buffer. Unpinning returns the surface to the
-     * view's size; when the two already agree nothing happens.
-     */
-    fun pinSurface(on: Boolean) {
-        val sv = surfaceView ?: return
-        if (on) { if (sv.width > 0 && sv.height > 0) sv.holder.setFixedSize(sv.width, sv.height) } else sv.holder.setSizeFromLayout()
-    }
     private var flashJob: Job? = null
     private var lastSid = 0
     private var autoSkip = false
@@ -1427,6 +1412,16 @@ class PlayerSession(
         hideJob?.cancel()
         controlsVisible = false
         sheet = Sheet.None
+    }
+
+    /**
+     * The page's window lost focus with the video playing: it may be about to shrink into the
+     * PiP window (see MainActivity.onWindowFocusChanged), so the transport controls go. An
+     * open settings sheet stays: on the page it is a window of its own, and opening it is
+     * itself what takes the focus from the page.
+     */
+    fun windowLostFocus() {
+        if (sheet == Sheet.None) hideControls()
     }
 
     /** Auto-hide unless paused or a sheet is open (YouTube behaviour). */

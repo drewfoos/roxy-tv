@@ -271,6 +271,8 @@ fun PlayerControls(
     onInteraction: () -> Unit,
     actions: PlayerActions,
     trickplay: TrickplayPreview? = null,
+    /** The app is being left with the settings page open (see [SheetHost]): everything of the player's goes. */
+    onLeaving: () -> Unit = { onSheet(Sheet.None) },
 ) {
     // In the page's 16:9 box everything is scaled down: smaller discs and icons, no clock,
     // tighter popups that stay inside the box.
@@ -429,6 +431,7 @@ fun PlayerControls(
                 top = barBottom, // right under the back arrow, the gap the sideways page has
                 modifier = if (cr) Modifier.fillMaxSize().padding(top = PhoneTitleGap) else Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.345f),
                 onBack = { onSheet(Sheet.None) },
+                onLeaving = if (state.paused) null else onLeaving,
             ) {
                 CompositionLocalProvider(LocalCompactMenu provides false, LocalTvPanel provides tv, LocalPhonePanel provides cr, LocalCloseSheet provides { onSheet(Sheet.None) }) { when (sheet) {
                     Sheet.Settings -> MenuPopup(
@@ -530,11 +533,21 @@ private val LocalTvPanel = compositionLocalOf { false }
  * a box in the player.
  */
 @Composable
-private fun SheetHost(page: Boolean, top: Float?, modifier: Modifier, onBack: () -> Unit, content: @Composable () -> Unit) {
+private fun SheetHost(page: Boolean, top: Float?, modifier: Modifier, onBack: () -> Unit, onLeaving: (() -> Unit)? = null, content: @Composable () -> Unit) {
     if (page) androidx.compose.ui.window.Dialog(onDismissRequest = onBack, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         // The video and the title above the page stay as they are: not dimmed.
         val view = androidx.compose.ui.platform.LocalView.current
         LaunchedEffect(view) { (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.setDimAmount(0f) }
+        // The Home gesture with the settings open and a video playing: the app is about to
+        // shrink into the PiP window, and this window, lying over the video, would be what
+        // shrinks. Its losing the focus (after having had it) is the first sign there is;
+        // the page's own window gets none, having lost the focus to this one.
+        if (onLeaving != null) {
+            val focused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+            var hadFocus by remember { mutableStateOf(false) }
+            val leave = androidx.compose.runtime.rememberUpdatedState(onLeaving)
+            LaunchedEffect(focused) { if (focused) hadFocus = true else if (hadFocus) leave.value() }
+        }
         Column(Modifier.fillMaxSize()) {
             if (top != null) {
                 // Above the page: the player's top bar as it is; a tap there closes the settings.

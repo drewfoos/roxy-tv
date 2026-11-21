@@ -69,80 +69,105 @@ class MainActivity : ComponentActivity() {
     var inPip by mutableStateOf(false)
         private set
 
-    /** Runs on the PiP callback itself, before the surface resizes (a Compose effect would be a frame late). */
-    var onPipChanged: ((Boolean) -> Unit)? = null
-
-    /** Android 15+: the enter animation is about to start. Pages hide their chrome and pin the video here. */
+    /**
+     * On the way into the PiP window: the system is shrinking the app's window as it is, and
+     * the window is not the small one yet. The player drops its controls so they are not
+     * part of the shrinking picture; the page keeps its layout (the system crops the window
+     * to where the picture is in it, so a page that rearranged itself now would be cropped
+     * to the wrong thing). Set by Android 15+'s own announcement and by the leave hint;
+     * cleared when the PiP window is there, or when the app is back in front without one.
+     */
     var pipTransitioning by mutableStateOf(false)
         private set
 
     override fun onPictureInPictureUiStateChanged(pipState: android.app.PictureInPictureUiState) {
         super.onPictureInPictureUiStateChanged(pipState)
-        if (android.os.Build.VERSION.SDK_INT >= 35 && pipState.isTransitioningToPip) {
-            pipTransitioning = true
-            onPipChanged?.invoke(true)
-        }
+        if (android.os.Build.VERSION.SDK_INT >= 35 && pipState.isTransitioningToPip) pipTransitioning = true
     }
 
-    /** The page's player tells us whether a video is playing, so swiping home shrinks it. */
-    private var pipAutoEnter: Boolean? = null
-    private var pipSource: android.graphics.Rect? = null
-    private var pipShape: Pair<Int, Int> = 16 to 9
+    override fun onResume() {
+        super.onResume()
+        // Left towards PiP and back without one (the system did not make the window).
+        if (!isInPictureInPictureMode) pipTransitioning = false
+    }
+
+    /** What the system is told about the PiP window; the page with the player sets it. */
+    private val pip = tv.roxy.tv.player.PipSettings()
 
     val pipSupported: Boolean by lazy {
         !isTelevision(this) && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     }
 
-    private fun pipParams(autoEnter: Boolean): android.app.PictureInPictureParams {
-        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(pipShape.first, pipShape.second))
-        pipSource?.let { b.setSourceRectHint(it) }
+    private fun pipParams(p: tv.roxy.tv.player.PipSettings.Params): android.app.PictureInPictureParams {
+        val b = android.app.PictureInPictureParams.Builder()
+            .setAspectRatio(android.util.Rational(p.shape.first, p.shape.second))
+            // The picture's place in the window: the system shrinks the window cropped to it,
+            // and grows the PiP window back towards it.
+            .setSourceRectHint(p.source)
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             // Auto-enter makes the swipe-home transition a seamless shrink of the live
-            // surface; the source rect is the video box, so the shrink starts from it.
-            b.setAutoEnterEnabled(autoEnter).setSeamlessResizeEnabled(true)
+            // surface. Seamless resize: the video is one buffer that the system scales (see
+            // PictureSurface), so the window can change size without a cross-fade.
+            b.setAutoEnterEnabled(p.autoEnter).setSeamlessResizeEnabled(true)
         }
         return b.build()
     }
 
-    /** The picture's shape (see playerBoxShape), so the PiP window has no bands either. */
-    fun setPipShape(shape: Pair<Int, Int>) {
-        if (pipShape == shape) return
-        pipShape = shape
-        if (!pipSupported || isDestroyed || pipAutoEnter == null) return
-        runCatching { setPictureInPictureParams(pipParams(autoEnter = pipAutoEnter == true)) }
+    private fun sendPip(p: tv.roxy.tv.player.PipSettings.Params?) {
+        if (p == null || !pipSupported || isDestroyed) return
+        runCatching { setPictureInPictureParams(pipParams(p)) }.onFailure { Timber.w(it, "PiP settings refused") }
     }
 
-    /** Called by the page's player: keep the system's PiP parameters current. */
-    fun updatePip(playing: Boolean, source: android.graphics.Rect?) {
-        if (!pipSupported || isDestroyed) return
-        val changed = pipAutoEnter != playing || pipSource != source
-        pipAutoEnter = playing; pipSource = source
-        if (changed) runCatching { setPictureInPictureParams(pipParams(autoEnter = playing)) }
+    /** A page with a player takes the PiP settings over (see [tv.roxy.tv.player.PipSettings]); [onLeaving]: see [onWindowFocusChanged]. */
+    fun claimPip(owner: Any, onLeaving: () -> Unit) = pip.claim(owner, onLeaving)
+
+    /** The picture's shape (see playerBoxShape), so the PiP window has no bands either. */
+    fun setPipShape(owner: Any, shape: Pair<Int, Int>) = sendPip(pip.shape(owner, shape))
+
+    /** Called by the page's player: whether it plays, and where the picture is in the (whole) window. */
+    fun updatePip(owner: Any, playing: Boolean, source: android.graphics.Rect?) {
+        val decor = window?.decorView
+        sendPip(pip.playing(owner, playing, source, decor?.width ?: 0, decor?.height ?: 0))
     }
 
     /** Leave PiP support behind when the page closes, so other screens never shrink. */
-    fun clearPip() {
+    fun clearPip(owner: Any) {
+        if (!pip.clear(owner)) return
+        pipTransitioning = false
         if (!pipSupported || isDestroyed) return
-        pipAutoEnter = null; pipSource = null; pipShape = 16 to 9
         runCatching { setPictureInPictureParams(android.app.PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()) }
+    }
+
+    /**
+     * The Home gesture gives the app nothing to go by while the launcher shrinks its window
+     * (about a second: no pause, no leave hint; Android 15's "transitioning" arrives when the
+     * shrinking is over). The one thing that does change, a tenth of a second in, is the
+     * window's focus. With a video playing that is taken as "may be about to become the PiP
+     * window", so the player's controls are not part of the shrinking picture. It is also
+     * what a pulled-down notification shade looks like: the controls go then too, which is
+     * what they do after three seconds anyway.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) pip.leaving()
     }
 
     fun enterPip() {
         if (!pipSupported) return
-        runCatching { enterPictureInPictureMode(pipParams(autoEnter = pipAutoEnter == true)) }.onFailure { Timber.w(it, "PiP failed") }
+        runCatching { enterPictureInPictureMode(pipParams(pip.params())) }.onFailure { Timber.w(it, "PiP failed") }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        if (!pipSupported || !pip.armed) return
+        // The app is being left with a video playing: it is about to shrink.
+        pipTransitioning = true
         // Android 12+ auto-enters through the params; older versions need the explicit call.
-        if (pipSupported && pipAutoEnter == true && android.os.Build.VERSION.SDK_INT < 31) enterPip()
+        if (android.os.Build.VERSION.SDK_INT < 31) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        // Entering: already announced by the transition-start callback on Android 15+;
-        // older versions hear it here. Leaving: always here.
-        if (!isInPictureInPictureMode || !pipTransitioning) onPipChanged?.invoke(isInPictureInPictureMode)
         pipTransitioning = false
         inPip = isInPictureInPictureMode
     }

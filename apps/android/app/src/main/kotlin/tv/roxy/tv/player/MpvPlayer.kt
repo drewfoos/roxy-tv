@@ -758,15 +758,16 @@ class MpvPlayer(
 
     // ---- surface ----
     //
-    // The same three calls mpv-android makes. mpv 0.41 syncs the window's buffer
-    // geometry on every resize itself (vo/context_android, "fix surface tearing on
-    // resize"); the one frame it still draws into the previous buffer is why a host
-    // should pin the surface's size across animated transitions (see PlayerSession.pinSurface)
-    // rather than resize it mid-flight.
+    // The same three calls mpv-android makes. Since 0.41 mpv gives the window's buffers the
+    // size it is told here (ANativeWindow_setBuffersGeometry, in vo/context_android) and
+    // the system scales them into the view: the buffer is whatever android-surface-size
+    // says, not what the view measures. The first frame after a change is still drawn into
+    // a buffer of the previous size, so a host whose box changes size under the video keeps
+    // the surface's size fixed (see PictureSurface) and sizes change only between files.
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         if (destroyed) return
-        Timber.d("surfaceCreated")
+        Timber.d("surfaceCreated %s", holder.surfaceFrame)
         // The size goes in before the vo comes up: the vo lays the picture out for the size
         // it sees at creation, and after a page/app switch that was the previous surface's.
         val frame = holder.surfaceFrame
@@ -785,19 +786,30 @@ class MpvPlayer(
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (destroyed) return
         Timber.d("surfaceChanged %dx%d", width, height)
+        if (lastSurface == width to height) return
         applySurfaceSize(width, height)
         // mpv draws its first frame at a new size into a buffer that is still the old size
-        // (the buffer was taken before the size changed). Playing, the next frame replaces it;
-        // paused, it stayed: after a rotation the picture was a zoomed-in corner, or squeezed
-        // into part of the screen. Once the resize has settled, draw the frame again.
+        // (the driver took it before the size changed). Playing, the next frame replaces
+        // it; paused, it stayed: the picture was a zoomed-in corner, or squeezed into part
+        // of the box. Draw the frame again: soon, so a playing video shows the wrong frame
+        // for a blink rather than until its next one, and once more for a slow device.
         main.removeCallbacks(redrawAfterResize)
-        main.postDelayed(redrawAfterResize, 150)
+        main.postDelayed(redrawAfterResize, 34)
+        main.postDelayed(redrawAfterResize, 200)
     }
 
-    /** Setting the size again makes mpv lay out and draw the current frame once more. */
+    private var redrawNudge = false
+
+    /**
+     * Makes mpv draw the current frame once more. Any change to a video-position option
+     * does; this one moves the picture inside its black bars by a ten-thousandth of their
+     * width, which is nothing. (Setting the surface's size again, as this did before, does
+     * nothing at all: mpv ignores an option set to the value it has.)
+     */
     private val redrawAfterResize = Runnable {
-        val (w, h) = lastSurface ?: return@Runnable
-        if (!destroyed && surfaceReady) mpv.setPropertyString("android-surface-size", "${w}x$h")
+        if (destroyed || !surfaceReady) return@Runnable
+        redrawNudge = !redrawNudge
+        mpv.setPropertyDouble("video-align-x", if (redrawNudge) 1e-4 else 0.0)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {

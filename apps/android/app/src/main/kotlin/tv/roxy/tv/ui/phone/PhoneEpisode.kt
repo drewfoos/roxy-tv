@@ -61,8 +61,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import tv.roxy.tv.RoxyApp
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import tv.roxy.tv.MainActivity
 import tv.roxy.tv.api.Item
 import tv.roxy.tv.api.CastMember
@@ -89,10 +87,16 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     val scope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
     val main = activity as? MainActivity
-    val inPip = main?.inPip == true || main?.pipTransitioning == true
+    // In the PiP window, and on the way into it (the window is still whole then: the system
+    // shrinks it as it is, so the page keeps its layout and only drops the controls).
+    val inPip = main?.inPip == true
+    val goingToPip = main?.pipTransitioning == true
     var videoBounds by remember { mutableStateOf<android.graphics.Rect?>(null) }
     val view = LocalView.current
-    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // Fullscreen is the window lying sideways, except in the PiP window, which always is.
+    val windowLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // (A page that opens in the PiP window, by a link, starts as the upright page it will be.)
+    val landscape = remember { tv.roxy.tv.player.FullscreenMemory(windowLandscape && !inPip) }.now(windowLandscape, inPip)
 
     // The episode playing here (autoplay moves it on) and whether the route's start was used:
     // kept with the page's saved state, so coming back to the page resumes that one.
@@ -154,32 +158,37 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
             override fun toggleFullscreen() = setFullscreen(!isLandscape)
             override fun nowPlaying(req: PlayRequest) = nowPlaying.invoke(req)
             override val pipSupported: Boolean get() = mainActivity?.pipSupported == true
-            override val inPip: Boolean get() = mainActivity?.inPip == true
+            // The player's own layers (controls, cards) go as soon as the way in starts.
+            override val inPip: Boolean get() = mainActivity?.inPip == true || mainActivity?.pipTransitioning == true
             override fun enterPip() { mainActivity?.enterPip() }
-            override fun playingChanged(playing: Boolean) { mainActivity?.updatePip(playing, bounds()) }
+            override fun playingChanged(playing: Boolean) { mainActivity?.updatePip(this, playing, bounds()) }
         }
     }
     host.mainActivity = main
     host.bounds = { videoBounds }
+    // The PiP settings are this page's from here on (before any effect below sends one), and
+    // nobody's once it has gone, so other screens never shrink.
+    val sessionNow = androidx.compose.runtime.rememberUpdatedState(session)
+    DisposableEffect(main) {
+        main?.claimPip(host) { sessionNow.value?.windowLostFocus() }
+        onDispose { main?.clearPip(host) }
+    }
     var castSheet by remember { mutableStateOf(false) }
     host.cast = { castSheet = true }
     if (castSheet) CastSheet(onDismiss = { castSheet = false })
-    // Playing state is reported on change only; the box's position changes on rotation,
-    // so push it as well when it moves.
-    LaunchedEffect(videoBounds) { val s = session ?: return@LaunchedEffect; main?.updatePip(!s.ui.paused, videoBounds) }
-    LaunchedEffect(inPip) { if (inPip) session?.hideControls() }
-    // The PiP shrink and expand animate the live surface; the resize bounce (a black frame
-    // and an audio re-seek) must be off before the surface changes, so it is armed on the
-    // activity's callback rather than from a Compose effect.
-    DisposableEffect(main, session) {
-        main?.onPipChanged = pip@{ entering ->
-            val s = session ?: return@pip
-            // The exit callback comes after the animation with the view laid out at its full
-            // size; the box is the same shape as the window, so unpinning then is a no-op
-            // when the size matches and a single resize when it does not.
-            s.pinSurface(entering)
-        }
-        onDispose { main?.onPipChanged = null; main?.clearPip() }
+    // Playing state is reported on change only; the picture's place changes on rotation,
+    // so push it as well when it moves. Once it has stopped moving: the page slides in, and
+    // every frame of that was a call to the system.
+    LaunchedEffect(videoBounds, session) {
+        val s = session ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(120)
+        main?.updatePip(host, !s.ui.paused, videoBounds)
+    }
+    // Into the PiP window: nothing of the player's own over the picture. Back out of it with
+    // the video paused (the window's own pause button): the controls, so there is a Play.
+    LaunchedEffect(inPip, goingToPip) {
+        val s = session ?: return@LaunchedEffect
+        if (inPip || goingToPip) s.hideControls() else if (s.ui.paused) s.showControls()
     }
     host.isLandscape = landscape
     // Turning the phone moves the controls (and open settings) to the other layout at once,
@@ -273,21 +282,22 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     // no black bands above and below it (nor a 4:3 show at its sides). Known from the file
     // before it plays, so the box does not change size under the picture.
     val shape = playerBoxShape(ep?.primarySource?.streams?.firstOrNull { it.type == "video" })
-    LaunchedEffect(shape) { main?.setPipShape(shape) }
+    LaunchedEffect(shape) { main?.setPipShape(host, shape) }
     Column(modifier = Modifier.fillMaxSize().background(if (full) Color.Black else RoxyColors.background).then(if (full) Modifier else Modifier.statusBarsPadding())) {
         // The player keeps its place in the tree in both orientations and in the PiP window,
-        // so the surface and the stream survive; only its size changes. Fullscreen is the
-        // whole screen; mpv fits the picture inside it (pillars on this phone's 21.7:9).
-        Box(
-            modifier = (if (full) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(shape.first.toFloat() / shape.second)).onGloballyPositioned { c ->
-                val b = c.boundsInWindow()
-                val r = android.graphics.Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt())
-                if (r != videoBounds) videoBounds = r
-            },
-        ) {
+        // so the surface and the stream survive; only its box changes. Fullscreen is the
+        // whole screen with the picture centred in it (pillars on this phone's 21.7:9); the
+        // picture itself is one buffer of the picture's shape that the system scales into
+        // each box (see PictureSurface), so no change of box reaches mpv.
+        Box(modifier = if (full) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(shape.first.toFloat() / shape.second)) {
             val s = session
             when {
-                s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize())
+                // Where the picture is in the whole window: what the system shrinks into the
+                // PiP window, and where it grows back to. In the PiP window the picture is
+                // the whole small window, which is not that place: the last one is kept.
+                s != null -> PlayerSurface(s, modifier = Modifier.fillMaxSize(), shape = shape, onPictureBounds = { r ->
+                    if (main?.inPip != true && main?.pipTransitioning != true && activity?.isInPictureInPictureMode != true && r != videoBounds) videoBounds = r
+                })
                 error != null -> Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     Text(error ?: "", color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                 }
