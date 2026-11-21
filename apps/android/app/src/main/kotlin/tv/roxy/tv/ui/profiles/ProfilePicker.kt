@@ -95,6 +95,10 @@ import tv.roxy.tv.ui.components.retryEachFrame
 /** Avatar size on the picker: big up to four profiles, a little smaller beyond so six still fit. */
 private fun pickSize(count: Int): Dp = if (count > 4) 96.dp else 112.dp
 
+/** The profile list kept from the last time the server gave it; null when there is none to show. */
+internal fun savedProfiles(json: String?): List<Profile>? =
+    json?.let { runCatching { Json.decodeFromString(ListSerializer(Profile.serializer()), it) }.getOrNull() }?.takeIf { it.isNotEmpty() }
+
 /**
  * "Who's watching?" (Netflix): the account's profiles as big avatars in centred rows,
  * Add profile on its own row beneath, and Manage profiles / Log out as pills at the
@@ -109,7 +113,12 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
     val app = RoxyApp.get(LocalContext.current)
     val session by app.prefs.session.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var profiles by remember { mutableStateOf<List<Profile>?>(null) }
+    // The list saved at the last visit shows at once and the server's replaces it. On a poor
+    // link that answer can take the whole connect timeout, and until it came there was
+    // nothing to pick (nor Back, nor Log out).
+    val saved = remember { savedProfiles(app.prefs.cachedProfiles.value) }
+    var profiles by remember { mutableStateOf(saved) }
+    var fromSaved by remember { mutableStateOf(saved != null) }
     var error by remember { mutableStateOf<String?>(null) }
     var managing by rememberSaveable { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Profile?>(editOnly) }
@@ -118,14 +127,19 @@ fun ProfilePicker(editOnly: Profile? = null, onDone: () -> Unit = {}) {
     suspend fun reload() {
         runCatching { app.api.profiles().profiles }
             .onSuccess { list ->
-                profiles = list; error = null
+                profiles = list; fromSaved = false; error = null
                 // Remembered for the next launch away from the server (downloads still play).
                 runCatching { app.prefs.cacheProfiles(Json.encodeToString(ListSerializer(Profile.serializer()), list)) }
             }
             .onFailure { t ->
                 Timber.w(t, "profiles failed")
-                val cached = app.prefs.cachedProfiles.value?.let { runCatching { Json.decodeFromString(ListSerializer(Profile.serializer()), it) }.getOrNull() }
-                if (!cached.isNullOrEmpty() && t !is ApiException) { profiles = cached; error = null } else error = tv.roxy.tv.data.friendlyError(t, "profiles")
+                // No answer: the saved list (or the one already read) stays. The server's own
+                // refusal is an answer: a saved list is not shown against it.
+                if (t is ApiException && fromSaved) { profiles = null; fromSaved = false }
+                if (profiles == null) {
+                    val cached = savedProfiles(app.prefs.cachedProfiles.value)
+                    if (cached != null && t !is ApiException) { profiles = cached; fromSaved = true; error = null } else error = tv.roxy.tv.data.friendlyError(t, "profiles")
+                }
             }
     }
     LaunchedEffect(Unit) { reload() }
