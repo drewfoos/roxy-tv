@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -112,8 +113,12 @@ fun PlayerSurface(
                 }
             }
         }
+        // The spinner is the one layer of the player's own that the PiP window keeps: a video
+        // still loading there, or starved on a slow link, was a plain black window with
+        // nothing to say it was coming. (One call for both, so going into PiP while it
+        // turns does not start its wait again.)
+        BufferingSpinner(session.ui.buffering, compact = session.host.inPip || session.ui.fullscreen == false)
         if (session.host.inPip) return@Box
-        BufferingSpinner(session.ui.buffering, compact = session.ui.fullscreen == false)
         PlayerControls(
             state = session.ui,
             visible = session.controlsVisible,
@@ -195,11 +200,11 @@ private fun SurfaceView.applyRenderSize(size: Pair<Int, Int>?) {
  * appears only after a short grace period, so a quick seek inside the cache shows nothing.
  */
 @Composable
-private fun BufferingSpinner(buffering: Boolean, compact: Boolean) {
+internal fun BufferingSpinner(buffering: Boolean, compact: Boolean) {
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(buffering) {
         if (!buffering) { shown = false; return@LaunchedEffect }
-        kotlinx.coroutines.delay(400)
+        kotlinx.coroutines.delay(BUFFERING_GRACE_MS)
         shown = true
     }
     if (!shown) return
@@ -207,7 +212,10 @@ private fun BufferingSpinner(buffering: Boolean, compact: Boolean) {
         CircularProgressIndicator(
             color = Color.White,
             strokeWidth = if (compact) 3.dp else 4.dp,
-            modifier = Modifier.size(if (compact) 36.dp else 56.dp),
+            modifier = Modifier.size(if (compact) 36.dp else 56.dp).testTag("buffering"),
         )
     }
 }
+
+/** How long the video may wait (the network, a seek, a load) before the spinner shows. */
+internal const val BUFFERING_GRACE_MS = 400L
