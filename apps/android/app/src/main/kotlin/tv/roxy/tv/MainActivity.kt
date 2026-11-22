@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import tv.roxy.tv.player.seeThrough
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
@@ -68,6 +69,8 @@ class MainActivity : ComponentActivity() {
     private companion object {
         /** How long after the window lost the focus the app looks at who has it (see [onWindowFocusChanged]). */
         const val LEAVING_LOOK_MS = 50L
+        /** The page fades to see-through this fast when the app is left for the PiP window. */
+        const val LEAVING_FADE_MS = 120
     }
 
     /** True while the activity is the floating picture-in-picture window (the episode page's player). */
@@ -99,16 +102,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        pipByHand = false
         // Left towards PiP and back without one (the system did not make the window).
         if (!isInPictureInPictureMode) pipLeaving = false
     }
 
     override fun onPause() {
-        // Home by the button, another app over this one: with a video playing the PiP window
-        // is next. (Split screen on Android 9 pauses the app that is merely not in use.)
-        if (pip.armed && !isInMultiWindowMode) pipLeaving = true
+        // On every way into the PiP window the app is in PiP by the time it is paused (the
+        // system pins it first). Paused outside it, the app was left some other way: the
+        // recent-apps overview, another app or a dialog over it, the screen going off. The
+        // page is itself again, for the picture the system keeps of it there and for what
+        // still shows of it. (Android 11 and older enter by hand, and may pause first.)
+        if (!isInPictureInPictureMode && !pipByHand) {
+            window?.decorView?.removeCallbacks(leavingLook)
+            pipLeaving = false
+        }
         super.onPause()
     }
+
+    /** Android 11 and older: PiP was asked for by hand at the leave hint, and the pause may come before it. */
+    private var pipByHand = false
 
     /** The page is in use after all: a touch in the app's own window. */
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
@@ -182,14 +195,32 @@ class MainActivity : ComponentActivity() {
         }
         pip.leaving()
         // A menu or sheet of the page's own is a window too and takes the focus the same
-        // way; its own "I have the focus" is a message or two behind this one. A moment for
-        // it to arrive, and a second look for a slow one.
+        // way. With no such window in existence the focus has gone to something else, and
+        // that is known now: the launcher is already shrinking the app, and every frame
+        // counts. With one, its own "I have the focus" is a message or two behind this one:
+        // a moment for it to arrive, and a second look for a slow one.
+        if (inFront() && pip.leftByFocus(hasFocus = false, isInMultiWindowMode, if (hasOtherWindows() == false) false else null)) pipLeaving = true
         decor?.postDelayed(leavingLook, LEAVING_LOOK_MS)
         decor?.postDelayed(leavingLook, LEAVING_LOOK_MS * 5)
     }
 
+    /** Whether the app has any window besides this one (a dialog, a menu, a sheet); null when it cannot be told. */
+    private fun hasOtherWindows(): Boolean? {
+        if (android.os.Build.VERSION.SDK_INT < 29) return null
+        val decor = window?.decorView
+        return runCatching { android.view.inspector.WindowInspector.getGlobalWindowViews().any { it !== decor } }.getOrNull()
+    }
+
+    /**
+     * In use, as far as the system has said: resumed and not the PiP window. The Home gesture
+     * leaves the app resumed for as long as the launcher is shrinking it; an app that was
+     * paused first lost its window's focus to whatever came over it, which is no way into PiP.
+     */
+    private fun inFront(): Boolean =
+        !isInPictureInPictureMode && !isDestroyed && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+
     private val leavingLook = Runnable {
-        if (isInPictureInPictureMode || isDestroyed) return@Runnable
+        if (!inFront()) return@Runnable
         val own = ownWindowFocused()
         if (own == true) pipLeaving = false
         else if (pip.leftByFocus(hasWindowFocus(), isInMultiWindowMode, own)) pipLeaving = true
@@ -218,7 +249,7 @@ class MainActivity : ComponentActivity() {
         // The app is being left with a video playing: it is about to shrink.
         pipLeaving = true
         // Android 12+ auto-enters through the params; older versions need the explicit call.
-        if (android.os.Build.VERSION.SDK_INT < 31) enterPip()
+        if (android.os.Build.VERSION.SDK_INT < 31) { pipByHand = true; enterPip() }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -226,6 +257,7 @@ class MainActivity : ComponentActivity() {
         // In the PiP window the page is the picture alone anyway; out of it, it is all there
         // again from the first frame (the system grows the window back with the page in it).
         pipLeaving = false
+        pipByHand = false
         inPip = isInPictureInPictureMode
     }
 
@@ -293,20 +325,33 @@ class MainActivity : ComponentActivity() {
         if (!tv) enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         setContent {
             RoxyTheme {
-                // The Surface paints the page colour itself; a second background modifier
-                // would be another full-screen fill on every frame.
-                Surface(modifier = Modifier.fillMaxSize(), colors = SurfaceDefaults.colors(containerColor = RoxyColors.background)) {
-                    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-                        CompatGate(tv) { AppRoot(tv) }
-                        // Above every page: "Can't reach Roxy" while the server is away. The phone
-                        // says it its own way (a strip over the bottom bar, offline pages).
-                        if (tv) ServerBanner(tv)
+                // Left for the PiP window, the page fades to see-through (see pipLeaving and
+                // seeThrough): the video alone is what shrinks into the corner.
+                val leaving = pipLeaving
+                val gone = androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (leaving) 1f else 0f,
+                    // Back at once when the app is not left after all: nothing is behind the
+                    // window by then, and a page fading in would be fading in from black.
+                    animationSpec = if (leaving) androidx.compose.animation.core.tween(LEAVING_FADE_MS, easing = androidx.compose.animation.core.LinearEasing) else androidx.compose.animation.core.snap(),
+                    label = "leaving",
+                )
+                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().seeThrough { gone.value }) {
+                    // The Surface paints the page colour itself; a second background modifier
+                    // would be another full-screen fill on every frame.
+                    Surface(modifier = Modifier.fillMaxSize(), colors = SurfaceDefaults.colors(containerColor = RoxyColors.background)) {
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                            CompatGate(tv) { AppRoot(tv) }
+                            // Above every page: "Can't reach Roxy" while the server is away. The phone
+                            // says it its own way (a strip over the bottom bar, offline pages).
+                            if (tv) ServerBanner(tv)
+                        }
                     }
                 }
             }
         }
         // The content is opaque, so the window's own background is one more full-screen
-        // fill the GPU can skip (a TV's fill rate is the frame budget's bottleneck).
+        // fill the GPU can skip (a TV's fill rate is the frame budget's bottleneck). It is
+        // also what lets the page be see-through on its way into PiP: nothing lies under it.
         window.setBackgroundDrawable(null)
     }
 }

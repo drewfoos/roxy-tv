@@ -36,7 +36,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -307,11 +306,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                 ep != null -> RoxyImage(app.downloads.image(app.api, ep, "thumb", widthPx(420.dp) * 2) ?: app.api.imageUrl(ep, "backdrop", widthPx(420.dp) * 2), ep.episodeCode, modifier = Modifier.fillMaxSize(), placeholderTextSize = 14)
             }
         }
-        // Not drawn while the app is being left for the PiP window: the system shrinks the
-        // whole window and crops it to the picture only gradually, and the series' name and
-        // the episode's rode along under the picture, inside the small window, until then.
-        // Kept in the layout (and its scroll position) for when the app is not left after all.
-        if (!full) Column(modifier = Modifier.fillMaxSize().alpha(if (goingToPip) 0f else 1f).verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
+        // (While the app is left for the PiP window this stays in the layout, and the whole
+        // page fades to see-through at the activity's root: see MainActivity.pipLeaving.)
+        if (!full) Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
             if (ep != null) {
                 Column(modifier = Modifier.padding(horizontal = PhonePad, vertical = 14.dp)) {
                     // Series name over an episode; "Movie" over a film.
