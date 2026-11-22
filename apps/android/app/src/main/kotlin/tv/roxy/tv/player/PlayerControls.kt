@@ -184,8 +184,23 @@ data class QualityOption(val key: String, val label: String, val height: Int, va
         }
 
         /**
-         * The menu for a video [sourceHeight] tall: the file itself under its resolution,
-         * then only the presets that are actually smaller. Unknown height: "Best" and all.
+         * The height that names a picture's size: its own, or, for a picture wider than
+         * 16:9, the height a 16:9 picture of its width has. A 3840 x 1604 film is 4K (2160)
+         * and a 1920 x 802 one 1080p, which is how the server's conversions count them. By
+         * height alone the 4K film was "1440p" with a second "1440p" listed under it, and
+         * every wide 1080p film "720p" over a "720p".
+         */
+        fun classHeight(width: Int, height: Int): Int =
+            if (height <= 0) 0 else maxOf(height, if (width > 0) (width * 9 + 8) / 16 else 0)
+
+        /** [classHeight] of a file's picture, from its streams; 0 when it is not known. */
+        fun classHeight(streams: List<tv.roxy.tv.api.MediaStream>?): Int =
+            streams?.firstOrNull { it.type == "video" }?.let { classHeight(it.width, it.height) } ?: 0
+
+        /**
+         * The menu for a video of class height [sourceHeight] (see [classHeight]): the file
+         * itself under its resolution, then only the presets that are actually smaller.
+         * Unknown height: "Best" and all.
          */
         fun forSource(sourceHeight: Int): List<QualityOption> {
             val res = resolutionLabel(sourceHeight)

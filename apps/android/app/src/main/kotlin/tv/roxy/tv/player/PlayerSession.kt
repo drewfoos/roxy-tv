@@ -663,7 +663,7 @@ class PlayerSession(
             val src = snapshot.primarySource
             segments = src?.segments.orEmpty()
             // The Quality menu names the file by its resolution ("1080p", "4K") offline too.
-            sourceHeight = src?.streams?.firstOrNull { it.type == "video" }?.height ?: 0
+            sourceHeight = QualityOption.classHeight(src?.streams)
             sourceDurationSec = src?.durationMs?.let { it / 1000.0 }
             itemSubs = subtitleInfos(src?.streams.orEmpty())
             itemContainer = src?.container
@@ -697,7 +697,7 @@ class PlayerSession(
                 if (this@PlayerSession.sourceId != sourceId) return@launch
                 segments = src.segments
                 segments.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) }
-                sourceHeight = src.streams.firstOrNull { it.type == "video" }?.height ?: 0
+                sourceHeight = QualityOption.classHeight(src.streams)
                 sourceDurationSec = src.durationMs?.let { it / 1000.0 }
             }
             // Seek-preview thumbnails: ask once now and, if the server is still generating
@@ -1388,7 +1388,7 @@ class PlayerSession(
         if (src == null) return true
         val kbps = sourceKbps(src)
         if (kbps > 0) return kbps > (q.kbps + 200) * 1.2
-        val h = src.streams.firstOrNull { it.type == "video" }?.height ?: 0
+        val h = QualityOption.classHeight(src.streams)
         return h <= 0 || h > q.height * 1.06
     }
 
