@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../api/client'
 import type { BrowseResponse, IdentifyCandidate, LibraryFolder, ManageTitle } from '../../api/admin'
@@ -368,13 +368,14 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
   const [cands, setCands] = useState<IdentifyCandidate[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [picked, setPicked] = useState<IdentifyCandidate | null>(null)
-  // The provider the results on screen came from: a result's id means nothing to the other
-  // one. The chip used to change only what the match was SENT as, so a TMDB pick could be
-  // saved as an AniList id (another show's details, or none), and a new search left the old
-  // pick in the question under the list.
-  const [from, setFrom] = useState<'tmdb' | 'anilist'>('tmdb')
+  // The results on screen are always the chosen provider's: a result's id means nothing to
+  // the other one. The chip used to change only what the match was SENT as, so a TMDB pick
+  // could be saved as an AniList id (another show's details, or none), and a new search
+  // left the old pick in the question under the list.
+  const asking = useRef(0) // the search whose answer is still wanted
   const choose = (p: 'tmdb' | 'anilist') => {
     if (p === provider) return
+    asking.current++ // an answer still on its way belongs to the other provider
     setProvider(p)
     setCands(null)
     setPicked(null)
@@ -382,12 +383,13 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
   const search = async () => {
     setErr(null)
     setPicked(null)
-    const asked = provider
+    const mine = ++asking.current
     try {
-      const r = await api.identifySearch(title.id, asked, query.trim())
-      setFrom(asked)
+      const r = await api.identifySearch(title.id, provider, query.trim())
+      if (mine !== asking.current) return // overtaken: by the other provider, or a newer search
       setCands(r.candidates)
     } catch (e) {
+      if (mine !== asking.current) return
       setErr(errorText(e))
       return false
     }
@@ -441,7 +443,7 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
           Use <b>{picked.title}</b>
           {picked.year ? ` (${picked.year})` : ''} for "{title.title}"? Its details and art replace what is there.
           <div className="acc-actions acc-actions--tight" style={{ marginTop: 10 }}>
-            <ActionButton onClick={() => run(() => api.identifyApply(title.id, from, picked.id), onDone)}>Yes, use this match</ActionButton>
+            <ActionButton onClick={() => run(() => api.identifyApply(title.id, provider, picked.id), onDone)}>Yes, use this match</ActionButton>
             <button className="btn btn--grey" onClick={() => setPicked(null)}>
               No
             </button>

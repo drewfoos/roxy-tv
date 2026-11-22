@@ -110,3 +110,31 @@ describe('prefs: each profile has its own', () => {
     expect(prefs.get()).toMatchObject({ skipWindowSec: 20, autoplay: false })
   })
 })
+
+// The settings page saved a height picked from "Best" as text ("720"): the select guessed
+// "text" from the value it showed. The player compares with the number 720, so the choice
+// did nothing. And "Best" picked after a height was saved as nothing at all.
+describe('prefs: the saved video quality', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('roxy.prefs.v', '3')
+  })
+  it('reads a height saved as text as that height', async () => {
+    localStorage.setItem('roxy.prefs', JSON.stringify({ quality: '720' }))
+    expect((await load()).quality).toBe(720)
+    const { startQuality } = await import('../player/stream')
+    expect(startQuality((await load()).quality, 1080)).toBe(720)
+  })
+  it('reads nothing, or something that is not a choice, as Best', async () => {
+    for (const saved of [null, 'NaN', 999, '72p', {}, '']) {
+      localStorage.setItem('roxy.prefs', JSON.stringify({ quality: saved }))
+      expect((await load()).quality, JSON.stringify(saved)).toBe('original')
+    }
+  })
+  it('keeps a quality saved the right way', async () => {
+    localStorage.setItem('roxy.prefs', JSON.stringify({ quality: 1080 }))
+    expect((await load()).quality).toBe(1080)
+    localStorage.setItem('roxy.prefs', JSON.stringify({ quality: 'original' }))
+    expect((await load()).quality).toBe('original')
+  })
+})

@@ -23,14 +23,25 @@ const REFRESH_MS = 5000
  * repackages it or converts it (and why). Jellyfin's dashboard has the same on its
  * "Active devices" cards; here the detail is on the card, not behind a button.
  */
+/**
+ * How long ago [data] (an answer from the server) was first drawn, in ms. The time is noted
+ * while drawing, the first time that answer is seen. Noted in an effect, as it was, the draw
+ * that showed a new answer still counted from the old one's time: every clock on the page
+ * jumped a refresh ahead (5 s) and back.
+ */
+export function useSinceArrival<T>(data: T): number {
+  const [got, setGot] = useState({ data, at: Date.now() })
+  if (got.data !== data) {
+    setGot({ data, at: Date.now() }) // drawn again at once, with the new answer's time
+    return 0
+  }
+  return Date.now() - got.at
+}
+
 export function NowPlayingPage() {
   const { data, error, loading, reload } = useAsync('now-playing', () => api.activeSessions())
-  // When the answer on screen arrived: playing sessions are counted on from it. Noted while
-  // drawing, the first time this answer is seen: noted in an effect, the draw that showed a
-  // new answer still counted from the old one's time, and every clock jumped five seconds
-  // ahead and back at each refresh.
-  const [got, setGot] = useState({ data, at: Date.now() })
-  if (got.data !== data) setGot({ data, at: Date.now() }) // drawn again at once with the new time
+  // Playing sessions are counted on from when the answer on screen arrived.
+  const since = useSinceArrival(data)
   const [, setTick] = useState(0)
   usePoll(reload, REFRESH_MS)
   useEffect(() => {
@@ -49,7 +60,6 @@ export function NowPlayingPage() {
   }, [reload])
 
   const sessions = data?.sessions ?? []
-  const since = got.data === data ? Date.now() - got.at : 0
   return (
     <section className="acc-form acc-form--wide np">
       <PanelHead title="Now Playing" sub="Who is watching what right now, and how the server is sending it." />

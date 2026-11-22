@@ -90,20 +90,23 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     /* refused: try the old way */
   }
+  const before = document.activeElement as HTMLElement | null
+  const box = document.createElement('textarea')
   try {
-    const box = document.createElement('textarea')
     box.value = text
     box.setAttribute('readonly', '')
     box.style.position = 'fixed'
     box.style.top = '-1000px'
     box.style.opacity = '0'
     document.body.appendChild(box)
+    box.focus() // the copy command takes the selection of what has the focus
     box.select()
-    const ok = document.execCommand('copy')
-    box.remove()
-    return ok
+    return document.execCommand('copy')
   } catch {
     return false
+  } finally {
+    box.remove()
+    before?.focus?.() // back on the Copy button, for whoever is using the keyboard
   }
 }
 
@@ -184,7 +187,6 @@ export function ActionButton({ children, onClick, disabled, kind = 'brand', done
   const [busy, setBusy] = useState(false)
   const [ok, setOk] = useState(false)
   const run = async () => {
-    if (busy) return
     setBusy(true)
     setOk(false)
     try {
@@ -213,14 +215,13 @@ export const CONFIRM_ARM_MS = 600
  * A button that removes something for good. The first press arms it and changes its words
  * ("Tap again to delete"); the second does it. The armed button is where the first press
  * was, so a double-click used to delete at once: presses in the first [CONFIRM_ARM_MS]
- * after arming are ignored. One removal at a time: more presses while it runs do nothing
+ * after arming are ignored. One removal at a time: the button is disabled while it runs
  * (a second request found nothing to delete and left its error on the page).
  */
 export function ConfirmButton({ label, confirm, onConfirm, onArmed, now = Date.now }: { label: string; confirm: string; onConfirm: () => Promise<unknown> | unknown; onArmed?: () => void; now?: () => number }) {
   const [armedAt, setArmedAt] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const press = async () => {
-    if (busy) return
     if (armedAt == null) {
       setArmedAt(now())
       onArmed?.()
