@@ -138,3 +138,23 @@ describe('prefs: the saved video quality', () => {
     expect((await load()).quality).toBe('original')
   })
 })
+
+// 4K and 1440p were offered in Preferences, but a browser is never sent more than 1080p:
+// both played the file as it is, exactly as Best does.
+describe('prefs: the qualities offered', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('roxy.prefs.v', '3')
+  })
+  it("are the ones the player's own menu has", async () => {
+    vi.resetModules()
+    const { QUALITY_PREFS } = await import('./prefs')
+    expect(QUALITY_PREFS.map((q) => q.id)).toEqual(['original', 1080, 720, 480])
+  })
+  it('reads a saved 4K or 1440p as Best, which is what it did', async () => {
+    for (const saved of [2160, 1440, '2160']) {
+      localStorage.setItem('roxy.prefs', JSON.stringify({ quality: saved }))
+      expect((await load()).quality, String(saved)).toBe('original')
+    }
+  })
+})

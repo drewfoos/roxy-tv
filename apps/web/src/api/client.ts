@@ -4,30 +4,7 @@
 import { session, deviceName } from './session'
 import { connection, connectionWords } from './connection'
 import type { AccountUser, ActiveSessions, AddressSettings, ApiKeyRow, ArrSettings, ArrTest, AvatarCharacter, BrowseResponse, IdentifyCandidate, LibraryFolder, ManageStatus, MediaRequest, SignedInDevice, TranscodingSettings, WebhookEvent } from './admin'
-import type {
-  DiscoverDetail,
-  DiscoverEpisode,
-  DiscoverFilms,
-  DiscoverItem,
-  DiscoverResponse,
-  ItemDetails,
-  HomeResponse,
-  Item,
-  ItemsResponse,
-  LegalDoc,
-  RequestRow,
-  LoginResponse,
-  MediaSource,
-  MediaTokenResponse,
-  Profile,
-  ProfilesResponse,
-  RelatedResponse,
-  Section,
-  SetupStatus,
-  SystemInfo,
-  TrickplayManifest,
-  UserData,
-} from './types'
+import type { DiscoverDetail, DiscoverEpisode, DiscoverFilms, DiscoverItem, DiscoverResponse, ItemDetails, HomeResponse, Item, ItemsResponse, LegalDoc, RequestRow, LoginResponse, MediaSource, MediaTokenResponse, Profile, ProfilesResponse, RelatedResponse, Section, SetupStatus, SystemInfo, TrickplayManifest, UserData, User } from './types'
 
 export const APP_VERSION = '0.1.0'
 
@@ -268,6 +245,8 @@ export const api = {
    * honoured for GET, so every change still needs the token.
    */
   cookie: () => post<void>('/v1/auth/cookie'),
+  /** Who this login is now (its level can be changed by an admin while it is signed in). */
+  me: () => get<User>('/v1/auth/me'),
 
   // ---- profiles ----
   profiles: () => get<ProfilesResponse>('/v1/me/profiles'),

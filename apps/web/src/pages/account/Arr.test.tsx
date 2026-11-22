@@ -103,3 +103,32 @@ describe('Sonarr & Radarr: the API key box', () => {
     expect((api.saveArrSettings.mock.calls[0][0] as { radarr: { apiKey: string } }).radarr.apiKey).toBe('')
   })
 })
+
+// Any error replaced the whole page with one red line and no heading: also the one from
+// the quiet refresh after Save, which took the form (and what had just been typed) away.
+describe('Sonarr & Radarr: when the settings cannot be read', () => {
+  const errors = () => Array.from(host.querySelectorAll('.notice--error')).map((n) => n.textContent)
+
+  it('says so under its own heading, and can try again', async () => {
+    api.arrSettings.mockRejectedValueOnce(new Error('The server did not answer.'))
+    await open()
+    expect(host.querySelector('.panel-head h1')?.textContent).toBe('Sonarr & Radarr')
+    expect(errors()).toEqual(['The server did not answer.'])
+    expect(host.querySelector('.fsecret input')).toBeNull()
+    await click('Try again')
+    await flush()
+    expect(errors()).toEqual([])
+    expect(keyBox()).toBeTruthy()
+  })
+
+  it('keeps the form when the refresh after Save fails', async () => {
+    await open()
+    type('0123456789abcdef0123456789abcdef')
+    api.arrSettings.mockRejectedValueOnce(new Error('The server did not answer.'))
+    await click('Save')
+    await flush()
+    expect(host.querySelector('.panel-head h1')?.textContent).toBe('Sonarr & Radarr')
+    expect(keyBox()).toBeTruthy() // the form is still there
+    expect(api.saveArrSettings).toHaveBeenCalledTimes(1)
+  })
+})

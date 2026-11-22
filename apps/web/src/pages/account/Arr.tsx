@@ -29,8 +29,23 @@ export function ArrPage() {
     if (data && fresh && !draft) setDraft({ sonarr: { ...EMPTY, ...data.sonarr }, radarr: { ...EMPTY, ...data.radarr } })
   }, [data, fresh, draft])
 
-  if (error) return <Notice kind="error">{error}</Notice>
-  if (loading || !draft) return <Spinner />
+  // No settings to show yet: the page's own heading with what went wrong, or the spinner.
+  // A read that fails LATER (the refresh after Save) must not take the form away: any error
+  // used to replace the whole page with one red line, the settings just typed gone with it.
+  if (!draft) {
+    if (!error && (loading || !fresh)) return <Spinner />
+    return (
+      <section className="acc-form">
+        <PanelHead title="Sonarr & Radarr" sub="Where Discover requests go. Sonarr fetches series, Radarr fetches movies; both import into folders Roxy watches." />
+        <Notice kind="error">{error ?? 'The server sent no settings.'}</Notice>
+        <div className="acc-actions">
+          <ActionButton kind="grey" onClick={() => reload()}>
+            Try again
+          </ActionButton>
+        </div>
+      </section>
+    )
+  }
   const cfg = draft[kind]
   const test = tests[kind]
   const patch = (p: Partial<ArrConfig>) => setDraft({ ...draft, [kind]: { ...cfg, ...p } })

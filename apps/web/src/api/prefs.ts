@@ -5,7 +5,8 @@ import { useSyncExternalStore } from 'react'
 import { session } from './session'
 
 export type SubMode = 'signs' | 'foreign' | 'full' | 'none'
-export type QualityPref = 'original' | 2160 | 1440 | 1080 | 720 | 480
+/** The qualities the web player can be given (its own menu offers the same): the file as it is, or a conversion down to 1080p or less. */
+export type QualityPref = 'original' | 1080 | 720 | 480
 
 export interface Prefs {
   /** ISO 639-2 of the audio to pick when a title has more than one. */
@@ -31,8 +32,8 @@ export const SUB_MODES: { id: SubMode; label: string; hint: string }[] = [
 
 export const QUALITY_PREFS: { id: QualityPref; label: string }[] = [
   { id: 'original', label: 'Best (the file as it is)' },
-  { id: 2160, label: '4K' },
-  { id: 1440, label: '1440p' },
+  // No 4K or 1440p: the server converts for a browser to 1080p at most, so both played
+  // the file as it is, exactly like Best. (A saved one is read as Best: see qualityPref.)
   { id: 1080, label: '1080p' },
   { id: 720, label: '720p' },
   { id: 480, label: '480p' },

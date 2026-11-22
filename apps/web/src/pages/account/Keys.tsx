@@ -43,7 +43,8 @@ export function KeysPage() {
       <PanelHead title="TMDB & fanart.tv" sub="The services that name your titles and dress them with art. Keys are stored on the server and never shown again." />
 
       <SectionHead>TMDB</SectionHead>
-      <Notice kind={tmdb.data?.set ? 'ok' : 'info'}>{tmdb.data == null ? '…' : tmdb.data.set ? `A TMDB key is saved${tmdb.data.source === 'server' ? ' on the server' : ''}. Paste a new one to replace it.` : 'No TMDB key yet. Discover and metadata lookups need one.'}</Notice>
+      {tmdb.error && !tmdb.data && <Notice kind="error">{tmdb.error}</Notice>}
+      <Notice kind={tmdb.data?.set ? 'ok' : 'info'}>{tmdb.data == null ? (tmdb.error ? "Roxy could not read whether a TMDB key is saved. You can still save one." : '…') : tmdb.data.set ? `A TMDB key is saved${tmdb.data.source === 'server' ? ' on the server' : ''}. Paste a new one to replace it.` : 'No TMDB key yet. Discover and metadata lookups need one.'}</Notice>
       <Field label="TMDB API key" hint="Free at themoviedb.org: Settings → API → Create. Checked with TMDB when you save.">
         <SecretInput label="TMDB key" value={tmdbKey} onChange={setTmdbKey} />
       </Field>
@@ -55,7 +56,8 @@ export function KeysPage() {
       </div>
 
       <SectionHead>fanart.tv</SectionHead>
-      <Notice kind={fanart.data?.enabled ? 'ok' : 'info'}>{fanart.data == null ? '…' : fanart.data.enabled ? 'fanart.tv is on: posters, backgrounds and logos come from it when TMDB has none, and all of its art is in the art picker.' : 'Off. Add a project key to fill in posters, backgrounds and logos TMDB has none of, and to see fanart.tv art in the art picker.'}</Notice>
+      {fanart.error && !fanart.data && <Notice kind="error">{fanart.error}</Notice>}
+      <Notice kind={fanart.data?.enabled ? 'ok' : 'info'}>{fanart.data == null ? (fanart.error ? 'Roxy could not read whether fanart.tv is on.' : '…') : fanart.data.enabled ? 'fanart.tv is on: posters, backgrounds and logos come from it when TMDB has none, and all of its art is in the art picker.' : 'Off. Add a project key to fill in posters, backgrounds and logos TMDB has none of, and to see fanart.tv art in the art picker.'}</Notice>
       <Field label="Project API key" hint="Free at fanart.tv under your account's API page. An empty key turns fanart.tv off.">
         <SecretInput label="fanart.tv key" value={fanartKey} onChange={setFanartKey} />
       </Field>

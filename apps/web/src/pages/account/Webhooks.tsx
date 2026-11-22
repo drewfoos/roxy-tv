@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useAsync } from '../../hooks/useAsync'
 import { copyText, ActionButton, ListRow, Notice, PanelHead, SecretValue, SectionHead, errorText, formatWhen } from '../../components/Form'
 import { IconCopy, IconDelete } from '../../components/Icons'
+import { Spinner } from '../../components/Skeleton'
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
@@ -86,6 +87,8 @@ export function WebhooksPage() {
           />
         ))}
         {keys.data && !keys.data.keys?.length && <Notice>No keys yet.</Notice>}
+        {/* Not read: an empty list here read as "no keys", with Sonarr's key in use all along. */}
+        {!keys.data && (keys.error ? <Notice kind="error">{keys.error}</Notice> : <Spinner />)}
       </div>
       <div className="acc-actions">
         <ActionButton onClick={() => make('Sonarr')}>New key for Sonarr</ActionButton>
@@ -110,6 +113,7 @@ export function WebhooksPage() {
           />
         ))}
         {events.data && !events.data.events?.length && <Notice>Nothing has arrived yet.</Notice>}
+        {!events.data && (events.error ? <Notice kind="error">{events.error}</Notice> : <Spinner />)}
       </div>
     </section>
   )

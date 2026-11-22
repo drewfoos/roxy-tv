@@ -152,6 +152,14 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   useEffect(() => connection.onBack(() => { if (failed.current) again.current(true) }), [])
   // Gone from the screen: whatever is still in flight for this component is ignored.
   useEffect(() => () => { gen.current++ }, [])
+  // The cache was cleared under this component: ask again (see clearAsyncCache).
+  useEffect(() => {
+    const ask = () => void again.current(false)
+    onClear.add(ask)
+    return () => {
+      onClear.delete(ask)
+    }
+  }, [])
 
   useEffect(() => {
     if (key == null) return
@@ -172,11 +180,21 @@ export function useAsync<T>(key: string | null, fn: () => Promise<T>, deps: unkn
   return { data: cached, error: null, loading: key != null && cached == null, fresh: false, reload: run }
 }
 
-/** Forget cached pages (after sign-out or a profile switch). */
+/** The components on screen: each asks again when the cache is cleared under it. */
+const onClear = new Set<() => void>()
+
+/**
+ * Forget cached pages (after sign-out or a profile switch, or a change that shows on many
+ * pages, like a profile's name). What is on screen at that moment asks again: its data is
+ * from before the clear, so it is no longer handed out, and with nothing asking, a
+ * component that stayed (the footer through a profile being saved) showed nothing until
+ * the page was left. Not while signed out: the pages are on their way out.
+ */
 export function clearAsyncCache() {
   epoch++
   cache.clear()
   fetchedAt.clear()
+  if (session.get()) [...onClear].forEach((ask) => ask())
 }
 
 /** The next page that shows `key` asks the server again (after a request changed it). */

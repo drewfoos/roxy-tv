@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useLocation } from "react-router";
 import { useSession } from "./useSession";
+import { useLoginRefresh } from "./whoAmI";
 import { Login } from "../pages/Login";
 import { Profiles } from "../pages/Profiles";
 import { Home } from "../pages/Home";
@@ -69,6 +70,8 @@ export default function App() {
     };
   }, [s?.token, profileId]);
   const signedIn = cookieFor != null && cookieFor === s?.token;
+  // An admin may have changed this login's level since it signed in.
+  useLoginRefresh(signedIn ? s?.token : undefined);
   useEffect(() => {
     if (signedIn) preloadPages();
   }, [signedIn]);

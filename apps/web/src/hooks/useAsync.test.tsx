@@ -211,3 +211,66 @@ describe('usePoll', () => {
     act(() => root.unmount())
   })
 })
+
+// clearAsyncCache() stops everything on screen from handing out its data (it is from
+// before the clear), but nothing asked again: a component that stayed on screen (the
+// footer, while a profile was being saved) showed nothing until the page was left.
+describe('after the cache is cleared', () => {
+  const signIn = async (on: boolean) => {
+    const { session } = await import('../api/session')
+    session.set(on ? { token: 't', userId: 'u', userName: 'drew', isAdmin: true, profileId: 'p', profileName: 'Drew', profileHasAvatar: false, profileAvatarKey: '' } : null)
+  }
+  afterEach(() => signIn(false))
+
+  it('what is on screen asks again and shows the new answer', async () => {
+    await signIn(true)
+    const answers: ((v: string) => void)[] = []
+    let state = { data: null as string | null, loading: false }
+    function Footer() {
+      const s = useAsync('system-info', () => new Promise<string>((res) => answers.push(res)))
+      state = { data: s.data, loading: s.loading }
+      return null
+    }
+    const root = createRoot(document.createElement('div'))
+    await act(async () => root.render(<Footer />))
+    await act(async () => { answers[0]('Roxy 1.0'); await tick() })
+    expect(state.data).toBe('Roxy 1.0')
+
+    await act(async () => { clearAsyncCache(); await tick() })
+    expect(answers).toHaveLength(2) // it asked again by itself
+    expect(state).toEqual({ data: null, loading: true }) // and does not show what was there before
+    await act(async () => { answers[1]('Roxy 1.1'); await tick() })
+    expect(state).toEqual({ data: 'Roxy 1.1', loading: false })
+    act(() => root.unmount())
+  })
+
+  it('nothing asks once it has left the screen', async () => {
+    await signIn(true)
+    let calls = 0
+    function Page() {
+      useAsync('k2', async () => { calls++; return 'x' })
+      return null
+    }
+    const root = createRoot(document.createElement('div'))
+    await act(async () => { root.render(<Page />); await tick() })
+    act(() => root.unmount())
+    const before = calls
+    await act(async () => { clearAsyncCache(); await tick() })
+    expect(calls).toBe(before)
+  })
+
+  it('nothing asks while signed out: the pages are on their way out', async () => {
+    await signIn(true)
+    let calls = 0
+    function Page() {
+      useAsync('k3', async () => { calls++; return 'x' })
+      return null
+    }
+    const root = createRoot(document.createElement('div'))
+    await act(async () => { root.render(<Page />); await tick() })
+    const before = calls
+    await act(async () => { await signIn(false); await tick() }) // signing out clears the cache itself
+    expect(calls).toBe(before)
+    act(() => root.unmount())
+  })
+})
