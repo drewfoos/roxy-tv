@@ -92,7 +92,10 @@ export default function App() {
   // keyed by page, so going to another page starts clean. Every /watch/:id is one page:
   // keying by the full path rebuilt the player for each episode, which dropped
   // fullscreen on Next and Autoplay. resetKey still clears an error on any path change.
-  const pageKey = loc.pathname.startsWith("/watch/") ? "/watch" : loc.pathname;
+  // The account settings are one page too, with its own pages inside: keyed by the full
+  // path, every link in its column rebuilt the column, and the keyboard's place in it was
+  // lost (Tab started again from the top of the site).
+  const pageKey = loc.pathname.startsWith("/watch/") ? "/watch" : /^\/account(\/|$)/.test(loc.pathname) ? "/account" : loc.pathname;
   return (
     <PageErrorBoundary key={pageKey} resetKey={loc.pathname}>
       {/* A page whose script is still coming shows what the pages themselves show while

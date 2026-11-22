@@ -65,6 +65,7 @@ export function PhoneAccountIndex() {
           <Row to="/account/transcoding" icon={<IconSettings size={22} />} label="Transcoding" value="Which GPU converts video for lower qualities" />
           <Row to="/account/keys" icon={<IconSettings size={22} />} label="TMDB & fanart.tv" value="Titles, posters, logos and backgrounds" />
           <Row to="/account/webhooks" icon={<IconSettings size={22} />} label="Webhooks" value="How imports reach the library without a rescan" />
+          <Row to="/account/addresses" icon={<IconSettings size={22} />} label="Server addresses" value="Other ways to reach this server, like Tailscale" />
         </Group>
       )}
 

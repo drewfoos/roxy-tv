@@ -7,7 +7,7 @@ import type { Profile } from '../../api/types'
 import { useAsync, clearAsyncCache } from '../../hooks/useAsync'
 import { useSession } from '../../app/useSession'
 import { Avatar } from '../../components/TopBar'
-import { ActionButton, Field, ListRow, Notice, PanelHead, SectionHead, TextInput, errorText } from '../../components/Form'
+import { ConfirmButton, ActionButton, Field, ListRow, Notice, PanelHead, SectionHead, TextInput, errorText } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
 
 const MAX_PROFILES = 6
@@ -88,7 +88,6 @@ export function ProfileEditor({ profile, onDone }: { profile: Profile | null; on
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<AvatarCharacter[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const { data: suggested } = useAsync('avatars-suggested', () => api.avatarsSuggested().catch(() => ({ characters: [] as AvatarCharacter[] })))
 
   useEffect(() => {
@@ -181,9 +180,7 @@ export function ProfileEditor({ profile, onDone }: { profile: Profile | null; on
           Cancel
         </button>
         {profile && !profile.isDefault && (
-          <button className={'btn ' + (confirmDelete ? 'btn--danger' : 'btn--outline')} onClick={() => (confirmDelete ? void remove() : setConfirmDelete(true))}>
-            {confirmDelete ? 'Tap again to delete' : 'Delete profile'}
-          </button>
+          <ConfirmButton label="Delete profile" confirm="Tap again to delete" onConfirm={remove} />
         )}
       </div>
     </div>

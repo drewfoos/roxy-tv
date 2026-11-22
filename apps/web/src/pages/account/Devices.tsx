@@ -43,7 +43,7 @@ export function DevicesPage() {
       {(error || err) && <Notice kind="error">{error || err}</Notice>}
       {loading && !data ? (
         <Spinner />
-      ) : devices.length === 0 ? (
+      ) : !data ? null : devices.length === 0 ? ( // not read (the error is above): nothing is known to be empty
         <Notice>No devices are signed in.</Notice>
       ) : (
         <div className="acc-list">

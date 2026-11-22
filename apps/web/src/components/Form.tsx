@@ -33,10 +33,17 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 }
 
 export function Select<T extends string | number>({ value, options, onChange, disabled }: { value: T; options: { id: T; label: string; disabled?: boolean }[]; onChange: (v: T) => void; disabled?: boolean }) {
-  const numeric = typeof value === 'number'
+  // The choice is handed on as the option's own id. Guessing "a number or a text" from the
+  // value in force went wrong for a list that has both (Video Quality: 'original' and
+  // 720): picked from 'original', 720 was saved as the text "720", which the player did
+  // not know as a quality.
+  const pick = (text: string) => {
+    const o = options.find((o) => String(o.id) === text)
+    if (o) onChange(o.id)
+  }
   return (
     <span className="fselect">
-      <select value={String(value)} disabled={disabled} onChange={(e) => onChange((numeric ? Number(e.target.value) : e.target.value) as T)}>
+      <select value={String(value)} disabled={disabled} onChange={(e) => pick(e.target.value)}>
         {options.map((o) => (
           <option key={String(o.id)} value={String(o.id)} disabled={o.disabled}>
             {o.label}
@@ -68,17 +75,48 @@ export function SecretInput({ value, onChange, placeholder, autoComplete = 'off'
   )
 }
 
+/**
+ * Puts [text] on the clipboard; false when the browser would not. The clipboard API only
+ * exists on https and localhost, and Roxy is mostly opened at a plain http address on the
+ * home network: there the old way (a selected, off-screen text box and the copy command)
+ * still works, and without it every Copy button on those pages did nothing.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    /* refused: try the old way */
+  }
+  try {
+    const box = document.createElement('textarea')
+    box.value = text
+    box.setAttribute('readonly', '')
+    box.style.position = 'fixed'
+    box.style.top = '-1000px'
+    box.style.opacity = '0'
+    document.body.appendChild(box)
+    box.select()
+    const ok = document.execCommand('copy')
+    box.remove()
+    return ok
+  } catch {
+    return false
+  }
+}
+
 /** A secret shown once (a new API key): masked until Reveal, with Copy either way. */
 export function SecretValue({ label, value }: { label: string; value: string }) {
   const [shown, setShown] = useState(false)
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
+    if (await copyText(value)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1400)
-    } catch {
-      setShown(true) // no clipboard (plain http on a LAN address): reveal so it can be selected
+    } else {
+      setShown(true) // no way to copy it: reveal so it can be selected
     }
   }
   return (
@@ -142,10 +180,11 @@ export function Notice({ kind = 'info', children }: { kind?: 'info' | 'error' | 
  * (or throws) when it failed: most handlers catch their error to show it in a notice, and
  * the button used to flash its done label ("Saved") over that error.
  */
-export function ActionButton({ children, onClick, disabled, kind = 'brand', done }: { children: ReactNode; onClick: () => Promise<unknown> | void; disabled?: boolean; kind?: 'brand' | 'grey' | 'outline' | 'danger'; done?: string }) {
+export function ActionButton({ children, onClick, disabled, kind = 'brand', done, submit }: { children: ReactNode; onClick: () => Promise<unknown> | void; disabled?: boolean; kind?: 'brand' | 'grey' | 'outline' | 'danger'; done?: string; /** The button of a <form>: Enter in one of its fields presses it. */ submit?: boolean }) {
   const [busy, setBusy] = useState(false)
   const [ok, setOk] = useState(false)
   const run = async () => {
+    if (busy) return
     setBusy(true)
     setOk(false)
     try {
@@ -161,8 +200,43 @@ export function ActionButton({ children, onClick, disabled, kind = 'brand', done
     }
   }
   return (
-    <button type="button" className={'btn btn--' + kind} disabled={disabled || busy} onClick={run}>
+    <button type={submit ? 'submit' : 'button'} className={'btn btn--' + kind} disabled={disabled || busy} onClick={run}>
       {busy ? 'Working…' : ok && done ? done : children}
+    </button>
+  )
+}
+
+/** A press this soon after the one that armed a [ConfirmButton] is the same decision (a double-click), not the second one. */
+export const CONFIRM_ARM_MS = 600
+
+/**
+ * A button that removes something for good. The first press arms it and changes its words
+ * ("Tap again to delete"); the second does it. The armed button is where the first press
+ * was, so a double-click used to delete at once: presses in the first [CONFIRM_ARM_MS]
+ * after arming are ignored. One removal at a time: more presses while it runs do nothing
+ * (a second request found nothing to delete and left its error on the page).
+ */
+export function ConfirmButton({ label, confirm, onConfirm, onArmed, now = Date.now }: { label: string; confirm: string; onConfirm: () => Promise<unknown> | unknown; onArmed?: () => void; now?: () => number }) {
+  const [armedAt, setArmedAt] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const press = async () => {
+    if (busy) return
+    if (armedAt == null) {
+      setArmedAt(now())
+      onArmed?.()
+      return
+    }
+    if (now() - armedAt < CONFIRM_ARM_MS) return
+    setBusy(true)
+    try {
+      await onConfirm()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button type="button" className={'btn ' + (armedAt != null ? 'btn--danger' : 'btn--outline')} disabled={busy} onClick={() => void press()}>
+      {busy ? 'Working…' : armedAt != null ? confirm : label}
     </button>
   )
 }

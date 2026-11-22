@@ -47,6 +47,16 @@ export const SKIP_WINDOWS: { id: number; label: string }[] = [
   { id: 0, label: 'Whole intro / outro' },
 ]
 
+/**
+ * A saved quality as one of the choices. The settings page used to save a picked height as
+ * text ("720"), which the player took for no choice at all, and "Best" picked after a
+ * height as nothing (null): both are read as what was meant.
+ */
+export function qualityPref(saved: unknown): QualityPref {
+  const n = typeof saved === 'number' ? saved : typeof saved === 'string' && /^\d+$/.test(saved) ? Number(saved) : NaN
+  return QUALITY_PREFS.find((q) => q.id === n)?.id ?? 'original'
+}
+
 // KEY alone is the set this browser had before each profile got its own
 // (`roxy.prefs.<profile id>`): a profile starts from it until its first change, so nobody
 // lost their settings, and a login with no profile picked still uses it.
@@ -65,6 +75,7 @@ function read(): Prefs {
     const raw = own ?? localStorage.getItem(KEY)
     if (raw) p = { ...p, ...(JSON.parse(raw) as Partial<Prefs>) }
     else if (localStorage.getItem('roxy.autoplay') === 'off') p.autoplay = false
+    p.quality = qualityPref(p.quality)
     // Defaults that changed: every save stores the whole set, so a save made before carried
     // the old default. v2 (2026-10-28): full subtitles. v3 (2026-11-08): the Skip button
     // stays 20 s, not 15 (a saved 15 was the old default; any other choice is kept).

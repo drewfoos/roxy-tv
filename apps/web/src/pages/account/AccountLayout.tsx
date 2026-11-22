@@ -126,7 +126,11 @@ export function AccountSection() {
                   <Route path="addresses" element={<AddressesPage />} />
                 </>
               )}
-              <Route path="*" element={<Navigate to="profiles" replace />} />
+              {/* The whole address: a relative one here is read against the unknown address
+                  itself (/account/x goes to /account/x/profiles, unknown again), and the page
+                  redirected for ever. A Server page opened by someone who is not an admin
+                  lands here too. */}
+              <Route path="*" element={<Navigate to="/account/profiles" replace />} />
             </Routes>
           </div>
         </div>

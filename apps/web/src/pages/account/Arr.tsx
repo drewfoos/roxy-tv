@@ -6,6 +6,8 @@ import { ActionButton, Field, Notice, PanelHead, SecretInput, Select, TextInput,
 import { Spinner } from '../../components/Skeleton'
 
 type Kind = 'sonarr' | 'radarr'
+/** What the server sends in place of a saved API key, and takes back as "keep the saved one". */
+export const SAVED_KEY = '••••••••'
 const EMPTY: ArrConfig = { url: '', apiKey: '', rootFolder: '', qualityProfileId: null, animeRootFolder: '', animeQualityProfileId: null, tags: [], animeTags: [], seasonFolders: true, minimumAvailability: 'released', searchOnAdd: true, externalUrl: '' }
 
 const AVAILABILITY = [
@@ -33,6 +35,7 @@ export function ArrPage() {
   const test = tests[kind]
   const patch = (p: Partial<ArrConfig>) => setDraft({ ...draft, [kind]: { ...cfg, ...p } })
   const name = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
+  const hasSavedKey = data?.[kind]?.apiKey === SAVED_KEY
   // The key lives in Sonarr / Radarr itself: link straight to the page that shows it.
   const arrBase = (cfg.externalUrl?.trim() || cfg.url.trim()).replace(/\/+$/, '')
   const keyPage = /^https?:\/\/[^/]/i.test(arrBase) ? `${arrBase}/settings/general` : null
@@ -107,7 +110,16 @@ export function ArrPage() {
           </>
         }
       >
-        <SecretInput label={`${name} API key`} value={cfg.apiKey} onChange={(v) => patch({ apiKey: v })} />
+        {/* A saved key comes back as eight dots, which mean "keep it" only when sent exactly
+            so. In the box they were text like any other: a new key pasted after them was
+            sent as dots + key, which failed the test, and Save stored it. The box is empty
+            for a saved key, and empty still means keep it. */}
+        <SecretInput
+          label={`${name} API key`}
+          value={cfg.apiKey === SAVED_KEY ? '' : cfg.apiKey}
+          placeholder={hasSavedKey ? 'Saved. Paste a new key to replace it' : undefined}
+          onChange={(v) => patch({ apiKey: v === '' && hasSavedKey ? SAVED_KEY : v })}
+        />
       </Field>
       <div className="acc-actions">
         <ActionButton kind="grey" onClick={runTest} disabled={!cfg.url.trim()}>

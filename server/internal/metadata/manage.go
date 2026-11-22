@@ -142,5 +142,8 @@ func (s *Service) RefreshAll(ctx context.Context, missingOnly bool) error {
 	return nil
 }
 
-// QueueLength is how many lookups are waiting (Library settings shows it as progress).
-func (s *Service) QueueLength() int { return len(s.queue) }
+// QueueLength is how many lookups are not finished: the ones waiting and the one the worker
+// has in hand (Library settings shows it as progress and reloads its lists until it is 0;
+// counted without the one in hand, the page stopped before the last result, and with a
+// single title to look up it never started).
+func (s *Service) QueueLength() int { return len(s.queue) + int(s.working.Load()) }

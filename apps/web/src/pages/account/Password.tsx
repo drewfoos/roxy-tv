@@ -35,10 +35,9 @@ export function PasswordPage() {
       <PanelHead title="Change Password" sub={`Signed in as ${s?.userName ?? ''}. Changing the password signs you out of your other devices; you'll enter the new one when you sign back in.`} />
       <form
         className="acc-stack"
-        onSubmit={(e) => {
-          e.preventDefault()
-          void submit()
-        }}
+        // Enter in a field presses the form's button (below), which runs the change: with no
+        // submit button in it the form did nothing on Enter.
+        onSubmit={(e) => e.preventDefault()}
       >
         <Field label="Current password">
           <TextInput type="password" value={current} onChange={setCurrent} autoComplete="current-password" />
@@ -52,7 +51,7 @@ export function PasswordPage() {
         {error && <Notice kind="error">{error}</Notice>}
         {done && <Notice kind="ok">Password changed. Your other devices are signed out.</Notice>}
         <div className="acc-actions">
-          <ActionButton onClick={submit} disabled={!current || !next || !again}>
+          <ActionButton submit onClick={submit} disabled={!current || !next || !again}>
             Change password
           </ActionButton>
         </div>

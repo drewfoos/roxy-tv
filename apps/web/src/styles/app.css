@@ -210,7 +210,8 @@ img { display: block; }
 .btn--grey:hover { background: #3a3a3a; }
 .btn--outline { border: 2px solid rgba(255, 255, 255, 0.85); color: #fff; }
 .btn--outline:hover { background: rgba(255, 255, 255, 0.08); }
-.btn[disabled] { opacity: 0.5; cursor: default; }
+/* A button that does nothing does not answer the mouse either: its hover colour still lit up. */
+.btn[disabled] { opacity: 0.5; cursor: default; pointer-events: none; }
 .save-btn { width: 40px; height: 40px; border-radius: var(--radius-button); border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; flex: none; }
 .save-btn:hover { background: rgba(62, 166, 255, 0.12); }
 .chip { height: 34px; padding: 0 16px; border-radius: var(--radius-chip); background: var(--chip-grey); color: #fff; font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
@@ -730,8 +731,9 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .acc-nav h2 { font-size: 20px; font-weight: 700; margin: 0; padding: 7px 10px 9px; }
 .acc-nav__link { display: block; padding: 12px 10px; font-size: 16px; color: #8c8c8c; transition: color 150ms, background-color 150ms; }
 .acc-nav__link:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
-.acc-nav__link--on { color: var(--accent); }
-.acc-nav__link--on:hover { color: var(--accent-light); background: none; }
+/* The page being shown: marked the same whether the mouse is on it or not. (Hovering it
+   used to take its mark away: the tint it has on a tablet, and its colour went pale.) */
+.acc-nav__link--on, .acc-nav__link--on:hover { color: var(--accent); background: none; }
 .acc-panel { flex: 1; min-width: 0; background: #272727; }
 /* The form uses the panel: a 420 px column in the middle of a panel twice that wide left
    most of it empty on a tablet or a laptop. */
@@ -806,9 +808,12 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .acc-foot { font-size: 13px; line-height: 18px; color: #8c8c8c; margin: 0; }
 .acc-list { display: flex; flex-direction: column; border-top: 1px solid rgba(255, 255, 255, 0.1); }
 .acc-list--scroll { max-height: 360px; overflow-y: auto; }
-.lrow { display: flex; align-items: center; gap: 16px; width: 100%; padding: 14px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); text-align: left; color: #fff; }
+/* The actions go under the text when there is no room for both: beside it, a title was left
+   a 37 px column for an 86 px word on a narrow panel. (The text takes 180 px before it
+   shares; "wrap" alone never wrapped, the text shrinking to nothing first.) */
+.lrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; width: 100%; padding: 14px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); text-align: left; color: #fff; }
 .lrow--button:hover { background: rgba(255, 255, 255, 0.04); }
-.lrow__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.lrow__text { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .lrow__text b { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .lrow__text span { font-size: 13px; line-height: 18px; color: #a0a0a0; }
 .lrow__right { flex: none; }
@@ -834,11 +839,14 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .prow { display: flex; align-items: center; gap: 14px; }
 .prow--big { align-items: flex-start; gap: 20px; }
 .prow__poster { width: 40px; height: 60px; object-fit: cover; border-radius: 3px; flex: none; }
-.avatar-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.avatar-grid__one { display: flex; flex-direction: column; align-items: center; gap: 6px; color: #a0a0a0; font-size: 12px; }
-.avatar-grid__one img { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; border: 3px solid transparent; }
+/* The pictures shrink with their column: at 72 px whatever the room, the fourth column stuck
+   out of the panel (or the screen) wherever the panel was narrower than four of them. */
+.avatar-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.avatar-grid__one { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; color: #a0a0a0; font-size: 12px; }
+.avatar-grid__one img { width: min(72px, 100%); height: auto; aspect-ratio: 1; border-radius: 50%; object-fit: cover; border: 3px solid transparent; }
 .avatar-grid__one:hover img { border-color: #fff; }
-.avatar-grid__one--on img { border-color: var(--accent); }
+/* The chosen one keeps its ring under the mouse: white there, a click seemed to have picked nothing. */
+.avatar-grid__one--on img, .avatar-grid__one--on:hover img { border-color: var(--accent); }
 .avatar-grid__one span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc-form .chips { padding: 0; }
 .chips--small .chip { height: 30px; padding: 0 12px; font-size: 12px; }
@@ -882,15 +890,14 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
   .acc-nav__group { margin-bottom: 12px; }
   .acc-nav h2 { font-size: 17px; padding: 6px 10px 6px; }
   .acc-nav__link { padding: 10px; font-size: 15px; border-radius: 8px; }
-  .acc-nav__link--on { background: rgba(62, 166, 255, 0.12); }
+  .acc-nav__link--on, .acc-nav__link--on:hover { background: rgba(62, 166, 255, 0.12); }
 }
 @media (max-width: 600px) {
   .acc { padding-top: 20px; }
   .acc__title { font-size: 24px; }
   .acc-form { padding: 28px 16px 40px; }
   .panel-head h1 { font-size: 24px; }
-  .avatar-grid { grid-template-columns: repeat(3, 1fr); }
-  .lrow { flex-wrap: wrap; }
+  .avatar-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* ======================================================================================
@@ -1189,7 +1196,8 @@ button.setup__back:hover { background: rgba(255,255,255,0.08); }
 .browse__group { margin: 14px 0 6px; padding: 16px 16px 4px; border-top: 1px solid rgba(255, 255, 255, 0.08); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .browse__cat { display: block; width: 100%; text-align: left; padding: 9px 16px; border-left: 3px solid transparent; border-radius: 0 6px 6px 0; font-size: 15px; font-weight: 600; line-height: 20px; color: var(--facts); transition: background-color 0.15s, color 0.15s; }
 .browse__cat:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
-.browse__cat--on { color: #fff; border-left-color: var(--accent); background: rgba(62, 166, 255, 0.12); }
+/* The chosen one keeps its tint under the mouse (the plain hover above is more specific than a lone modifier). */
+.browse__cat--on, .browse__cat--on:hover { color: #fff; border-left-color: var(--accent); background: rgba(62, 166, 255, 0.12); }
 .browse__cat:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .browse__bone { display: block; height: 18px; width: 70%; margin: 10px 16px; border-radius: 4px; }
 .browse__main { flex: 1; min-width: 0; }

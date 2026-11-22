@@ -77,6 +77,13 @@ export function RequestsPage() {
   const counts = { all: all.length, waiting: all.filter((r) => r.status === 'approval').length, downloading: all.filter(isDownloading).length, problems: all.filter(isProblem).length }
   const shown = all.filter((r) => (filter === 'waiting' ? r.status === 'approval' : filter === 'downloading' ? isDownloading(r) : filter === 'problems' ? isProblem(r) : true))
 
+  // One reason box for the page: it starts empty for each request it is opened on. A reason
+  // typed for one request and cancelled was sent with the next one declined.
+  const openDecline = (id: string | null) => {
+    setDeclining(id)
+    setReason('')
+  }
+
   const act = async (fn: () => Promise<unknown>) => {
     setErr(null)
     try {
@@ -115,7 +122,7 @@ export function RequestsPage() {
       {err && <Notice kind="error">{err}</Notice>}
       {loading && !data ? (
         <Spinner />
-      ) : shown.length === 0 ? (
+      ) : !data ? null : shown.length === 0 ? ( // not read (the error is above): nothing is known to be empty
         <Notice>{filter === 'all' ? 'Nobody has requested anything yet.' : 'Nothing here.'}</Notice>
       ) : (
         <div className="reqs">
@@ -141,14 +148,14 @@ export function RequestsPage() {
                       <ActionButton kind="grey" onClick={() => act(() => api.declineRequest(r.id, reason.trim() || undefined))}>
                         Decline
                       </ActionButton>
-                      <button className="btn btn--outline" onClick={() => setDeclining(null)}>
+                      <button className="btn btn--outline" onClick={() => openDecline(null)}>
                         Cancel
                       </button>
                     </div>
                   ) : (
                     <div className="acc-actions acc-actions--tight">
                       <ActionButton onClick={() => act(() => api.approveRequest(r.id))}>Approve</ActionButton>
-                      <button className="btn btn--grey" onClick={() => setDeclining(r.id)}>
+                      <button className="btn btn--grey" onClick={() => openDecline(r.id)}>
                         Decline
                       </button>
                     </div>

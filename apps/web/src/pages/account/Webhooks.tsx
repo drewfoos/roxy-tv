@@ -1,19 +1,16 @@
 import { useState } from 'react'
 import { api } from '../../api/client'
 import { useAsync } from '../../hooks/useAsync'
-import { ActionButton, ListRow, Notice, PanelHead, SecretValue, SectionHead, errorText, formatWhen } from '../../components/Form'
+import { copyText, ActionButton, ListRow, Notice, PanelHead, SecretValue, SectionHead, errorText, formatWhen } from '../../components/Form'
 import { IconCopy, IconDelete } from '../../components/Icons'
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1400)
-    } catch {
-      /* no clipboard: the text is selectable */
-    }
+    // Over plain http the browser has no clipboard API; copyText still copies there.
+    if (!(await copyText(value))) return // the text is on screen and can be selected
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1400)
   }
   return (
     <div className="copyrow">

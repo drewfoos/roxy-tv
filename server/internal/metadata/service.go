@@ -60,7 +60,10 @@ type Service struct {
 	ff        *ffmpeg.FFmpeg // frame grabs for episodes with no still; nil without ffmpeg
 
 	queue chan job
-	force bool // the job being processed was a forced refresh (worker-local)
+	// working is 1 while the worker has a lookup in hand: it is off the queue by then, and
+	// the queue alone said "nothing left" while the last one (or the only one) still ran.
+	working atomic.Int32
+	force   bool // the job being processed was a forced refresh (worker-local)
 	// replaceImages: the job re-downloads art even when the provider's URL is unchanged
 	// (locked images are still kept). Set by the worker, also read by SetImage on a
 	// request's goroutine: atomic.
@@ -268,10 +271,12 @@ func (s *Service) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case j := <-s.queue:
+				s.working.Store(1)
 				s.mu.Lock()
 				delete(s.pending, j.key())
 				s.mu.Unlock()
 				s.processSafe(ctx, j)
+				s.working.Store(0)
 			}
 		}
 	}()

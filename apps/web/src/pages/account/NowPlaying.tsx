@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api, px } from '../../api/client'
 import type { ActiveSession, ActiveTrack } from '../../api/admin'
@@ -25,12 +25,13 @@ const REFRESH_MS = 5000
  */
 export function NowPlayingPage() {
   const { data, error, loading, reload } = useAsync('now-playing', () => api.activeSessions())
-  // When the answer on screen arrived: playing sessions are counted on from it.
-  const gotAt = useRef(Date.now())
+  // When the answer on screen arrived: playing sessions are counted on from it. Noted while
+  // drawing, the first time this answer is seen: noted in an effect, the draw that showed a
+  // new answer still counted from the old one's time, and every clock jumped five seconds
+  // ahead and back at each refresh.
+  const [got, setGot] = useState({ data, at: Date.now() })
+  if (got.data !== data) setGot({ data, at: Date.now() }) // drawn again at once with the new time
   const [, setTick] = useState(0)
-  useEffect(() => {
-    gotAt.current = Date.now()
-  }, [data])
   usePoll(reload, REFRESH_MS)
   useEffect(() => {
     const second = window.setInterval(() => {
@@ -48,7 +49,7 @@ export function NowPlayingPage() {
   }, [reload])
 
   const sessions = data?.sessions ?? []
-  const since = Date.now() - gotAt.current
+  const since = got.data === data ? Date.now() - got.at : 0
   return (
     <section className="acc-form acc-form--wide np">
       <PanelHead title="Now Playing" sub="Who is watching what right now, and how the server is sending it." />

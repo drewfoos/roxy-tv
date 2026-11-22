@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import type { AccountUser } from '../../api/admin'
 import { useAsync } from '../../hooks/useAsync'
-import { ActionButton, Field, ListRow, Notice, PanelHead, RadioList, SectionHead, TextInput, errorText } from '../../components/Form'
+import { ConfirmButton, ActionButton, Field, ListRow, Notice, PanelHead, RadioList, SectionHead, TextInput, errorText } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
 
 const ROLES = [
@@ -121,9 +121,7 @@ function UserEditor({ user, onChanged, onGone }: { user: AccountUser; onChanged:
         <ActionButton kind="grey" onClick={toggleDisabled}>
           {user.isDisabled ? 'Enable account' : 'Disable account'}
         </ActionButton>
-        <button className={'btn ' + (confirm ? 'btn--danger' : 'btn--outline')} onClick={() => (confirm ? void remove() : setConfirm(true))}>
-          {confirm ? 'Tap again to delete' : 'Delete account'}
-        </button>
+        <ConfirmButton label="Delete account" confirm="Tap again to delete" onArmed={() => setConfirm(true)} onConfirm={remove} />
       </div>
       {confirm && <div className="ffield__hint">Deleting removes their profiles and watch history. Their requests stay. There is no undo.</div>}
     </div>

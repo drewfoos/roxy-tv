@@ -4,7 +4,7 @@ import { api } from '../../api/client'
 import type { BrowseResponse, IdentifyCandidate, LibraryFolder, ManageTitle } from '../../api/admin'
 import type { Item } from '../../api/types'
 import { markStale, useAsync } from '../../hooks/useAsync'
-import { ActionButton, Field, ListRow, Notice, PanelHead, RadioList, SectionHead, TextArea, TextInput, ToggleRow, errorText, formatWhen } from '../../components/Form'
+import { ActionButton, ConfirmButton, Field, ListRow, Notice, PanelHead, RadioList, SectionHead, TextArea, TextInput, ToggleRow, errorText, formatWhen } from '../../components/Form'
 import { Spinner } from '../../components/Skeleton'
 
 const KINDS = [
@@ -108,7 +108,10 @@ export function LibraryPage() {
         Needs attention
         {unmatched.length > 0 && <span className="tag">{unmatched.length}</span>}
       </SectionHead>
-      {unmatched.length === 0 ? (
+      {!manage.data ? (
+        // Not read yet, or the read failed (the error is above): nothing is known to be matched.
+        !manage.error && <Spinner />
+      ) : unmatched.length === 0 ? (
         <Notice kind="ok">Every title is matched.</Notice>
       ) : (
         <div className="acc-list">
@@ -225,9 +228,7 @@ function FolderEditor({ folder, onDone, run }: { folder: LibraryFolder; onDone: 
         <button className="btn btn--grey" onClick={onDone}>
           Cancel
         </button>
-        <button className={'btn ' + (confirm ? 'btn--danger' : 'btn--outline')} onClick={() => (confirm ? void run(() => api.deleteFolder(folder.id), onDone) : setConfirm(true))}>
-          {confirm ? 'Tap again to remove' : 'Remove folder'}
-        </button>
+        <ConfirmButton label="Remove folder" confirm="Tap again to remove" onArmed={() => setConfirm(true)} onConfirm={() => run(() => api.deleteFolder(folder.id), onDone)} />
       </div>
       {confirm && <div className="ffield__hint">Removing forgets the titles and watch history under it. The files stay where they are.</div>}
     </div>
@@ -239,6 +240,8 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
   const [err, setErr] = useState<string | null>(null)
   const [chosen, setChosen] = useState<string | null>(null)
   const [name, setName] = useState('')
+  // The name this form filled in itself: replaced with the next folder's unless it was typed over.
+  const [filled, setFilled] = useState('')
   const [kind, setKind] = useState('series')
   const [anime, setAnime] = useState(false)
   const go = (path?: string) => {
@@ -253,7 +256,11 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
     setChosen(path)
     // Guess the type and anime from the folder's name, like the phone.
     const base = path.split(/[\\/]/).filter(Boolean).pop() ?? ''
-    if (!name) setName(base)
+    // Back, another folder, Use: the first folder's name stayed while the type was guessed again.
+    if (!name || name === filled) {
+      setName(base)
+      setFilled(base)
+    }
     setKind(/movie|film/i.test(base) ? 'movies' : 'series')
     setAnime(/anime/i.test(base))
   }
@@ -280,19 +287,33 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
                 <ListRow key={d.path} title={d.name} sub={d.skip ? d.skip : d.videos ? `${d.videos} videos` : undefined} right={<span className="link-brand">Open</span>} onClick={() => go(d.path)} />
               ))}
             </div>
-            {tree.path && (
-              <div className="acc-actions">
+            {/* Cancel from the first list too: it was only offered inside a folder. */}
+            <div className="acc-actions">
+              {tree.path && (
                 <button className="btn btn--brand" onClick={() => pick(tree.path)}>
                   Use this folder
                 </button>
-                <button className="btn btn--grey" onClick={onDone}>
-                  Cancel
-                </button>
-              </div>
-            )}
+              )}
+              <button className="btn btn--grey" onClick={onDone}>
+                Cancel
+              </button>
+            </div>
           </>
         ) : (
-          <Spinner />
+          // Still reading, or the read failed (the error is above): a way out either way.
+          <>
+            {!err && <Spinner />}
+            <div className="acc-actions">
+              {err && (
+                <button className="btn btn--brand" onClick={() => go()}>
+                  Try again
+                </button>
+              )}
+              <button className="btn btn--grey" onClick={onDone}>
+                Cancel
+              </button>
+            </div>
+          </>
         )
       ) : (
         <>
@@ -347,10 +368,24 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
   const [cands, setCands] = useState<IdentifyCandidate[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [picked, setPicked] = useState<IdentifyCandidate | null>(null)
+  // The provider the results on screen came from: a result's id means nothing to the other
+  // one. The chip used to change only what the match was SENT as, so a TMDB pick could be
+  // saved as an AniList id (another show's details, or none), and a new search left the old
+  // pick in the question under the list.
+  const [from, setFrom] = useState<'tmdb' | 'anilist'>('tmdb')
+  const choose = (p: 'tmdb' | 'anilist') => {
+    if (p === provider) return
+    setProvider(p)
+    setCands(null)
+    setPicked(null)
+  }
   const search = async () => {
     setErr(null)
+    setPicked(null)
+    const asked = provider
     try {
-      const r = await api.identifySearch(title.id, provider, query.trim())
+      const r = await api.identifySearch(title.id, asked, query.trim())
+      setFrom(asked)
       setCands(r.candidates)
     } catch (e) {
       setErr(errorText(e))
@@ -360,10 +395,10 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
   return (
     <div className="acc-sub">
       <div className="chips chips--small">
-        <button type="button" className={'chip' + (provider === 'tmdb' ? ' chip--on' : '')} onClick={() => setProvider('tmdb')}>
+        <button type="button" className={'chip' + (provider === 'tmdb' ? ' chip--on' : '')} onClick={() => choose('tmdb')}>
           TMDB
         </button>
-        <button type="button" className={'chip' + (provider === 'anilist' ? ' chip--on' : '')} onClick={() => setProvider('anilist')}>
+        <button type="button" className={'chip' + (provider === 'anilist' ? ' chip--on' : '')} onClick={() => choose('anilist')}>
           AniList
         </button>
       </div>
@@ -406,7 +441,7 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
           Use <b>{picked.title}</b>
           {picked.year ? ` (${picked.year})` : ''} for "{title.title}"? Its details and art replace what is there.
           <div className="acc-actions acc-actions--tight" style={{ marginTop: 10 }}>
-            <ActionButton onClick={() => run(() => api.identifyApply(title.id, provider, picked.id), onDone)}>Yes, use this match</ActionButton>
+            <ActionButton onClick={() => run(() => api.identifyApply(title.id, from, picked.id), onDone)}>Yes, use this match</ActionButton>
             <button className="btn btn--grey" onClick={() => setPicked(null)}>
               No
             </button>
@@ -426,7 +461,9 @@ function Identify({ title, onDone, run }: { title: ManageTitle; onDone: () => vo
 function EditDetails({ title, onDone, run }: { title: ManageTitle; onDone: () => void; run: Run }) {
   const [item, setItem] = useState<Item | null>(null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [f, setF] = useState({ title: title.title, year: title.year ? String(title.year) : '', overview: '', genres: '', studio: '', premiered: '', locked: !!title.locked })
+  // "Keep my edits" starts on, as on the phone: details typed by hand are meant to stay, and
+  // left off the title stayed under Needs attention and the next refresh could replace them.
+  const [f, setF] = useState({ title: title.title, year: title.year ? String(title.year) : '', overview: '', genres: '', studio: '', premiered: '', locked: true })
   useEffect(() => {
     let live = true
     api.item(title.id).then(
@@ -436,7 +473,7 @@ function EditDetails({ title, onDone, run }: { title: ManageTitle; onDone: () =>
         // A series or movie carries its date as premiered; airDate is only set on episodes,
         // so reading it alone left the field empty and saving erased the date.
         const date = it.premiered ?? it.airDate ?? ''
-        setF({ title: it.title, year: it.year ? String(it.year) : '', overview: it.overview ?? '', genres: (it.genres ?? []).join(', '), studio: it.studio ?? '', premiered: /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : date, locked: !!title.locked })
+        setF({ title: it.title, year: it.year ? String(it.year) : '', overview: it.overview ?? '', genres: (it.genres ?? []).join(', '), studio: it.studio ?? '', premiered: /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : date, locked: true })
       },
       (e: unknown) => live && setLoadErr(errorText(e)),
     )
