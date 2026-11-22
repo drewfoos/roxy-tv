@@ -6,7 +6,7 @@ import { pictureShape } from './shape'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
-import { chooseStream, MOVED_SEC, ReopenBudget, startQuality, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, classHeight, MOVED_SEC, QUALITY_KBPS, ReopenBudget, smallerSteps, startQuality, StreamClock, streamEnded, type Mode } from './stream'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -109,7 +109,6 @@ async function probeStream(url: string): Promise<'ok' | string> {
   }
 }
 
-const QUALITY_KBPS: Record<Exclude<Quality, 'original'>, number> = { 1080: 8000, 720: 4000, 480: 1500 }
 
 /**
  * Roxy's player, laid out like Crunchyroll's: a seek bar across the top of the controls
@@ -215,7 +214,9 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   // Account > Preferences sets the defaults; the gear menu overrides them. The saved
   // quality is weighed against each file (startQuality; again in the start effect, since
   // the next episode may be another size); one picked in the menu is kept as picked.
-  const srcHeight = source?.streams?.find((s) => s.type === 'video')?.height ?? 0
+  // The file's size is named by its class (a 3840 x 1604 film is 4K, not "1604p").
+  const srcVideo = source?.streams?.find((s) => s.type === 'video')
+  const srcHeight = classHeight(srcVideo?.width, srcVideo?.height)
   const [quality, setQuality] = useState<Quality>(() => startQuality(prefs.get().quality, srcHeight))
   const qualityFromPrefs = useRef(true)
   const [autoplay, setAutoplay] = useState(() => prefs.get().autoplay)
@@ -730,7 +731,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     reopens.current.reset() // a new stream the viewer asked for: a fresh start
     reload(absTime(), audioIndex)
   }
-  const qualities: Quality[] = ['original', ...([1080, 720, 480] as const).filter((h) => srcHeight === 0 || h < srcHeight)]
+  const qualities: Quality[] = ['original', ...smallerSteps(srcHeight)]
   const changeSub = (idx: number | null) => {
     ownTracks.current.sub = true
     setSubIndex(idx)

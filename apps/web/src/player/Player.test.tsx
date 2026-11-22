@@ -533,6 +533,51 @@ describe('Player', () => {
       await flush()
       expect(video().src).toBe('/v1/sources/src-c/transcode?h=720')
     })
+    // The only choice between a 4K film and 1080p. A film wider than 16:9 (3840 x 1604)
+    // counts by its width: it is 4K, though it has fewer lines than 1440p's name says.
+    const wide = (id: string, width: number, height: number): Item => {
+      const it = tall(id, height)
+      it.mediaSources![0].streams![0].width = width
+      return it
+    }
+    const listed = () => {
+      click(host.querySelector('[aria-label="Settings"]'))
+      const rows = [...host.querySelectorAll('.panel__list .panel__row')].map((b) => b.querySelector('b')?.textContent)
+      click(host.querySelector('[aria-label="Settings"]'))
+      return rows
+    }
+    it('offers a 4K film 1440p, and names the film 4K', async () => {
+      await mount(wide('a', 3840, 1604))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(listed()).toEqual(['4K (Original)', '1440p', '1080p', '720p', '480p'])
+      click(host.querySelector('[aria-label="Settings"]'))
+      click([...host.querySelectorAll('.panel__row')].find((b) => b.textContent?.startsWith('1440p')))
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=1440')
+      expect(ticked()).toEqual(['1440p'])
+    })
+    it('lowers a 4K film to a saved 1440p, and leaves a 1080p file alone', async () => {
+      prefs.set({ quality: 1440 })
+      await mount(wide('a', 3840, 1604))
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=1440')
+      expect(ticked()).toEqual(['1440p'])
+      await act(async () => setShown(tall('b', 1080)))
+      await flush()
+      expect(video().src).toBe('/v1/stream/src-b')
+      expect(ticked()).toEqual(['1080p (Original)'])
+    })
+    it('plays a 4K film as it is for a saved 4K', async () => {
+      prefs.set({ quality: 2160 })
+      await mount(wide('a', 3840, 1604))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(ticked()).toEqual(['4K (Original)'])
+    })
+    it('names a wide 1080p film 1080p and offers it what a 1080p file gets', async () => {
+      prefs.set({ quality: 1080 })
+      await mount(wide('a', 1920, 802))
+      expect(video().src).toBe('/v1/stream/src-a')
+      expect(listed()).toEqual(['1080p (Original)', '720p', '480p'])
+    })
     it('a quality picked in the gear menu is kept as picked', async () => {
       prefs.set({ quality: 1080 })
       await mount(tall('a', 1080))

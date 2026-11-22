@@ -31,11 +31,45 @@ export function chooseStream(quality: 'original' | number, tracks: AudioTrack[],
  * saving data, so a file already that small plays as it is: re-encoding it saves nothing
  * (the server never makes the picture taller than the file's). "A few lines taller"
  * counts as that size, as in the apps (0.94). Only for the saved preference: a quality
- * picked in the gear menu is used as picked. The web has no encode above 1080p.
+ * picked in the gear menu is used as picked. [srcHeight] is the file's classHeight.
  */
-export function startQuality(pref: 'original' | number, srcHeight: number): 'original' | 1080 | 720 | 480 {
-  if (pref !== 1080 && pref !== 720 && pref !== 480) return 'original'
-  return srcHeight > 0 && pref >= srcHeight * 0.94 ? 'original' : pref
+export function startQuality(pref: 'original' | number, srcHeight: number): 'original' | QualityStep {
+  const step = QUALITY_STEPS.find((h) => h === pref)
+  if (!step) return 'original'
+  return srcHeight > 0 && step >= srcHeight * 0.94 ? 'original' : step
+}
+
+/** The sizes the server converts to, largest first, named by height. The apps offer the same ones. */
+export const QUALITY_STEPS = [2160, 1440, 1080, 720, 480] as const
+export type QualityStep = (typeof QUALITY_STEPS)[number]
+
+/** The video bitrate asked for with each (kbps), as in the apps. */
+export const QUALITY_KBPS: Record<QualityStep, number> = { 2160: 40000, 1440: 16000, 1080: 8000, 720: 4000, 480: 1500 }
+
+/**
+ * The height that names a picture's size: its own, or, for a picture wider than 16:9, the
+ * height a 16:9 picture of its width has. A 3840 x 1604 film is 4K (2160) and a 1920 x 802
+ * one 1080p, which is how the server's conversions count them. By height alone they were
+ * "1604p" and "802p", and the 4K film was offered nothing between itself and 1080p.
+ */
+export function classHeight(width: number | undefined, height: number | undefined): number {
+  if (!height || !(height > 0)) return 0
+  return Math.max(height, width && width > 0 ? Math.round((width * 9) / 16) : 0)
+}
+
+/** "4K", "1080p": what a picture of that (class) height is called; a few lines short still counts. */
+export function resolutionLabel(height: number): string {
+  if (!(height > 0)) return ''
+  const std = [4320, 2160, 1440, 1080, 720, 576, 480, 360].find((s) => height >= s * 0.94)
+  return std === 4320 ? '8K' : std === 2160 ? '4K' : `${std ?? height}p`
+}
+
+/**
+ * The conversions the gear menu lists for a file of that class height: only the ones
+ * really smaller than the file (all of them when its size is not known).
+ */
+export function smallerSteps(srcHeight: number): QualityStep[] {
+  return QUALITY_STEPS.filter((h) => srcHeight <= 0 || h < srcHeight * 0.94)
 }
 
 /** The part of a <video> element the clock reads. */

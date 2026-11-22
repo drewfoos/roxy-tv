@@ -1,9 +1,10 @@
 import type { MediaStream } from '../api/types'
 import { IconCheckCircle } from '../components/Icons'
 import { trackLabel } from './format'
+import { resolutionLabel, type QualityStep } from './stream'
 
 /** Quality choices (Crunchyroll's gear): the file itself, or a server H.264 encode at a height. */
-export type Quality = 'original' | 1080 | 720 | 480
+export type Quality = 'original' | QualityStep
 
 /** Audio and Subtitles/CC side by side; "None" turns subtitles off. */
 export function TracksPanel({ audioTracks, audioIndex, onAudio, subTracks, subIndex, subsOn, onSub }: {
@@ -64,7 +65,14 @@ export function SpeedPanel({ speeds, rate, onRate }: { speeds: number[]; rate: n
   )
 }
 
-/** The gear: Autoplay Next, then the quality choices with what each costs. */
+/** The line under a quality: what picking it does. */
+export function qualityHint(q: Quality): string {
+  if (q === 'original') return 'The file as it is, nothing re-encoded.'
+  if (q > 1080) return 'A smaller picture, made by the server as it plays.'
+  return q === 480 ? 'Uses the least data. Good for slower connections.' : 'Uses less data at a standard quality.'
+}
+
+/** The gear: Autoplay Next, then the quality choices with what each costs. [srcHeight]: the file's classHeight. */
 export function SettingsPanel({ autoplay, onAutoplay, qualities, quality, srcHeight, onQuality }: {
   autoplay: boolean
   onAutoplay: () => void
@@ -87,8 +95,8 @@ export function SettingsPanel({ autoplay, onAutoplay, qualities, quality, srcHei
         {qualities.map((q) => (
           <button key={q} className={'panel__row panel__row--tall' + (q === quality ? ' panel__row--on' : '')} onClick={() => onQuality(q)}>
             <span>
-              <b>{q === 'original' ? (srcHeight ? `${srcHeight}p (Original)` : 'Original') : `${q}p`}</b>
-              <small>{q === 'original' ? 'The file as it is, nothing re-encoded.' : q === 480 ? 'Uses the least data. Good for slower connections.' : 'Uses less data at a standard quality.'}</small>
+              <b>{q === 'original' ? (srcHeight ? `${resolutionLabel(srcHeight)} (Original)` : 'Original') : resolutionLabel(q)}</b>
+              <small>{qualityHint(q)}</small>
             </span>
             {q === quality && <IconCheckCircle size={22} />}
           </button>

@@ -25,10 +25,12 @@ import (
 
 // pipeWorld serves /transcode and /remux over a real HTTP server (real connections, so
 // disconnects and stalls behave as with a player), with a fake ffmpeg that streams zeros
-// forever and writes its process id to a file.
+// forever and writes its process id to a file, and its arguments to another. Sources:
+// "src" (240 lines) and "wide" (a 3840 x 1604 film).
 type pipeWorld struct {
 	srv  *httptest.Server
 	pids string
+	args string
 }
 
 func newPipeWorld(t *testing.T) *pipeWorld {
@@ -44,11 +46,15 @@ func newPipeWorld(t *testing.T) *pipeWorld {
 	if err := os.WriteFile(video, []byte("not really a video"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pids := filepath.Join(base, "pids")
+	wide := filepath.Join(media, "Wide.mkv")
+	if err := os.WriteFile(wide, []byte("not really a film"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pids, args := filepath.Join(base, "pids"), filepath.Join(base, "args")
 	fake := filepath.Join(base, "ffmpeg")
 	// The encoder check ("-filters", read whole) is answered at once; anything else is a
 	// stream: zeros, forever.
-	script := "#!/bin/sh\ncase \"$*\" in *-filters*) exit 0;; esac\necho $$ >> '" + pids + "'\nexec cat /dev/zero\n"
+	script := "#!/bin/sh\ncase \"$*\" in *-filters*) exit 0;; esac\necho \"$*\" >> '" + args + "'\necho $$ >> '" + pids + "'\nexec cat /dev/zero\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -73,12 +79,20 @@ func newPipeWorld(t *testing.T) *pipeWorld {
 		Streams: []model.MediaStream{{SourceID: "src", Index: 0, Type: model.StreamVideo, Codec: "h264", Height: 240}, {SourceID: "src", Index: 1, Type: model.StreamAudio, Codec: "aac", Channels: 2}}}, "{}"); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.UpsertItem(ctx, &model.Item{ID: "w", GUID: "gw", LibraryID: lib.ID, Type: model.TypeMovie, Title: "Wide"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceSource(ctx, &model.MediaSource{ID: "wide", ItemID: "w", Container: "mkv", IsPrimary: true,
+		Parts:   []model.MediaPart{{ID: "pw", SourceID: "wide", Path: wide}},
+		Streams: []model.MediaStream{{SourceID: "wide", Index: 0, Type: model.StreamVideo, Codec: "hevc", Width: 3840, Height: 1604, FPS: 23.976}, {SourceID: "wide", Index: 1, Type: model.StreamAudio, Codec: "aac", Channels: 2}}}, "{}"); err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{cfg: &config.Config{DataDir: data}, store: st, ff: &ffmpeg.FFmpeg{FFmpeg: fake},
 		transcoder: transcode.NewDetector(fake, "software", "")}
 	r := chi.NewRouter()
 	r.Get("/v1/sources/{id}/transcode", s.transcodeStream)
 	r.Get("/v1/sources/{id}/remux", s.remuxStream)
-	w := &pipeWorld{srv: httptest.NewServer(r), pids: pids}
+	w := &pipeWorld{srv: httptest.NewServer(r), pids: pids, args: args}
 	t.Cleanup(w.srv.Close)
 	return w
 }
@@ -126,6 +140,36 @@ func (w *pipeWorld) open(t *testing.T, path string) *http.Response {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+// lastArgs is the command line the newest fake ffmpeg was started with.
+func (w *pipeWorld) lastArgs(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(w.args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	return lines[len(lines)-1]
+}
+
+// A quality is a class: "1440p" of a film wider than 16:9 fits 2560 pixels across as well
+// as 1440 down. The handler has to tell the encoder the file's width for that; by height
+// alone a 3840 x 1604 film came out 3448 x 1440, still 4K across.
+func TestTranscodeFitsAWideFilmToItsQualityClass(t *testing.T) {
+	w := newPipeWorld(t)
+	for path, want := range map[string]string{
+		"/v1/sources/wide/transcode?web=1&height=1440&bitrate=16000": "scale=-2:1070,",
+		"/v1/sources/wide/transcode?height=1080&bitrate=8000":        "scale=-2:802,",
+		"/v1/sources/src/transcode?height=120&bitrate=300":           "scale=-2:120,",
+	} {
+		resp := w.open(t, path)
+		resp.Body.Close()
+		if got := w.lastArgs(t); !strings.Contains(got, want) {
+			t.Errorf("%s: want %q in: %s", path, want, got)
+		}
+		waitUntil(t, "ffmpeg to stop", 5*time.Second, func() bool { return len(w.running()) == 0 })
+	}
 }
 
 // The player going away (it closed the connection: stopped, seeked, the app closed)

@@ -119,6 +119,16 @@ plain 200 response** (no ranges, no length). It is for Roxy's own libmpv players
 keep rendering ASS themselves: every subtitle track, font attachment and chapter is copied
 as-is (MP4 `mov_text` becomes SRT), so it plays like direct play at a lower bitrate.
 
+- `height` names a quality the usual way (480, 720, 1080, 1440, 2160): the picture is
+  fitted inside that height **and** the width a 16:9 picture of that height has, and is
+  never made larger than the file. A film wider than 16:9 therefore gets fewer lines than
+  the number says: "1440" of a 3840 x 1604 film is 2562 x 1070 (by height alone it would
+  be 3448 x 1440, still 4K across). Clients name a file's size the same way, by
+  `max(height, width * 9 / 16)`, and offer only the qualities below it.
+- The encoder is chosen per conversion: the server times its hardware encoder and the
+  software one once at start, and a picture the hardware cannot encode at least 1.5 times
+  faster than it plays goes to the CPU when that is the quicker of the two (1440p of a 4K
+  film on a small GPU). Now Playing shows the encoder each stream got.
 - Timestamps keep the file's clock (`-copyts`): the first frame of a stream started at
   300 s is at 300 s. Players set mpv `rebase-start-time=no` and take the duration from the
   source (`durationMs`), since the stream has none.

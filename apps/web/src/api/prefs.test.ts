@@ -139,8 +139,9 @@ describe('prefs: the saved video quality', () => {
   })
 })
 
-// 4K and 1440p were offered in Preferences, but a browser is never sent more than 1080p:
-// both played the file as it is, exactly as Best does.
+// Preferences and the player's own menu must offer the same sizes. (4K and 1440p were once
+// listed here while the player knew nothing above 1080p, so both did what Best does; then
+// they were dropped; now the player converts to them.)
 describe('prefs: the qualities offered', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -149,10 +150,24 @@ describe('prefs: the qualities offered', () => {
   it("are the ones the player's own menu has", async () => {
     vi.resetModules()
     const { QUALITY_PREFS } = await import('./prefs')
-    expect(QUALITY_PREFS.map((q) => q.id)).toEqual(['original', 1080, 720, 480])
+    const { QUALITY_STEPS, QUALITY_KBPS } = await import('../player/stream')
+    expect(QUALITY_PREFS.map((q) => q.id)).toEqual(['original', 2160, 1440, 1080, 720, 480])
+    expect(QUALITY_PREFS.map((q) => q.id)).toEqual(['original', ...QUALITY_STEPS])
+    for (const step of QUALITY_STEPS) expect(QUALITY_KBPS[step], String(step)).toBeGreaterThan(0)
   })
-  it('reads a saved 4K or 1440p as Best, which is what it did', async () => {
-    for (const saved of [2160, 1440, '2160']) {
+  it('names them as the apps do', async () => {
+    vi.resetModules()
+    const { QUALITY_PREFS } = await import('./prefs')
+    expect(QUALITY_PREFS.map((q) => q.label)).toEqual(['Best (the file as it is)', '4K', '1440p', '1080p', '720p', '480p'])
+  })
+  it('keeps a saved 4K or 1440p', async () => {
+    for (const [saved, want] of [[2160, 2160], [1440, 1440], ['2160', 2160], ['1440', 1440]] as const) {
+      localStorage.setItem('roxy.prefs', JSON.stringify({ quality: saved }))
+      expect((await load()).quality, String(saved)).toBe(want)
+    }
+  })
+  it('reads a size that is not offered as Best', async () => {
+    for (const saved of [4320, 900, '360']) {
       localStorage.setItem('roxy.prefs', JSON.stringify({ quality: saved }))
       expect((await load()).quality, String(saved)).toBe('original')
     }

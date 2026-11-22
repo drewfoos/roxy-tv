@@ -41,9 +41,11 @@ const (
 type Request struct {
 	Path        string
 	StartSec    float64
-	MaxHeight   int // 0 = keep
+	MaxHeight   int // 0 = keep; else the quality asked for by its height (720, 1080, 1440...): see OutputSize
 	BitrateK    int // video kbps
+	SrcWidth    int
 	SrcHeight   int
+	SrcFPS      float64 // 0 = not known
 	SrcHDR      bool
 	Container   string // source container, for the subtitle codec choice
 	VAAPIDevice string
@@ -178,6 +180,43 @@ func NormalizeChoice(v string) string {
 	return ""
 }
 
+// OutputSize is the picture a request is converted to: the quality asked for is a class
+// named by its height ("1440p"), which means fitting inside that height AND the width a
+// 16:9 picture of that height has (2560 x 1440), never larger than the file. A film wider
+// than 16:9 used to be scaled by height alone: "1440p" of a 3840 x 1604 film came out
+// 3448 x 1440 (still "4K" by its width, and more than a small GPU encodes in real time),
+// "720p" of a 1920 x 802 one 1724 x 720. Both sides are even; the fitted ones are the
+// nearest even numbers, so a picture a hair wider than 16:9 (1915 x 1077) still gets the
+// full 1280 x 720, and the width is the one ffmpeg's scale=-2:h works out. Width 0: left
+// to ffmpeg (the source's width is not known).
+func OutputSize(srcW, srcH, maxHeight int) (w, h int) {
+	h = maxHeight
+	if srcH > 0 && (h <= 0 || h > srcH) {
+		h = srcH
+	}
+	if h <= 0 {
+		return 0, 0
+	}
+	h -= h % 2
+	if srcW <= 0 || srcH <= 0 {
+		return 0, h
+	}
+	if boxW := maxHeight * 16 / 9; maxHeight > 0 && srcW*h > boxW*srcH {
+		if fit := nearestEven(boxW, srcH, srcW); fit < h {
+			h = fit
+		}
+	}
+	if h < 2 {
+		h = 2
+	}
+	return nearestEven(h, srcW, srcH), h
+}
+
+// nearestEven is a*b/c as the nearest even number.
+func nearestEven(a, b, c int) int {
+	return int((int64(a)*int64(b)+int64(c))/(2*int64(c))) * 2
+}
+
 // Detector picks the encoder transcodes use and can be told to pick again when the
 // admin changes the setting. Test results are cached: a GPU does not come and go.
 type Detector struct {
@@ -190,6 +229,117 @@ type Detector struct {
 	chosen   Encoder
 	tonemapx bool
 	tested   map[Encoder]bool
+	measures bool // time the encoders once one is chosen (NewDetector: on)
+	// How many pixels a second the chosen hardware encoder and the software one get
+	// through on this server, measured once in the background (see measure); 0 = not
+	// known. gen counts choices, so a measurement of an encoder since replaced is dropped.
+	hwRate, swRate float64
+	gen            int
+}
+
+// hwHeadroom: a hardware encoder is used for a conversion it can make at least this many
+// times faster than the video plays; a seek, a second viewer or a busy scene need the rest.
+const hwHeadroom = 1.5
+
+// swRealContent: the software encoder on real pictures against the test pattern it is
+// measured with (measured on a 4K film: 0.37).
+const swRealContent = 0.4
+
+// EncoderFor is the encoder for one request: the chosen hardware encoder when it can make
+// that picture comfortably faster than it plays, else the software encoder if that is the
+// quicker of the two here. Small GPUs are the reason: an RX 550 encodes about 90 million
+// pixels a second, which is 1080p at 43 frames a second but a 1440p-class picture of a
+// 24 fps film at only 1.2 times its speed, where sixteen CPU cores do 3.2 times. Until the
+// speeds are measured, and when they cannot be, the chosen encoder is used as before.
+func (d *Detector) EncoderFor(r Request) Encoder {
+	e := d.Encoder()
+	if e == Software {
+		return e
+	}
+	d.mu.Lock()
+	hw, sw := d.hwRate, d.swRate
+	d.mu.Unlock()
+	w, h := OutputSize(r.SrcWidth, r.SrcHeight, r.MaxHeight)
+	if hw <= 0 || sw <= 0 || w <= 0 || h <= 0 {
+		return e
+	}
+	fps := r.SrcFPS
+	if fps <= 0 || fps > 240 {
+		fps = 24
+	}
+	need := float64(w) * float64(h) * fps
+	if need*hwHeadroom <= hw || sw*swRealContent <= hw {
+		return e
+	}
+	return Software
+}
+
+// SetRates sets the measured speeds (pixels a second): for tests.
+func (d *Detector) SetRates(hw, sw float64) {
+	d.mu.Lock()
+	d.hwRate, d.swRate = hw, sw
+	d.mu.Unlock()
+}
+
+// measure times the chosen hardware encoder and the software one on four seconds of a
+// 1080p test pattern each, in the background (a few seconds of one GPU and some CPU), and
+// once more when the server has settled: right after a start (a boot with every other
+// service starting too, a deploy) the machine is busy and both read low.
+func (d *Detector) measure(e Encoder, gen int) {
+	if !d.measured(gen, e, d.speed(e), d.speed(Software)) {
+		return
+	}
+	time.Sleep(remeasureAfter)
+	d.mu.Lock()
+	current := gen == d.gen
+	d.mu.Unlock()
+	if current {
+		d.measured(gen, e, d.speed(e), d.speed(Software))
+	}
+}
+
+// remeasureAfter is how long after the first measurement the second one is made.
+var remeasureAfter = 10 * time.Minute
+
+// measured records the speeds found for choice number [gen], keeping the higher of each
+// when there are two readings (what an encoder can do is its best one; the lower was a
+// busy machine). Those of a choice since replaced are dropped: false.
+func (d *Detector) measured(gen int, e Encoder, hw, sw float64) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if gen != d.gen {
+		return false
+	}
+	d.hwRate, d.swRate = max(d.hwRate, hw), max(d.swRate, sw)
+	slog.Info("transcode: encoder speed", "encoder", e, "megapixelsPerSec", int(d.hwRate/1e6), "software", int(d.swRate/1e6))
+	return true
+}
+
+// speed is how many pixels a second [e] encodes (a 1080p test pattern, 96 frames); 0 when
+// the test could not be run.
+func (d *Detector) speed(e Encoder) float64 {
+	const frames, w, h = 96, 1920, 1080
+	args := []string{"-hide_banner", "-loglevel", "error"}
+	args = append(args, hwInit(e, d.device)...)
+	args = append(args, "-f", "lavfi", "-i", fmt.Sprintf("testsrc2=s=%dx%d:r=24:d=%d", w, h, frames/24))
+	args = append(args, "-vf", videoFilter(e, h, false, false))
+	args = append(args, videoCodec(e, 8000)...)
+	args = append(args, "-f", "null", "-")
+	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+	defer cancel()
+	out := &capped{max: 64 << 10}
+	cmd := exec.CommandContext(ctx, d.ffmpeg, args...)
+	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = out, out, 5*time.Second
+	start := time.Now()
+	if err := cmd.Run(); err != nil {
+		slog.Debug("transcode: encoder speed test", "encoder", e, "err", err, "out", strings.TrimSpace(out.String()))
+		return 0
+	}
+	took := time.Since(start).Seconds()
+	if took <= 0 {
+		return 0
+	}
+	return frames * w * h / took
 }
 
 func NewDetector(ffmpegPath, want, vaapiDevice string) *Detector {
@@ -201,7 +351,7 @@ func NewDetector(ffmpegPath, want, vaapiDevice string) *Detector {
 		slog.Warn("transcode: unknown hardware acceleration, using auto", "value", want)
 		w = Auto
 	}
-	return &Detector{ffmpeg: ffmpegPath, want: w, device: vaapiDevice, tested: map[Encoder]bool{}}
+	return &Detector{ffmpeg: ffmpegPath, want: w, device: vaapiDevice, tested: map[Encoder]bool{}, measures: true}
 }
 
 // Encoder is the encoder transcodes use: the chosen one when it works, else (and for
@@ -273,7 +423,12 @@ func (d *Detector) decide() {
 		d.tonemapx = d.hasFilter("tonemapx")
 	}
 	d.decided = true
+	d.gen++
+	d.hwRate, d.swRate = 0, 0
 	slog.Info("transcode: encoder", "setting", d.want, "encoder", d.chosen, "tonemapx", d.tonemapx)
+	if d.chosen != Software && d.measures {
+		go d.measure(d.chosen, d.gen)
+	}
 }
 
 // works runs with mu held.
@@ -340,7 +495,7 @@ func (c *capped) String() string { return string(c.buf) }
 
 // Args is the ffmpeg command line for a request, writing Matroska to stdout.
 func (d *Detector) Args(r Request) []string {
-	e := d.Encoder()
+	e := d.EncoderFor(r)
 	d.mu.Lock()
 	tonemapx := d.tonemapx
 	d.mu.Unlock()
@@ -364,10 +519,7 @@ func (d *Detector) Args(r Request) []string {
 			"-map_metadata", "0", "-map_chapters", "0",
 		)
 	}
-	height := r.MaxHeight
-	if height <= 0 || (r.SrcHeight > 0 && height > r.SrcHeight) {
-		height = r.SrcHeight
-	}
+	_, height := OutputSize(r.SrcWidth, r.SrcHeight, r.MaxHeight)
 	args = append(args, "-vf", videoFilter(e, height, r.SrcHDR, tonemapx))
 	bitrate := r.BitrateK
 	if bitrate <= 0 {

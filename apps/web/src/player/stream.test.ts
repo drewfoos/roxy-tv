@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chooseStream, MAX_REOPENS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, startQuality, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, classHeight, MAX_REOPENS, QUALITY_KBPS, QUALITY_STEPS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, resolutionLabel, smallerSteps, startQuality, StreamClock, streamEnded, type Mode } from './stream'
 
 const aac = { index: 1, codec: 'aac' }
 const ac3 = { index: 1, codec: 'AC3' }
@@ -46,10 +46,83 @@ describe('startQuality', () => {
   it('keeps the preference when the height is unknown', () => {
     expect(startQuality(720, 0)).toBe(720)
   })
-  it('has nothing above 1080p to offer: those and "best" are the file as it is', () => {
+  // The web knew nothing above 1080p: a saved 1440p played a 4K file as it is.
+  it('lowers a 4K file to 1440p, and a larger one to 4K', () => {
+    expect(startQuality(1440, 2160)).toBe(1440)
+    expect(startQuality(2160, 4320)).toBe(2160)
+  })
+  it('plays a file no larger than 4K or 1440p as it is', () => {
     expect(startQuality('original', 2160)).toBe('original')
     expect(startQuality(2160, 2160)).toBe('original')
-    expect(startQuality(1440, 2160)).toBe('original')
+    expect(startQuality(2160, 1080)).toBe('original')
+    expect(startQuality(1440, 1440)).toBe('original')
+    expect(startQuality(1440, 1080)).toBe('original')
+  })
+  it('takes a size that is not offered as the file itself', () => {
+    expect(startQuality(900, 2160)).toBe('original')
+    expect(startQuality(4320, 4320)).toBe('original')
+  })
+})
+
+// A film wider than 16:9 has fewer lines than its size's name says: 3840 x 1604 is 4K. By
+// height alone it read as "1604p" and was offered nothing between itself and 1080p.
+describe('classHeight', () => {
+  it('is the height of a 16:9 picture of that width for wide films', () => {
+    expect(classHeight(3840, 1604)).toBe(2160)
+    expect(classHeight(1920, 802)).toBe(1080)
+    expect(classHeight(1920, 1038)).toBe(1080)
+    expect(classHeight(2560, 1072)).toBe(1440)
+  })
+  it('is the height itself for 16:9 and narrower pictures', () => {
+    expect(classHeight(1920, 1080)).toBe(1080)
+    expect(classHeight(1440, 1080)).toBe(1080)
+    expect(classHeight(960, 720)).toBe(720)
+  })
+  it('is the height when the width is not known, and 0 when nothing is', () => {
+    expect(classHeight(undefined, 1080)).toBe(1080)
+    expect(classHeight(0, 720)).toBe(720)
+    expect(classHeight(1920, undefined)).toBe(0)
+    expect(classHeight(undefined, undefined)).toBe(0)
+  })
+})
+
+describe('resolutionLabel', () => {
+  it('names a size as people do', () => {
+    expect(resolutionLabel(2160)).toBe('4K')
+    expect(resolutionLabel(4320)).toBe('8K')
+    expect(resolutionLabel(1440)).toBe('1440p')
+    expect(resolutionLabel(1080)).toBe('1080p')
+    expect(resolutionLabel(480)).toBe('480p')
+  })
+  it('counts a few lines short as that size', () => {
+    expect(resolutionLabel(1038)).toBe('1080p')
+    expect(resolutionLabel(2076)).toBe('4K')
+  })
+  it('says the lines for a size with no name, and nothing for none', () => {
+    expect(resolutionLabel(240)).toBe('240p')
+    expect(resolutionLabel(0)).toBe('')
+  })
+})
+
+describe('smallerSteps', () => {
+  it('offers a 4K file 1440p and everything under it, not 4K again', () => {
+    expect(smallerSteps(2160)).toEqual([1440, 1080, 720, 480])
+    expect(smallerSteps(classHeight(3840, 1604))).toEqual([1440, 1080, 720, 480])
+  })
+  it('offers a 1080p file 720p and 480p', () => {
+    expect(smallerSteps(1080)).toEqual([720, 480])
+    expect(smallerSteps(classHeight(1920, 802))).toEqual([720, 480])
+  })
+  it('does not offer a size a few lines under the file as a conversion', () => {
+    expect(smallerSteps(1088)).toEqual([720, 480])
+    expect(smallerSteps(760)).toEqual([480])
+  })
+  it('offers everything when the size is not known, and 4K only above 4K', () => {
+    expect(smallerSteps(0)).toEqual([...QUALITY_STEPS])
+    expect(smallerSteps(4320)).toEqual([2160, 1440, 1080, 720, 480])
+  })
+  it('asks for the bitrates the apps ask for', () => {
+    expect(QUALITY_KBPS).toEqual({ 2160: 40000, 1440: 16000, 1080: 8000, 720: 4000, 480: 1500 })
   })
 })
 

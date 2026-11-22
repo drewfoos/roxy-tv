@@ -70,7 +70,7 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case st.Type == model.StreamVideo && !videoSeen:
 			videoSeen = true
-			req.SrcHeight = st.Height
+			req.SrcWidth, req.SrcHeight, req.SrcFPS = st.Width, st.Height, st.FPS
 			req.SrcHDR = st.ColorTransfer == "smpte2084" || st.ColorTransfer == "arib-std-b67"
 		case st.Type == model.StreamAudio && !st.IsExternal:
 			req.Audio = append(req.Audio, transcode.AudioTrack{Codec: st.Codec, Channels: st.Channels, Bitrate: st.Bitrate})
@@ -89,9 +89,12 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 	if req.WebAudio != nil {
 		audioIndex = req.WebAudio.Index
 	}
-	defer s.streaming(r, src, activity.Stream{Method: activity.Transcode, AudioIndex: audioIndex, Web: req.Web, MaxHeight: height, BitrateK: bitrate, Encoder: string(s.transcoder.Encoder())})()
+	// The encoder for THIS picture: a large one goes to the CPU where the GPU is too slow for it.
+	encoder := s.transcoder.EncoderFor(req)
+	outW, outH := transcode.OutputSize(req.SrcWidth, req.SrcHeight, req.MaxHeight)
+	defer s.streaming(r, src, activity.Stream{Method: activity.Transcode, AudioIndex: audioIndex, Web: req.Web, MaxHeight: height, BitrateK: bitrate, Encoder: string(encoder)})()
 	args := s.transcoder.Args(req)
-	s.pipeFFmpeg(w, r, "transcode", ffmpeg.LocalInputs(args), "source", src.ID, "encoder", s.transcoder.Encoder(), "height", height, "kbps", bitrate, "start", start)
+	s.pipeFFmpeg(w, r, "transcode", ffmpeg.LocalInputs(args), "source", src.ID, "encoder", encoder, "height", height, "size", strconv.Itoa(outW)+"x"+strconv.Itoa(outH), "kbps", bitrate, "start", start)
 }
 
 // GET /v1/system/transcoding -> {encoder}: which encoder the server uses.
