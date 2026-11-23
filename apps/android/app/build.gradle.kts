@@ -31,8 +31,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 191
-        versionName = "0.6.61"
+        versionCode = 192
+        versionName = "0.6.62"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")

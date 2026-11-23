@@ -1374,6 +1374,10 @@ data class MediaStream(
     val width: Int = 0,
     val height: Int = 0,
     val rangeType: String? = null,
+    /** How the picture is encoded for light, in ffmpeg's words (smpte2084 = HDR10's, arib-std-b67 = HLG's); for Dolby Vision, the picture underneath. */
+    val colorTransfer: String? = null,
+    /** The Dolby Vision profile (5: nothing but Dolby Vision; 7, 8: an HDR10 or HLG picture underneath); 0 when it is not Dolby Vision. */
+    val dvProfile: Int = 0,
     val language: String? = null,
     val detectedLanguage: String? = null,
     val title: String? = null,

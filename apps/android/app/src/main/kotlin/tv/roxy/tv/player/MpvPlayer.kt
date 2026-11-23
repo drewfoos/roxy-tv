@@ -312,16 +312,23 @@ class MpvPlayer(
      * [sid]: the subtitle track to open the file on (0 = none; null = mpv's slang choice,
      * then the policy once it is open). [aid]: the audio track (null = mpv's alang choice).
      * A transcode numbers its tracks itself: never preselected.
+     * [picture]: what the server says of the file's picture, when it is HDR (see
+     * [startNative]); a transcode is ordinary video whatever its source was.
      */
-    fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null, aid: Int? = null) {
+    internal fun play(url: String, start: Int = options.startSeconds, transcoded: Boolean = false, sid: Int? = null, aid: Int? = null, picture: KnownPicture? = null) {
         if (destroyed) return
         startSeconds = if (transcoded) 0 else start
         pendingTranscode = transcoded
         pendingSid = if (transcoded) null else sid
         pendingAid = if (transcoded) null else aid
+        pendingPicture = if (transcoded) null else picture
         pendingUrl = url
         if (surfaceReady) loadPending()
     }
+
+    @Volatile private var pendingPicture: KnownPicture? = null
+    /** The load under way began on the native output: its START_FILE does not put the normal one back. */
+    private var nativeFromStart = false
 
     @Volatile private var pendingSid: Int? = null
     @Volatile private var pendingAid: Int? = null
@@ -405,6 +412,8 @@ class MpvPlayer(
         for ((name, value) in MpvTracks.loadTrackOptions(pendingSid, pendingAid)) mpv.setPropertyString(name, value)
         pendingSid = null; pendingAid = null
         for ((name, value) in loadCacheOptions(loadUrl)) mpv.setPropertyString(name, value)
+        nativeFromStart = startNative(pendingPicture)
+        pendingPicture = null
         queuedLoads.incrementAndGet()
         mpv.command(arrayOf("loadfile", loadUrl, "replace"))
         mpv.setPropertyBoolean("pause", false)
@@ -911,14 +920,42 @@ class MpvPlayer(
      * draws its subtitles on a second one the page lays over it ([subtitleSurface]).
      */
     private fun maybeNativeHdr(gamma: String) {
+        if (hdrActive) {
+            // Begun on the server's word (see startNative): from here the shape is mpv's,
+            // which knows the shape of the pixels as well as their number.
+            pictureShape()?.let { if (it != nativeShape) { nativeShape = it; listener?.onHdrNative(true) } }
+            return
+        }
         // Bench switch: `adb shell setprop debug.roxy.hdr native` forces this output for HDR
         // files, `native-all` for every file (to try the subtitle layer with a styled
         // track on a device without an HDR file at hand).
-        val bench = sysprop("debug.roxy.hdr")
-        if (!(bench == "native" || bench == "native-all" || (options.hdrNative && options.hdrDisplay)) || hdrActive) return
-        if (gamma != "pq" && gamma != "hlg" && bench != "native-all") return
+        if (!wantsNativeHdr(gamma, sysprop("debug.roxy.hdr"), options.hdrNative, options.hdrDisplay)) return
         // Read before the switch: the video chain is rebuilt by it and has no size meanwhile.
-        nativeShape = pictureShape()
+        enterNativeHdr(gamma, pictureShape())
+    }
+
+    /**
+     * The file about to be loaded starts on the native output when the server already says
+     * it is HDR. Found out only from the open file (see [maybeNativeHdr]), the switch came
+     * with the decoder running: it was torn down and opened again, which held the app's
+     * main thread for 0.5 to 0.6 s on a TV and put the first picture off. Only with nothing
+     * open: a file still playing would be rebuilt for the new output first. True: this load
+     * plays natively from its first frame.
+     */
+    private fun startNative(picture: KnownPicture?): Boolean {
+        if (picture == null || !wantsNativeHdr(picture.gamma, sysprop("debug.roxy.hdr"), options.hdrNative, options.hdrDisplay)) return false
+        val shape = picture.width to picture.height
+        if (hdrActive) { // the file before it was native too: nothing to switch
+            if (nativeShape != shape) { nativeShape = shape; listener?.onHdrNative(true) }
+            return true
+        }
+        if (bool("idle-active") != true) return false
+        enterNativeHdr(picture.gamma, shape)
+        return true
+    }
+
+    private fun enterNativeHdr(gamma: String, shape: Pair<Int, Int>?) {
+        nativeShape = shape
         Timber.i("native HDR output for %s video, shape %s", gamma, nativeShape)
         hdrActive = true
         activeVo = "mediacodec_embed"
@@ -943,7 +980,7 @@ class MpvPlayer(
         return if (w > 0 && h > 0) w to h else null
     }
 
-    /** A new file starts from the normal (tone-mapped, subtitled) output. */
+    /** A new file starts from the normal (tone-mapped, subtitled) output, unless it began on the native one. */
     private fun leaveNativeHdr() {
         if (!hdrActive) return
         hdrActive = false
@@ -990,7 +1027,7 @@ class MpvPlayer(
                 queuedLoads.updateAndGet { (it - 1).coerceAtLeast(0) }
                 loading = true
                 ended = false
-                post { frameRateGate.fileStarted(); leaveNativeHdr() }
+                post { frameRateGate.fileStarted(); if (!nativeFromStart) leaveNativeHdr() }
             }
             MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> post { frameRateGate.firstFrame()?.let { frameRate = it; applyFrameRate() } }
             MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> {

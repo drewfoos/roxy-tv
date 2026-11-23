@@ -196,6 +196,9 @@ class PlayerSession(
     var nativeHdr by mutableStateOf(false); private set
     var nativeShape by mutableStateOf<Pair<Int, Int>?>(null); private set
 
+    /** The file's picture as the server describes it, when it is HDR: it then starts on the native output. */
+    private var itemPicture: KnownPicture? = null
+
     /** mpv gave that second surface up: the page takes it away (until another file plays). */
     var subtitleSurfaceRefused by mutableStateOf(false); private set
     private var osdJob: Job? = null
@@ -667,6 +670,7 @@ class PlayerSession(
         directUrl = url
         pendingStart = start.toDouble()
         sourceHeight = 0
+        itemPicture = null
         sourceDurationSec = null
         reloadTarget = null
         transcoding = false
@@ -695,7 +699,8 @@ class PlayerSession(
             // file's and ignored, and the player stayed mid-switch (no progress, Next blocked).
             life.fileRequested()
             itemPreload = preloadTracks(src?.streams.orEmpty())
-            player.play(url, start, sid = itemPreload.sid, aid = itemPreload.aid)
+            itemPicture = knownPicture(src?.streams)
+            player.play(url, start, sid = itemPreload.sid, aid = itemPreload.aid, picture = itemPicture)
             // Is the server there? The Quality menu and "Play on" depend on the answer, and
             // nothing else may ask for a while (reports rest a minute when it is away).
             app.server.checkSoon()
@@ -754,8 +759,9 @@ class PlayerSession(
                 life.fileRequested()
                 // The original file's numbering; a transcode is opened on mpv's own choice.
                 itemPreload = preloadTracks(streams.orEmpty())
+                itemPicture = knownPicture(streams)
                 player.play(if (use && mt != null) app.api.transcodeUrl(sourceId, quality.height, quality.kbps, start.toDouble(), mt) else url, start, transcoded = use && mt != null,
-                    sid = itemPreload.sid, aid = itemPreload.aid)
+                    sid = itemPreload.sid, aid = itemPreload.aid, picture = itemPicture)
             }
         } else {
             life.fileRequested()
@@ -965,7 +971,7 @@ class PlayerSession(
             // On the tracks it played on: opened on mpv's choice, the session's picks then
             // switched after the load, and each switch is one of mpv's refresh seeks.
             val tracks = reloadTracks()
-            player.play(url, at.toInt(), sid = tracks.sid, aid = tracks.aid)
+            player.play(url, at.toInt(), sid = tracks.sid, aid = tracks.aid, picture = itemPicture)
         }
     }
 
@@ -1351,7 +1357,7 @@ class PlayerSession(
         reloadTarget = at
         life.reloadStarted()
         val tracks = reloadTracks()
-        player.play(directUrl, at.toInt(), transcoded = false, sid = tracks.sid, aid = tracks.aid)
+        player.play(directUrl, at.toInt(), transcoded = false, sid = tracks.sid, aid = tracks.aid, picture = itemPicture)
         watchReload(at)
     }
 
