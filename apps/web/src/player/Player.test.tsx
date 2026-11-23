@@ -29,6 +29,10 @@ const subs = vi.hoisted(() => ({
 }))
 vi.mock('./subtitles', () => ({ createSubtitleRenderer: () => subs }))
 
+// Whether "the browser" has a decoder for the file's video (see canPlay).
+const canPlay = vi.hoisted(() => ({ ok: true }))
+vi.mock('./canPlay', () => ({ canPlayVideo: async () => canPlay.ok }))
+
 import { Player, REMUX_ZERO_WAIT_MS } from './Player'
 
 // ---- a <video> the test drives ----
@@ -133,6 +137,7 @@ beforeEach(() => {
   localStorage.clear()
   prefs.set({ subMode: 'full', audioLang: 'jpn', subLang: 'eng', quality: 'original', autoplay: true, autoSkip: false })
   vi.clearAllMocks()
+  canPlay.ok = true
   bufferedTo = 0
   api.remuxStart.mockImplementation(async (_id: string, start: number) => start)
   onEnded = () => undefined
@@ -577,6 +582,88 @@ describe('Player', () => {
       await mount(wide('a', 1920, 802))
       expect(video().src).toBe('/v1/stream/src-a')
       expect(listed()).toEqual(['1080p (Original)', '720p', '480p'])
+    })
+    // A browser with no decoder for the file (HEVC without a hardware decoder, 10-bit
+    // H.264) was given the file anyway: "This file cannot be played in this browser".
+    describe('a file this browser cannot play', () => {
+      const hints = () => {
+        click(host.querySelector('[aria-label="Settings"]'))
+        const out = [...host.querySelectorAll('.panel__list .panel__row')].map((b) => b.querySelector('small')?.textContent)
+        click(host.querySelector('[aria-label="Settings"]'))
+        return out
+      }
+      it('starts as a conversion of its own size, 1440p for a 4K film', async () => {
+        canPlay.ok = false
+        await mount(wide('a', 3840, 1604))
+        expect(video().src).toBe('/v1/sources/src-a/transcode?h=1440')
+        expect(listed()).toEqual(['1440p', '1080p', '720p', '480p'])
+        expect(ticked()).toEqual(['1440p'])
+        expect(hints()[0]).toBe('Converted by the server: this browser cannot play the file itself.')
+        expect(host.textContent).not.toContain('cannot be played')
+      })
+      it('converts a 1080p file at 1080p and offers no "original"', async () => {
+        canPlay.ok = false
+        await mount(tall('a', 1080))
+        expect(video().src).toBe('/v1/sources/src-a/transcode?h=1080')
+        expect(listed()).toEqual(['1080p', '720p', '480p'])
+        expect(ticked()).toEqual(['1080p'])
+      })
+      it('keeps a smaller saved quality, and a pick in the menu', async () => {
+        canPlay.ok = false
+        prefs.set({ quality: 720 })
+        await mount(tall('a', 1080))
+        expect(video().src).toBe('/v1/sources/src-a/transcode?h=720')
+        click(host.querySelector('[aria-label="Settings"]'))
+        click([...host.querySelectorAll('.panel__row')].find((b) => b.textContent?.startsWith('1080p')))
+        await flush()
+        expect(video().src).toBe('/v1/sources/src-a/transcode?h=1080')
+      })
+      it('is decided for each file: the next one may be playable', async () => {
+        canPlay.ok = false
+        await mount(tall('a', 1080))
+        expect(video().src).toContain('/transcode?h=1080')
+        canPlay.ok = true
+        await act(async () => setShown(tall('b', 1080)))
+        await flush()
+        expect(video().src).toBe('/v1/stream/src-b')
+        expect(listed()).toEqual(['1080p (Original)', '720p', '480p'])
+      })
+      // The browser said it could, and then could not (or said nothing useful): the
+      // failure itself switches to the conversion, once, instead of ending in a message.
+      it('goes on as a conversion when the file itself fails in the browser', async () => {
+        const fetchWas = globalThis.fetch
+        globalThis.fetch = (async () => ({ ok: true, status: 200 })) as unknown as typeof fetch
+        try {
+          await mount(tall('a', 1080))
+          expect(video().src).toBe('/v1/stream/src-a')
+          Object.defineProperty(video(), 'error', { value: { code: 4 }, configurable: true })
+          fire('error')
+          await flush()
+          expect(video().src).toBe('/v1/sources/src-a/transcode?h=1080')
+          expect(host.textContent).not.toContain('cannot be played')
+          expect(listed()).toEqual(['1080p', '720p', '480p'])
+          // The conversion failing too is said, not retried for ever.
+          fire('error')
+          await flush()
+          expect(host.textContent).toContain('The server could not prepare a stream this browser can play.')
+        } finally {
+          globalThis.fetch = fetchWas
+        }
+      })
+    })
+    it('does the same for a file the decoder gives up on, once', async () => {
+      await mount(tall('a', 1080))
+      expect(video().src).toBe('/v1/stream/src-a')
+      Object.defineProperty(video(), 'error', { value: { code: 3 }, configurable: true })
+      fire('error')
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=1080')
+      expect(host.textContent).not.toContain('could not be decoded')
+      // The conversion failing the same way is said: there is nothing left to fall back to.
+      fire('error')
+      await flush()
+      expect(video().src).toBe('/v1/sources/src-a/transcode?h=1080')
+      expect(host.textContent).toContain('The video could not be decoded.')
     })
     it('a quality picked in the gear menu is kept as picked', async () => {
       prefs.set({ quality: 1080 })

@@ -65,21 +65,24 @@ export function SpeedPanel({ speeds, rate, onRate }: { speeds: number[]; rate: n
   )
 }
 
-/** The line under a quality: what picking it does. */
-export function qualityHint(q: Quality): string {
+/** The line under a quality: what picking it does. [standIn]: the row that plays in place of a file this browser cannot play. */
+export function qualityHint(q: Quality, standIn = false): string {
   if (q === 'original') return 'The file as it is, nothing re-encoded.'
+  if (standIn) return 'Converted by the server: this browser cannot play the file itself.'
   if (q > 1080) return 'A smaller picture, made by the server as it plays.'
   return q === 480 ? 'Uses the least data. Good for slower connections.' : 'Uses less data at a standard quality.'
 }
 
 /** The gear: Autoplay Next, then the quality choices with what each costs. [srcHeight]: the file's classHeight. */
-export function SettingsPanel({ autoplay, onAutoplay, qualities, quality, srcHeight, onQuality }: {
+export function SettingsPanel({ autoplay, onAutoplay, qualities, quality, srcHeight, onQuality, playable = true }: {
   autoplay: boolean
   onAutoplay: () => void
   qualities: Quality[]
   quality: Quality
   srcHeight: number
   onQuality: (q: Quality) => void
+  /** False when the browser cannot play the file itself: the first row is then its stand-in. */
+  playable?: boolean
 }) {
   return (
     <div className="panel panel--settings">
@@ -96,7 +99,7 @@ export function SettingsPanel({ autoplay, onAutoplay, qualities, quality, srcHei
           <button key={q} className={'panel__row panel__row--tall' + (q === quality ? ' panel__row--on' : '')} onClick={() => onQuality(q)}>
             <span>
               <b>{q === 'original' ? (srcHeight ? `${resolutionLabel(srcHeight)} (Original)` : 'Original') : resolutionLabel(q)}</b>
-              <small>{qualityHint(q)}</small>
+              <small>{qualityHint(q, !playable && q === qualities[0])}</small>
             </span>
             {q === quality && <IconCheckCircle size={22} />}
           </button>

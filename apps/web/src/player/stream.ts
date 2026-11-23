@@ -65,6 +65,32 @@ export function resolutionLabel(height: number): string {
 }
 
 /**
+ * The conversion that stands in for a file this browser cannot play as it is: the file's
+ * own size, 1440p at most (a 4K conversion is more than a home server makes as fast as it
+ * plays). 1080p when the size is not known.
+ */
+export function fallbackStep(srcHeight: number): QualityStep {
+  if (!(srcHeight > 0)) return 1080
+  return QUALITY_STEPS.find((h) => h <= 1440 && h * 0.94 <= srcHeight) ?? 480
+}
+
+/** The quality a stream is opened at: the one chosen, or the stand-in when the file itself cannot be played here. */
+export function playedQuality(quality: 'original' | QualityStep, playable: boolean, srcHeight: number): 'original' | QualityStep {
+  return quality === 'original' && !playable ? fallbackStep(srcHeight) : quality
+}
+
+/**
+ * What the gear menu lists. A file the browser plays: itself, then the smaller
+ * conversions. One it cannot play: the stand-in first (there is no "original" to pick),
+ * then the smaller ones.
+ */
+export function offeredQualities(playable: boolean, srcHeight: number): ('original' | QualityStep)[] {
+  if (playable) return ['original', ...smallerSteps(srcHeight)]
+  const top = fallbackStep(srcHeight)
+  return [top, ...QUALITY_STEPS.filter((h) => h < top)]
+}
+
+/**
  * The conversions the gear menu lists for a file of that class height: only the ones
  * really smaller than the file (all of them when its size is not known).
  */

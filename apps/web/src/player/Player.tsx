@@ -6,7 +6,8 @@ import { pictureShape } from './shape'
 import { SUBTITLES_OFF, type Item, type MediaSegment, type MediaStream, type TrickplayManifest } from '../api/types'
 import { IconFullscreen, IconPause, IconPlay, IconSettings, IconSkipNext, IconSubtitles, IconVolume, IconVolumeOff, IconForward10, IconReplay10 } from '../components/Icons'
 import { fmt } from './format'
-import { chooseStream, classHeight, MOVED_SEC, QUALITY_KBPS, ReopenBudget, smallerSteps, startQuality, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, classHeight, MOVED_SEC, offeredQualities, playedQuality, QUALITY_KBPS, ReopenBudget, startQuality, StreamClock, streamEnded, type Mode } from './stream'
+import { canPlayVideo } from './canPlay'
 import { SettingsPanel, SpeedPanel, TracksPanel, type Quality } from './PlayerPanels'
 import { SeekBar } from './SeekBar'
 import { createSubtitleRenderer, type SubtitleRenderer } from './subtitles'
@@ -225,6 +226,12 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     if (prefs.get().autoplay !== autoplay) prefs.set({ autoplay })
   }, [autoplay])
   const qualityRef = useRef<Quality>(quality)
+  // Whether this browser plays the file's video as it is (asked before each file starts,
+  // see canPlay). When it cannot, "the file itself" is played as a conversion.
+  const [playable, setPlayable] = useState(true)
+  const playableRef = useRef(true)
+  /** Where the last stream was asked to start (seconds into the file). */
+  const askedStart = useRef(0)
   const autoplayRef = useRef(true)
   const [skip, setSkip] = useState<MediaSegment | null>(null)
   const [advisory, setAdvisory] = useState(true)
@@ -240,6 +247,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
   const [trick, setTrick] = useState<TrickplayManifest | null>(null)
   // Set again for every new item in the start effect below (see initialTracks).
   const [audioIndex, setAudioIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).audio)
+  const audioIndexRef = useRef(audioIndex)
+  audioIndexRef.current = audioIndex
   const [subIndex, setSubIndex] = useState<number | null>(() => initialTracks(item, source, audioTracks, subTracks).sub)
   const [subsOn, setSubsOn] = useState(() => initialTracks(item, source, audioTracks, subTracks).subsOn)
   // The item whose tracks the audio / subtitle state holds. The Player is reused: in the
@@ -338,7 +347,8 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       }
       const first = audioTracks[0]
       const chosen = audioTracks.find((t) => t.index === audio) ?? first
-      const q = qualityRef.current
+      askedStart.current = startSec
+      const q = playedQuality(qualityRef.current, playableRef.current, srcHeight)
       const kind = chooseStream(q, audioTracks, audio)
       const direct = kind === 'direct'
       // Playing, or meant to by a load this one replaces: a new src pauses the element, so
@@ -512,7 +522,14 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     setSkip(null)
     // A watched episode with a position is a rewatch under way: resume it, as the apps do.
     const start = (item.userData?.positionMs ?? 0) / 1000
-    load(start > 5 ? start : 0, tracks.audio).catch((e: unknown) => live && setError(errorText(e)))
+    // Asked first: a file this browser has no decoder for starts as a conversion, not as
+    // "This file cannot be played in this browser".
+    canPlayVideo(srcVideo).then((ok) => {
+      if (!live) return
+      playableRef.current = ok
+      setPlayable(ok)
+      load(start > 5 ? start : 0, tracks.audio).catch((e: unknown) => live && setError(errorText(e)))
+    })
     api.trickplay(source.id).then((m) => live && setTrick(m)).catch(() => undefined)
     const t = setTimeout(() => live && setAdvisory(false), 7000)
     return () => {
@@ -600,9 +617,20 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       reload(e.at, m.audio, true)
       return 'reopened'
     }
+    // The file itself failed in the browser (no decoder after all, or one that gave up on
+    // it): once per file, go on as a conversion from where it was.
+    const convertInstead = (): boolean => {
+      if (modeRef.current.kind !== 'direct' || !playableRef.current) return false
+      playableRef.current = false
+      setPlayable(false)
+      // From where it was, or, when it never started, from where it was meant to.
+      reload(Math.max(absTime(), askedStart.current), audioIndexRef.current, true)
+      return true
+    }
     const onError = () => {
       const code = v.error?.code
       if (code === 2 && reconnect() !== 'end') return
+      if (code === 3 && convertInstead()) return
       if (code !== 4) {
         setError(code === 2 ? 'The connection to the server dropped while playing. Try again.' : code === 3 ? 'The video could not be decoded.' : `Playback error ${code ?? ''}`.trim())
         return
@@ -614,6 +642,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
       const direct = modeRef.current.kind === 'direct'
       probeStream(api.streamUrl(source.id, tokenRef.current)).then((status) => {
         if (my !== loadGen.current) return // a newer load replaced this stream meanwhile
+        if (status === 'ok' && direct && convertInstead()) return
         setError(status === 'ok' ? (direct ? 'This file cannot be played in this browser (unsupported video or audio codec).' : 'The server could not prepare a stream this browser can play.') : status)
       })
     }
@@ -731,7 +760,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
     reopens.current.reset() // a new stream the viewer asked for: a fresh start
     reload(absTime(), audioIndex)
   }
-  const qualities: Quality[] = ['original', ...smallerSteps(srcHeight)]
+  const qualities: Quality[] = offeredQualities(playable, srcHeight)
   const changeSub = (idx: number | null) => {
     ownTracks.current.sub = true
     setSubIndex(idx)
@@ -822,7 +851,7 @@ export function Player({ item, series, next, onNext, onEnded }: PlayerProps) {
               <IconSettings size={26} />
             </button>
             {menu === 'quality' && (
-              <SettingsPanel autoplay={autoplay} onAutoplay={() => setAutoplay((a) => !a)} qualities={qualities} quality={quality} srcHeight={srcHeight} onQuality={changeQuality} />
+              <SettingsPanel autoplay={autoplay} onAutoplay={() => setAutoplay((a) => !a)} qualities={qualities} quality={playedQuality(quality, playable, srcHeight)} srcHeight={srcHeight} onQuality={changeQuality} playable={playable} />
             )}
           </div>
           <button className="controls__btn" onClick={toggleFullscreen} aria-label="Fullscreen">

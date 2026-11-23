@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chooseStream, classHeight, MAX_REOPENS, QUALITY_KBPS, QUALITY_STEPS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, resolutionLabel, smallerSteps, startQuality, StreamClock, streamEnded, type Mode } from './stream'
+import { chooseStream, classHeight, fallbackStep, MAX_REOPENS, offeredQualities, playedQuality, QUALITY_KBPS, QUALITY_STEPS, RECOVERED_AFTER_SEC, ReopenBudget, reopenAt, resolutionLabel, smallerSteps, startQuality, StreamClock, streamEnded, type Mode } from './stream'
 
 const aac = { index: 1, codec: 'aac' }
 const ac3 = { index: 1, codec: 'AC3' }
@@ -265,5 +265,36 @@ describe('ReopenBudget', () => {
     expect(tryReopen(b, 200)).toBeNull()
     b.reset()
     expect(tryReopen(b, 10)).toBe(10)
+  })
+})
+
+// A file the browser has no decoder for (HEVC in a browser without one, 10-bit H.264) is
+// played as a conversion of its own size.
+describe('a file this browser cannot play', () => {
+  it('is converted at its own size, 1440p at most', () => {
+    expect(fallbackStep(2160)).toBe(1440)
+    expect(fallbackStep(classHeight(3840, 1604))).toBe(1440)
+    expect(fallbackStep(1440)).toBe(1440)
+    expect(fallbackStep(1080)).toBe(1080)
+    expect(fallbackStep(1038)).toBe(1080)
+    expect(fallbackStep(classHeight(1920, 802))).toBe(1080)
+    expect(fallbackStep(720)).toBe(720)
+    expect(fallbackStep(576)).toBe(480)
+    expect(fallbackStep(360)).toBe(480)
+    expect(fallbackStep(0)).toBe(1080)
+  })
+  it('opens that conversion in place of "the file itself", and a picked size as picked', () => {
+    expect(playedQuality('original', false, 2160)).toBe(1440)
+    expect(playedQuality('original', false, 1080)).toBe(1080)
+    expect(playedQuality(720, false, 1080)).toBe(720)
+    expect(playedQuality('original', true, 2160)).toBe('original')
+    expect(playedQuality(1080, true, 2160)).toBe(1080)
+  })
+  it('is not offered as itself: the stand-in comes first, then the smaller sizes', () => {
+    expect(offeredQualities(false, 2160)).toEqual([1440, 1080, 720, 480])
+    expect(offeredQualities(false, 1080)).toEqual([1080, 720, 480])
+    expect(offeredQualities(false, 480)).toEqual([480])
+    expect(offeredQualities(true, 2160)).toEqual(['original', 1440, 1080, 720, 480])
+    expect(offeredQualities(true, 1080)).toEqual(['original', 720, 480])
   })
 })
