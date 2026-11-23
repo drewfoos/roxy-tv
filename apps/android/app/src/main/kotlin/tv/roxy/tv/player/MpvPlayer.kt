@@ -821,6 +821,22 @@ class MpvPlayer(
         releaseSurface()
     }
 
+    /**
+     * The player is about to close for good: the picture is given up now, while its surface
+     * is still there. Left playing, mpv rebuilt its video chain when the surface went, and
+     * with no surface there is no hardware decoder: a 4K film was decoded in software, and
+     * every call the closing page then made (the rest of [releaseSurface], pause,
+     * [destroy]) waited for mpv to finish a frame. On a TV that held the app's main thread
+     * for about 0.7 s and again for 0.6 s at each exit. The sound plays on until the page
+     * pauses it, as before.
+     */
+    fun closing() {
+        if (destroyed || closed) return
+        closed = true
+        mpv.setPropertyString("vid", "no")
+    }
+    private var closed = false
+
     private fun releaseSurface() {
         main.removeCallbacks(redrawAfterResize)
         surfaceReady = false

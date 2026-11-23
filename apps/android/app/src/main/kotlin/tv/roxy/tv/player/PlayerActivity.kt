@@ -422,6 +422,12 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onStart() { super.onStart(); RoxyApp.get(this).remote.setForeground(true); RoxyApp.get(this).server.setForeground(true) }
 
+    /** Closing for good, by any way: the player gives its picture up first (see MpvPlayer.closing). */
+    override fun finish() {
+        if (::session.isInitialized && !session.destroyed) session.player.closing()
+        super.finish()
+    }
+
     override fun onStop() {
         if (::session.isInitialized) session.onStop()
         RoxyApp.get(this).remote.setForeground(false)
