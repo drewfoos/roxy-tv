@@ -28,7 +28,20 @@ var pipeStall = 10 * time.Minute
 // cancelled: when it was not, ffmpeg blocked writing into the full pipe, the wait never
 // returned, and the transcode slot stayed taken; a few of those and no one could start
 // a transcode. WaitDelay caps the wait in any case.
-func (s *Server) pipeFFmpeg(w http.ResponseWriter, r *http.Request, what string, args []string, attrs ...any) {
+//
+// The answer says how many bytes went out and whether ffmpeg itself failed (it ended in
+// an error with the player still there), so the caller can try another way.
+func (s *Server) pipeFFmpeg(w http.ResponseWriter, r *http.Request, what string, args []string, attrs ...any) (sent int64, failed bool) {
+	return s.pipe(w, r, what, args, false, attrs)
+}
+
+// pipeAgain is pipeFFmpeg for an answer that has begun: a first ffmpeg gave nothing and
+// failed, and this one takes its place. The player sees one answer.
+func (s *Server) pipeAgain(w http.ResponseWriter, r *http.Request, what string, args []string, attrs ...any) (sent int64, failed bool) {
+	return s.pipe(w, r, what, args, true, attrs)
+}
+
+func (s *Server) pipe(w http.ResponseWriter, r *http.Request, what string, args []string, begun bool, attrs []any) (sent int64, failed bool) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.ff.FFmpeg, args...)
@@ -37,22 +50,27 @@ func (s *Server) pipeFFmpeg(w http.ResponseWriter, r *http.Request, what string,
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		writeError(w, 500, err.Error())
-		return
+		if !begun {
+			writeError(w, 500, err.Error())
+		}
+		return 0, true
 	}
 	began := time.Now()
 	if err := cmd.Start(); err != nil {
-		writeError(w, 500, "ffmpeg: "+err.Error())
-		return
+		if !begun {
+			writeError(w, 500, "ffmpeg: "+err.Error())
+		}
+		return 0, true
 	}
 	slog.Info(what+": start", attrs...)
-	w.Header().Set("Content-Type", "video/x-matroska")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(200)
+	if !begun {
+		w.Header().Set("Content-Type", "video/x-matroska")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(200)
+	}
 	buf := make([]byte, 256*1024)
 	flusher, _ := w.(http.Flusher)
 	rc := http.NewResponseController(w)
-	var sent int64
 	playerGone := false
 	for {
 		n, rerr := stdout.Read(buf)
@@ -72,9 +90,11 @@ func (s *Server) pipeFFmpeg(w http.ResponseWriter, r *http.Request, what string,
 			break
 		}
 	}
-	_ = cmd.Wait()
-	if !playerGone && r.Context().Err() == nil && stderr.Len() > 0 {
+	werr := cmd.Wait()
+	playerThere := !playerGone && r.Context().Err() == nil
+	if playerThere && stderr.Len() > 0 {
 		slog.Warn(what+": ffmpeg", append(attrs, "err", strings.TrimSpace(tailString(stderr.String(), 600)))...)
 	}
 	slog.Info(what+": end", append(attrs, "bytes", sent, "took", time.Since(began).Round(time.Second))...)
+	return sent, playerThere && werr != nil
 }

@@ -218,7 +218,8 @@ func nearestEven(a, b, c int) int {
 }
 
 // Detector picks the encoder transcodes use and can be told to pick again when the
-// admin changes the setting. Test results are cached: a GPU does not come and go.
+// admin changes the setting. Test results are cached, but not for good: a GPU can go
+// while the server runs (see Failed), and may come back.
 type Detector struct {
 	ffmpeg string
 	device string
@@ -235,6 +236,77 @@ type Detector struct {
 	// known. gen counts choices, so a measurement of an encoder since replaced is dropped.
 	hwRate, swRate float64
 	gen            int
+	// A hardware encoder that stopped working while the server ran (see Failed): which,
+	// when it was last found not to work, and whether it is being tried again right now.
+	lost      Encoder
+	lostAt    time.Time
+	retrying  bool
+	rechecked time.Time // the last test run on the word of a failed conversion
+}
+
+// failedRecheck: on the word of failed conversions, a hardware encoder's test is run again
+// at most this often (a file it cannot take fails every time it is opened).
+var failedRecheck = 30 * time.Second
+
+// lostRetry: a hardware encoder that stopped working is tried again this often, so one
+// that returns (a device reset, a driver loaded again) is used again without a restart.
+var lostRetry = 10 * time.Minute
+
+// Failed is told that a conversion with encoder e ended in an ffmpeg error. A hardware
+// encoder that passed its test at start can stop working while the server runs: a GPU
+// the kernel failed to power down in the middle of an encode stays unusable until it is
+// reset. Every conversion then failed the moment it began, and players asked again
+// without end. The encoder's test is run again, and when it no longer passes the choice
+// is made again without it. The answer is the encoder to use now.
+func (d *Detector) Failed(e Encoder) Encoder {
+	d.mu.Lock()
+	if !d.decided {
+		d.decide()
+	}
+	if e == Software || e != d.chosen || time.Since(d.rechecked) < failedRecheck {
+		defer d.mu.Unlock()
+		return d.chosen
+	}
+	d.rechecked = time.Now()
+	d.mu.Unlock()
+	ok := d.test(e) // not under the lock: conversions that start meanwhile do not wait for it
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if ok || e != d.chosen {
+		return d.chosen // the encoder is fine: it was that file, or that moment
+	}
+	slog.Warn("transcode: the hardware encoder stopped working; it is tried again every "+lostRetry.String(), "encoder", e)
+	d.tested[e] = false
+	d.lost, d.lostAt = e, time.Now()
+	d.decide()
+	return d.chosen
+}
+
+// retryLost runs with mu held: once lostRetry has passed, the encoder that stopped working
+// is tested again in the background, and chosen again when it passes.
+func (d *Detector) retryLost() {
+	if d.lost == "" || d.retrying || time.Since(d.lostAt) < lostRetry {
+		return
+	}
+	d.retrying = true
+	e := d.lost
+	go func() {
+		ok := d.test(e)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.retrying = false
+		if d.lost != e {
+			return
+		}
+		d.tested[e] = ok
+		if !ok {
+			d.lostAt = time.Now()
+			return
+		}
+		slog.Info("transcode: the hardware encoder works again", "encoder", e)
+		d.lost = ""
+		d.decide()
+	}()
 }
 
 // hwHeadroom: a hardware encoder is used for a conversion it can make at least this many
@@ -363,6 +435,7 @@ func (d *Detector) Encoder() Encoder {
 	if !d.decided {
 		d.decide()
 	}
+	d.retryLost()
 	return d.chosen
 }
 
@@ -386,6 +459,7 @@ func (d *Detector) SetChoice(choice string) (Encoder, error) {
 		return "", fmt.Errorf("%s did not work on this server (no such GPU, driver or device access)", Encoder(w).Label())
 	}
 	d.want = w
+	d.lost = "" // a new choice: what stopped working under the old one is not waited for
 	d.decide()
 	return d.chosen, nil
 }
@@ -495,7 +569,12 @@ func (c *capped) String() string { return string(c.buf) }
 
 // Args is the ffmpeg command line for a request, writing Matroska to stdout.
 func (d *Detector) Args(r Request) []string {
-	e := d.EncoderFor(r)
+	return d.ArgsWith(r, d.EncoderFor(r))
+}
+
+// ArgsWith is Args with the encoder named: the same picture from another encoder, when
+// the one chosen for it failed.
+func (d *Detector) ArgsWith(r Request, e Encoder) []string {
 	d.mu.Lock()
 	tonemapx := d.tonemapx
 	d.mu.Unlock()

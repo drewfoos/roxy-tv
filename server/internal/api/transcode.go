@@ -93,8 +93,22 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 	encoder := s.transcoder.EncoderFor(req)
 	outW, outH := transcode.OutputSize(req.SrcWidth, req.SrcHeight, req.MaxHeight)
 	defer s.streaming(r, src, activity.Stream{Method: activity.Transcode, AudioIndex: audioIndex, Web: req.Web, MaxHeight: height, BitrateK: bitrate, Encoder: string(encoder)})()
-	args := s.transcoder.Args(req)
-	s.pipeFFmpeg(w, r, "transcode", ffmpeg.LocalInputs(args), "source", src.ID, "encoder", encoder, "height", height, "size", strconv.Itoa(outW)+"x"+strconv.Itoa(outH), "kbps", bitrate, "start", start)
+	attrs := func(e transcode.Encoder) []any {
+		return []any{"source", src.ID, "encoder", e, "height", height, "size", strconv.Itoa(outW) + "x" + strconv.Itoa(outH), "kbps", bitrate, "start", start}
+	}
+	sent, failed := s.pipeFFmpeg(w, r, "transcode", ffmpeg.LocalInputs(s.transcoder.ArgsWith(req, encoder)), attrs(encoder)...)
+	if !failed || encoder == transcode.Software {
+		return
+	}
+	// The hardware encoder failed: the server looks whether it still works at all, so the
+	// next conversion does not walk into the same wall (see transcode.Detector.Failed).
+	s.transcoder.Failed(encoder)
+	if sent > 0 {
+		return // the player has part of the stream: it asks again from where that ended
+	}
+	// Nothing has gone out, so the player need not know: the same picture from the CPU.
+	slog.Info("transcode: again with the software encoder", "source", src.ID, "failed", encoder)
+	s.pipeAgain(w, r, "transcode", ffmpeg.LocalInputs(s.transcoder.ArgsWith(req, transcode.Software)), attrs(transcode.Software)...)
 }
 
 // GET /v1/system/transcoding -> {encoder}: which encoder the server uses.
