@@ -1,7 +1,11 @@
 # Building libmpv-roxy (custom libmpv-android AAR)
 
-Output: `app/libs/libmpv-roxy-1.0.0-pl7.387.aar` (22,726,494 bytes,
-sha256 `382AF08EF09F5ACFD6C2EA366E60546D4A44B340A7F7F5D4F2AD9CBC3D63A23B`, built 2026-11-01).
+Output: `app/libs/libmpv-roxy-1.0.0-pl7.387-p1.aar` (22,726,737 bytes,
+sha256 `E3D289F5D2813F6085677535AA9ECDE3E8299CAE9DF4C5DD70D5EA6F1EEC1DFA`, made 2026-11-23): the build of 2026-11-01
+(`libmpv-roxy-1.0.0-pl7.387.aar`, 22,726,494 bytes, sha256
+`382AF08EF09F5ACFD6C2EA366E60546D4A44B340A7F7F5D4F2AD9CBC3D63A23B`) with `libavcodec.so` of both
+ABIs replaced by the patched one (see "Patches" and "p1" below). Every other file in it is that
+build's, byte for byte.
 
 It's a drop-in replacement for `dev.jdtech.mpv:libmpv:1.0.0`: same package `dev.jdtech.mpv`, and the
 MPVLib API is byte-identical (`javap -p -constants` diff is empty). Only two pins changed:
@@ -11,11 +15,27 @@ MPVLib API is byte-identical (`javap -p -constants` diff is empty). Only two pin
 | libplacebo | 7.360.1  | **7.387.0** | GL sync-object leak fix c93aa134 (vo=gpu-next purple/frozen after 15-20 min), AV1 film-grain GLES fix a701ba4 |
 | libass     | 0.17.4   | **0.17.5**  | latest release |
 
+## Patches
+`tools/libmpv-patches/<dep>/*.patch` are applied to the dependency's sources by the build's own
+`patch.sh` (copied to `buildscripts/patches/` first). `tools/libmpv-patches/recipe.patch` is the
+change to the build scripts themselves (the pins above and the ABI list), the same text as in
+"Steps" below. `LibmpvPatchTest` checks the shipped AAR for each patch.
+
+| patch | what it fixes |
+|-------|---------------|
+| `ffmpeg/0001-mediacodec-end-of-stream.patch` | FFmpeg's MediaCodec decoder answered "send more" (EAGAIN) after the last packet when a dequeue brought something other than a frame. mpv hands the end of its input over once, so it then waited for ever: the video never ended. Seen on the TCL Google TV (MediaTek `c2.mtk.hevc.decoder`), which reports an output format change with the last frame of an HDR stream: the film froze on its last picture, never closed, and a seek into its last seconds spun for good. Same code in FFmpeg master on 2026-11-23 (not fixed upstream). |
+
 Everything else stays at the 1.0.0 pins: mpv 0.41.0, FFmpeg 8.1, dav1d 1.5.3, fontconfig 2.17.1, harfbuzz 14.1.0,
 freetype 2.14.3, fribidi 1.0.16, libxml2 2.15.2, mbedtls 3.6.6, lua 5.2.4, libunibreak 6.1, NDK 29.0.14206865.
 ABIs: arm64-v8a and armeabi-v7a only, matching the app's abiFilters.
 
 ## Environment
+In a container (how the home server builds it since 2026-11-23; it needs only docker and git):
+`tools/libmpv-build/build.sh` builds the image (`Dockerfile` beside it: Ubuntu 24.04 with the
+packages below), clones libmpv-android v1.0.0 into `~/build/libmpv`, applies `recipe.patch`, copies
+the patches and runs the steps below as the calling user. About 6 minutes on 16 cores, downloads
+included. The rest of this section is the laptop's setup, which the container copies.
+
 WSL2 Ubuntu-24.04 on the laptop. Build in the Linux filesystem (`~/build`), not `/mnt/c`.
 
 ```sh
@@ -109,3 +129,21 @@ the build prefix `lib/pkgconfig/libass.pc` (Version: 0.17.5).
 
 API check (Windows): `javap -p -constants -cp classes.jar dev.jdtech.mpv.MPVLib 'dev.jdtech.mpv.MPVLib$*'`
 on the old (Gradle cache 1.0.0) and new classes.jar gives 132 lines each with no diff.
+
+## p1: one library swapped, not the whole AAR
+The patched build's AAR was not shipped whole: a rebuild on another machine is a new binary of
+everything (mpv, libplacebo, libass), and only one function of FFmpeg changed. `p1` is the AAR of
+2026-11-01 with `jni/<abi>/libavcodec.so` taken from the patched build's AAR (stripped by Gradle
+like the others):
+```sh
+python3 - old.aar patched-build.aar libmpv-roxy-1.0.0-pl7.387-p1.aar <<'PY'
+import sys, zipfile
+old, new, out = sys.argv[1:]
+swap = {f"jni/{abi}/libavcodec.so" for abi in ("arm64-v8a", "armeabi-v7a")}
+with zipfile.ZipFile(old) as a, zipfile.ZipFile(new) as b, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as o:
+    for i in a.infolist():
+        o.writestr(i, (b if i.filename in swap else a).read(i.filename))
+PY
+```
+Checked before shipping: the two libraries export and import the same symbols as the ones they
+replace (`readelf --dyn-syms`), need the same libraries, and carry the patch's log line.

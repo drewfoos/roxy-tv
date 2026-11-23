@@ -1,0 +1,61 @@
+--- a/libavcodec/mediacodecdec.c
++++ b/libavcodec/mediacodecdec.c
+@@ -31,6 +31,7 @@
+ #include "libavutil/opt.h"
+ #include "libavutil/intreadwrite.h"
+ #include "libavutil/pixfmt.h"
++#include "libavutil/time.h"
+ #include "libavutil/internal.h"
+ 
+ #include "avcodec.h"
+@@ -486,6 +487,9 @@
+     return ret;
+ }
+ 
++/* How long the codec may take to end its stream after the last packet. */
++#define DRAIN_GIVE_UP_US 5000000
++
+ static int mediacodec_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+ {
+     MediaCodecH264DecContext *s = avctx->priv_data;
+@@ -554,11 +558,36 @@
+         /* fetch new packet or eof */
+         ret = ff_decode_get_packet(avctx, &s->buffered_pkt);
+         if (ret == AVERROR_EOF) {
++            /* The caller has sent its last packet: from here on it must get a
++             * frame, the end of the stream or an error. EAGAIN asks it for
++             * input it does not have, and a caller that hands the end of its
++             * input over once (mpv) then waits for ever. Two things answered
++             * EAGAIN here: the send, once the end of stream is queued (it has
++             * nothing left to do), and a dequeue that brought something other
++             * than a buffer, such as the output format change a MediaTek HEVC
++             * decoder reports with the last frame of an HDR stream. */
+             AVPacket null_pkt = { 0 };
+-            ret = ff_mediacodec_dec_send(avctx, s->ctx, &null_pkt, true);
+-            if (ret < 0)
+-                return ret;
+-            return ff_mediacodec_dec_receive(avctx, s->ctx, frame, true);
++            int64_t give_up = av_gettime_relative() + DRAIN_GIVE_UP_US;
++
++            for (;;) {
++                if (!s->ctx->draining) {
++                    ret = ff_mediacodec_dec_send(avctx, s->ctx, &null_pkt, true);
++                    if (ret < 0 && ret != AVERROR(EAGAIN))
++                        return ret;
++                }
++                ret = ff_mediacodec_dec_receive(avctx, s->ctx, frame, true);
++                if (ret != AVERROR(EAGAIN))
++                    return ret;
++                if (av_gettime_relative() >= give_up) {
++                    av_log(avctx, AV_LOG_WARNING,
++                           "The codec did not end its stream within %d s of the "
++                           "last packet: ending it here\n",
++                           (int)(DRAIN_GIVE_UP_US / 1000000));
++                    s->ctx->draining = 1;
++                    s->ctx->eos = 1;
++                    return AVERROR_EOF;
++                }
++            }
+         } else if (ret == AVERROR(EAGAIN) && s->ctx->current_input_buffer < 0) {
+             return ff_mediacodec_dec_receive(avctx, s->ctx, frame, true);
+         } else if (ret < 0) {
