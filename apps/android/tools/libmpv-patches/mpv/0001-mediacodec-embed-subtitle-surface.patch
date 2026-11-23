@@ -105,7 +105,7 @@ index 160d860..8bfe0c7 100644
  
  enum {
 diff --git a/video/out/vo_mediacodec_embed.c b/video/out/vo_mediacodec_embed.c
-index 985b526..251b0f4 100644
+index 985b526..1404aa7 100644
 --- a/video/out/vo_mediacodec_embed.c
 +++ b/video/out/vo_mediacodec_embed.c
 @@ -15,11 +15,18 @@
@@ -127,7 +127,7 @@ index 985b526..251b0f4 100644
  #include "vo.h"
  #include "video/mp_image.h"
  #include "video/hwdec.h"
-@@ -27,8 +34,178 @@
+@@ -27,8 +34,200 @@
  struct priv {
      struct mp_image *next_image;
      struct mp_hwdec_ctx hwctx;
@@ -154,6 +154,16 @@ index 985b526..251b0f4 100644
 +    p->osd_locked = false;
 +}
 +
++// The surface is no longer drawn to (its buffers are not what this file writes).
++// Nothing is shown on it by this.
++static void layer_give_up(struct vo *vo, int format)
++{
++    struct priv *p = vo->priv;
++    MP_ERR(vo, "The subtitle surface has the wrong format (%d): not used.\n", format);
++    ANativeWindow_release(p->osd_window);
++    p->osd_window = NULL;
++}
++
 +// Locks the surface's next buffer, all of it: the system then copies nothing into
 +// it, and the caller draws every pixel. Nothing is assumed of what a buffer holds.
 +// The surface hands a few out in turn, each with what was drawn to it some frames
@@ -162,6 +172,14 @@ index 985b526..251b0f4 100644
 +static bool layer_lock(struct vo *vo, ANativeWindow_Buffer *buf)
 +{
 +    struct priv *p = vo->priv;
++    // Looked at before the lock: a locked buffer can only be given back by showing
++    // it (there is no unlock that does not post), and one of another format cannot
++    // be written by this file, so it would go on screen with whatever it holds.
++    int format = ANativeWindow_getFormat(p->osd_window);
++    if (format != WINDOW_FORMAT_RGBA_8888) {
++        layer_give_up(vo, format);
++        return false;
++    }
 +    ARect all = {0, 0, p->osd_w, p->osd_h};
 +    if (ANativeWindow_lock(p->osd_window, buf, &all) < 0) {
 +        mp_msg(vo->log, p->osd_failed ? MSGL_TRACE : MSGL_WARN,
@@ -169,16 +187,18 @@ index 985b526..251b0f4 100644
 +        p->osd_failed = true;
 +        return false;
 +    }
++    p->osd_failed = false;
 +    if (buf->format != WINDOW_FORMAT_RGBA_8888) {
-+        // Asked for in layer_attach(); anything else has other pixels than the
-+        // ones written here. Shown as it is and given up.
-+        MP_ERR(vo, "The subtitle surface has the wrong format (%d).\n", (int)buf->format);
++        // The surface said RGBA and handed out something else: it has to be shown
++        // to be given back. Made empty first where the size of its pixels is
++        // known, so that what goes on screen is at least not left-over memory.
++        size_t pixel = buf->format == WINDOW_FORMAT_RGBX_8888 ? 4 :
++                       buf->format == WINDOW_FORMAT_RGB_565 ? 2 : 0;
++        memset(buf->bits, 0, (size_t)buf->stride * pixel * buf->height);
 +        ANativeWindow_unlockAndPost(p->osd_window);
-+        ANativeWindow_release(p->osd_window);
-+        p->osd_window = NULL;
++        layer_give_up(vo, buf->format);
 +        return false;
 +    }
-+    p->osd_failed = false;
 +    memset(buf->bits, 0, (size_t)buf->stride * 4 * buf->height);
 +    return true;
 +}
@@ -235,9 +255,11 @@ index 985b526..251b0f4 100644
 +    }
 +    int w = ANativeWindow_getWidth(window), h = ANativeWindow_getHeight(window);
 +    if (w <= 0 || h <= 0 || ANativeWindow_setBuffersGeometry(
-+            window, w, h, WINDOW_FORMAT_RGBA_8888) < 0)
++            window, w, h, WINDOW_FORMAT_RGBA_8888) < 0 ||
++        ANativeWindow_getFormat(window) != WINDOW_FORMAT_RGBA_8888)
 +    {
-+        MP_ERR(vo, "The subtitle surface has no usable size (%dx%d).\n", w, h);
++        MP_ERR(vo, "The subtitle surface cannot be used (%dx%d, format %d).\n",
++               w, h, (int)ANativeWindow_getFormat(window));
 +        ANativeWindow_release(window);
 +        return;
 +    }
@@ -306,7 +328,7 @@ index 985b526..251b0f4 100644
  static AVBufferRef *create_mediacodec_device_ref(struct vo *vo)
  {
      AVBufferRef *device_ref = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_MEDIACODEC);
-@@ -62,12 +239,14 @@ static int preinit(struct vo *vo)
+@@ -62,12 +261,14 @@ static int preinit(struct vo *vo)
      }
  
      hwdec_devices_add(vo->hwdec_devs, &p->hwctx);
@@ -321,7 +343,7 @@ index 985b526..251b0f4 100644
      if (!p->next_image)
          return;
  
-@@ -86,6 +265,11 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+@@ -86,6 +287,11 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
  
      talloc_free(p->next_image);
      p->next_image = mpi;
@@ -333,7 +355,7 @@ index 985b526..251b0f4 100644
      return VO_TRUE;
  }
  
-@@ -96,6 +280,11 @@ static int query_format(struct vo *vo, int format)
+@@ -96,6 +302,11 @@ static int query_format(struct vo *vo, int format)
  
  static int control(struct vo *vo, uint32_t request, void *data)
  {
@@ -345,7 +367,7 @@ index 985b526..251b0f4 100644
      return VO_NOTIMPL;
  }
  
-@@ -109,6 +298,9 @@ static void uninit(struct vo *vo)
+@@ -109,6 +320,9 @@ static void uninit(struct vo *vo)
      struct priv *p = vo->priv;
      mp_image_unrefp(&p->next_image);
  
@@ -355,7 +377,7 @@ index 985b526..251b0f4 100644
      hwdec_devices_remove(vo->hwdec_devs, &p->hwctx);
      av_buffer_unref(&p->hwctx.av_device_ref);
  }
-@@ -116,7 +308,7 @@ static void uninit(struct vo *vo)
+@@ -116,7 +330,7 @@ static void uninit(struct vo *vo)
  const struct vo_driver video_out_mediacodec_embed = {
      .description = "Android (Embedded MediaCodec Surface)",
      .name = "mediacodec_embed",

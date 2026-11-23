@@ -31,8 +31,8 @@ android {
         applicationId = "tv.roxy.tv"
         minSdk = 28
         targetSdk = 36
-        versionCode = 188
-        versionName = "0.6.58"
+        versionCode = 189
+        versionName = "0.6.59"
 
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         buildConfigField("String", "DEFAULT_USERNAME", "\"\"")
@@ -126,8 +126,8 @@ dependencies {
     // libmpv: our build of libmpv-android v1.0.0 with libplacebo 7.387.0 (GL sync leak and AV1
     // film-grain fixes) and libass 0.17.5; mpv 0.41.0. With Roxy's patches (tools/libmpv-patches):
     // FFmpeg's MediaCodec decoder ends its stream (p1), and mpv draws its subtitles on a second
-    // surface over a native-HDR picture, MPVLib.attachOsdSurface (p2, p3). Recipe: tools/build-libmpv.md.
-    implementation(files("libs/libmpv-roxy-1.0.0-pl7.387-p3.aar"))
+    // surface over a native-HDR picture, MPVLib.attachOsdSurface (p2 to p4). Recipe: tools/build-libmpv.md.
+    implementation(files("libs/libmpv-roxy-1.0.0-pl7.387-p4.aar"))
     implementation(libs.timber)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
