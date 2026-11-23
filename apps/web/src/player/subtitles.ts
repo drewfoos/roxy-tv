@@ -9,6 +9,7 @@ import legacyWasmUrl from 'jassub/dist/jassub-worker.wasm.js?url'
 import defaultFontUrl from 'jassub/dist/default.woff2?url'
 import { api, ApiError } from '../api/client'
 import type { Attachment, MediaStream } from '../api/types'
+import { isAss, plainToAss } from './plainSubs'
 
 const abs = (u: string) => new URL(u, window.location.href).href
 
@@ -92,10 +93,23 @@ export function createSubtitleRenderer(video: HTMLVideoElement, onFontsFailed?: 
         return
       }
       const source = await api.source(sourceId)
-      const wanted = fontAttachments(source.attachments).filter((a) => !loadedFonts.has(`${sourceId}/${a.index}`))
-      const [text, fonts] = await Promise.all([api.subtitleText(sourceId, stream.index), Promise.all(wanted.map((a) => fetchFont(sourceId, a)))])
+      const fontsOf = (list: Attachment[]) => Promise.all(list.map((a) => fetchFont(sourceId, a)))
+      const missing = fontAttachments(source.attachments).filter((a) => !loadedFonts.has(`${sourceId}/${a.index}`))
+      // The file's fonts are for its styled tracks. A track said to be plain text is read
+      // first: only if it turns out to be ASS after all are the fonts fetched for it.
+      const saidStyled = stream.codec === 'ass' || stream.codec === 'ssa'
+      let wanted = saidStyled ? missing : []
+      let [text, fonts] = await Promise.all([api.subtitleText(sourceId, stream.index), fontsOf(wanted)])
+      const styled = isAss(text)
+      if (styled && !saidStyled) {
+        wanted = missing
+        fonts = await fontsOf(wanted)
+      }
       if (my !== gen) return
-      ensure(text, fonts.filter((f): f is Uint8Array => !!f))
+      // libass reads ASS only: SubRip and WebVTT are written as ASS first (see plainSubs).
+      const video = (source.streams ?? []).find((s) => s.type === 'video')
+      const script = styled ? text : plainToAss(text, video ? { width: video.width ?? 0, height: video.height ?? 0 } : null)
+      ensure(script, fonts.filter((f): f is Uint8Array => !!f))
       const failed: string[] = []
       wanted.forEach((a, i) => (fonts[i] ? loadedFonts.add(`${sourceId}/${a.index}`) : failed.push(a.filename || `font ${a.index}`)))
       if (failed.length) onFontsFailed?.(failed)
