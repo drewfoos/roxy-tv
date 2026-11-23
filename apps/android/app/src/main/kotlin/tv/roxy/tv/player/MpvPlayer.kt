@@ -126,8 +126,11 @@ class MpvPlayer(
         fun onPauseChanged(paused: Boolean) {}
         /** Waiting on the network, a seek, or a (re)load; the controls show a spinner. */
         fun onBufferingChanged(buffering: Boolean) {}
-        /** Native HDR output switched on (true) for this file: styled subtitles are not drawn. */
+        /** Native HDR output switched on (true) or off for this file; on, the page lays [subtitleSurface] over the picture. */
         fun onHdrNative(active: Boolean) {}
+        /** mpv gave the subtitle surface of a native-HDR picture up (see [subtitleSurfaceRefused]). */
+        fun onSubtitleSurfaceRefused() {}
+
         /**
          * Passthrough never started for this file's audio (see [watchPassthrough]); the codec
          * is decoded here from now on. True: the listener reopens the file at [atSec] itself,
@@ -1070,6 +1073,7 @@ class MpvPlayer(
         if (HTTP_4XX.containsMatchIn(line)) lastOpenHttp4xx = true
         // Only while a file is opening: a subtitle file that would not load is not the stream.
         if (loading) httpErrorStatus(line)?.let { lastOpenHttpStatus = it }
+        if (subtitleSurfaceRefused(prefix, line)) post { listener?.onSubtitleSurfaceRefused() }
         val interesting = prefix.contains("libass") || prefix.contains("sub") ||
             line.contains("fontselect") || line.contains("font provider") ||
             line.contains("Glyph") || line.contains("attachment", ignoreCase = true) ||

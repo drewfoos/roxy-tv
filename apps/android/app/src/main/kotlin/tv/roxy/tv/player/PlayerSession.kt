@@ -195,6 +195,9 @@ class PlayerSession(
      */
     var nativeHdr by mutableStateOf(false); private set
     var nativeShape by mutableStateOf<Pair<Int, Int>?>(null); private set
+
+    /** mpv gave that second surface up: the page takes it away (until another file plays). */
+    var subtitleSurfaceRefused by mutableStateOf(false); private set
     private var osdJob: Job? = null
     var ui by mutableStateOf(PlayerUiState()); private set
 
@@ -437,6 +440,14 @@ class PlayerSession(
             override fun onHdrNative(active: Boolean) {
                 nativeHdr = active
                 nativeShape = if (active) player.nativeShape else null
+                if (!active) subtitleSurfaceRefused = false
+            }
+
+            override fun onSubtitleSurfaceRefused() {
+                if (subtitleSurfaceRefused) return
+                Timber.w("mpv gave the subtitle surface up: taken away")
+                subtitleSurfaceRefused = true
+                flashOsd("Subtitles cannot be drawn over native HDR on this device. HDR Video: Tone-map shows them.", 7000)
             }
 
             override fun onPassthroughFailed(atSec: Double): Boolean {

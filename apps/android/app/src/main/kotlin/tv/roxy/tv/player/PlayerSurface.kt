@@ -85,8 +85,9 @@ fun PlayerSurface(
         )
         // The subtitles of a native-HDR picture: a see-through surface of their own, over
         // the video's and under everything the page draws. mpv draws them there itself
-        // (MpvPlayer.subtitleSurface).
-        if (session.nativeHdr && placed != null) {
+        // (MpvPlayer.subtitleSurface). Gone when mpv gave it up: with it goes whatever mpv
+        // had to show on it on the way.
+        if (session.nativeHdr && !session.subtitleSurfaceRefused && placed != null) {
             AndroidView(
                 modifier = pictureModifier(placed) {},
                 factory = { ctx ->

@@ -130,3 +130,17 @@ internal fun policyTakesSidecar(ownLang: String?, viewerLang: String): Boolean {
     if (ownLang.isEmpty() || ownLang == "und" || viewerLang.isEmpty()) return false
     return Languages.canonical(ownLang) != Languages.canonical(viewerLang)
 }
+
+/**
+ * What mpv's native-HDR output says when it gives the subtitle surface up (Roxy's patch to
+ * mpv, tools/libmpv-patches/mpv: a surface that is not one it can draw on).
+ */
+internal val SUBTITLE_SURFACE_REFUSALS = listOf("The subtitle surface has the wrong format", "The subtitle surface cannot be used")
+
+/**
+ * mpv gave the subtitle surface up ([prefix], [line]: one of its log lines). On the way it
+ * may have had to show a buffer it could not write: Android gives a locked buffer back only
+ * by showing it. mpv cannot take that back, so the page takes the surface away.
+ */
+internal fun subtitleSurfaceRefused(prefix: String, line: String): Boolean =
+    prefix.startsWith("vo/mediacodec_embed") && SUBTITLE_SURFACE_REFUSALS.any { it in line }
