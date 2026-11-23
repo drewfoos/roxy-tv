@@ -862,14 +862,34 @@ class MpvPlayer(
         }.onFailure { Timber.w(it, "setFrameRate %.3f", frameRate) }
     }
 
+    /**
+     * The surface for the subtitles of a native-HDR picture (the page lays it over the
+     * picture): mpv draws its own subtitles there, every kind it can show, because the
+     * decoder fills the video's surface itself and nothing can be drawn on that one
+     * (`--android-osd-wid`, Roxy's patch to mpv: tools/libmpv-patches/mpv). Attached again
+     * on every size it takes: mpv draws at the surface's size.
+     */
+    val subtitleSurface = object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) {}
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+            if (destroyed) return
+            Timber.i("subtitle surface %dx%d", width, height)
+            mpv.attachOsdSurface(holder.surface)
+        }
+        // Returns when mpv has let go of the surface.
+        override fun surfaceDestroyed(holder: SurfaceHolder) {
+            if (!destroyed) mpv.detachOsdSurface()
+        }
+    }
+
     // ---- native HDR ----
 
     /**
      * HDR10/HLG straight to the screen: hardware decoding into the surface with
      * mediacodec_embed, so the TV's own HDR pipeline shows it, in the file's full size and
      * at the decoder's pace (a 4K HDR film drawn through the graphics chip instead ran at
-     * about 15 frames a second on a TV). mpv cannot draw subtitles there: the page lays
-     * [SubtitleOverlay] over the picture for them.
+     * about 15 frames a second on a TV). Nothing can be drawn on that surface, so mpv
+     * draws its subtitles on a second one the page lays over it ([subtitleSurface]).
      */
     private fun maybeNativeHdr(gamma: String) {
         // Bench switch: `adb shell setprop debug.roxy.hdr native` forces this output for HDR
@@ -903,28 +923,6 @@ class MpvPlayer(
         val h = int("video-params/dh") ?: return null
         return if (w > 0 && h > 0) w to h else null
     }
-
-    /**
-     * The files of the subtitle being shown while the picture is native HDR (what
-     * [SubtitleOverlay] draws), or null: subtitles off, not native, or nothing the layer can
-     * draw (see [overlayFiles]).
-     */
-    internal fun overlaySubtitle(): OverlayFiles? {
-        if (destroyed || !hdrActive) return null
-        if (int("current-tracks/sub/id") == null) return null
-        return overlayFiles(
-            streamUrl = lastUrl,
-            tokenInHeader = lastLoadUsedHeader,
-            external = bool("current-tracks/sub/external") == true,
-            externalFile = str("current-tracks/sub/external-filename"),
-            streamIndex = int("current-tracks/sub/ff-index"),
-            codec = str("current-tracks/sub/codec").orEmpty(),
-        )
-    }
-
-    /** The shown subtitle is a picture track, which the layer over a native-HDR picture cannot draw. */
-    fun nativeHdrHidesSubtitle(): Boolean =
-        !destroyed && hdrActive && int("current-tracks/sub/id") != null && isPictureSubtitle(str("current-tracks/sub/codec").orEmpty())
 
     /** A new file starts from the normal (tone-mapped, subtitled) output. */
     private fun leaveNativeHdr() {
@@ -1105,6 +1103,8 @@ class MpvPlayer(
             if (frameRate != 0f) { frameRate = 0f; applyFrameRate() }
             releaseSurface()
         }
+        // Before the flag: its surface may be destroyed after this, and then says nothing.
+        runCatching { mpv.detachOsdSurface() }
         destroyed = true
         listener = null
         main.removeCallbacksAndMessages(null)

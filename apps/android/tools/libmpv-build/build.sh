@@ -15,9 +15,10 @@ W=${LIBMPV_WORK:-$HOME/build/libmpv}
 mkdir -p "$W/home"
 [ -d "$W/libmpv-android" ] || git clone -q --depth 1 --branch v1.0.0 https://github.com/jarnedemeulemeester/libmpv-android "$W/libmpv-android"
 cd "$W/libmpv-android"
-# The build scripts as the tag has them, then Roxy's pins and ABI list.
-git checkout -q -- buildscripts/include/depinfo.sh libmpv/build.gradle.kts
-git apply "$PATCHES/recipe.patch"
+# The tag's own files, then Roxy's pins and ABI list (recipe.patch) and its additions to
+# the JNI wrapper (wrapper.patch).
+git checkout -q -- buildscripts/include/depinfo.sh libmpv/build.gradle.kts libmpv/src
+git apply "$PATCHES/recipe.patch" "$PATCHES/wrapper.patch"
 # The dependencies' patches, where the build's own patch.sh looks for them.
 rm -rf buildscripts/patches && mkdir -p buildscripts/patches
 for d in "$PATCHES"/*/; do cp -r "$d" buildscripts/patches/; done

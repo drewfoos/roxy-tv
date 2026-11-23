@@ -84,16 +84,16 @@ fun PlayerSurface(
             update = { sv -> sv.applyRenderSize(render) },
         )
         // The subtitles of a native-HDR picture: a see-through surface of their own, over
-        // the video's and under everything the page draws (see SubtitleOverlay).
-        val overlay = session.subtitleOverlay
-        if (session.nativeHdr && overlay != null && placed != null) {
+        // the video's and under everything the page draws. mpv draws them there itself
+        // (MpvPlayer.subtitleSurface).
+        if (session.nativeHdr && placed != null) {
             AndroidView(
                 modifier = pictureModifier(placed) {},
                 factory = { ctx ->
                     SurfaceView(ctx).apply {
                         setZOrderMediaOverlay(true)
                         holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
-                        holder.addCallback(overlay)
+                        holder.addCallback(player.subtitleSurface)
                     }
                 },
             )

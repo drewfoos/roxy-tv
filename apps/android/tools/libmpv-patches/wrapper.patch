@@ -1,0 +1,92 @@
+diff --git a/libmpv/src/main/cpp/globals.h b/libmpv/src/main/cpp/globals.h
+index 8bf2c3b..80f1859 100644
+--- a/libmpv/src/main/cpp/globals.h
++++ b/libmpv/src/main/cpp/globals.h
+@@ -15,4 +15,5 @@ struct MPVInstance {
+     jobject javaObject;
+     jobject appCtx;
+     jobject surface;
++    jobject osdSurface;
+ };
+diff --git a/libmpv/src/main/cpp/main.cpp b/libmpv/src/main/cpp/main.cpp
+index ff6050c..0e5d36b 100644
+--- a/libmpv/src/main/cpp/main.cpp
++++ b/libmpv/src/main/cpp/main.cpp
+@@ -95,6 +95,10 @@ jni_func(void, nativeDestroy, jlong instance) {
+     }
+ 
+     mpv_terminate_destroy(mpv_instance->mpv);
++    if (mpv_instance->osdSurface) {
++        env->DeleteGlobalRef(mpv_instance->osdSurface);
++        mpv_instance->osdSurface = nullptr;
++    }
+     if (mpv_instance->surface) {
+         env->DeleteGlobalRef(mpv_instance->surface);
+         mpv_instance->surface = nullptr;
+diff --git a/libmpv/src/main/cpp/render.cpp b/libmpv/src/main/cpp/render.cpp
+index 61d9cf9..e3fe6e8 100644
+--- a/libmpv/src/main/cpp/render.cpp
++++ b/libmpv/src/main/cpp/render.cpp
+@@ -9,6 +9,21 @@
+ extern "C" {
+     jni_func(void, nativeAttachSurface, jlong instance, jobject surface);
+     jni_func(void, nativeDetachSurface, jlong instance);
++    jni_func(void, nativeAttachOsdSurface, jlong instance, jobject surface);
++    jni_func(void, nativeDetachOsdSurface, jlong instance);
++}
++
++// mpv's --android-osd-wid: set synchronously (the video output has let go of the
++// surface it had before when the call returns), so the old reference can go after it.
++static void set_osd_surface(JNIEnv *env, MPVInstance *mpv_instance, jobject surface) {
++    jobject next = surface ? env->NewGlobalRef(surface) : nullptr;
++    int64_t wid = reinterpret_cast<intptr_t>(next);
++    int result = mpv_set_property(mpv_instance->mpv, "android-osd-wid", MPV_FORMAT_INT64, &wid);
++    if (result < 0)
++        ALOGE("mpv_set_property(android-osd-wid) returned error %s", mpv_error_string(result));
++    if (mpv_instance->osdSurface)
++        env->DeleteGlobalRef(mpv_instance->osdSurface);
++    mpv_instance->osdSurface = next;
+ }
+ 
+ jni_func(void, nativeAttachSurface, jlong instance, jobject surface) {
+@@ -36,3 +51,11 @@ jni_func(void, nativeDetachSurface, jlong instance) {
+     env->DeleteGlobalRef(mpv_instance->surface);
+     mpv_instance->surface = nullptr;
+ }
++
++jni_func(void, nativeAttachOsdSurface, jlong instance, jobject surface) {
++    set_osd_surface(env, reinterpret_cast<MPVInstance*>(instance), surface);
++}
++
++jni_func(void, nativeDetachOsdSurface, jlong instance) {
++    set_osd_surface(env, reinterpret_cast<MPVInstance*>(instance), nullptr);
++}
+diff --git a/libmpv/src/main/java/dev/jdtech/mpv/MPVLib.kt b/libmpv/src/main/java/dev/jdtech/mpv/MPVLib.kt
+index d7d1776..9706df3 100644
+--- a/libmpv/src/main/java/dev/jdtech/mpv/MPVLib.kt
++++ b/libmpv/src/main/java/dev/jdtech/mpv/MPVLib.kt
+@@ -66,6 +66,24 @@ class MPVLib private constructor(nativePtr: Long) {
+     }
+     private external fun nativeDetachSurface(instance: Long)
+ 
++    /**
++     * A second surface, for mpv's own subtitles where the video output cannot draw them
++     * on the video (vo=mediacodec_embed: the decoder fills that surface itself). Lay it
++     * over the video's. When this returns mpv has let go of the surface given before.
++     */
++    fun attachOsdSurface(surface: Surface) {
++        checkCreated()
++        nativeAttachOsdSurface(nativeInstance, surface)
++    }
++    private external fun nativeAttachOsdSurface(instance: Long, surface: Surface)
++
++    /** When this returns mpv no longer uses the surface: it may be destroyed. */
++    fun detachOsdSurface() {
++        checkCreated()
++        nativeDetachOsdSurface(nativeInstance)
++    }
++    private external fun nativeDetachOsdSurface(instance: Long)
++
+     fun command(cmd: Array<String>) {
+         checkCreated()
+         nativeCommand(nativeInstance, cmd)

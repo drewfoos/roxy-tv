@@ -1,0 +1,428 @@
+diff --git a/options/options.c b/options/options.c
+index 716c3e6..6a99251 100644
+--- a/options/options.c
++++ b/options/options.c
+@@ -245,6 +245,9 @@ static const m_option_t mp_vo_opt_list[] = {
+ #if HAVE_EGL_ANDROID
+     {"android-surface-size", OPT_SIZE_BOX(android_surface_size)},
+ #endif
++#if HAVE_ANDROID
++    {"android-osd-wid", OPT_INT64(android_osd_wid)},
++#endif
+ #if HAVE_D3D11
+     {"d3d11-composition-size", OPT_SIZE_BOX(d3d11_composition_size)},
+ #endif
+diff --git a/options/options.h b/options/options.h
+index 12dafea..98342a7 100644
+--- a/options/options.h
++++ b/options/options.h
+@@ -85,6 +85,7 @@ typedef struct mp_vo_opts {
+     int video_sync;
+ 
+     struct m_geometry android_surface_size;
++    int64_t android_osd_wid;
+ 
+     struct m_geometry d3d11_composition_size;
+ 
+diff --git a/player/command.c b/player/command.c
+index 96bc06a..f1a23df 100644
+--- a/player/command.c
++++ b/player/command.c
+@@ -8022,6 +8022,15 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
+             vo_control(mpctx->video_out, VOCTRL_EXTERNAL_RESIZE, NULL);
+     }
+ 
++    if (opt_ptr == &opts->vo->android_osd_wid) {
++        // Waited for: once the option is set, the VO no longer uses the surface it
++        // had before, and the caller may let that one go.
++        if (mpctx->video_out) {
++            int64_t wid = opts->vo->android_osd_wid;
++            vo_control(mpctx->video_out, VOCTRL_ANDROID_OSD_WID, &wid);
++        }
++    }
++
+     if (opt_ptr == &opts->input_commands) {
+         mpctx->command_ctx->command_opts_processed = false;
+         run_command_opts(mpctx);
+diff --git a/player/sub.c b/player/sub.c
+index b5dcb0c..0678c27 100644
+--- a/player/sub.c
++++ b/player/sub.c
+@@ -153,6 +153,12 @@ static bool update_subtitle(struct MPContext *mpctx, double video_pts,
+                 osd_query_and_reset_want_redraw(mpctx->osd);
+                 vo_redraw(mpctx->video_out);
+             }
++        } else if (sub_updated && mpctx->paused && mpctx->video_out) {
++            // Paused on a frame of a video: nothing draws it again by itself,
++            // so a track switched on now, whose packets took longer to arrive
++            // than reinit_sub() waits for them (a network stream), stayed
++            // unseen until playback went on.
++            vo_redraw(mpctx->video_out);
+         }
+     }
+ 
+diff --git a/video/out/vo.c b/video/out/vo.c
+index c9cde30..de33042 100644
+--- a/video/out/vo.c
++++ b/video/out/vo.c
+@@ -1083,6 +1083,13 @@ static void do_redraw(struct vo *vo)
+ 
+     if (vo->driver->caps & (VO_CAP_NORETAIN | VO_CAP_UNTIMED)) {
+         mp_mutex_unlock(&in->lock);
++        // There is no frame to draw again, but the VO's own layer may have
++        // changed (subtitles switched, or reached by a seek, while paused).
++        if (vo->driver->caps & VO_CAP_OSD_LAYER) {
++            struct vo_frame none = {.redraw = true, .still = true, .duration = -1};
++            vo->driver->draw_frame(vo, &none);
++            vo->driver->flip_page(vo);
++        }
+         return;
+     }
+ 
+diff --git a/video/out/vo.h b/video/out/vo.h
+index 160d860..8bfe0c7 100644
+--- a/video/out/vo.h
++++ b/video/out/vo.h
+@@ -72,6 +72,10 @@ enum mp_voctrl {
+     // you could install your own listener.
+     VOCTRL_VO_OPTS_CHANGED,
+ 
++    // The surface for the VO's own subtitle layer changed (--android-osd-wid):
++    // int64_t*, a jobject of an android.view.Surface, or 0 for none.
++    VOCTRL_ANDROID_OSD_WID,
++
+     /* private to vo_gpu */
+     VOCTRL_LOAD_HWDEC_API,
+ 
+@@ -205,6 +209,9 @@ enum {
+     VO_CAP_FRAMEOWNER   = 1 << 5,
+     // VO does handle mp_image_params.vflip
+     VO_CAP_VFLIP        = 1 << 6,
++    // VO keeps no frame, but has a layer of its own that a redraw updates
++    // (vo_mediacodec_embed's subtitles).
++    VO_CAP_OSD_LAYER    = 1 << 7,
+ };
+ 
+ enum {
+diff --git a/video/out/vo_mediacodec_embed.c b/video/out/vo_mediacodec_embed.c
+index 985b526..608d7ea 100644
+--- a/video/out/vo_mediacodec_embed.c
++++ b/video/out/vo_mediacodec_embed.c
+@@ -15,20 +15,259 @@
+  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <string.h>
++
++#include <android/native_window_jni.h>
+ #include <libavcodec/mediacodec.h>
+ #include <libavutil/hwcontext.h>
+ #include <libavutil/hwcontext_mediacodec.h>
+ 
+ #include "common/common.h"
++#include "common/msg.h"
++#include "misc/jni.h"
++#include "sub/draw_bmp.h"
++#include "sub/osd.h"
+ #include "vo.h"
+ #include "video/mp_image.h"
+ #include "video/hwdec.h"
+ 
++// The surface hands out a few buffers in turn, each still holding what was drawn
++// to it some frames ago. Each is told apart by its memory and brought up to date
++// from what changed since it was drawn last: copying less matters, an animated
++// line is redrawn for every frame.
++#define LAYER_SLOTS 8
++#define LAYER_RECTS 24
++
++struct layer_slot {
++    void *bits;                 // NULL: free
++    int w, h;
++    bool all;                   // nothing of it is known to be current
++    int num;                    // changed since it was drawn last:
++    struct mp_rect rc[LAYER_RECTS];
++};
++
+ struct priv {
+     struct mp_image *next_image;
+     struct mp_hwdec_ctx hwctx;
++
++    // mpv's own subtitles on a second surface laid over the video's
++    // (--android-osd-wid). The decoder fills the video's surface itself, so
++    // nothing can be drawn there; without this the VO shows no subtitles.
++    int64_t osd_wid;            // the surface in use (0: none)
++    ANativeWindow *osd_window;
++    int osd_w, osd_h;
++    struct mp_draw_sub_cache *osd_cache;
++    double osd_pts;             // of the last frame shown: what a redraw draws
++    bool osd_all;               // every buffer has to be drawn whole
++    struct layer_slot osd_slots[LAYER_SLOTS];
++    int osd_next_slot;          // the one given up when a new buffer shows up
++    bool osd_locked;            // drawn; flip_page() shows it with the frame
++    bool osd_failed;            // the surface refused a drawing (said once)
+ };
+ 
++// Shows what layer_draw() drew.
++static void layer_post(struct vo *vo)
++{
++    struct priv *p = vo->priv;
++    if (p->osd_locked)
++        ANativeWindow_unlockAndPost(p->osd_window);
++    p->osd_locked = false;
++}
++
++// Locks the surface's next buffer. All of it is asked for, so that the system
++// copies nothing into it from the buffer shown last: what it holds is what was
++// drawn to it before (see layer_slot).
++static bool layer_lock(struct vo *vo, ANativeWindow_Buffer *buf)
++{
++    struct priv *p = vo->priv;
++    ARect all = {0, 0, p->osd_w, p->osd_h};
++    if (ANativeWindow_lock(p->osd_window, buf, &all) < 0) {
++        mp_msg(vo->log, p->osd_failed ? MSGL_TRACE : MSGL_WARN,
++               "The subtitle surface cannot be drawn to.\n");
++        p->osd_failed = true;
++        return false;
++    }
++    p->osd_failed = false;
++    return true;
++}
++
++// The record of the buffer just locked; a buffer not seen before has to be drawn
++// whole.
++static struct layer_slot *layer_slot_of(struct vo *vo, ANativeWindow_Buffer *buf)
++{
++    struct priv *p = vo->priv;
++    for (int n = 0; n < LAYER_SLOTS; n++) {
++        struct layer_slot *slot = &p->osd_slots[n];
++        if (slot->bits == buf->bits && slot->w == buf->width && slot->h == buf->height)
++            return slot;
++    }
++    struct layer_slot *slot = &p->osd_slots[p->osd_next_slot];
++    MP_VERBOSE(vo, "Subtitle surface: buffer %d, %dx%d.\n", p->osd_next_slot,
++               buf->width, buf->height);
++    p->osd_next_slot = (p->osd_next_slot + 1) % LAYER_SLOTS;
++    *slot = (struct layer_slot){.bits = buf->bits, .w = buf->width,
++                                .h = buf->height, .all = true};
++    return slot;
++}
++
++// [rc] changed: every buffer has to draw it when its turn comes.
++static void layer_changed(struct priv *p, struct mp_rect rc)
++{
++    for (int n = 0; n < LAYER_SLOTS; n++) {
++        struct layer_slot *slot = &p->osd_slots[n];
++        if (!slot->bits || slot->all)
++            continue;
++        if (slot->num == LAYER_RECTS) {
++            // Too many to keep apart: one around them all.
++            for (int i = 1; i < slot->num; i++)
++                mp_rect_union(&slot->rc[0], &slot->rc[i]);
++            slot->num = 1;
++        }
++        slot->rc[slot->num++] = rc;
++    }
++}
++
++static uint32_t *layer_row(ANativeWindow_Buffer *buf, int x, int y)
++{
++    return (uint32_t *)((uint8_t *)buf->bits + (size_t)y * buf->stride * 4) + x;
++}
++
++// Makes the surface see-through again (the VO is going away).
++static void layer_clear(struct vo *vo)
++{
++    struct priv *p = vo->priv;
++    if (!p->osd_window)
++        return;
++    layer_post(vo);
++    ANativeWindow_Buffer buf;
++    if (!layer_lock(vo, &buf))
++        return;
++    for (int y = 0; y < buf.height; y++)
++        memset(layer_row(&buf, 0, y), 0, (size_t)buf.width * 4);
++    ANativeWindow_unlockAndPost(p->osd_window);
++    p->osd_all = true;
++}
++
++static void layer_detach(struct vo *vo)
++{
++    struct priv *p = vo->priv;
++    if (!p->osd_window)
++        return;
++    layer_post(vo);
++    ANativeWindow_release(p->osd_window);
++    p->osd_window = NULL;
++    p->osd_wid = 0;
++}
++
++// [wid]: a jobject of an android.view.Surface, or 0 for none. The caller keeps
++// it valid until it has set another.
++static void layer_attach(struct vo *vo, int64_t wid)
++{
++    struct priv *p = vo->priv;
++    if (wid == -1)
++        wid = 0;
++    if (wid == p->osd_wid)
++        return;
++    layer_detach(vo);
++    if (!wid)
++        return;
++
++    JNIEnv *env = MP_JNI_GET_ENV(vo);
++    ANativeWindow *window =
++        env ? ANativeWindow_fromSurface(env, (jobject)(intptr_t)wid) : NULL;
++    if (!window) {
++        MP_ERR(vo, "The subtitle surface cannot be used.\n");
++        return;
++    }
++    int w = ANativeWindow_getWidth(window), h = ANativeWindow_getHeight(window);
++    if (w <= 0 || h <= 0 || ANativeWindow_setBuffersGeometry(
++            window, w, h, WINDOW_FORMAT_RGBA_8888) < 0)
++    {
++        MP_ERR(vo, "The subtitle surface has no usable size (%dx%d).\n", w, h);
++        ANativeWindow_release(window);
++        return;
++    }
++    MP_VERBOSE(vo, "Subtitles on their own surface, %dx%d.\n", w, h);
++    p->osd_window = window;
++    p->osd_wid = wid;
++    p->osd_w = w;
++    p->osd_h = h;
++    p->osd_all = true;
++    p->osd_failed = false;
++    vo->want_redraw = true;
++}
++
++// Draws the subtitles of [osd_pts] into the surface's next buffer, if they are
++// not the ones it shows already. layer_post() shows them.
++static void layer_draw(struct vo *vo)
++{
++    struct priv *p = vo->priv;
++    if (!p->osd_window || p->osd_locked)
++        return;
++
++    struct mp_osd_res res = {.w = p->osd_w, .h = p->osd_h, .display_par = 1.0};
++    struct sub_bitmap_list *sbs = osd_render(vo->osd, res, p->osd_pts,
++                                             OSD_DRAW_SUB_ONLY,
++                                             mp_draw_sub_formats);
++    if (!sbs)
++        return;
++
++    if (!p->osd_cache)
++        p->osd_cache = mp_draw_sub_alloc(p, vo->global);
++
++    struct mp_rect act[1], mod[64];
++    int num_act = 0, num_mod = 0;
++    // BGRA with premultiplied alpha, [osd_w] x [osd_h], see-through where
++    // there is nothing.
++    struct mp_image *osd = mp_draw_sub_overlay(p->osd_cache, sbs,
++                                               act, MP_ARRAY_SIZE(act), &num_act,
++                                               mod, MP_ARRAY_SIZE(mod), &num_mod);
++    if (!osd)
++        goto done;
++    if (p->osd_all) {
++        // A new surface, or one wiped: none of its buffers holds anything.
++        memset(p->osd_slots, 0, sizeof(p->osd_slots));
++    } else if (!num_mod) {
++        goto done; // the buffer on show is the overlay as it is
++    }
++    for (int n = 0; n < num_mod; n++)
++        layer_changed(p, mod[n]);
++
++    ANativeWindow_Buffer buf;
++    if (!layer_lock(vo, &buf))
++        goto done;
++    struct layer_slot *slot = layer_slot_of(vo, &buf);
++    if (slot->all) {
++        slot->rc[0] = (struct mp_rect){0, 0, buf.width, buf.height};
++        slot->num = 1;
++    }
++    int w = MPMIN(buf.width, osd->w), h = MPMIN(buf.height, osd->h);
++    for (int n = 0; n < slot->num; n++) {
++        struct mp_rect rc = slot->rc[n];
++        int x0 = MPCLAMP(rc.x0, 0, w), x1 = MPCLAMP(rc.x1, 0, w);
++        for (int y = MPCLAMP(rc.y0, 0, buf.height); y < MPCLAMP(rc.y1, 0, buf.height); y++) {
++            uint32_t *dst = layer_row(&buf, 0, y);
++            if (slot->all) // also what lies outside the overlay, if anything does
++                memset(dst, 0, (size_t)buf.width * 4);
++            if (y >= h)
++                continue;
++            const uint32_t *src = mp_image_pixel_ptr(osd, 0, 0, y);
++            // The surface's bytes are R G B A, the overlay's B G R A.
++            for (int x = x0; x < x1; x++) {
++                uint32_t v = src[x];
++                dst[x] = (v & 0xFF00FF00u) | ((v & 0xFFu) << 16) | ((v >> 16) & 0xFFu);
++            }
++        }
++    }
++    slot->all = false;
++    slot->num = 0;
++    p->osd_locked = true;
++    p->osd_all = false;
++
++done:
++    talloc_free(sbs);
++}
++
+ static AVBufferRef *create_mediacodec_device_ref(struct vo *vo)
+ {
+     AVBufferRef *device_ref = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_MEDIACODEC);
+@@ -62,12 +301,14 @@ static int preinit(struct vo *vo)
+     }
+ 
+     hwdec_devices_add(vo->hwdec_devs, &p->hwctx);
++    layer_attach(vo, vo->opts->android_osd_wid);
+     return 0;
+ }
+ 
+ static void flip_page(struct vo *vo)
+ {
+     struct priv *p = vo->priv;
++    layer_post(vo);
+     if (!p->next_image)
+         return;
+ 
+@@ -86,6 +327,11 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+ 
+     talloc_free(p->next_image);
+     p->next_image = mpi;
++
++    // A redraw (no frame) draws for the frame shown last.
++    if (mpi && mpi->pts != MP_NOPTS_VALUE)
++        p->osd_pts = mpi->pts;
++    layer_draw(vo);
+     return VO_TRUE;
+ }
+ 
+@@ -96,6 +342,11 @@ static int query_format(struct vo *vo, int format)
+ 
+ static int control(struct vo *vo, uint32_t request, void *data)
+ {
++    switch (request) {
++    case VOCTRL_ANDROID_OSD_WID:
++        layer_attach(vo, *(int64_t *)data);
++        return VO_TRUE;
++    }
+     return VO_NOTIMPL;
+ }
+ 
+@@ -109,6 +360,9 @@ static void uninit(struct vo *vo)
+     struct priv *p = vo->priv;
+     mp_image_unrefp(&p->next_image);
+ 
++    layer_clear(vo);
++    layer_detach(vo);
++
+     hwdec_devices_remove(vo->hwdec_devs, &p->hwctx);
+     av_buffer_unref(&p->hwctx.av_device_ref);
+ }
+@@ -116,7 +370,7 @@ static void uninit(struct vo *vo)
+ const struct vo_driver video_out_mediacodec_embed = {
+     .description = "Android (Embedded MediaCodec Surface)",
+     .name = "mediacodec_embed",
+-    .caps = VO_CAP_NORETAIN,
++    .caps = VO_CAP_NORETAIN | VO_CAP_OSD_LAYER,
+     .preinit = preinit,
+     .query_format = query_format,
+     .control = control,

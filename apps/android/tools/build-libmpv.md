@@ -1,14 +1,12 @@
 # Building libmpv-roxy (custom libmpv-android AAR)
 
-Output: `app/libs/libmpv-roxy-1.0.0-pl7.387-p1.aar` (22,726,737 bytes,
-sha256 `E3D289F5D2813F6085677535AA9ECDE3E8299CAE9DF4C5DD70D5EA6F1EEC1DFA`, made 2026-11-23): the build of 2026-11-01
-(`libmpv-roxy-1.0.0-pl7.387.aar`, 22,726,494 bytes, sha256
-`382AF08EF09F5ACFD6C2EA366E60546D4A44B340A7F7F5D4F2AD9CBC3D63A23B`) with `libavcodec.so` of both
-ABIs replaced by the patched one (see "Patches" and "p1" below). Every other file in it is that
-build's, byte for byte.
+Output: `app/libs/libmpv-roxy-1.0.0-pl7.387-p2.aar` (22,728,545 bytes,
+sha256 `B5C81686B9BF29632083AD31E03EE820427D378E78C97A0C9BA8F747344B889D`, built 2026-11-23 in the
+container, see "Environment"), with Roxy's patches (see "Patches"). Earlier ones are listed under
+"History" at the end.
 
-It's a drop-in replacement for `dev.jdtech.mpv:libmpv:1.0.0`: same package `dev.jdtech.mpv`, and the
-MPVLib API is byte-identical (`javap -p -constants` diff is empty). Only two pins changed:
+It stands in for `dev.jdtech.mpv:libmpv:1.0.0`: same package `dev.jdtech.mpv`, and the MPVLib API is
+that one's plus `attachOsdSurface` / `detachOsdSurface` (wrapper.patch). Two pins changed:
 
 | dep        | 1.0.0    | roxy        | why |
 |------------|----------|-------------|-----|
@@ -17,13 +15,18 @@ MPVLib API is byte-identical (`javap -p -constants` diff is empty). Only two pin
 
 ## Patches
 `tools/libmpv-patches/<dep>/*.patch` are applied to the dependency's sources by the build's own
-`patch.sh` (copied to `buildscripts/patches/` first). `tools/libmpv-patches/recipe.patch` is the
-change to the build scripts themselves (the pins above and the ABI list), the same text as in
-"Steps" below. `LibmpvPatchTest` checks the shipped AAR for each patch.
+`patch.sh` (copied to `buildscripts/patches/` first). Two more are applied to libmpv-android itself:
+`recipe.patch`, the change to its build scripts (the pins above and the ABI list, the same text as
+in "Steps" below), and `wrapper.patch`, an addition to its JNI wrapper. `LibmpvPatchTest` checks the
+shipped AAR for each patch. To change one: edit the sources under
+`~/build/libmpv/libmpv-android/buildscripts/deps/<dep>`, write `git diff` over the patch file, and
+build (the build resets the sources and applies the files).
 
 | patch | what it fixes |
 |-------|---------------|
 | `ffmpeg/0001-mediacodec-end-of-stream.patch` | FFmpeg's MediaCodec decoder answered "send more" (EAGAIN) after the last packet when a dequeue brought something other than a frame. mpv hands the end of its input over once, so it then waited for ever: the video never ended. Seen on the TCL Google TV (MediaTek `c2.mtk.hevc.decoder`), which reports an output format change with the last frame of an HDR stream: the film froze on its last picture, never closed, and a seek into its last seconds spun for good. Same code in FFmpeg master on 2026-11-23 (not fixed upstream). |
+| `mpv/0001-mediacodec-embed-subtitle-surface.patch` | `vo=mediacodec_embed` (the decoder fills the surface itself: what native HDR uses) could show no subtitles. With `--android-osd-wid=<Surface>` it draws mpv's own subtitles, of every kind mpv can show (text, styled with the file's fonts, pictures), on a second surface laid over the video's: the way `vo_dmabuf_wayland` does it (`osd_render` + `mp_draw_sub_overlay`), written to the surface's buffers with `ANativeWindow_lock`, only where something changed. The option is told to the VO at once and waited for, so the surface given before can be released when the set returns. Two small changes outside the VO: a redraw reaches a VO that keeps no frame but has such a layer (`VO_CAP_OSD_LAYER`; subtitles switched while paused), and a track switched on while paused is drawn when its packets arrive, not only when playback goes on. |
+| `wrapper.patch` | `MPVLib.attachOsdSurface(Surface)` / `detachOsdSurface()`: hand that surface to mpv and take it back (they set `android-osd-wid`). |
 
 Everything else stays at the 1.0.0 pins: mpv 0.41.0, FFmpeg 8.1, dav1d 1.5.3, fontconfig 2.17.1, harfbuzz 14.1.0,
 freetype 2.14.3, fribidi 1.0.16, libxml2 2.15.2, mbedtls 3.6.6, lua 5.2.4, libunibreak 6.1, NDK 29.0.14206865.
@@ -116,7 +119,7 @@ plus ~5 min of downloads.
 ## Copy to the app and verify
 ```powershell
 Copy-Item \wsl.localhost\<distro>\home\<you>\build\libmpv-android\libmpv\build\outputs\aar\libmpv-release.aar `
-  <repo>\apps\android\app\libs\libmpv-roxy-1.0.0-pl7.387.aar
+  <repo>\apps\android\app\libs\libmpv-roxy-1.0.0-pl7.387-p2.aar
 ```
 ```sh
 unzip -q libmpv-release.aar -d x
@@ -128,22 +131,19 @@ libass doesn't embed a version string. You can check it at runtime with `ass_lib
 the build prefix `lib/pkgconfig/libass.pc` (Version: 0.17.5).
 
 API check (Windows): `javap -p -constants -cp classes.jar dev.jdtech.mpv.MPVLib 'dev.jdtech.mpv.MPVLib$*'`
-on the old (Gradle cache 1.0.0) and new classes.jar gives 132 lines each with no diff.
+on the old (Gradle cache 1.0.0) and new classes.jar gave 132 lines each with no diff for the first
+build; since p2 the new one has `attachOsdSurface`, `detachOsdSurface` and their two native functions
+more.
 
-## p1: one library swapped, not the whole AAR
-The patched build's AAR was not shipped whole: a rebuild on another machine is a new binary of
-everything (mpv, libplacebo, libass), and only one function of FFmpeg changed. `p1` is the AAR of
-2026-11-01 with `jni/<abi>/libavcodec.so` taken from the patched build's AAR (stripped by Gradle
-like the others):
-```sh
-python3 - old.aar patched-build.aar libmpv-roxy-1.0.0-pl7.387-p1.aar <<'PY'
-import sys, zipfile
-old, new, out = sys.argv[1:]
-swap = {f"jni/{abi}/libavcodec.so" for abi in ("arm64-v8a", "armeabi-v7a")}
-with zipfile.ZipFile(old) as a, zipfile.ZipFile(new) as b, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as o:
-    for i in a.infolist():
-        o.writestr(i, (b if i.filename in swap else a).read(i.filename))
-PY
-```
-Checked before shipping: the two libraries export and import the same symbols as the ones they
-replace (`readelf --dyn-syms`), need the same libraries, and carry the patch's log line.
+## History
+- 2026-11-01, `libmpv-roxy-1.0.0-pl7.387.aar` (22,726,494 bytes, sha256
+  `382AF08EF09F5ACFD6C2EA366E60546D4A44B340A7F7F5D4F2AD9CBC3D63A23B`): built on the laptop, no
+  patches. App 0.5.2 to 0.6.55.
+- 2026-11-23, `...-p1.aar` (22,726,737 bytes, sha256
+  `E3D289F5D2813F6085677535AA9ECDE3E8299CAE9DF4C5DD70D5EA6F1EEC1DFA`): that AAR with
+  `libavcodec.so` of both ABIs taken from the first container build (ffmpeg/0001). App 0.6.56.
+- 2026-11-23, `...-p2.aar`: the container build's AAR whole, with ffmpeg/0001, mpv/0001 and
+  wrapper.patch. App 0.6.57. Compared with the first one before shipping (`readelf --dyn-syms`, both
+  ABIs, every library): the same exported and imported symbols and the same needed libraries, but
+  for what the patches add (`av_gettime_relative` in libavcodec, `ANativeWindow_lock` /
+  `ANativeWindow_unlockAndPost` in libmpv, the two JNI functions in libplayer).
