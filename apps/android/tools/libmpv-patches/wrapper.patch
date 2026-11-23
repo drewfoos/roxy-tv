@@ -24,10 +24,10 @@ index ff6050c..0e5d36b 100644
          env->DeleteGlobalRef(mpv_instance->surface);
          mpv_instance->surface = nullptr;
 diff --git a/libmpv/src/main/cpp/render.cpp b/libmpv/src/main/cpp/render.cpp
-index 61d9cf9..e3fe6e8 100644
+index 61d9cf9..55ddfbb 100644
 --- a/libmpv/src/main/cpp/render.cpp
 +++ b/libmpv/src/main/cpp/render.cpp
-@@ -9,6 +9,21 @@
+@@ -9,6 +9,31 @@
  extern "C" {
      jni_func(void, nativeAttachSurface, jlong instance, jobject surface);
      jni_func(void, nativeDetachSurface, jlong instance);
@@ -37,19 +37,29 @@ index 61d9cf9..e3fe6e8 100644
 +
 +// mpv's --android-osd-wid: set synchronously (the video output has let go of the
 +// surface it had before when the call returns), so the old reference can go after it.
++// When the set fails the option still names the old surface, and a video output made
++// later would read it: then the old reference is the one kept, and the new one goes.
 +static void set_osd_surface(JNIEnv *env, MPVInstance *mpv_instance, jobject surface) {
 +    jobject next = surface ? env->NewGlobalRef(surface) : nullptr;
++    if (surface && !next) {
++        ALOGE("no reference to the subtitle surface could be made");
++        return;
++    }
 +    int64_t wid = reinterpret_cast<intptr_t>(next);
 +    int result = mpv_set_property(mpv_instance->mpv, "android-osd-wid", MPV_FORMAT_INT64, &wid);
-+    if (result < 0)
++    if (result < 0) {
 +        ALOGE("mpv_set_property(android-osd-wid) returned error %s", mpv_error_string(result));
++        if (next)
++            env->DeleteGlobalRef(next);
++        return;
++    }
 +    if (mpv_instance->osdSurface)
 +        env->DeleteGlobalRef(mpv_instance->osdSurface);
 +    mpv_instance->osdSurface = next;
  }
  
  jni_func(void, nativeAttachSurface, jlong instance, jobject surface) {
-@@ -36,3 +51,11 @@ jni_func(void, nativeDetachSurface, jlong instance) {
+@@ -36,3 +61,11 @@ jni_func(void, nativeDetachSurface, jlong instance) {
      env->DeleteGlobalRef(mpv_instance->surface);
      mpv_instance->surface = nullptr;
  }

@@ -105,10 +105,10 @@ index 160d860..8bfe0c7 100644
  
  enum {
 diff --git a/video/out/vo_mediacodec_embed.c b/video/out/vo_mediacodec_embed.c
-index 985b526..608d7ea 100644
+index 985b526..251b0f4 100644
 --- a/video/out/vo_mediacodec_embed.c
 +++ b/video/out/vo_mediacodec_embed.c
-@@ -15,20 +15,259 @@
+@@ -15,11 +15,18 @@
   * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
   */
  
@@ -127,22 +127,7 @@ index 985b526..608d7ea 100644
  #include "vo.h"
  #include "video/mp_image.h"
  #include "video/hwdec.h"
- 
-+// The surface hands out a few buffers in turn, each still holding what was drawn
-+// to it some frames ago. Each is told apart by its memory and brought up to date
-+// from what changed since it was drawn last: copying less matters, an animated
-+// line is redrawn for every frame.
-+#define LAYER_SLOTS 8
-+#define LAYER_RECTS 24
-+
-+struct layer_slot {
-+    void *bits;                 // NULL: free
-+    int w, h;
-+    bool all;                   // nothing of it is known to be current
-+    int num;                    // changed since it was drawn last:
-+    struct mp_rect rc[LAYER_RECTS];
-+};
-+
+@@ -27,8 +34,178 @@
  struct priv {
      struct mp_image *next_image;
      struct mp_hwdec_ctx hwctx;
@@ -155,9 +140,7 @@ index 985b526..608d7ea 100644
 +    int osd_w, osd_h;
 +    struct mp_draw_sub_cache *osd_cache;
 +    double osd_pts;             // of the last frame shown: what a redraw draws
-+    bool osd_all;               // every buffer has to be drawn whole
-+    struct layer_slot osd_slots[LAYER_SLOTS];
-+    int osd_next_slot;          // the one given up when a new buffer shows up
++    bool osd_all;               // draw, though the subtitles have not changed
 +    bool osd_locked;            // drawn; flip_page() shows it with the frame
 +    bool osd_failed;            // the surface refused a drawing (said once)
  };
@@ -171,9 +154,11 @@ index 985b526..608d7ea 100644
 +    p->osd_locked = false;
 +}
 +
-+// Locks the surface's next buffer. All of it is asked for, so that the system
-+// copies nothing into it from the buffer shown last: what it holds is what was
-+// drawn to it before (see layer_slot).
++// Locks the surface's next buffer, all of it: the system then copies nothing into
++// it, and the caller draws every pixel. Nothing is assumed of what a buffer holds.
++// The surface hands a few out in turn, each with what was drawn to it some frames
++// ago, and may replace one by another at the same address: keeping track of them
++// would save a clear per drawn frame and risk a line left over, or one missing.
 +static bool layer_lock(struct vo *vo, ANativeWindow_Buffer *buf)
 +{
 +    struct priv *p = vo->priv;
@@ -184,44 +169,18 @@ index 985b526..608d7ea 100644
 +        p->osd_failed = true;
 +        return false;
 +    }
++    if (buf->format != WINDOW_FORMAT_RGBA_8888) {
++        // Asked for in layer_attach(); anything else has other pixels than the
++        // ones written here. Shown as it is and given up.
++        MP_ERR(vo, "The subtitle surface has the wrong format (%d).\n", (int)buf->format);
++        ANativeWindow_unlockAndPost(p->osd_window);
++        ANativeWindow_release(p->osd_window);
++        p->osd_window = NULL;
++        return false;
++    }
 +    p->osd_failed = false;
++    memset(buf->bits, 0, (size_t)buf->stride * 4 * buf->height);
 +    return true;
-+}
-+
-+// The record of the buffer just locked; a buffer not seen before has to be drawn
-+// whole.
-+static struct layer_slot *layer_slot_of(struct vo *vo, ANativeWindow_Buffer *buf)
-+{
-+    struct priv *p = vo->priv;
-+    for (int n = 0; n < LAYER_SLOTS; n++) {
-+        struct layer_slot *slot = &p->osd_slots[n];
-+        if (slot->bits == buf->bits && slot->w == buf->width && slot->h == buf->height)
-+            return slot;
-+    }
-+    struct layer_slot *slot = &p->osd_slots[p->osd_next_slot];
-+    MP_VERBOSE(vo, "Subtitle surface: buffer %d, %dx%d.\n", p->osd_next_slot,
-+               buf->width, buf->height);
-+    p->osd_next_slot = (p->osd_next_slot + 1) % LAYER_SLOTS;
-+    *slot = (struct layer_slot){.bits = buf->bits, .w = buf->width,
-+                                .h = buf->height, .all = true};
-+    return slot;
-+}
-+
-+// [rc] changed: every buffer has to draw it when its turn comes.
-+static void layer_changed(struct priv *p, struct mp_rect rc)
-+{
-+    for (int n = 0; n < LAYER_SLOTS; n++) {
-+        struct layer_slot *slot = &p->osd_slots[n];
-+        if (!slot->bits || slot->all)
-+            continue;
-+        if (slot->num == LAYER_RECTS) {
-+            // Too many to keep apart: one around them all.
-+            for (int i = 1; i < slot->num; i++)
-+                mp_rect_union(&slot->rc[0], &slot->rc[i]);
-+            slot->num = 1;
-+        }
-+        slot->rc[slot->num++] = rc;
-+    }
 +}
 +
 +static uint32_t *layer_row(ANativeWindow_Buffer *buf, int x, int y)
@@ -239,8 +198,6 @@ index 985b526..608d7ea 100644
 +    ANativeWindow_Buffer buf;
 +    if (!layer_lock(vo, &buf))
 +        return;
-+    for (int y = 0; y < buf.height; y++)
-+        memset(layer_row(&buf, 0, y), 0, (size_t)buf.width * 4);
 +    ANativeWindow_unlockAndPost(p->osd_window);
 +    p->osd_all = true;
 +}
@@ -312,43 +269,26 @@ index 985b526..608d7ea 100644
 +    if (!p->osd_cache)
 +        p->osd_cache = mp_draw_sub_alloc(p, vo->global);
 +
-+    struct mp_rect act[1], mod[64];
++    struct mp_rect act[32], mod[1];
 +    int num_act = 0, num_mod = 0;
 +    // BGRA with premultiplied alpha, [osd_w] x [osd_h], see-through where
-+    // there is nothing.
++    // there is nothing. [act]: where there is something; [mod]: what changed
++    // since the last call (only whether anything did is used).
 +    struct mp_image *osd = mp_draw_sub_overlay(p->osd_cache, sbs,
 +                                               act, MP_ARRAY_SIZE(act), &num_act,
 +                                               mod, MP_ARRAY_SIZE(mod), &num_mod);
-+    if (!osd)
-+        goto done;
-+    if (p->osd_all) {
-+        // A new surface, or one wiped: none of its buffers holds anything.
-+        memset(p->osd_slots, 0, sizeof(p->osd_slots));
-+    } else if (!num_mod) {
++    if (!osd || (!num_mod && !p->osd_all))
 +        goto done; // the buffer on show is the overlay as it is
-+    }
-+    for (int n = 0; n < num_mod; n++)
-+        layer_changed(p, mod[n]);
 +
 +    ANativeWindow_Buffer buf;
 +    if (!layer_lock(vo, &buf))
 +        goto done;
-+    struct layer_slot *slot = layer_slot_of(vo, &buf);
-+    if (slot->all) {
-+        slot->rc[0] = (struct mp_rect){0, 0, buf.width, buf.height};
-+        slot->num = 1;
-+    }
 +    int w = MPMIN(buf.width, osd->w), h = MPMIN(buf.height, osd->h);
-+    for (int n = 0; n < slot->num; n++) {
-+        struct mp_rect rc = slot->rc[n];
-+        int x0 = MPCLAMP(rc.x0, 0, w), x1 = MPCLAMP(rc.x1, 0, w);
-+        for (int y = MPCLAMP(rc.y0, 0, buf.height); y < MPCLAMP(rc.y1, 0, buf.height); y++) {
-+            uint32_t *dst = layer_row(&buf, 0, y);
-+            if (slot->all) // also what lies outside the overlay, if anything does
-+                memset(dst, 0, (size_t)buf.width * 4);
-+            if (y >= h)
-+                continue;
++    for (int n = 0; n < num_act; n++) {
++        int x0 = MPCLAMP(act[n].x0, 0, w), x1 = MPCLAMP(act[n].x1, 0, w);
++        for (int y = MPCLAMP(act[n].y0, 0, h); y < MPCLAMP(act[n].y1, 0, h); y++) {
 +            const uint32_t *src = mp_image_pixel_ptr(osd, 0, 0, y);
++            uint32_t *dst = layer_row(&buf, 0, y);
 +            // The surface's bytes are R G B A, the overlay's B G R A.
 +            for (int x = x0; x < x1; x++) {
 +                uint32_t v = src[x];
@@ -356,8 +296,6 @@ index 985b526..608d7ea 100644
 +            }
 +        }
 +    }
-+    slot->all = false;
-+    slot->num = 0;
 +    p->osd_locked = true;
 +    p->osd_all = false;
 +
@@ -368,7 +306,7 @@ index 985b526..608d7ea 100644
  static AVBufferRef *create_mediacodec_device_ref(struct vo *vo)
  {
      AVBufferRef *device_ref = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_MEDIACODEC);
-@@ -62,12 +301,14 @@ static int preinit(struct vo *vo)
+@@ -62,12 +239,14 @@ static int preinit(struct vo *vo)
      }
  
      hwdec_devices_add(vo->hwdec_devs, &p->hwctx);
@@ -383,7 +321,7 @@ index 985b526..608d7ea 100644
      if (!p->next_image)
          return;
  
-@@ -86,6 +327,11 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+@@ -86,6 +265,11 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
  
      talloc_free(p->next_image);
      p->next_image = mpi;
@@ -395,7 +333,7 @@ index 985b526..608d7ea 100644
      return VO_TRUE;
  }
  
-@@ -96,6 +342,11 @@ static int query_format(struct vo *vo, int format)
+@@ -96,6 +280,11 @@ static int query_format(struct vo *vo, int format)
  
  static int control(struct vo *vo, uint32_t request, void *data)
  {
@@ -407,7 +345,7 @@ index 985b526..608d7ea 100644
      return VO_NOTIMPL;
  }
  
-@@ -109,6 +360,9 @@ static void uninit(struct vo *vo)
+@@ -109,6 +298,9 @@ static void uninit(struct vo *vo)
      struct priv *p = vo->priv;
      mp_image_unrefp(&p->next_image);
  
@@ -417,7 +355,7 @@ index 985b526..608d7ea 100644
      hwdec_devices_remove(vo->hwdec_devs, &p->hwctx);
      av_buffer_unref(&p->hwctx.av_device_ref);
  }
-@@ -116,7 +370,7 @@ static void uninit(struct vo *vo)
+@@ -116,7 +308,7 @@ static void uninit(struct vo *vo)
  const struct vo_driver video_out_mediacodec_embed = {
      .description = "Android (Embedded MediaCodec Surface)",
      .name = "mediacodec_embed",
