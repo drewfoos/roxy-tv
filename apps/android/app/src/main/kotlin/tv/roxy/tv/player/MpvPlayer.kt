@@ -866,25 +866,73 @@ class MpvPlayer(
 
     /**
      * HDR10/HLG straight to the screen: hardware decoding into the surface with
-     * mediacodec_embed, so the TV's own HDR pipeline shows it. libass cannot draw there,
-     * so this is opt-in (settings) and the controls say subtitles are off.
+     * mediacodec_embed, so the TV's own HDR pipeline shows it, in the file's full size and
+     * at the decoder's pace (a 4K HDR film drawn through the graphics chip instead ran at
+     * about 15 frames a second on a TV). mpv cannot draw subtitles there: the page lays
+     * [SubtitleOverlay] over the picture for them.
      */
     private fun maybeNativeHdr(gamma: String) {
-        if (!options.hdrNative || !options.hdrDisplay || hdrActive) return
-        if (gamma != "pq" && gamma != "hlg") return
-        Timber.i("native HDR output for %s video", gamma)
+        // Bench switch: `adb shell setprop debug.roxy.hdr native` forces this output for HDR
+        // files, `native-all` for every file (to try the subtitle layer with a styled
+        // track on a device without an HDR file at hand).
+        val bench = sysprop("debug.roxy.hdr")
+        if (!(bench == "native" || bench == "native-all" || (options.hdrNative && options.hdrDisplay)) || hdrActive) return
+        if (gamma != "pq" && gamma != "hlg" && bench != "native-all") return
+        // Read before the switch: the video chain is rebuilt by it and has no size meanwhile.
+        nativeShape = pictureShape()
+        Timber.i("native HDR output for %s video, shape %s", gamma, nativeShape)
         hdrActive = true
         activeVo = "mediacodec_embed"
+        // The decoder shows its frames itself: there is nothing for mpv to blend or to
+        // time against the display, and trying made the sound drift from the picture.
+        if (options.smoothMotion) { mpv.setPropertyString("video-sync", "audio"); mpv.setPropertyString("interpolation", "no") }
         mpv.setPropertyString("hwdec", "mediacodec")
         if (surfaceReady) mpv.setPropertyString("vo", activeVo)
         listener?.onHdrNative(true)
     }
 
+    /** The picture is on the device's own video hardware (native HDR): mpv draws nothing over it. */
+    val nativeHdr: Boolean get() = hdrActive
+
+    /** The shape (width to height) of the picture shown as native HDR; null otherwise. */
+    @Volatile var nativeShape: Pair<Int, Int>? = null; private set
+
+    /** The picture's shape as shown (width to height), once a file plays. */
+    fun pictureShape(): Pair<Int, Int>? {
+        val w = int("video-params/dw") ?: return null
+        val h = int("video-params/dh") ?: return null
+        return if (w > 0 && h > 0) w to h else null
+    }
+
+    /**
+     * The files of the subtitle being shown while the picture is native HDR (what
+     * [SubtitleOverlay] draws), or null: subtitles off, not native, or nothing the layer can
+     * draw (see [overlayFiles]).
+     */
+    internal fun overlaySubtitle(): OverlayFiles? {
+        if (destroyed || !hdrActive) return null
+        if (int("current-tracks/sub/id") == null) return null
+        return overlayFiles(
+            streamUrl = lastUrl,
+            tokenInHeader = lastLoadUsedHeader,
+            external = bool("current-tracks/sub/external") == true,
+            externalFile = str("current-tracks/sub/external-filename"),
+            streamIndex = int("current-tracks/sub/ff-index"),
+            codec = str("current-tracks/sub/codec").orEmpty(),
+        )
+    }
+
+    /** The shown subtitle is a picture track, which the layer over a native-HDR picture cannot draw. */
+    fun nativeHdrHidesSubtitle(): Boolean =
+        !destroyed && hdrActive && int("current-tracks/sub/id") != null && isPictureSubtitle(str("current-tracks/sub/codec").orEmpty())
+
     /** A new file starts from the normal (tone-mapped, subtitled) output. */
     private fun leaveNativeHdr() {
         if (!hdrActive) return
         hdrActive = false
+        nativeShape = null
         activeVo = options.vo
+        if (options.smoothMotion) { mpv.setPropertyString("video-sync", "display-resample"); mpv.setPropertyString("interpolation", "yes") }
         mpv.setPropertyString("hwdec", mpvHwdec(options.hwdec))
         if (surfaceReady) mpv.setPropertyString("vo", activeVo)
         listener?.onHdrNative(false)

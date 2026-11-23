@@ -73,13 +73,31 @@ fun PlayerSurface(
             shape?.let { s -> PictureSurface.displaySides(context).let { (long, short) -> PictureSurface.renderSize(s, long, short) } }
         }
         val bounds = rememberUpdatedState(onPictureBounds)
+        // Native HDR: the decoder fills the surface itself, so the view has to have the
+        // picture's shape (a wide film filled the whole screen, stretched tall).
+        val placed = shape ?: session.nativeShape.takeIf { session.nativeHdr }
         AndroidView(
-            modifier = pictureModifier(shape) { r -> bounds.value?.invoke(r) },
+            modifier = pictureModifier(placed) { r -> bounds.value?.invoke(r) },
             // The size goes on the holder before the surface exists: the first buffer is
             // already the picture's.
             factory = { ctx -> SurfaceView(ctx).apply { applyRenderSize(render); holder.addCallback(player) } },
             update = { sv -> sv.applyRenderSize(render) },
         )
+        // The subtitles of a native-HDR picture: a see-through surface of their own, over
+        // the video's and under everything the page draws (see SubtitleOverlay).
+        val overlay = session.subtitleOverlay
+        if (session.nativeHdr && overlay != null && placed != null) {
+            AndroidView(
+                modifier = pictureModifier(placed) {},
+                factory = { ctx ->
+                    SurfaceView(ctx).apply {
+                        setZOrderMediaOverlay(true)
+                        holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
+                        holder.addCallback(overlay)
+                    }
+                },
+            )
+        }
         // Tap: toggle the controls. Double-tap: seek -10 s on the left half, +10 s on
         // the right (YouTube), with a flash saying how far. No pinch zoom anywhere: it was
         // buggy, inline and fullscreen alike (removed in 0.5.29; the Fill button crops).

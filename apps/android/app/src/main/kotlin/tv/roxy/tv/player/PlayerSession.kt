@@ -186,6 +186,18 @@ class PlayerSession(
     var fontLog by mutableStateOf<List<String>>(emptyList()); private set
     var showStats by mutableStateOf(params.showStats); private set
     var osd by mutableStateOf<String?>(null); private set
+
+    /**
+     * The picture is on the device's own video hardware (native HDR). The page then gives
+     * the video's view the picture's shape ([nativeShape]: nothing but the view places a
+     * picture that mpv does not draw) and lays [subtitleOverlay] over it.
+     */
+    var nativeHdr by mutableStateOf(false); private set
+    var nativeShape by mutableStateOf<Pair<Int, Int>?>(null); private set
+    var subtitleOverlay by mutableStateOf<SubtitleOverlay?>(null); private set
+
+    /** The fonts and other files attached to the video file being played (the subtitle layer fetches the fonts). */
+    @Volatile private var playingAttachments: List<tv.roxy.tv.api.Attachment> = emptyList()
     private var osdJob: Job? = null
     var ui by mutableStateOf(PlayerUiState()); private set
 
@@ -426,7 +438,10 @@ class PlayerSession(
             override fun onBufferingChanged(buffering: Boolean) = refreshUi(forceGlue = true)
 
             override fun onHdrNative(active: Boolean) {
-                if (active) flashOsd("Native HDR: styled subtitles are off for this video", 5000)
+                nativeHdr = active
+                nativeShape = if (active) player.nativeShape else null
+                if (active && subtitleOverlay == null) subtitleOverlay = SubtitleOverlay(context, context.cacheDir, player) { playingAttachments }
+                if (active) noteHiddenSubtitle()
             }
 
             override fun onPassthroughFailed(atSec: Double): Boolean {
@@ -479,6 +494,7 @@ class PlayerSession(
                 if (id > 0) lastSid = id
                 trackChoices++
                 player.setSubtitleTrack(id)
+                if (nativeHdr && id > 0) noteHiddenSubtitle()
                 subPick = pickOf(id, "sub")
                 savedSubsOff = false; savedSubIndex = null // the viewer chose: the saved "off" no longer applies
                 refreshUi()
@@ -646,6 +662,7 @@ class PlayerSession(
         directUrl = url
         pendingStart = start.toDouble()
         sourceHeight = 0
+        playingAttachments = emptyList()
         sourceDurationSec = null
         reloadTarget = null
         transcoding = false
@@ -664,6 +681,7 @@ class PlayerSession(
             segments = src?.segments.orEmpty()
             // The Quality menu names the file by its resolution ("1080p", "4K") offline too.
             sourceHeight = QualityOption.classHeight(src?.streams)
+            playingAttachments = emptyList()
             sourceDurationSec = src?.durationMs?.let { it / 1000.0 }
             itemSubs = subtitleInfos(src?.streams.orEmpty())
             itemContainer = src?.container
@@ -698,6 +716,7 @@ class PlayerSession(
                 segments = src.segments
                 segments.forEach { Timber.i("segment %s %.1f-%.1f s (%s)", it.type, it.startSec, it.endSec, it.origin) }
                 sourceHeight = QualityOption.classHeight(src.streams)
+                playingAttachments = src.attachments
                 sourceDurationSec = src.durationMs?.let { it / 1000.0 }
             }
             // Seek-preview thumbnails: ask once now and, if the server is still generating
@@ -1469,6 +1488,18 @@ class PlayerSession(
         }
     }
 
+    /**
+     * Says so when the shown subtitle cannot be drawn over a native-HDR picture: a picture
+     * track (PGS, VobSub), which the layer over it has no file of. Looked at a moment after
+     * a change, when mpv has the track.
+     */
+    private fun noteHiddenSubtitle() {
+        scope.launch {
+            delay(1200)
+            if (player.nativeHdrHidesSubtitle()) flashOsd("This subtitle track is made of pictures and cannot be shown over native HDR. HDR Video: Tone-map shows it.", 7000)
+        }
+    }
+
     private fun flashOsd(text: String?, holdMs: Long = 2500) {
         osdJob?.cancel()
         osd = text
@@ -1519,6 +1550,9 @@ class PlayerSession(
         runCatching { displayManager?.unregisterDisplayListener(displayListener) }
         glue.release()
         player.listener = null
+        // First: it reads the player's position from a thread of its own.
+        subtitleOverlay?.destroy()
+        subtitleOverlay = null
         player.destroy()
     }
 }

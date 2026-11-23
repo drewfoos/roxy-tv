@@ -210,7 +210,7 @@ fun PhoneAccount(bottomInset: Dp, onOpenDownloads: () -> Unit = {}, onLinkTv: ()
                 Divider()
                 SwitchRow(null, "Smooth motion", settings.smoothMotion) { save(settings.copy(smoothMotion = it)) }
                 Divider()
-                SwitchRow(null, "Native HDR (no styled subtitles)", settings.hdrNative) { save(settings.copy(hdrNative = it)) }
+                SwitchRow(null, "Native HDR", settings.hdrNative) { save(settings.copy(hdrNative = it)) }
                 Divider()
                 val found = remember { AudioPassthrough.detect(context) }
                 val passLabels = listOf("auto" to AudioPassthrough.autoLabel(found), "off" to "Off (always decode here)")

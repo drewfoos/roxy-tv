@@ -92,7 +92,11 @@ data class PlayerSettings(
     val vo: String = "gpu",
     /** Frame interpolation: smooth 24 fps on a 60 Hz screen (judder-free pans) at some GPU cost. */
     val smoothMotion: Boolean = false,
-    /** HDR files go to the screen as HDR (no styled subtitles) instead of tone-mapped SDR. */
+    /**
+     * HDR files go to the screen as HDR, shown by the device's own video hardware with the
+     * subtitles on a layer over it, instead of tone-mapped to SDR by the graphics chip.
+     * Unset, it is on for a TV and off for a phone: see [hdrNativeFor].
+     */
     val hdrNative: Boolean = false,
     /** Preferred audio languages in order, ISO 639-2 codes; the file's default track when none match. */
     val audioLangs: List<String> = listOf("eng"),
@@ -180,6 +184,7 @@ private val Context.roxyDataStore: DataStore<Preferences> by preferencesDataStor
 class Prefs(context: Context, private val scope: CoroutineScope) {
 
     private val ds = context.applicationContext.roxyDataStore
+    private val television = tv.roxy.tv.diagnostics.DeviceReport.isTelevision(context)
 
     private val _session: MutableStateFlow<Session>
     private val _settings: MutableStateFlow<PlayerSettings>
@@ -411,7 +416,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             it[KEY_HWDEC] = s.hwdec
             it[KEY_VO] = s.vo
             it[KEY_SMOOTH] = s.smoothMotion
-            it[KEY_HDR_NATIVE] = s.hdrNative
+            it[KEY_HDR_MODE] = if (s.hdrNative) HDR_NATIVE else HDR_TONEMAP
             it[KEY_ALANG] = s.audioLangs.joinToString(",")
             it[KEY_SUBMODE] = s.subMode
             it[KEY_SLANG] = s.subLang
@@ -456,7 +461,7 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
             hwdec = this[KEY_HWDEC] ?: d.hwdec,
             vo = (this[KEY_VO] ?: d.vo).let { if (it == "gpu-next") "gpu" else it },
             smoothMotion = this[KEY_SMOOTH] ?: d.smoothMotion,
-            hdrNative = this[KEY_HDR_NATIVE] ?: d.hdrNative,
+            hdrNative = hdrNativeFor(this[KEY_HDR_MODE], this[KEY_HDR_NATIVE], television),
             audioLangs = this[KEY_ALANG]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: d.audioLangs,
             subMode = this[KEY_SUBMODE] ?: d.subMode,
             subLang = this[KEY_SLANG] ?: d.subLang,
@@ -497,7 +502,9 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         // the previous default, mediacodec-copy, for everyone who ever saved a setting.
         val KEY_HWDEC = stringPreferencesKey("hwdec_v2")
         val KEY_SMOOTH = booleanPreferencesKey("smooth_motion")
+        /** The old switch ("Native HDR (no styled subtitles)", off unless turned on): only its "on" is still read. */
         val KEY_HDR_NATIVE = booleanPreferencesKey("hdr_native")
+        val KEY_HDR_MODE = stringPreferencesKey("hdr_mode")
         val KEY_VO = stringPreferencesKey("vo")
         val KEY_ALANG = stringPreferencesKey("audio_langs")
         // "_v2": full subtitles became the default on 2026-10-28; the old key held the previous default.
@@ -519,4 +526,20 @@ class Prefs(context: Context, private val scope: CoroutineScope) {
         const val PIN_SEP = "\u001f"
         const val MAX_PINS = 8
     }
+}
+
+internal const val HDR_NATIVE = "native"
+internal const val HDR_TONEMAP = "tonemap"
+
+/**
+ * Whether HDR files are shown as native HDR. A choice made since native HDR has
+ * subtitles ([mode]) is kept. Without one: on where it was turned on before
+ * ([oldSwitch]), and on a TV, whose graphics chip cannot tone-map a 4K film in time
+ * (about 15 frames a second, measured); off on a phone, which can. The old switch's
+ * "off" is not a choice: it was the only way to have subtitles.
+ */
+internal fun hdrNativeFor(mode: String?, oldSwitch: Boolean?, television: Boolean): Boolean = when (mode) {
+    HDR_NATIVE -> true
+    HDR_TONEMAP -> false
+    else -> oldSwitch == true || television
 }
