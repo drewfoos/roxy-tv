@@ -51,7 +51,7 @@ jobs:
           go test -race -count=1 -v -run 'TestPlaybackOverHTTP' ./internal/api 2>&1 | tee -a "$RUNNER_TEMP/test.log"
           go test -race -count=1 -v ./internal/trickplay ./internal/stills 2>&1 | tee -a "$RUNNER_TEMP/test.log"
           go test -race -count=1 -v -run 'TestAttachmentsExtractedByRealFFmpeg|TestLinkedChaptersOfARealFile' ./internal/probe 2>&1 | tee -a "$RUNNER_TEMP/test.log"
-          go test -race -count=1 -v -run 'TestRealFilesAreRead' ./internal/music 2>&1 | tee -a "$RUNNER_TEMP/test.log"
+          go test -race -count=1 -v -run 'TestReal' ./internal/music 2>&1 | tee -a "$RUNNER_TEMP/test.log"
         env:
           ROXY_REQUIRE_INTEGRATION: "1"
       - if: failure()

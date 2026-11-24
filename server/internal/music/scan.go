@@ -137,10 +137,7 @@ func (s *Service) Run(ctx context.Context, interval time.Duration, now, again bo
 			if err := s.Scan(ctx, false); err != nil && ctx.Err() == nil {
 				slog.Warn("music: scan failed", "err", err)
 			}
-			// What the scan brought in (or a changed file) is measured for loudness.
-			if _, err := s.MeasureLoudness(ctx); err != nil && ctx.Err() == nil {
-				slog.Warn("music: loudness pass failed", "err", err)
-			}
+			s.AfterScan(ctx, again, first)
 		}
 		if !again {
 			return
@@ -151,6 +148,39 @@ func (s *Service) Run(ctx context.Context, interval time.Duration, now, again bo
 		case <-time.After(interval):
 		}
 	}
+}
+
+// AfterScan measures the loudness of what a scan brought in (or changed). In the
+// background when background is set: measuring a large library for the first time takes
+// hours, and the folders go on being looked at meanwhile. When the scan moved songs
+// between albums (or all is set: the first scan after a start), every album's loudness is
+// worked out again, not only that of the albums with a newly measured song.
+func (s *Service) AfterScan(ctx context.Context, background, all bool) {
+	work := func() {
+		if all || s.lastScanChanged() {
+			if err := s.RefreshAlbumLoudness(ctx, nil); err != nil && ctx.Err() == nil {
+				slog.Warn("music: album loudness not worked out", "err", err)
+			}
+		}
+		if _, err := s.MeasureLoudness(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("music: loudness pass failed", "err", err)
+		}
+	}
+	if background {
+		go work()
+		return
+	}
+	work()
+}
+
+// lastScanChanged reports whether the last scan added, changed, moved or lost a song.
+func (s *Service) lastScanChanged() bool {
+	for _, f := range s.Status().Folders {
+		if f.Added+f.Updated+f.Moved+f.Missing+f.Removed > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Scan reads every music folder. force reads every file again, not only new and changed

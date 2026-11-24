@@ -685,9 +685,7 @@ func (s *Server) musicScanNow(force bool) {
 	if err := s.music.Scan(ctx, force); err != nil {
 		slog.Warn("music: scan failed", "err", err)
 	}
-	if _, err := s.music.MeasureLoudness(ctx); err != nil {
-		slog.Warn("music: loudness pass failed", "err", err)
-	}
+	s.music.AfterScan(ctx, false, false)
 }
 
 // musicLoudness says how far the loudness measuring is: {measured, total, measuring}.

@@ -2,16 +2,27 @@ package music
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-// What ffmpeg prints when ebur128 is done (the end of a real run).
-const loudSummary = `[Parsed_ebur128_0 @ 0x70c7680036c0] Summary:
+// What ffmpeg prints while and when ebur128 is done (a real run, cut short): a line for
+// every 100 ms with the loudness of the 400 ms block ending there (the first three have no
+// whole block yet), then the summary.
+const loudRun = `[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.0999792  TARGET:-23 LUFS    M:-120.7 S:-120.7     I: -70.0 LUFS       LRA:   0.0 LU  FTPK:  -inf  -inf dBFS  TPK:  -inf  -inf dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.199979   TARGET:-23 LUFS    M:-120.7 S:-120.7     I: -70.0 LUFS       LRA:   0.0 LU  FTPK: -83.1 -82.9 dBFS  TPK: -83.1 -82.9 dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.299979   TARGET:-23 LUFS    M:-120.7 S:-120.7     I: -70.0 LUFS       LRA:   0.0 LU  FTPK:  -3.8  -7.1 dBFS  TPK:  -3.8  -7.1 dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.399979   TARGET:-23 LUFS    M: -16.3 S:-120.7     I: -16.3 LUFS       LRA:   0.0 LU  FTPK:  -5.3  -5.7 dBFS  TPK:  -3.8  -5.7 dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.499979   TARGET:-23 LUFS    M: -14.0 S:-120.7     I: -15.0 LUFS       LRA:   0.0 LU  FTPK:  -4.9  -6.0 dBFS  TPK:  -3.8  -5.7 dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.599979   TARGET:-23 LUFS    M: -12.8 S:-120.7     I: -14.1 LUFS       LRA:   0.0 LU  FTPK:  -6.8  -5.5 dBFS  TPK:  -3.8  -5.5 dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] t: 0.699979   TARGET:-23 LUFS    M: -12.8 S:-120.7     I: -13.6 LUFS       LRA:   0.0 LU  FTPK:  -4.4  -6.0 dBFS  TPK:  -3.8  -5.5 dBFS
+[Parsed_ebur128_0 @ 0x7c5e04003640] Summary:
 
   Integrated loudness:
     I:         -15.1 LUFS
@@ -29,49 +40,156 @@ const loudSummary = `[Parsed_ebur128_0 @ 0x70c7680036c0] Summary:
 `
 
 func TestParseLoudness(t *testing.T) {
-	l, err := parseLoudness([]byte(loudSummary))
+	l, err := parseLoudness([]byte(loudRun))
 	if err != nil || l.LUFS != -15.1 || l.Peak != 0.3 {
 		t.Errorf("%+v %v", l, err)
 	}
+	// Four blocks: the three lines before a whole block had been heard are not blocks, and
+	// neither is the running "I:" on every line the song's loudness.
+	if l.Blocks.Total() != 4 || l.Blocks.First != 537 || len(l.Blocks.Counts) != 36 || l.Blocks.Counts[35] != 2 {
+		t.Errorf("blocks: %+v", l.Blocks)
+	}
 	// Digital silence: as quiet as it gets, not an error and not a number to divide by.
-	l, err = parseLoudness([]byte("    I:         -inf LUFS\n    Peak:       -inf dBFS\n"))
-	if err != nil || l.LUFS != silentLUFS || l.Peak != silentLUFS {
+	l, err = parseLoudness([]byte("x] Summary:\n    I:         -inf LUFS\n    Peak:       -inf dBFS\n"))
+	if err != nil || l.LUFS != silentLUFS || l.Peak != silentLUFS || l.Blocks.Total() != 0 {
 		t.Errorf("silence: %+v %v", l, err)
 	}
-	// The summary is the last of it: a line of the same shape earlier on is not it.
-	l, _ = parseLoudness([]byte("    I:         -30.0 LUFS\n" + loudSummary))
-	if l.LUFS != -15.1 {
-		t.Errorf("an earlier line was taken for the summary: %v", l.LUFS)
+	// Only the summary gives the song's figure: a line of the same shape before it does not.
+	if _, err := parseLoudness([]byte("    I:         -30.0 LUFS\n")); err == nil {
+		t.Error("a line before the summary was taken for it")
 	}
 	if _, err := parseLoudness([]byte("Error opening input: Invalid data found")); err == nil {
 		t.Error("output with no measurement was read as one")
 	}
 }
 
-func TestAlbumLoudness(t *testing.T) {
-	// Two songs as loud as each other: the album is as loud as they are.
-	if l, ok := AlbumLoudness([]float64{-10, -10}, []int64{200000, 100000}); !ok || l != -10 {
-		t.Errorf("%v %v", l, ok)
+func blocksOf(levels map[float64]int) Blocks {
+	var b Blocks
+	for m, n := range levels {
+		for i := 0; i < n; i++ {
+			b.Add(m)
+		}
 	}
-	// A loud song and a quiet one of the same length: nearer the loud one (energy, not decibels, is averaged).
-	if l, ok := AlbumLoudness([]float64{-8, -20}, []int64{180000, 180000}); !ok || l < -11 || l > -10.5 {
-		t.Errorf("%v %v", l, ok)
+	return b
+}
+
+// The loudness of blocks together, gated as the standard says.
+func TestBlocksIntegrated(t *testing.T) {
+	// Every block as loud as the next: that loudness.
+	if l, ok := blocksOf(map[float64]int{-10: 500}).Integrated(); !ok || l != -10 {
+		t.Errorf("even blocks: %v %v", l, ok)
 	}
-	// A long quiet song weighs more than a short loud one.
-	short, _ := AlbumLoudness([]float64{-8, -20}, []int64{10000, 600000})
-	if short > -17 {
-		t.Errorf("a ten-second song set an album's loudness: %v", short)
+	// Loud and a little less loud, half and half: energy is averaged, not decibels.
+	if l, _ := blocksOf(map[float64]int{-8: 100, -14: 100}).Integrated(); l != -10 {
+		t.Errorf("-8 and -14: %v, want -10.0", l)
 	}
-	if _, ok := AlbumLoudness(nil, nil); ok {
-		t.Error("no songs gave a loudness")
+	// A quiet half more than 10 LU under the whole is left out: the level is the loud
+	// half's, not pulled down by three decibels as a mean over all of it would be.
+	if l, _ := blocksOf(map[float64]int{-10: 300, -30: 300}).Integrated(); l != -10 {
+		t.Errorf("a loud half and a quiet half: %v, want -10.0", l)
 	}
-	if _, ok := AlbumLoudness([]float64{silentLUFS}, []int64{1000}); ok {
-		t.Error("silence gave a loudness")
+	// Within 10 LU of the whole it counts.
+	if l, _ := blocksOf(map[float64]int{-10: 300, -18: 300}).Integrated(); l != -12.4 {
+		t.Errorf("-10 and -18: %v, want -12.4", l)
+	}
+	// Nothing, and silence under the absolute gate, have no loudness.
+	if _, ok := (Blocks{}).Integrated(); ok {
+		t.Error("no blocks gave a loudness")
+	}
+	var quiet Blocks
+	quiet.Add(-90)
+	quiet.Add(-120.7)
+	if quiet.Total() != 0 {
+		t.Errorf("blocks under -70 LUFS were kept: %+v", quiet)
+	}
+	// Louder than can be is kept at the top step, not dropped or out of bounds.
+	var loudest Blocks
+	loudest.Add(25)
+	if loudest.Total() != 1 || loudest.First != blocksTop {
+		t.Errorf("%+v", loudest)
 	}
 }
 
-func loud(lufs, peak string) []byte {
-	return []byte("  Integrated loudness:\n    I:         " + lufs + " LUFS\n  True peak:\n    Peak:        " + peak + " dBFS\n")
+func TestBlocksMergeAndPack(t *testing.T) {
+	a := blocksOf(map[float64]int{-12.3: 40, -9: 200, -31.7: 5})
+	b := blocksOf(map[float64]int{-45: 7, -9: 10, -3.1: 1})
+	sum := a
+	sum.Counts = append([]uint32(nil), a.Counts...)
+	sum.Merge(b)
+	if sum.Total() != a.Total()+b.Total() {
+		t.Errorf("merged %d blocks from %d and %d", sum.Total(), a.Total(), b.Total())
+	}
+	want := blocksOf(map[float64]int{-12.3: 40, -9: 210, -31.7: 5, -45: 7, -3.1: 1})
+	if sum.First != want.First || len(sum.Counts) != len(want.Counts) {
+		t.Fatalf("merged %+v, want %+v", sum, want)
+	}
+	for i := range sum.Counts {
+		if sum.Counts[i] != want.Counts[i] {
+			t.Fatalf("step %d: %d, want %d", i, sum.Counts[i], want.Counts[i])
+		}
+	}
+	// Packed and read back, it is the same; a song takes little room.
+	packed := sum.Encode()
+	back, err := DecodeBlocks(packed)
+	if err != nil || back.First != sum.First || len(back.Counts) != len(sum.Counts) || back.Total() != sum.Total() {
+		t.Fatalf("read back %+v (%v), wrote %+v", back, err, sum)
+	}
+	if l1, _ := back.Integrated(); l1 != mustIntegrated(sum) {
+		t.Errorf("loudness changed by packing: %v", l1)
+	}
+	if len(packed) > 600 {
+		t.Errorf("a song's blocks take %d bytes", len(packed))
+	}
+	if b, err := DecodeBlocks(nil); err != nil || b.Total() != 0 {
+		t.Errorf("nothing: %+v %v", b, err)
+	}
+	if b, err := DecodeBlocks(Blocks{}.Encode()); err != nil || b.Total() != 0 {
+		t.Errorf("no blocks, packed: %+v %v", b, err)
+	}
+	// What is not a packed set of blocks is refused, not read as one.
+	for name, bad := range map[string][]byte{
+		"another version": {2, 0, 0},
+		"cut short":       packed[:len(packed)-3],
+		"more after it":   append(append([]byte(nil), packed...), 1),
+		"steps past the top": func() []byte {
+			return Blocks{First: 790, Counts: make([]uint32, 5)}.Encode()[:3] // says 5 steps from 790, has none
+		}(),
+		"too many steps": {1, 0xa0, 0x06, 0xff, 0x7f},
+	} {
+		if _, err := DecodeBlocks(bad); err == nil {
+			t.Errorf("%s: read without complaint", name)
+		}
+	}
+}
+
+func mustIntegrated(b Blocks) float64 {
+	l, _ := b.Integrated()
+	return l
+}
+
+// loud is what the stand-in ffmpeg prints for a song: a line for each block, then the
+// summary. Without blocks given, the song is 20 seconds of blocks at its loudness.
+func loud(lufs, peak string, blocks ...float64) []byte {
+	if len(blocks) == 0 {
+		v, _ := strconv.ParseFloat(lufs, 64)
+		for i := 0; i < 200; i++ {
+			blocks = append(blocks, v)
+		}
+	}
+	var b strings.Builder
+	for i, m := range blocks {
+		fmt.Fprintf(&b, "[Parsed_ebur128_0 @ 0x1] t: %-10.6g TARGET:-23 LUFS    M:%6.1f S:-120.7     I: -70.0 LUFS       LRA:   0.0 LU  FTPK:  -5.3  -5.7 dBFS  TPK:  -3.8  -5.7 dBFS\n", 0.4+float64(i)/10, m)
+	}
+	b.WriteString("[Parsed_ebur128_0 @ 0x1] Summary:\n\n  Integrated loudness:\n    I:         " + lufs + " LUFS\n  True peak:\n    Peak:        " + peak + " dBFS\n")
+	return []byte(b.String())
+}
+
+func repeat(m float64, n int) []float64 {
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = m
+	}
+	return out
 }
 
 // Every song is measured once; a changed file is measured again; an album has a
@@ -91,16 +209,17 @@ func TestLoudnessIsMeasured(t *testing.T) {
 	if got := l.track("One"); got.Loudness == nil || *got.Loudness != -9 || got.Peak == nil || *got.Peak != 0.5 {
 		t.Errorf("One: %+v %+v", got.Loudness, got.Peak)
 	}
-	if got := l.track("Two"); got.Loudness != nil || got.AlbumLoudness != nil {
+	if got := l.track("Two"); got.Loudness != nil || got.AlbumLoudness != nil || got.AlbumPeak != nil {
 		t.Errorf("a song that could not be measured has a loudness, or its album has: %v %v", got.Loudness, got.AlbumLoudness)
 	}
-	// The second song can be measured now: the album gets its loudness.
+	// The second song can be measured now: the album gets its loudness, and its peak is
+	// the higher of the two songs'.
 	os.WriteFile(two+".loud", loud("-9.0", "-1.0"), 0o644)
 	if n, _ = l.svc.MeasureLoudness(l.ctx); n != 1 {
 		t.Fatalf("second pass measured %d", n)
 	}
-	if got := l.track("Two"); got.Loudness == nil || got.AlbumLoudness == nil || *got.AlbumLoudness != -9 {
-		t.Errorf("Two and its album: %v %v", got.Loudness, got.AlbumLoudness)
+	if got := l.track("Two"); got.Loudness == nil || got.AlbumLoudness == nil || *got.AlbumLoudness != -9 || got.AlbumPeak == nil || *got.AlbumPeak != 0.5 {
+		t.Errorf("Two and its album: %v %v %v", got.Loudness, got.AlbumLoudness, got.AlbumPeak)
 	}
 	// Nothing left that can be measured: the file that fails was tried three times in all, then left.
 	l.svc.MeasureLoudness(l.ctx)
@@ -130,8 +249,8 @@ func TestLoudnessIsMeasured(t *testing.T) {
 	if n, _ = l.svc.MeasureLoudness(l.ctx); n != 1 {
 		t.Fatalf("after a change measured %d", n)
 	}
-	if got := l.track("One"); *got.Loudness != -14.5 || got.AlbumLoudness == nil || *got.AlbumLoudness >= -9 {
-		t.Errorf("after the change: %v, album %v", *got.Loudness, got.AlbumLoudness)
+	if got := l.track("One"); *got.Loudness != -14.5 || got.AlbumLoudness == nil || *got.AlbumLoudness >= -9 || *got.AlbumPeak != -0.2 {
+		t.Errorf("after the change: %v, album %v, album peak %v", *got.Loudness, got.AlbumLoudness, got.AlbumPeak)
 	}
 	// The file that was given up on is replaced by one that can be measured: it is tried again.
 	bad := l.put("A/bad.mp3", song{tags: tags("title", "Bad", "artist", "A")})
@@ -146,6 +265,142 @@ func TestLoudnessIsMeasured(t *testing.T) {
 	}
 	if measured, total, _ = l.st.MusicLoudnessCounts(l.ctx); measured != 3 || total != 3 {
 		t.Errorf("in the end measured %d of %d", measured, total)
+	}
+}
+
+// An album is measured as one: from the blocks of all its songs together. A quiet
+// interlude between loud songs is more than 10 LU under the album and is left out, as
+// it would be were the album one file; a mean of the songs' own loudness over their
+// lengths puts such an album well under what it is.
+func TestAlbumIsMeasuredAsOne(t *testing.T) {
+	l := newTestLib(t)
+	a := l.put("A/Album/1.mp3", song{tags: tags("title", "Loud one", "artist", "A", "album", "Album", "track", "1")})
+	b := l.put("A/Album/2.mp3", song{tags: tags("title", "Interlude", "artist", "A", "album", "Album", "track", "2")})
+	c := l.put("A/Album/3.mp3", song{tags: tags("title", "Loud two", "artist", "A", "album", "Album", "track", "3")})
+	os.WriteFile(a+".loud", loud("-8.0", "-0.1", repeat(-8, 1800)...), 0o644)
+	os.WriteFile(b+".loud", loud("-32.0", "-14.0", repeat(-32, 1800)...), 0o644) // three quiet minutes
+	os.WriteFile(c+".loud", loud("-8.0", "0.6", repeat(-8, 1800)...), 0o644)
+	l.scan(false)
+	if n, err := l.svc.MeasureLoudness(l.ctx); n != 3 || err != nil {
+		t.Fatalf("measured %d: %v", n, err)
+	}
+	for _, title := range []string{"Loud one", "Interlude", "Loud two"} {
+		got := l.track(title)
+		// The mean over the three songs' lengths would be -9.8.
+		if got.AlbumLoudness == nil || *got.AlbumLoudness != -8 {
+			t.Errorf("%s: album loudness %v, want -8.0", title, got.AlbumLoudness)
+		}
+		// One peak for the album: the highest of its songs', so that all of them can be
+		// turned by the same amount.
+		if got.AlbumPeak == nil || *got.AlbumPeak != 0.6 {
+			t.Errorf("%s: album peak %v, want 0.6", title, got.AlbumPeak)
+		}
+	}
+	if got := l.track("Interlude"); *got.Loudness != -32 || *got.Peak != -14 {
+		t.Errorf("the interlude's own: %v %v", *got.Loudness, *got.Peak)
+	}
+	// A song with no album has no album figures.
+	d := l.put("A/single.mp3", song{tags: tags("title", "Single", "artist", "A")})
+	os.WriteFile(d+".loud", loud("-10.0", "-1.0"), 0o644)
+	l.scan(false)
+	l.svc.MeasureLoudness(l.ctx)
+	if got := l.track("Single"); got.Loudness == nil || got.AlbumLoudness != nil || got.AlbumPeak != nil {
+		t.Errorf("a single: %v %v %v", got.Loudness, got.AlbumLoudness, got.AlbumPeak)
+	}
+}
+
+// A song that cannot be measured is given up on after three passes, and then no longer
+// holds its album back: the album is measured from its other songs.
+func TestAGivenUpSongDoesNotHoldItsAlbumBack(t *testing.T) {
+	l := newTestLib(t)
+	a := l.put("A/Album/1.mp3", song{tags: tags("title", "Good", "artist", "A", "album", "Album", "track", "1")})
+	l.put("A/Album/2.mp3", song{tags: tags("title", "Broken", "artist", "A", "album", "Album", "track", "2")})
+	os.WriteFile(a+".loud", loud("-12.0", "-2.0"), 0o644)
+	l.scan(false)
+	for pass := 1; pass <= 2; pass++ {
+		l.svc.MeasureLoudness(l.ctx)
+		if got := l.track("Good"); got.Loudness == nil || got.AlbumLoudness != nil {
+			t.Fatalf("pass %d: the album has a loudness while a song of it may still be measured: %v", pass, got.AlbumLoudness)
+		}
+	}
+	l.svc.MeasureLoudness(l.ctx) // the third failure: given up on
+	if got := l.track("Good"); got.AlbumLoudness == nil || *got.AlbumLoudness != -12 || *got.AlbumPeak != -2 {
+		t.Errorf("the album once its broken song is given up on: %v %v", got.AlbumLoudness, got.AlbumPeak)
+	}
+	if got := l.track("Broken"); got.Loudness != nil || got.AlbumLoudness == nil {
+		t.Errorf("the broken song: own %v, album %v", got.Loudness, got.AlbumLoudness)
+	}
+}
+
+// A drive that is not there is not a library of broken files. Songs whose files cannot be
+// opened are passed over without a mark against them (three marks and a song is given up
+// on), and a run of them ends the pass before it has asked ffmpeg about a whole library.
+func TestAnUnmountedDriveCostsNoTries(t *testing.T) {
+	l := newTestLib(t)
+	var paths []string
+	for i := 0; i < 60; i++ {
+		p := l.put(fmt.Sprintf("A/song%02d.mp3", i), song{tags: tags("title", fmt.Sprintf("Song %02d", i), "artist", "A")})
+		os.WriteFile(p+".loud", loud("-10.0", "-1.0"), 0o644)
+		paths = append(paths, p)
+	}
+	l.scan(false)
+	calls := func() int {
+		b, _ := os.ReadFile(filepath.Join(filepath.Dir(l.root), "ffmpeg.calls"))
+		return strings.Count(string(b), "\n")
+	}
+	// The folder is gone (the drive under it was unmounted).
+	away := l.root + ".away"
+	if err := os.Rename(l.root, away); err != nil {
+		t.Fatal(err)
+	}
+	before := calls()
+	for pass := 0; pass < 4; pass++ {
+		if n, err := l.svc.MeasureLoudness(l.ctx); n != 0 || err != nil {
+			t.Fatalf("with the drive gone: measured %d, %v", n, err)
+		}
+	}
+	if calls() != before {
+		t.Errorf("ffmpeg was asked about %d files that are not there", calls()-before)
+	}
+	for _, tr := range l.tracks() {
+		if tries, _ := l.st.MusicLoudnessTries(l.ctx, tr.ID); tries != 0 {
+			t.Fatalf("%s has %d failed tries for a drive that was away", tr.Title, tries)
+		}
+	}
+	// It is back: every song is measured.
+	if err := os.Rename(away, l.root); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := l.svc.MeasureLoudness(l.ctx); n != 60 || err != nil {
+		t.Fatalf("with the drive back: measured %d of 60, %v", n, err)
+	}
+	// One file gone among others that are there is passed over, and the rest are measured.
+	later := time.Now().Add(time.Hour)
+	for _, p := range paths[:5] {
+		os.Chtimes(p, later, later)
+	}
+	l.scan(false)
+	os.Remove(paths[2])
+	if n, _ := l.svc.MeasureLoudness(l.ctx); n != 4 {
+		t.Errorf("four changed files there and one gone: measured %d", n)
+	}
+	if tries, _ := l.st.MusicLoudnessTries(l.ctx, l.track("Song 02").ID); tries != 0 {
+		t.Errorf("the file that was gone has %d failed tries", tries)
+	}
+}
+
+// A long file prints more lines than a run's output may hold; it is measured all the same.
+func TestALongFileIsMeasured(t *testing.T) {
+	l := newTestLib(t)
+	p := l.put("A/mix.mp3", song{tags: tags("title", "Mix", "artist", "A")})
+	// Two hours: 72 000 blocks, eleven megabytes of lines.
+	os.WriteFile(p+".loud", loud("-13.0", "-0.5", repeat(-13, 72000)...), 0o644)
+	l.scan(false)
+	if n, err := l.svc.MeasureLoudness(l.ctx); n != 1 || err != nil {
+		t.Fatalf("measured %d: %v", n, err)
+	}
+	if got := l.track("Mix"); got.Loudness == nil || *got.Loudness != -13 {
+		t.Errorf("%v", got.Loudness)
 	}
 }
 

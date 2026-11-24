@@ -499,7 +499,7 @@ type MusicTrackQuery struct {
 const musicTrackCols = `t.id, t.title, t.artist, t.artist_id, COALESCE(t.album_id, ''), t.album, t.album_artist, t.disc, t.track, t.year,
 	t.duration_ms, t.container, t.codec, t.bitrate, t.sample_rate, t.bit_depth, t.channels, t.size,
 	CASE WHEN t.art <> '' THEN t.art ELSE COALESCE(al.art, '') END, t.lyrics, t.gain_track, t.gain_album, t.added_at, t.path, t.mtime,
-	t.loudness, t.true_peak, al.loudness,
+	t.loudness, t.true_peak, al.loudness, al.true_peak,
 	COALESCE(u.is_favorite, 0), COALESCE(u.play_count, 0), u.last_played_at`
 
 const musicTrackFrom = ` FROM music_tracks t
@@ -509,13 +509,13 @@ const musicTrackFrom = ` FROM music_tracks t
 
 func scanMusicTrack(rows interface{ Scan(...any) error }) (model.MusicTrack, error) {
 	var t model.MusicTrack
-	var gt, ga, loud, peak, albumLoud sql.NullFloat64
+	var gt, ga, loud, peak, albumLoud, albumPeak sql.NullFloat64
 	var added string
 	var last sql.NullString
 	var fav int
 	if err := rows.Scan(&t.ID, &t.Title, &t.Artist, &t.ArtistID, &t.AlbumID, &t.Album, &t.AlbumArtist, &t.Disc, &t.Track, &t.Year,
 		&t.DurationMs, &t.Container, &t.Codec, &t.Bitrate, &t.SampleRate, &t.BitDepth, &t.Channels, &t.Size,
-		&t.Art, &t.Lyrics, &gt, &ga, &added, &t.Path, &t.Mtime, &loud, &peak, &albumLoud, &fav, &t.PlayCount, &last); err != nil {
+		&t.Art, &t.Lyrics, &gt, &ga, &added, &t.Path, &t.Mtime, &loud, &peak, &albumLoud, &albumPeak, &fav, &t.PlayCount, &last); err != nil {
 		return t, err
 	}
 	if loud.Valid {
@@ -526,6 +526,9 @@ func scanMusicTrack(rows interface{ Scan(...any) error }) (model.MusicTrack, err
 	}
 	if albumLoud.Valid {
 		t.AlbumLoudness = &albumLoud.Float64
+	}
+	if albumPeak.Valid {
+		t.AlbumPeak = &albumPeak.Float64
 	}
 	if gt.Valid {
 		t.GainTrack = &gt.Float64
@@ -943,42 +946,47 @@ func (s *Store) MusicPlayCount(ctx context.Context, scope, trackID string) (int,
 
 // MusicUnmeasured is a track whose loudness is not measured for the file as it is now.
 type MusicUnmeasured struct {
-	ID    string
-	Path  string
-	Mtime int64
+	ID      string
+	Path    string
+	Mtime   int64
+	AlbumID string // "" when the song names no album
 }
 
 // MusicLoudnessMaxTries is how many failed measurements a file gets before it is left alone.
 const MusicLoudnessMaxTries = 3
 
-// MusicTracksToMeasure lists tracks whose loudness has to be measured (files that are
-// there, not yet measured as they are, and not given up on), and how many there are.
-func (s *Store) MusicTracksToMeasure(ctx context.Context, limit int) ([]MusicUnmeasured, int, error) {
-	const where = ` FROM music_tracks WHERE missing_since IS NULL AND loudness_mtime <> mtime AND loudness_tries < ?`
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, MusicLoudnessMaxTries).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, path, mtime`+where+` ORDER BY added_at DESC, id LIMIT ?`, MusicLoudnessMaxTries, limit)
+// musicToMeasure: files that are there, not measured as they are now (or measured before
+// their blocks were kept), and not given up on.
+const musicToMeasure = `missing_since IS NULL AND (loudness_mtime <> mtime OR loudness_blocks IS NULL) AND loudness_tries < ?`
+
+// MusicTracksToMeasure lists the tracks whose loudness has to be measured, the ones that
+// came in last first. All of them at once: a pass goes down the list one time, however
+// many there are and however many fail on the way.
+func (s *Store) MusicTracksToMeasure(ctx context.Context) ([]MusicUnmeasured, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, path, mtime, COALESCE(album_id, '') FROM music_tracks WHERE `+musicToMeasure+` ORDER BY added_at DESC, id`, MusicLoudnessMaxTries)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	defer rows.Close()
 	var out []MusicUnmeasured
 	for rows.Next() {
 		var u MusicUnmeasured
-		if err := rows.Scan(&u.ID, &u.Path, &u.Mtime); err != nil {
-			return nil, 0, err
+		if err := rows.Scan(&u.ID, &u.Path, &u.Mtime, &u.AlbumID); err != nil {
+			return nil, err
 		}
 		out = append(out, u)
 	}
-	return out, total, rows.Err()
+	return out, rows.Err()
 }
 
-// SetMusicLoudness records a measurement for the file as it was at mtime. A file that
-// changed meanwhile keeps being listed for measuring.
-func (s *Store) SetMusicLoudness(ctx context.Context, id string, mtime int64, lufs, peak float64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE music_tracks SET loudness = ?, true_peak = ?, loudness_mtime = ?, loudness_tries = 0 WHERE id = ?`, lufs, peak, mtime, id)
+// SetMusicLoudness records a measurement for the file as it was at mtime: its loudness,
+// its true peak and how loud its blocks are (music.Blocks, packed). A file that changed
+// meanwhile keeps being listed for measuring.
+func (s *Store) SetMusicLoudness(ctx context.Context, id string, mtime int64, lufs, peak float64, blocks []byte) error {
+	if blocks == nil {
+		blocks = []byte{} // measured, with no blocks (shorter than one): not "never measured"
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE music_tracks SET loudness = ?, true_peak = ?, loudness_blocks = ?, loudness_mtime = ?, loudness_tries = 0 WHERE id = ?`, lufs, peak, blocks, mtime, id)
 	return err
 }
 
@@ -988,53 +996,91 @@ func (s *Store) MusicLoudnessFailed(ctx context.Context, id string) error {
 	return err
 }
 
-// MusicLoudnessCounts says how many songs are measured, of how many there are.
+// MusicLoudnessTries is how many measurements of a track have failed (for tests).
+func (s *Store) MusicLoudnessTries(ctx context.Context, id string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT loudness_tries FROM music_tracks WHERE id = ?`, id).Scan(&n)
+	return n, err
+}
+
+// MusicLoudnessCounts says how many songs are measured as they are now, of how many there are.
 func (s *Store) MusicLoudnessCounts(ctx context.Context) (measured, total int, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(loudness IS NOT NULL AND loudness_mtime = mtime), 0), COUNT(*) FROM music_tracks WHERE missing_since IS NULL`).Scan(&measured, &total)
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(loudness IS NOT NULL AND loudness_mtime = mtime AND loudness_blocks IS NOT NULL), 0), COUNT(*) FROM music_tracks WHERE missing_since IS NULL`).Scan(&measured, &total)
 	return
 }
 
 // MusicAlbumTrackLoudness is one song's part in its album's loudness.
 type MusicAlbumTrackLoudness struct {
-	AlbumID    string
-	DurationMs int64
-	Loudness   *float64 // nil: not measured
+	AlbumID  string
+	Measured bool    // measured as its file is now
+	GivenUp  bool    // not measured, and not going to be until the file changes
+	Peak     float64 // true peak, when measured
+	Blocks   []byte  // how loud its blocks are, packed, when measured
 }
 
-// MusicAlbumLoudnessInputs lists, for every album, its songs' lengths and loudness.
-func (s *Store) MusicAlbumLoudnessInputs(ctx context.Context) ([]MusicAlbumTrackLoudness, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT album_id, duration_ms, loudness FROM music_tracks WHERE album_id IS NOT NULL AND missing_since IS NULL ORDER BY album_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []MusicAlbumTrackLoudness
-	for rows.Next() {
-		var t MusicAlbumTrackLoudness
-		var l sql.NullFloat64
-		if err := rows.Scan(&t.AlbumID, &t.DurationMs, &l); err != nil {
-			return nil, err
+// MusicAlbumLoudnessInputs hands over, album by album, the songs that are there of the
+// albums named (of every album when none are named), with what was measured of each.
+func (s *Store) MusicAlbumLoudnessInputs(ctx context.Context, albumIDs []string, each func(MusicAlbumTrackLoudness) error) error {
+	const cols = `SELECT album_id, loudness IS NOT NULL AND loudness_mtime = mtime AND loudness_blocks IS NOT NULL, loudness_tries >= ?, COALESCE(true_peak, 0), loudness_blocks FROM music_tracks WHERE album_id IS NOT NULL AND missing_since IS NULL`
+	read := func(query string, args ...any) error {
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
 		}
-		if l.Valid {
-			t.Loudness = &l.Float64
+		defer rows.Close()
+		for rows.Next() {
+			var t MusicAlbumTrackLoudness
+			if err := rows.Scan(&t.AlbumID, &t.Measured, &t.GivenUp, &t.Peak, &t.Blocks); err != nil {
+				return err
+			}
+			if err := each(t); err != nil {
+				return err
+			}
 		}
-		out = append(out, t)
+		return rows.Err()
 	}
-	return out, rows.Err()
+	if len(albumIDs) == 0 {
+		return read(cols+` ORDER BY album_id`, MusicLoudnessMaxTries)
+	}
+	// In parts: a database takes only so many values in one question.
+	for len(albumIDs) > 0 {
+		part := albumIDs[:min(len(albumIDs), 400)]
+		albumIDs = albumIDs[len(part):]
+		args := []any{MusicLoudnessMaxTries}
+		for _, id := range part {
+			args = append(args, id)
+		}
+		if err := read(cols+` AND album_id IN (`+placeholders(len(part))+`) ORDER BY album_id`, args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// SetMusicAlbumLoudness sets every album's loudness: the ones named, and none for the rest.
-func (s *Store) SetMusicAlbumLoudness(ctx context.Context, byAlbum map[string]float64) error {
+// MusicAlbumLevel is an album's loudness and true peak (nil: it has none yet).
+type MusicAlbumLevel struct {
+	Loudness *float64
+	Peak     *float64
+}
+
+// SetMusicAlbumLoudness sets the albums named. With others set, every other album loses
+// its figures (they were worked out for all, and those not named have none).
+func (s *Store) SetMusicAlbumLoudness(ctx context.Context, byAlbum map[string]MusicAlbumLevel, others bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE music_albums SET loudness = NULL WHERE loudness IS NOT NULL`); err != nil {
-		return err
+	if others {
+		if _, err := tx.ExecContext(ctx, `UPDATE music_albums SET loudness = NULL, true_peak = NULL WHERE loudness IS NOT NULL OR true_peak IS NOT NULL`); err != nil {
+			return err
+		}
 	}
 	for id, l := range byAlbum {
-		if _, err := tx.ExecContext(ctx, `UPDATE music_albums SET loudness = ? WHERE id = ?`, l, id); err != nil {
+		if others && l.Loudness == nil {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE music_albums SET loudness = ?, true_peak = ? WHERE id = ?`, l.Loudness, l.Peak, id); err != nil {
 			return err
 		}
 	}

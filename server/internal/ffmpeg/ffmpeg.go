@@ -3,10 +3,12 @@
 package ffmpeg
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,6 +166,52 @@ func (f *FFmpeg) RunCombined(ctx context.Context, args ...string) ([]byte, error
 		return out.buf.Bytes(), fmt.Errorf("ffmpeg: %w: %s", err, tail(out.buf.String(), 2000))
 	}
 	return out.buf.Bytes(), nil
+}
+
+// RunLines executes ffmpeg and hands each line it prints (stdout and stderr together) to
+// line as it comes, keeping none of it: for a filter that reports many times a second,
+// through a file of any length (RunCombined stops at MaxCombined, which a measurement
+// printed ten times a second reaches in under an hour of sound). A line longer than 64
+// KiB comes in pieces. The slice handed to line is only good until line returns.
+func (f *FFmpeg) RunLines(ctx context.Context, line func([]byte), args ...string) error {
+	ctx, cancel := limited(ctx, RunLimit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.FFmpeg, LocalInputs(args)...)
+	cmd.WaitDelay = waitDelay
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	read := make(chan string, 1)
+	go func() {
+		// The last of what was printed is kept, to say why a run failed.
+		var last []byte
+		r := bufio.NewReaderSize(pr, 64<<10)
+		for {
+			b, err := r.ReadSlice('\n')
+			if len(b) > 0 {
+				b = bytes.TrimRight(b, "\r\n")
+				line(b)
+				if len(b) > 0 {
+					last = append(append(last, b...), '\n')
+					if len(last) > 4000 {
+						last = last[len(last)-2000:]
+					}
+				}
+			}
+			if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+				_, _ = io.Copy(io.Discard, pr)
+				read <- string(last)
+				return
+			}
+		}
+	}()
+	err := cmd.Run()
+	_ = pw.Close()
+	last := <-read
+	if err != nil {
+		return fmt.Errorf("ffmpeg: %w: %s", err, tail(last, 2000))
+	}
+	return nil
 }
 
 // capWriter collects up to max bytes; past that it drops the rest, notes it, and calls

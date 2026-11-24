@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"image"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,4 +160,80 @@ func TestRealFilesAreRead(t *testing.T) {
 	if len(albums) != 1 || albums[0].TrackCount != 2 || albums[0].Art != intro.Art {
 		t.Errorf("albums: %+v", albums)
 	}
+}
+
+// With the real ffmpeg: the blocks kept for a song give the loudness ffmpeg itself
+// reports for it, and an album's loudness worked out from its songs' blocks is the one
+// ffmpeg measures when the songs are fed to it as one file. A quiet song between two
+// loud ones is left out of the album by the standard's gate; a mean of the songs' own
+// figures over their lengths (what this did before) puts the album well under that.
+func TestRealAlbumLoudnessIsThatOfTheAlbumAsOneFile(t *testing.T) {
+	ff := needFFmpeg(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	noise := func(name string, amplitude string, seed string) string {
+		p := filepath.Join(dir, name)
+		cmd := []string{"-v", "error", "-y", "-f", "lavfi", "-i", "anoisesrc=color=pink:duration=12:sample_rate=48000:amplitude=" + amplitude + ":seed=" + seed, "-ac", "2", p}
+		if out, err := exec.Command(ff.FFmpeg, cmd...).CombinedOutput(); err != nil {
+			t.Fatalf("making %s: %v\n%s", name, err, out)
+		}
+		return p
+	}
+	files := []string{noise("1-loud.flac", "0.5", "1"), noise("2-interlude.flac", "0.02", "2"), noise("3-loud.flac", "0.5", "3")}
+
+	var album Blocks
+	var own []float64
+	peak := -1000.0
+	for _, f := range files {
+		l, err := MeasureFile(ctx, ff, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Twelve seconds: a block every 100 ms once the first 400 ms are in.
+		if n := l.Blocks.Total(); n < 110 || n > 120 {
+			t.Errorf("%s: %d blocks", filepath.Base(f), n)
+		}
+		fromBlocks, ok := l.Blocks.Integrated()
+		if !ok || fromBlocks < l.LUFS-0.15 || fromBlocks > l.LUFS+0.15 {
+			t.Errorf("%s: ffmpeg says %.1f LUFS, its blocks give %.1f", filepath.Base(f), l.LUFS, fromBlocks)
+		}
+		back, err := DecodeBlocks(l.Blocks.Encode())
+		if err != nil || back.Total() != l.Blocks.Total() {
+			t.Errorf("%s: blocks packed and read back: %v", filepath.Base(f), err)
+		}
+		album.Merge(l.Blocks)
+		own = append(own, l.LUFS)
+		if l.Peak > peak {
+			peak = l.Peak
+		}
+	}
+	if own[1] > own[0]-20 {
+		t.Fatalf("the interlude is not quiet enough for this test: %v", own)
+	}
+
+	// The album as ffmpeg measures it: the three files joined into one.
+	var whole loudnessReader
+	err := ff.RunLines(ctx, whole.line, "-hide_banner", "-nostats", "-v", "info", "-i", files[0], "-i", files[1], "-i", files[2],
+		"-filter_complex", "[0:a][1:a][2:a]concat=n=3:v=0:a=1,ebur128=peak=true:framelog=info", "-f", "null", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	truth, err := whole.result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := album.Integrated()
+	if !ok || got < truth.LUFS-0.2 || got > truth.LUFS+0.2 {
+		t.Errorf("the album from its songs' blocks: %.1f LUFS; as one file ffmpeg measures %.1f", got, truth.LUFS)
+	}
+	if peak < truth.Peak-0.3 || peak > truth.Peak+0.3 {
+		t.Errorf("the album's peak, the highest of its songs': %.1f; as one file %.1f", peak, truth.Peak)
+	}
+	// The mean of the songs' figures over their (equal) lengths is over a decibel and a
+	// half under it: every song would be turned up that much too far.
+	mean := 10 * math.Log10((math.Pow(10, own[0]/10)+math.Pow(10, own[1]/10)+math.Pow(10, own[2]/10))/3)
+	if truth.LUFS-mean < 1.2 {
+		t.Errorf("this album does not tell the two ways apart: as one file %.1f, mean of the songs %.1f", truth.LUFS, mean)
+	}
+	t.Logf("songs %.1f / %.1f / %.1f LUFS; album as one file %.1f, from blocks %.1f, mean of the songs %.1f; peak %.1f (one file %.1f)", own[0], own[1], own[2], truth.LUFS, got, mean, peak, truth.Peak)
 }

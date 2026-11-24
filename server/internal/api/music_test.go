@@ -885,7 +885,7 @@ func TestMusicConversion(t *testing.T) {
 func TestMusicLoudnessOverAPI(t *testing.T) {
 	w := newMusicWorld(t)
 	song := w.song("A/song.mp3", nil, "title", "Song", "artist", "A")
-	if err := os.WriteFile(song+".loud", []byte("  Integrated loudness:\n    I:         -9.5 LUFS\n  True peak:\n    Peak:        0.4 dBFS\n"), 0o644); err != nil {
+	if err := os.WriteFile(song+".loud", []byte("[Parsed_ebur128_0 @ 0x1] Summary:\n\n  Integrated loudness:\n    I:         -9.5 LUFS\n  True peak:\n    Peak:        0.4 dBFS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if rec := w.do("POST", "/v1/music/folders", w.adminTok, map[string]string{"path": w.root}); rec.Code != 201 {

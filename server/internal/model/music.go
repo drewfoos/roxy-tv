@@ -69,11 +69,13 @@ type MusicTrack struct {
 	// ReplayGain as the file is tagged, in dB (nil when it has none).
 	GainTrack *float64 `json:"gainTrack,omitempty"`
 	GainAlbum *float64 `json:"gainAlbum,omitempty"`
-	// Loudness measured by the server: the song's integrated loudness (LUFS), its true
-	// peak (dBTP) and its album's loudness. Nil until measured.
+	// Loudness measured by the server: the song's integrated loudness (LUFS) and true
+	// peak (dBTP), and its album's, measured over all the album's songs as one. Nil until
+	// measured (an album's: until every song of it is).
 	Loudness      *float64   `json:"loudness,omitempty"`
 	Peak          *float64   `json:"peak,omitempty"`
 	AlbumLoudness *float64   `json:"albumLoudness,omitempty"`
+	AlbumPeak     *float64   `json:"albumPeak,omitempty"`
 	Favorite      bool       `json:"favorite"`
 	PlayCount     int        `json:"playCount"`
 	LastPlayedAt  *time.Time `json:"lastPlayedAt,omitempty"`
