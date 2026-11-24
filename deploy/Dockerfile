@@ -10,7 +10,7 @@ ARG GO_VERSION=1.27
 ARG JELLYFIN_FFMPEG_VERSION=8.1.3-1
 
 # Roxy Web: the browser app, embedded in the server binary (server/internal/web/dist).
-FROM node:24-bookworm-slim AS web
+FROM node:25-bookworm-slim AS web
 WORKDIR /src/apps/web
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci
