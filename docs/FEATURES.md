@@ -13,7 +13,9 @@ The full feature list, server and apps. The short version is in the [README](../
   when its file is moved or replaced by a better copy. Since the second round the same
   day: playlists per profile (a song can be in one twice; entries are ordered and
   removed by their own id), a log of every listen (a report sent twice is one listen),
-  loudness measured from the audio (EBU R 128, per song and per album) and conversion on
+  loudness measured from the audio (EBU R 128; an album is measured as one file from its
+  songs' blocks, and has a true peak of its own; a drive that is away costs no song its
+  tries) and conversion on
   request (Opus, MP3, AAC, 16-bit FLAC), made once, kept and served with ranges.
 
 - Library scan of TRaSH-style folders (series/year/tvdb tag, SxxExx and absolute numbers,
@@ -131,7 +133,10 @@ a budget Google TV.
   the right mouse button); the queue and a playlist are put in another order by dragging
   a row's handle (or the arrow keys on it). Songs that follow each other on an album are
   joined on the audio clock, to the sample (the next one is decoded ahead; other joins
-  start the next element when the current one ends). Volume levelling from the server's
+  start the next element when the current one ends). Measured with a test album cut from
+  one continuous signal, every output sample recorded: no break and no sample that is not
+  the file's own with gapless on, 11 ms of silence a join with it off (`docs/api/music.md`,
+  "Joins"). Two decoded songs are held at most. Volume levelling from the server's
   measurements, a streaming quality for slow connections, a visualizer (bars, mirror,
   wave, ring) and a page that says how the song playing is sent and joined. Laid out
   for a phone (two tiles and part of a third, "now playing" with its own controls), for

@@ -268,6 +268,57 @@ func TestLoudnessIsMeasured(t *testing.T) {
 	}
 }
 
+// A song measured before its blocks were kept (the loudness of an earlier version of
+// this server) is measured once more; one measured and found to have no blocks at all
+// (shorter than one) is measured, not "never measured".
+func TestSongsWithoutBlocksAreMeasuredOnceMore(t *testing.T) {
+	l := newTestLib(t)
+	a := l.put("A/a.mp3", song{tags: tags("title", "Old measure", "artist", "A")})
+	b := l.put("A/b.mp3", song{tags: tags("title", "Blip", "artist", "A")})
+	os.WriteFile(a+".loud", loud("-10.0", "-1.0"), 0o644)
+	// A blip: ffmpeg gives a summary and no block.
+	os.WriteFile(b+".loud", []byte("[Parsed_ebur128_0 @ 0x1] Summary:\n\n  Integrated loudness:\n    I:         -70.0 LUFS\n  True peak:\n    Peak:        -3.0 dBFS\n"), 0o644)
+	l.scan(false)
+	if n, _ := l.svc.MeasureLoudness(l.ctx); n != 2 {
+		t.Fatalf("measured %d", n)
+	}
+	calls := func() int {
+		c, _ := os.ReadFile(filepath.Join(filepath.Dir(l.root), "ffmpeg.calls"))
+		return strings.Count(string(c), "\n")
+	}
+	before := calls()
+	if n, _ := l.svc.MeasureLoudness(l.ctx); n != 0 || calls() != before {
+		t.Errorf("the blip, which has no blocks, was measured again: %d songs, %d runs of ffmpeg", n, calls()-before)
+	}
+	if measured, total, _ := l.st.MusicLoudnessCounts(l.ctx); measured != 2 || total != 2 {
+		t.Errorf("measured %d of %d", measured, total)
+	}
+	// As an earlier version left a song: a loudness, and no blocks.
+	old := l.track("Old measure")
+	if _, err := l.st.DB().ExecContext(l.ctx, `UPDATE music_tracks SET loudness_blocks = NULL WHERE id = ?`, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if measured, _, _ := l.st.MusicLoudnessCounts(l.ctx); measured != 1 {
+		t.Errorf("a song without blocks counts as measured: %d", measured)
+	}
+	if got := l.track("Old measure"); got.Loudness == nil || *got.Loudness != -10 {
+		t.Errorf("until it is measured again it keeps the loudness it has: %v", got.Loudness)
+	}
+	if n, _ := l.svc.MeasureLoudness(l.ctx); n != 1 {
+		t.Errorf("a song without blocks: measured %d, want it measured once more", n)
+	}
+	if n, _ := l.svc.MeasureLoudness(l.ctx); n != 0 {
+		t.Errorf("and then again: %d", n)
+	}
+	// The store itself: a measurement handed over with no blocks at all is a measurement.
+	if err := l.st.SetMusicLoudness(l.ctx, old.ID, old.Mtime, -10, -1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if measured, _, _ := l.st.MusicLoudnessCounts(l.ctx); measured != 2 {
+		t.Errorf("a measurement with no blocks is not counted: %d", measured)
+	}
+}
+
 // An album is measured as one: from the blocks of all its songs together. A quiet
 // interlude between loud songs is more than 10 LU under the album and is left out, as
 // it would be were the album one file; a mean of the songs' own loudness over their

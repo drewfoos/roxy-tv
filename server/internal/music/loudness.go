@@ -57,9 +57,10 @@ const blocksTop = 800
 
 // Add counts one block of m LUFS.
 func (b *Blocks) Add(m float64) {
-	if math.IsNaN(m) || m < silentLUFS {
+	if math.IsNaN(m) {
 		return
 	}
+	// A block under -70 LUFS is a step under the first, which add does not keep.
 	b.add(int(math.Round((m-silentLUFS)*10)), 1)
 }
 

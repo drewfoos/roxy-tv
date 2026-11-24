@@ -434,8 +434,9 @@ export class Engine {
 
   /** Whether a song can be decoded into memory here. */
   canDecode(track: EngineTrack): boolean {
-    if (!track.exact || this.noContext || !contextClass() || typeof fetch !== 'function' || this.budget <= 0) return false
-    // Before the sound output is open its rate is not known: 48 kHz is the usual one.
+    if (!track.exact || this.noContext || !contextClass() || typeof fetch !== 'function') return false
+    // Before the sound output is open its rate is not known: 48 kHz is the usual one. A
+    // device given no memory for this has no length of song that fits.
     return track.duration > 0 && track.duration <= exactSeconds(this.ctx?.sampleRate ?? 48000, this.budget)
   }
 

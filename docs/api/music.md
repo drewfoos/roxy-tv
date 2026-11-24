@@ -38,10 +38,22 @@ signed-in user; plays, favourites and playlists belong to the profile named by
 - **Lyrics.** `Song.lrc` (synced) or `Song.txt` beside `Song.mp3`, else the lyrics the
   audio file carries.
 - **Loudness.** After a scan the server measures each song it has not measured yet (EBU
-  R 128, from the audio itself: about a second a song): its integrated loudness and its
-  true peak. An album's loudness is that of its songs played one after another, once
-  all of them are measured. A file that changes is measured again; one that cannot be
-  decoded is given up on after three tries, until it changes.
+  R 128 / BS.1770, from the audio itself, a few songs at a time beside the scan: about a
+  second a song): its integrated loudness and its true peak. A file that changes is
+  measured again; one that cannot be decoded is given up on after three tries, until it
+  changes. A file that cannot be *opened* is not counted as a try: a drive that is away
+  costs no song anything, and twenty such files in a row end the pass.
+- **An album's loudness is measured as if the album were one file**, not worked out from
+  its songs' figures. The standard measures in blocks of 400 ms and leaves out the ones
+  more than 10 LU under the level of the whole, and which those are depends on the whole
+  album: a quiet interlude between loud songs is left out of the album, though it has a
+  loudness of its own. So each song also keeps how loud its blocks are (counted by
+  tenths of a LU, a few hundred bytes), and an album is measured from all its songs'
+  blocks together. Checked against ffmpeg measuring three files joined into one: -20.7
+  LUFS as one file, -20.6 from the blocks; the mean of the three songs' own figures
+  over their lengths gives -22.4. An album has its figures once every song of it that is
+  there is measured (a song given up on is left out and does not hold it back). Its true
+  peak is the highest of its songs'.
 - Folders are looked at again every ten minutes (only new and changed files are read),
   at start, and on request.
 
@@ -62,7 +74,7 @@ signed-in user; plays, favourites and playlists belong to the profile named by
 | `lyrics` | `"lrc"`, `"txt"` or `"embedded"`; absent when there are none |
 | `gainTrack`, `gainAlbum` | ReplayGain in dB, as tagged; absent when not tagged |
 | `loudness`, `peak` | measured by the server: integrated loudness in LUFS and true peak in dBTP; absent until measured |
-| `albumLoudness` | the loudness of the song's album as a whole (LUFS); absent until every song of it is measured |
+| `albumLoudness`, `albumPeak` | the loudness (LUFS) and true peak (dBTP) of the song's album measured as one; absent until every song of it is measured |
 | `favorite`, `playCount`, `lastPlayedAt` | the profile's |
 | `addedAt` | when the song came in (the file's time for a library read for the first time) |
 
@@ -118,11 +130,50 @@ report without `at` is always a listen of its own.
 **Levelling.** A player that wants songs as loud as each other turns each one by
 `target - loudness` dB (Roxy Web's target is -14 LUFS), but never up by more than
 `-peak` dB, where it would clip. Among other songs of its album it uses `albumLoudness`
-instead, so an album keeps its own balance. Without a measurement, `gainTrack` /
-`gainAlbum` say how far the song is from -18 LUFS (ReplayGain).
+and `albumPeak` instead: every song of the album is then turned by the same amount, so
+the album keeps its own balance (held by each song's own peak, the loud songs would be
+turned up less than the quiet ones). Without a measurement, `gainTrack` / `gainAlbum`
+say how far the song is from -18 LUFS (ReplayGain).
 
 **Covers and streams are not counted** against the limit on API calls: a page of tiles
 asks for a hundred covers at once, and a song is read in ranges.
+
+## Joins
+
+How Roxy Web plays the songs of an album into each other, for whoever writes another
+player on Web Audio. All of it was measured, not reasoned: a test album is one
+continuous ramp cut into four files, every sample that comes out of the player is
+recorded (an AudioWorklet on its output), and a sample that does not follow the one
+before it is a break, counted to the sample.
+
+- A song that follows another on its album (same disc, the next track number) is decoded
+  into memory and put on the audio clock for the sample the one before it ends at. A
+  32 s album then comes out as 32.000 s with no break, also in a tab that is not being
+  looked at: what is on the audio clock does not depend on the page's timers.
+- **A start must be asked for a little ahead.** `start(context.currentTime)` happens some
+  blocks of sound later than the clock read on the page says (the audio thread is that
+  far on), so the song ends later than reckoned and the next one comes in over its end:
+  640 samples early in the measurement. Roxy Web asks for every start `baseLatency` + 20
+  ms ahead (at most 300 ms).
+- **A start must be on a sample.** Started at a time between two samples, a buffer is
+  played between its samples for its whole length (each sample worked out from its two
+  neighbours): no longer the file's own sound, and duller at the top. Start times and
+  offsets are rounded to the output's sample rate.
+- The first song of a run starts at once from an `<audio>` element, and the decoded song
+  after it is put on the clock from the element's own time, three seconds before its end
+  and again with every reading until 0.4 s before (a hidden tab gets one reading a
+  second). Measured: 0 samples off in most tries, 10 to 24 samples (half a millisecond)
+  in some. It comes off the clock again if the element stops to load, is paused by
+  something else, or the sound output is taken away. After a seek or a pause the first
+  song plays from memory as well, and its end is joined to the sample.
+- Songs that do not follow each other on an album, and all songs with "Gapless albums"
+  off, are joined by starting the next element when the current one ends: 481 samples
+  (11 ms) of silence a join in Chromium.
+- Memory: decoded sound is 8 bytes for every moment of stereo at the output's rate (23 MB
+  a minute at 48 kHz). At most two songs are held, the one playing and the next; a song
+  is let go the moment it is neither; songs are fetched and decoded one at a time; a
+  song too long for the device's share (192 MB on a computer that does not say how much
+  memory it has, 64 MB on a phone) is played from an element instead.
 
 ## Playlists
 

@@ -35,7 +35,7 @@ that were never built.
 
 ### Non-goals
 
-- Live TV, DVR, DLNA, music, photos, books.
+- Live TV, DVR, DLNA, photos, books. (Music was one until 2026-11-23: `docs/api/music.md`.)
 - SyncPlay / watch together.
 - Jellyfin- or Plex-compatible APIs.
 - Roku, webOS and Tizen apps.
@@ -130,7 +130,7 @@ Library ──< Item (movie | series | season | episode) ──< MediaSource ─
 | Tables | Role |
 |---|---|
 | `libraries` | The media folders (movies, series; anime flag), from `ROXY_MEDIA_ROOTS` or added in the app |
-| `music_folders`, `music_tracks`, `music_albums`, `music_artists`, `music_track_artists`, `music_user_data` | Music, apart from `items` (`docs/api/music.md`): one row per audio file, named by its tags; albums and artists are what the tracks add up to; plays and favourites per profile |
+| `music_folders`, `music_tracks`, `music_albums`, `music_artists`, `music_track_artists`, `music_user_data`, `music_playlists`, `music_playlist_tracks`, `music_plays` | Music, apart from `items` (`docs/api/music.md`): one row per audio file, named by its tags, with its measured loudness and how loud its blocks are; albums and artists are what the tracks add up to; plays, favourites and playlists per profile; every listen with the time the player gave for it |
 | `items`, `item_provider_ids`, `item_images`, `item_relations` | Titles and their tree. An item's `guid` (`tmdb:…`, `tvdb:…`, else a content hash) is its stable identity; aired, absolute and season numbers are separate columns |
 | `media_sources`, `media_parts`, `media_streams`, `attachments` | Files, their tracks (codec, bit depth, HDR type, language, flags, `is_text_format`) and their fonts |
 | `media_segments`, `segment_detection`, `audio_fingerprints` | Intro / outro / preview ranges and the data used to find them |

@@ -29,6 +29,8 @@ class FakeContext {
   static last: FakeContext | null = null
   static rate = 48000
   static latency: number | undefined = undefined
+  /** Set, decodes wait here until let go (to look at the engine while one runs). */
+  static holdDecode: ((go: () => void) => void) | null = null
   baseLatency = FakeContext.latency
   currentTime = 100
   sampleRate = FakeContext.rate
@@ -59,7 +61,9 @@ class FakeContext {
   }
   /** A file's length is told by its size here: a byte a second, in stereo at this context's rate. */
   decodeAudioData(bytes: ArrayBuffer) {
-    return Promise.resolve({ duration: bytes.byteLength, length: bytes.byteLength * this.sampleRate, numberOfChannels: 2 })
+    const buffer = { duration: bytes.byteLength, length: bytes.byteLength * this.sampleRate, numberOfChannels: 2 }
+    const hold = FakeContext.holdDecode
+    return hold ? new Promise((resolve) => hold(() => resolve(buffer))) : Promise.resolve(buffer)
   }
 }
 
@@ -82,6 +86,7 @@ beforeEach(() => {
   FakeContext.last = null
   FakeContext.rate = 48000
   FakeContext.latency = undefined
+  FakeContext.holdDecode = null
   events = []
   fetched = []
   vi.stubGlobal('Audio', FakeAudio)
@@ -341,7 +346,7 @@ describe('songs that follow each other', () => {
     e.setNext(track('b'))
     await settle()
     const ctx = FakeContext.last!
-    ctx.currentTime = 100 + 1 / 3 // a time that is on no sample
+    ctx.currentTime = 100.0000123 // a time that is on no sample (half of one past)
     e.seek(40.00001) // nor is this place in the song
     const [a, b] = live()
     const onSample = (t: number) => Math.abs(t * 44100 - Math.round(t * 44100)) < 1e-6
@@ -396,6 +401,39 @@ describe('songs that follow each other', () => {
     // The album is over and another song plays: nothing of it is left behind.
     engine.load(track('x', { exact: false }), true)
     expect(engine.memory()).toEqual({ songs: 0, bytes: 0 })
+  })
+
+  it('lets the song before go at once when the one made ready is played by a press', async () => {
+    engine.load(track('a'), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(engine.memory().songs).toBe(2)
+    engine.load(track('b'), true) // Next was pressed: b plays from memory, a is not kept for Previous
+    expect(engine.voice()).toBe('buffer')
+    expect(engine.memory().songs).toBe(1)
+  })
+
+  it('never has two songs being decoded at once, even when the first is no longer wanted', async () => {
+    // A decode cannot be stopped once the browser has the file. With b's under way, c
+    // becomes what follows: c's file is not asked for until b's decode is over, or both
+    // files and both decoded songs would be in memory together.
+    const waiting: (() => void)[] = []
+    FakeContext.holdDecode = (go) => waiting.push(go)
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(fetched).toEqual(['/s/b'])
+    expect(waiting.length).toBe(1) // b is being decoded
+    engine.setNext(track('c'))
+    await settle()
+    expect(fetched).toEqual(['/s/b']) // c waits its turn
+    waiting[0]()
+    await settle()
+    expect(fetched).toEqual(['/s/b', '/s/c'])
+    expect(engine.memory().songs).toBe(0) // b was decoded for nothing, and is not kept
+    waiting[1]()
+    await settle()
+    expect(engine.memory().songs).toBe(1)
   })
 
   it('fetches and decodes one song at a time, and stops fetching one that is let go', async () => {
