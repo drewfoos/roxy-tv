@@ -9,7 +9,7 @@ import { clock, codecName, isHiRes, longDuration, music, qualityLabel, type Musi
 import { useAsync } from '../hooks/useAsync'
 import { IconClose, IconDrag, IconExpand, IconMic, IconPause, IconPlay, IconPlaylistAdd, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconSkipNext, IconSkipPrevious, IconSpectrum, IconTune, IconVolume, IconVolumeOff } from '../components/Icons'
 import { FloatingMenu, MoreButton, NameDialog, SongsMenu, type MenuAt } from './Menus'
-import { ArtistLinks, Cover, Equalizer, HeartButton } from './Parts'
+import { ArtistLinks, Cover, Empty, Equalizer, HeartButton } from './Parts'
 import { playlistsChanged } from './changes'
 import { claimMediaKeys, currentTrack, player, type PlayerState } from './player'
 import { musicPrefs, QUALITIES } from './prefs'
@@ -25,6 +25,34 @@ import '../styles/music.css'
 type Open = 'none' | 'queue' | 'now'
 type NowTab = 'lyrics' | 'visualizer' | 'queue'
 
+/** How long "now playing" and the queue take to leave (the length of their closing animation). */
+export const LEAVE_MS = 240
+
+/** Whether things may move here: not where less motion was asked for, nor where that cannot be asked. */
+function animates(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/**
+ * What is open, and what was open a moment ago and is still on its way out: a panel that
+ * is closed stays drawn, leaving, until its closing animation is done.
+ */
+function usePanels(): { open: Open; leaving: Open; setOpen: (next: Open | ((o: Open) => Open)) => void } {
+  const [panel, setPanel] = useState<{ open: Open; leaving: Open }>({ open: 'none', leaving: 'none' })
+  const setOpen = (next: Open | ((o: Open) => Open)) =>
+    setPanel((p) => {
+      const to = typeof next === 'function' ? next(p.open) : next
+      if (to === p.open) return p
+      return { open: to, leaving: p.open !== 'none' && animates() ? p.open : 'none' }
+    })
+  useEffect(() => {
+    if (panel.leaving === 'none') return
+    const t = setTimeout(() => setPanel((p) => (p.leaving === 'none' ? p : { ...p, leaving: 'none' })), LEAVE_MS)
+    return () => clearTimeout(t)
+  }, [panel])
+  return { open: panel.open, leaving: panel.leaving, setOpen }
+}
+
 /** How the song playing is sent, in the words on the bar ("Opus · 128 kbps" for a conversion). */
 function streamLabel(track: MusicTrack, state: PlayerState): string {
   const c = state.stream?.converted
@@ -36,14 +64,14 @@ function streamLabel(track: MusicTrack, state: PlayerState): string {
 export function MusicBar() {
   const state = usePlayer()
   const track = currentTrack(state)
-  const [open, setOpen] = useState<Open>('none')
+  const { open, leaving, setOpen } = usePanels()
   const [tab, setTab] = useState<NowTab>('lyrics')
   const [settings, setSettings] = useState<MenuAt | null>(null)
   const loc = useLocation()
   useEffect(() => claimMediaKeys(), [])
   // Going to another page closes "now playing" (a link in it was followed); the queue
   // drawer stays, like the bar.
-  useEffect(() => setOpen((o) => (o === 'now' ? 'none' : o)), [loc.pathname])
+  useEffect(() => setOpen((o) => (o === 'now' ? 'none' : o)), [loc.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open !== 'none') setOpen('none')
@@ -67,11 +95,12 @@ export function MusicBar() {
   const repeatLabel = state.repeat === 'off' ? 'Repeat' : state.repeat === 'all' ? 'Repeat one' : 'Repeat off'
   return (
     <>
-      {open === 'now' && <NowPlaying track={track} state={state} tab={tab} onTab={setTab} onClose={() => setOpen('none')} />}
-      {open === 'queue' && <QueueDrawer onClose={() => setOpen('none')} />}
-      <div className={'mbar' + (open !== 'none' ? ' mbar--open' : '')} role="region" aria-label="Music player">
+      {(open === 'now' || leaving === 'now') && <NowPlaying track={track} state={state} tab={tab} onTab={setTab} onClose={() => setOpen('none')} closing={open !== 'now'} />}
+      {(open === 'queue' || leaving === 'queue') && <QueueDrawer onClose={() => setOpen('none')} closing={open !== 'queue'} />}
+      <div className={'mbar' + (open !== 'none' ? ' mbar--open' : '') + (open === 'now' ? ' mbar--now' : '')} role="region" aria-label="Music player">
         <div className="mbar__song">
-          <button type="button" className="mbar__cover" onClick={() => showNow(first)} aria-label="Now playing" title="Now playing">
+          {/* The cover opens "now playing" and, whatever tab that is on, closes it: its arrow points the way it will go. */}
+          <button type="button" className="mbar__cover" onClick={() => (open === 'now' ? setOpen('none') : showNow(first))} aria-label={open === 'now' ? 'Close now playing' : 'Now playing'} title={open === 'now' ? 'Close' : 'Now playing'} aria-expanded={open === 'now'}>
             <Cover art={track.art} size={60} />
             <span className="mbar__grow">
               <IconExpand size={22} />
@@ -443,9 +472,9 @@ function QueueList() {
   )
 }
 
-function QueueDrawer({ onClose }: { onClose: () => void }) {
+function QueueDrawer({ onClose, closing = false }: { onClose: () => void; closing?: boolean }) {
   return (
-    <aside className="mqueue" aria-label="Queue">
+    <aside className={'mqueue' + (closing ? ' mqueue--closing' : '')} aria-label="Queue" aria-hidden={closing || undefined}>
       <button type="button" className="micon mqueue__close" onClick={onClose} aria-label="Close the queue">
         <IconClose size={20} />
       </button>
@@ -456,7 +485,7 @@ function QueueDrawer({ onClose }: { onClose: () => void }) {
 
 // ---- now playing ----
 
-function NowPlaying({ track, state, tab, onTab, onClose }: { track: MusicTrack; state: PlayerState; tab: NowTab; onTab: (t: NowTab) => void; onClose: () => void }) {
+function NowPlaying({ track, state, tab, onTab, onClose, closing = false }: { track: MusicTrack; state: PlayerState; tab: NowTab; onTab: (t: NowTab) => void; onClose: () => void; closing?: boolean }) {
   const art = music.artUrl(track.art, 640)
   const [menu, setMenu] = useState<MenuAt | null>(null)
   const repeatLabel = state.repeat === 'off' ? 'Repeat' : state.repeat === 'all' ? 'Repeat one' : 'Repeat off'
@@ -466,7 +495,7 @@ function NowPlaying({ track, state, tab, onTab, onClose }: { track: MusicTrack; 
     ['queue', 'Queue'],
   ]
   return (
-    <div className="mnow" role="dialog" aria-label="Now playing">
+    <div className={'mnow' + (closing ? ' mnow--closing' : '')} role="dialog" aria-label="Now playing" aria-hidden={closing || undefined}>
       {art && <div className="mnow__back" key={art} style={{ backgroundImage: `url(${art})` }} />}
       <div className="mnow__shade" />
       <button type="button" className="micon mnow__close" onClick={onClose} aria-label="Close">
@@ -546,7 +575,14 @@ function LyricsView({ track }: { track: MusicTrack }) {
   const touched = () => {
     handsOff.current = Date.now() + 4000
   }
-  if (!track.lyrics) return <div className="mlyrics mlyrics--none">No lyrics for this song.</div>
+  if (!track.lyrics)
+    return (
+      <div className="mlyrics mlyrics--none">
+        <Empty small icon={<IconMic size={30} />} title="No lyrics for this song">
+          A file named like the song, ending in .lrc or .txt, beside it in the music folder gives it some.
+        </Empty>
+      </div>
+    )
   if (lyrics.loading && !lyrics.data) return <div className="mlyrics mlyrics--none" aria-busy="true" />
   if (!lines.length) return <div className="mlyrics mlyrics--none">{lyrics.error ? 'The lyrics could not be read.' : 'No lyrics for this song.'}</div>
   return (

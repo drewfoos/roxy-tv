@@ -10,10 +10,10 @@ import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
 import { Row } from '../components/Cards'
 import { LoadError } from '../components/Connection'
-import { IconAdd, IconClose, IconPlay, IconSearch, IconShuffle } from '../components/Icons'
+import { IconAdd, IconAlbum, IconClose, IconHeart, IconMusicNote, IconPlay, IconPlaylist, IconSearch, IconShuffle } from '../components/Icons'
 import { playlistsChanged, usePlaylistsVersion } from '../music/changes'
 import { MoreButton, NameDialog, SongsMenu, useMenu } from '../music/Menus'
-import { AlbumTile, ArtistTile, Cover, HeartButton, ListSkeleton, PlaylistCover, PlaylistTile, TileSkeleton, TrackList, TrackTile } from '../music/Parts'
+import { AlbumTile, ArtistTile, Cover, Empty, HeartButton, ListSkeleton, PlaylistCover, PlaylistTile, TileSkeleton, TrackList, TrackTile } from '../music/Parts'
 import { player } from '../music/player'
 import { toast } from '../music/toast'
 import '../styles/music.css'
@@ -125,23 +125,26 @@ export function Music() {
 
 function NoMusic({ scanning }: { scanning: boolean }) {
   const s = useSession()
+  if (scanning)
+    return (
+      <Empty icon={<IconMusicNote size={44} />} title="Reading the music folder…">
+        Songs appear here as they are read.
+      </Empty>
+    )
   return (
-    <div className="music__empty">
-      <b>{scanning ? 'Reading the music folder…' : 'No music yet'}</b>
-      {scanning ? (
-        'Songs appear here as they are read.'
-      ) : s?.isAdmin ? (
-        <>
-          Add a music folder in{' '}
-          <Link to="/account/library" className="link-brand">
-            Library settings
+    <Empty
+      icon={<IconMusicNote size={44} />}
+      title="No music yet"
+      action={
+        s?.isAdmin ? (
+          <Link to="/account/library" className="btn btn--brand">
+            <IconAdd size={20} /> Add a music folder
           </Link>
-          : its songs are read from their tags.
-        </>
-      ) : (
-        'This server has no music folder yet.'
-      )}
-    </div>
+        ) : undefined
+      }
+    >
+      {s?.isAdmin ? 'Point Roxy at a folder of songs: they are read from their tags, wherever they sit in it.' : 'This server has no music folder yet.'}
+    </Empty>
   )
 }
 
@@ -153,6 +156,16 @@ async function allTracks(sort: TrackSort = 'title'): Promise<MusicTrack[]> {
     out.push(...r.tracks)
     if (!r.tracks.length || out.length >= r.total) return out
   }
+}
+
+/** A button that goes to another tab of the library (from an empty one). */
+function TabButton({ tab, children }: { tab: Tab; children: ReactNode }) {
+  const [, setParams] = useSearchParams()
+  return (
+    <button className="btn btn--brand" onClick={() => setParams({ tab }, { replace: true })}>
+      {children}
+    </button>
+  )
 }
 
 function ShuffleAll({ label = 'Shuffle all' }: { label?: string }) {
@@ -371,10 +384,9 @@ function AlbumsTab() {
   const list = albums.data?.albums ?? []
   if (!list.length)
     return (
-      <div className="music__empty">
-        <b>No albums yet</b>
+      <Empty icon={<IconAlbum size={44} />} title="No albums yet" action={<TabButton tab="songs">See the songs</TabButton>}>
         An album is listed once two of its songs are in the library. Single songs are under Songs.
-      </div>
+      </Empty>
     )
   return (
     <div className="music__pad">
@@ -403,25 +415,29 @@ function PlaylistsTab() {
     )
   if (lists.error && !lists.data) return <LoadError error={lists.error} onRetry={() => lists.reload()} />
   const list = lists.data?.playlists ?? []
+  const make = (
+    <button className="btn btn--brand" onClick={() => setNaming(true)}>
+      <IconAdd size={20} /> New playlist
+    </button>
+  )
   return (
     <div className="music__pad">
-      <div className="music__bar">
-        <button className="btn btn--brand" onClick={() => setNaming(true)}>
-          <IconAdd size={20} /> New playlist
-        </button>
-        <span className="music__count">{plural(list.length, 'playlist')}</span>
-      </div>
       {list.length ? (
-        <div className="mgrid">
-          {list.map((p) => (
-            <PlaylistTile key={p.id} playlist={p} />
-          ))}
-        </div>
+        <>
+          <div className="music__bar">
+            {make}
+            <span className="music__count">{plural(list.length, 'playlist')}</span>
+          </div>
+          <div className="mgrid">
+            {list.map((p) => (
+              <PlaylistTile key={p.id} playlist={p} />
+            ))}
+          </div>
+        </>
       ) : (
-        <div className="music__empty">
-          <b>No playlists yet</b>
-          Make one here, or from the ⋮ on any song, album or the queue: “Add to playlist”.
-        </div>
+        <Empty icon={<IconPlaylist size={44} />} title="No playlists yet" action={make}>
+          Make one here, or from the three dots on any song, album or the queue: “Add to playlist”.
+        </Empty>
       )}
       {naming && (
         <NameDialog
@@ -451,10 +467,9 @@ function LikedTab() {
   const tracks = liked.data?.tracks ?? []
   if (!tracks.length)
     return (
-      <div className="music__empty">
-        <b>No liked songs yet</b>
-        The heart on a song puts it here.
-      </div>
+      <Empty icon={<IconHeart size={44} />} title="No liked songs yet" action={<TabButton tab="songs">Find some to like</TabButton>}>
+        The heart on a song keeps it here, the newest first.
+      </Empty>
     )
   return (
     <div className="music__pad">
@@ -476,10 +491,9 @@ function SearchResults({ query }: { query: string }) {
   const d = found.data
   if (!d || d.tracks.length + d.albums.length + d.artists.length === 0)
     return (
-      <div className="music__empty">
-        <b>Nothing found for “{query}”</b>
-        Every word must be part of a title, an artist or an album.
-      </div>
+      <Empty icon={<IconSearch size={44} />} title={`Nothing found for “${query}”`}>
+        Every word must be part of a title, an artist or an album. Case and accents do not matter.
+      </Empty>
     )
   return (
     <>
@@ -766,10 +780,17 @@ export function MusicPlaylistPage() {
               ]}
             />
           ) : (
-            <div className="music__empty">
-              <b>Nothing in this playlist yet</b>
-              The ⋮ on any song or album has “Add to playlist”.
-            </div>
+            <Empty
+              icon={<IconPlaylist size={44} />}
+              title="Nothing in this playlist yet"
+              action={
+                <Link to="/music?tab=songs" className="btn btn--brand">
+                  Find songs to add
+                </Link>
+              }
+            >
+              The three dots on any song or album have “Add to playlist”.
+            </Empty>
           )}
         </div>
       </div>

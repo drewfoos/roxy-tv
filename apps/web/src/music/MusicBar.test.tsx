@@ -8,7 +8,7 @@ import { session } from '../api/session'
 import { clearAsyncCache } from '../hooks/useAsync'
 import { FakeAudio } from './fakeAudio'
 import { musicPrefs } from './prefs'
-import { MusicBar } from './MusicBar'
+import { LEAVE_MS, MusicBar } from './MusicBar'
 import { MusicBarHost } from './MusicBarHost'
 import { AlbumTile, TrackList } from './Parts'
 import { toast } from './toast'
@@ -278,6 +278,72 @@ describe('the player bar', () => {
     // The sheet has the whole transport (the narrow bar has only play and next).
     expect(Array.from(document.body.querySelectorAll('.mnow__controls button')).map((b) => b.getAttribute('aria-label'))).toEqual(['Shuffle', 'Previous', 'Pause', 'Next', 'Repeat'])
     expect(document.body.querySelector('.mnow__controls .mslider')!.getAttribute('aria-label')).toBe('Seek')
+  })
+
+  it('opens and closes "now playing" from the cover, whatever tab it is on, its arrow turning to say which', async () => {
+    await act(async () => player.playTracks(list, 2, { shuffle: false }))
+    await renderBar()
+    const cover = () => document.body.querySelector<HTMLElement>('.mbar__cover')!
+    const bar = () => document.body.querySelector('.mbar')!.className
+    expect(cover().getAttribute('aria-label')).toBe('Now playing')
+    expect(bar()).not.toContain('mbar--now')
+    await click(cover())
+    expect(document.body.querySelector('.mnow')).not.toBeNull()
+    expect(cover().getAttribute('aria-label')).toBe('Close now playing')
+    expect(bar()).toContain('mbar--now') // the arrow points down: a press closes
+    // On another tab than the one the cover opens: the cover still closes.
+    await click(Array.from(document.body.querySelectorAll('.mnow__tabs button')).find((b) => b.textContent === 'Queue')!)
+    await click(cover())
+    expect(document.body.querySelector('.mnow')).toBeNull()
+    expect(bar()).not.toContain('mbar--now')
+    // The queue being open is not "now playing" being open: the arrow still says "open".
+    await click(button('Queue'))
+    expect(bar()).not.toContain('mbar--now')
+    expect(cover().getAttribute('aria-label')).toBe('Now playing')
+  })
+
+  it('lets a closed panel leave the way it came before it is taken away, and takes it away at once where motion is unwanted', async () => {
+    vi.useFakeTimers()
+    try {
+      let reduced = false
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: reduced && q.includes('prefers-reduced-motion') }))
+      await act(async () => player.playTracks(list, 0, { shuffle: false }))
+      await renderBar()
+      const cover = () => document.body.querySelector<HTMLElement>('.mbar__cover')!
+      const now = () => document.body.querySelector('.mnow')
+      await click(cover())
+      expect(now()!.className).not.toContain('mnow--closing')
+      await click(cover())
+      expect(now()!.className).toContain('mnow--closing') // still drawn, on its way out
+      expect(document.body.querySelector('.mbar')!.className).not.toContain('mbar--now') // the arrow has turned already
+      await act(async () => { vi.advanceTimersByTime(LEAVE_MS - 20) })
+      expect(now()).not.toBeNull()
+      await act(async () => { vi.advanceTimersByTime(40) })
+      expect(now()).toBeNull()
+      // Opened again while it leaves: it stays, and is not taken away under the pointer.
+      await click(cover())
+      await click(cover())
+      await act(async () => { vi.advanceTimersByTime(100) })
+      await click(cover())
+      expect(now()!.className).not.toContain('mnow--closing')
+      await act(async () => { vi.advanceTimersByTime(LEAVE_MS * 2) })
+      expect(now()).not.toBeNull()
+      // The queue leaves the same way; with it open, "now playing" opening sends it off.
+      await click(cover())
+      await act(async () => { vi.advanceTimersByTime(LEAVE_MS + 10) })
+      await click(button('Queue'))
+      await click(button('Close the queue'))
+      expect(document.body.querySelector('.mqueue')!.className).toContain('mqueue--closing')
+      await act(async () => { vi.advanceTimersByTime(LEAVE_MS + 10) })
+      expect(document.body.querySelector('.mqueue')).toBeNull()
+      // Less motion asked for: gone at once.
+      reduced = true
+      await click(cover())
+      await click(cover())
+      expect(now()).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('opens the visualizer from the bar, with its styles to choose from', async () => {

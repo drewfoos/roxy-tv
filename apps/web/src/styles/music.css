@@ -192,8 +192,25 @@ a.mtile__name:hover { color: var(--accent-light); }
 .mhero__facts a { color: #fff; font-weight: 700; }
 .mhero__facts a:hover { text-decoration: underline; }
 .mhero .music__bar { margin: 22px 0 0; }
-.music__empty { padding: 72px var(--gutter); color: var(--muted); text-align: center; line-height: 22px; }
-.music__empty b { display: block; margin-bottom: 6px; color: #fff; font-size: 18px; }
+/* A page with nothing in it yet: what would be here, large, with rings going out from it. */
+.mempty { display: flex; flex-direction: column; align-items: center; padding: 72px var(--gutter) 88px; text-align: center; animation: mfade 320ms var(--ease-out); }
+.mempty__art { position: relative; display: grid; place-items: center; width: 132px; height: 132px; margin-bottom: 28px; }
+.mempty__icon { position: relative; display: grid; place-items: center; width: 104px; height: 104px; border-radius: 50%; color: #fff; background: linear-gradient(145deg, var(--accent-light), var(--accent) 45%, #1b5fa8); box-shadow: 0 18px 44px rgba(62, 166, 255, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: mempty-float 5s ease-in-out infinite; }
+.mempty__icon svg { filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3)); }
+.mempty__ring { position: absolute; inset: 14px; border-radius: 50%; border: 2px solid var(--accent); opacity: 0; animation: mempty-ring 3.6s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+.mempty__ring:nth-child(2) { animation-delay: 1.2s; }
+.mempty__ring:nth-child(3) { animation-delay: 2.4s; }
+@keyframes mempty-ring { 0% { transform: scale(1); opacity: 0.55; } 100% { transform: scale(2.1); opacity: 0; } }
+@keyframes mempty-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.mempty__title { color: #fff; font-size: 26px; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+.mempty__text { max-width: 460px; margin: 10px 0 0; color: var(--muted); font-size: 15px; line-height: 22px; }
+.mempty__action { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 26px; }
+.mempty--small { padding: 24px 16px; }
+.mempty--small .mempty__art { width: 92px; height: 92px; margin-bottom: 18px; }
+.mempty--small .mempty__icon { width: 72px; height: 72px; }
+.mempty--small .mempty__ring { inset: 10px; }
+.mempty--small .mempty__title { font-size: 19px; }
+.mempty--small .mempty__text { font-size: 14px; }
 
 /* ---------- menus, the name window, the line that says what happened ---------- */
 .mmenu { min-width: 220px; max-width: min(320px, calc(100vw - 16px)); transform-origin: top right; animation: mpop 140ms var(--ease-out); }
@@ -228,9 +245,11 @@ a.mtile__name:hover { color: var(--accent-light); }
 .mbar__cover { position: relative; width: 60px; flex: none; border-radius: 6px; transition: transform 200ms var(--ease-out); }
 .mbar__cover:hover { transform: scale(1.05); }
 .mbar__grow { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 6px; background: rgba(0, 0, 0, 0.55); color: #fff; opacity: 0; transition: opacity 140ms; }
-.mbar__grow svg { transform: rotate(180deg); transition: transform 200ms var(--ease-out); }
-.mbar--open .mbar__grow svg { transform: none; }
-.mbar__cover:hover .mbar__grow, .mbar__cover:focus-visible .mbar__grow { opacity: 1; }
+/* The arrow on the cover points where a press will take "now playing": up to open it,
+   down, turning over, to close it. While it is open the arrow stays in view. */
+.mbar__grow svg { transform: rotate(180deg); transition: transform 320ms var(--ease-out); }
+.mbar--now .mbar__grow svg { transform: none; }
+.mbar__cover:hover .mbar__grow, .mbar__cover:focus-visible .mbar__grow, .mbar--now .mbar__grow { opacity: 1; }
 .mbar__names { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .mbar__title { font-size: 15px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mbar__artist, .mbar__album { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -294,6 +313,9 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
 /* ---------- the queue ---------- */
 .mqueue { position: fixed; top: var(--topbar-h); right: 0; bottom: var(--mbar-h); z-index: 770; display: flex; flex-direction: column; width: min(440px, 100vw); background: #15151b; border-left: 1px solid rgba(255, 255, 255, 0.1); box-shadow: -16px 0 40px rgba(0, 0, 0, 0.4); animation: mslide 260ms var(--ease-out); }
 @keyframes mslide { from { transform: translateX(100%); } to { transform: none; } }
+/* Closed, it leaves the way it came. */
+.mqueue--closing { animation: mslide-out 240ms cubic-bezier(0.5, 0, 0.9, 0.4) forwards; pointer-events: none; }
+@keyframes mslide-out { to { transform: translateX(100%); } }
 .mqueue__close { position: absolute; top: 12px; right: 10px; }
 .mqueue__head { display: flex; align-items: center; gap: 10px; padding: 18px 56px 12px 20px; }
 .mqueue__head b { font-size: 18px; }
@@ -316,6 +338,8 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
 /* ---------- now playing ---------- */
 .mnow { position: fixed; inset: 0 0 var(--mbar-h) 0; z-index: 790; overflow: hidden; background: #0b0b0f; isolation: isolate; animation: mnow-in 320ms var(--ease-out); }
 @keyframes mnow-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+.mnow--closing { animation: mnow-out 240ms cubic-bezier(0.5, 0, 0.9, 0.4) forwards; pointer-events: none; }
+@keyframes mnow-out { to { opacity: 0; transform: translateY(28px); } }
 .mnow__back { position: absolute; inset: -60px; z-index: -2; background-position: center; background-size: cover; filter: blur(48px) saturate(1.2); transform: scale(1.1); animation: mfadein 600ms ease-out; }
 .mnow__shade { position: absolute; inset: 0; z-index: -1; background: rgba(8, 8, 12, 0.72); }
 .mnow__close { position: absolute; top: 16px; right: 16px; z-index: 2; width: 44px; height: 44px; }
@@ -364,7 +388,10 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
 
 @media (prefers-reduced-motion: reduce) {
   .meq--on i { animation: none; height: 70%; }
-  .mbar, .mqueue, .mnow, .mnow__cover, .mnow__back, .music__tab, .mhero, .mmenu, .mdialog, .mheart--on svg { animation: none; }
+  .mbar, .mqueue, .mnow, .mnow__cover, .mnow__back, .music__tab, .mhero, .mmenu, .mdialog, .mheart--on svg, .mempty, .mempty__icon { animation: none; }
+  .mempty__ring { animation: none; opacity: 0.25; transform: scale(1.35); }
+  .mempty__ring:nth-child(2) { transform: scale(1.7); opacity: 0.14; }
+  .mempty__ring:nth-child(3) { display: none; }
   .mtile__art, .mtile__hit .mcover img, .mlyrics--synced .mlyrics__line, .trow .mcover { transition: none; }
   .mtile:hover .mtile__art, .mtile:hover .mcover img, .trow:hover .mcover { transform: none; }
 }
@@ -477,5 +504,5 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
   .mpage .mhero__art { width: 100%; }
   .mpage .mhero__title { font-size: clamp(30px, 2vw, 46px); }
   .mpage__main { padding-top: 40px; padding-bottom: 40px; }
-  .mpage__main .music__empty { text-align: left; padding-left: 0; }
+  .mpage__main .mempty { padding-left: 0; padding-right: 0; }
 }

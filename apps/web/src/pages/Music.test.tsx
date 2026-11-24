@@ -42,6 +42,10 @@ const album = (id: string) => ({ id, title: 'Album ' + id, artistId: 'ar', artis
 let server: {
   playlists: { id: string; name: string; entries: { entryId: number; track: MusicTrack }[] }[]
   albums: ReturnType<typeof album>[]
+  /** The songs the profile likes (null: the two the server holds). */
+  liked: MusicTrack[] | null
+  /** A server with no music at all. */
+  noMusic: boolean
   artists: { id: string; name: string; trackCount: number; albumCount: number; favorite: boolean }[]
   calls:{ method: string; url: string; body?: unknown }[]
   refuse: (method: string, url: string) => boolean
@@ -53,6 +57,7 @@ const listed = () => server.playlists.map((p) => ({ id: p.id, name: p.name, trac
 function answer(method: string, url: string, body: unknown): { status: number; body: unknown } {
   const path = url.split('?')[0]
   const one = /^\/v1\/music\/playlists\/([^/]+)(\/[a-z]+)?$/.exec(path)
+  if (path === '/v1/music' && server.noMusic) return { status: 200, body: { counts: { tracks: 0, albums: 0, artists: 0 }, scanning: false } }
   if (path === '/v1/music')
     return {
       status: 200,
@@ -80,6 +85,8 @@ function answer(method: string, url: string, body: unknown): { status: number; b
     if (one[2] === '/remove') p.entries = p.entries.filter((e) => !(body as { entryIds: number[] }).entryIds.includes(e.entryId))
     return { status: 204, body: null }
   }
+  if (path === '/v1/music/tracks' && url.includes('favorite=') && server.liked) return { status: 200, body: { tracks: server.liked, total: server.liked.length } }
+  if (path === '/v1/music/search') return { status: 200, body: { artists: [], albums: [], tracks: [] } }
   if (path === '/v1/music/tracks') return { status: 200, body: { tracks: [song('a'), song('b')], total: 2 } }
   if (path === '/v1/music/albums') return { status: 200, body: { albums: server.albums } }
   if (path === '/v1/music/artists') return { status: 200, body: { artists: server.artists } }
@@ -132,6 +139,8 @@ beforeEach(() => {
   server = {
     playlists: [{ id: 'pl1', name: 'Morning', entries: [{ entryId: 11, track: song('a') }, { entryId: 12, track: song('b') }, { entryId: 13, track: song('a') }, { entryId: 14, track: song('c') }] }],
     albums: [],
+    liked: null,
+    noMusic: false,
     artists: [],
     calls: [],
     refuse: () => false,
@@ -244,14 +253,49 @@ describe('the playlists tab', () => {
     expect(server.calls.find((c) => c.method === 'POST' && c.url === '/v1/music/playlists')!.body).toEqual({ name: 'Night drive', trackIds: [] })
     expect(where).toBe('/music/playlist/made')
     expect($('.mhero__title')!.textContent).toBe('Night drive')
-    expect($('.music__empty')!.textContent).toContain('Nothing in this playlist yet')
+    expect($('.mempty')!.textContent).toContain('Nothing in this playlist yet')
   })
 
-  it('says how to make one when there are none', async () => {
+  it('says how to make one when there are none, with the one button that makes it', async () => {
     server.playlists = []
     await open('/music?tab=playlists')
-    expect($('.music__empty')!.textContent).toContain('No playlists yet')
-    expect(button('New playlist')).not.toBeNull()
+    expect($('.mempty')!.textContent).toContain('No playlists yet')
+    expect($$('button').filter((b) => b.textContent!.trim() === 'New playlist').length).toBe(1)
+    await click($('.mempty button'))
+    await type('First')
+    expect(where).toBe('/music/playlist/made')
+  })
+
+  it('gives an empty page something to look at and a way on: liked songs lead to the songs', async () => {
+    server.liked = []
+    await open('/music?tab=liked')
+    const empty = $('.mempty')!
+    expect(empty.querySelector('.mempty__title')!.textContent).toBe('No liked songs yet')
+    expect(empty.querySelector('.mempty__icon svg')).not.toBeNull()
+    expect(empty.querySelectorAll('.mempty__ring').length).toBe(3)
+    await click(empty.querySelector('button'))
+    expect(where).toBe('/music?tab=songs')
+    expect(rows()).toEqual(['Song a', 'Song b'])
+  })
+
+  it('says so, with nothing to press, when a search finds nothing', async () => {
+    await open('/music?q=zzz')
+    expect($('.mempty__title')!.textContent).toBe('Nothing found for “zzz”')
+    expect($('.mempty button, .mempty a')).toBeNull()
+    expect($('.mtabs')).toBeNull() // a search stands in for the tabs
+  })
+
+  it('offers an admin the way to add a folder when the server has no music, and only an admin', async () => {
+    server.noMusic = true
+    await open('/music')
+    expect($('.mempty__title')!.textContent).toBe('No music yet')
+    expect($('.mempty a')).toBeNull()
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    session.set({ ...S, isAdmin: true })
+    clearAsyncCache()
+    await open('/music')
+    expect($('.mempty a')!.getAttribute('href')).toBe('/account/library')
   })
 
   it('shows a playlist made from a menu elsewhere without leaving the tab', async () => {

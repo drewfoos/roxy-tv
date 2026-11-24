@@ -369,6 +369,26 @@ export function PlaylistTile({ playlist }: { playlist: MusicPlaylist }) {
   )
 }
 
+/**
+ * A page (or a panel) with nothing in it yet: what would be here, drawn large and quietly
+ * alive, what to do about it in a line, and the button that does it where there is one.
+ */
+export function Empty({ icon, title, children, action, small = false }: { icon: ReactNode; title: string; children?: ReactNode; action?: ReactNode; small?: boolean }) {
+  return (
+    <div className={'mempty' + (small ? ' mempty--small' : '')}>
+      <div className="mempty__art" aria-hidden="true">
+        <span className="mempty__ring" />
+        <span className="mempty__ring" />
+        <span className="mempty__ring" />
+        <span className="mempty__icon">{icon}</span>
+      </div>
+      <b className="mempty__title">{title}</b>
+      {children && <p className="mempty__text">{children}</p>}
+      {action && <div className="mempty__action">{action}</div>}
+    </div>
+  )
+}
+
 /** Tiles the shape of the ones to come, while a page loads. */
 export function TileSkeleton({ count = 12, round = false }: { count?: number; round?: boolean }) {
   return (
