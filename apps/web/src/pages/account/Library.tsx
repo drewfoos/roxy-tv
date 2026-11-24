@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../api/client'
+import { music, type MusicFolder, type MusicScanStatus } from '../../api/music'
 import type { BrowseResponse, IdentifyCandidate, LibraryFolder, ManageTitle } from '../../api/admin'
 import type { Item } from '../../api/types'
 import { markStale, useAsync } from '../../hooks/useAsync'
@@ -11,6 +12,8 @@ const KINDS = [
   { id: 'series', label: 'Shows & movies', hint: 'Finds shows and movies in the folder by itself' },
   { id: 'movies', label: 'Movies only', hint: 'Every video is a movie' },
 ]
+/** What a new folder can be: music folders are added here too, and kept apart from the video ones. */
+const NEW_KINDS = [...KINDS, { id: 'music', label: 'Music', hint: 'Songs, named by their tags' }]
 
 /**
  * Library (admin): the media folders, scans and refreshes, and the titles the server
@@ -150,15 +153,26 @@ type Run = (fn: () => Promise<unknown>, after?: () => void) => Promise<boolean>
 /** The media folders with Edit and Add folder (a folder browser). Also the setup wizard's media step. */
 export function MediaFolders({ onChanged }: { onChanged?: () => void }) {
   const folders = useAsync('library-folders', () => api.folders())
+  const musicFolders = useAsync('music-folders', () => music.folders())
   const [err, setErr] = useState<string | null>(null)
   const [editing, setEditing] = useState<LibraryFolder | null>(null)
+  const [editingMusic, setEditingMusic] = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
+  // While the music folders are being read, their counts are looked at again every few seconds.
+  const scanning = !!musicFolders.data?.scan.scanning
+  useEffect(() => {
+    if (!scanning) return
+    const t = setInterval(() => void musicFolders.reload(true), 2000)
+    return () => clearInterval(t)
+  }, [scanning]) // eslint-disable-line react-hooks/exhaustive-deps
   const run: Run = async (fn, after) => {
     setErr(null)
     try {
       await fn()
       after?.()
       folders.reload(true)
+      musicFolders.reload(true)
+      markStale('music-home')
       onChanged?.()
       return true
     } catch (e) {
@@ -190,7 +204,23 @@ export function MediaFolders({ onChanged }: { onChanged?: () => void }) {
               {editing?.id === f.id && <FolderEditor folder={f} onDone={() => setEditing(null)} run={run} />}
             </div>
           ))}
-          {folders.data && !folders.data.libraries?.length && <Notice>No folders yet. Add the one your downloads land in.</Notice>}
+          {(musicFolders.data?.folders ?? []).map((f) => (
+            <div key={'music-' + f.id}>
+              <ListRow
+                title={f.name}
+                sub={
+                  <>
+                    <div>{f.root}</div>
+                    <div>{f.reachable === false ? "The server can't see this folder right now" : `Music · ${f.tracks.toLocaleString()} ${f.tracks === 1 ? 'song' : 'songs'}`}</div>
+                  </>
+                }
+                right={<span className="link-brand">{editingMusic === f.id ? 'Close' : 'Edit'}</span>}
+                onClick={() => setEditingMusic(editingMusic === f.id ? null : f.id)}
+              />
+              {editingMusic === f.id && <MusicFolderEditor folder={f} scan={musicFolders.data?.scan} onDone={() => setEditingMusic(null)} run={run} />}
+            </div>
+          ))}
+          {folders.data && !folders.data.libraries?.length && !musicFolders.data?.folders.length && <Notice>No folders yet. Add the one your downloads land in.</Notice>}
         </div>
       )}
       {adding ? (
@@ -235,6 +265,49 @@ function FolderEditor({ folder, onDone, run }: { folder: LibraryFolder; onDone: 
   )
 }
 
+/** A music folder: what its last scan found, a scan on request, and removing it. */
+function MusicFolderEditor({ folder, scan, onDone, run }: { folder: MusicFolder; scan?: MusicScanStatus; onDone: () => void; run: Run }) {
+  const [confirm, setConfirm] = useState(false)
+  const last = scan?.folders?.find((r) => r.folderId === folder.id)
+  return (
+    <div className="acc-sub">
+      {scan?.scanning ? (
+        <Notice>Reading the folder{scan.total > 0 ? `: ${scan.done.toLocaleString()} of ${scan.total.toLocaleString()} files` : '…'}</Notice>
+      ) : last?.leftAlone ? (
+        <Notice kind="error">Left as it is: {last.leftAlone}</Notice>
+      ) : last ? (
+        <Notice kind={last.failed ? 'error' : 'ok'}>
+          Last scan: {last.files.toLocaleString()} files
+          {[
+            [last.added, 'new'],
+            [last.updated, 'changed'],
+            [last.moved, 'moved'],
+            [last.missing, 'gone'],
+            [last.failed, 'could not be read'],
+          ]
+            .filter(([n]) => (n as number) > 0)
+            .map(([n, word]) => `, ${n} ${word}`)
+            .join('')}
+          {last.problems?.length ? ` (${last.problems[0]})` : ''}
+        </Notice>
+      ) : null}
+      <div className="acc-actions">
+        <ActionButton kind="grey" onClick={() => run(() => music.scan(false))} done="Started">
+          Scan now
+        </ActionButton>
+        <ActionButton kind="grey" onClick={() => run(() => music.scan(true))} done="Started">
+          Read every file again
+        </ActionButton>
+        <button className="btn btn--grey" onClick={onDone}>
+          Close
+        </button>
+        <ConfirmButton label="Remove folder" confirm="Tap again to remove" onArmed={() => setConfirm(true)} onConfirm={() => run(() => music.removeFolder(folder.id), onDone)} />
+      </div>
+      {confirm && <div className="ffield__hint">Removing forgets its songs, their play counts and liked marks. The files stay where they are.</div>}
+    </div>
+  )
+}
+
 function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
   const [tree, setTree] = useState<BrowseResponse | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -261,7 +334,7 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
       setName(base)
       setFilled(base)
     }
-    setKind(/movie|film/i.test(base) ? 'movies' : 'series')
+    setKind(/music|songs|audio|albums/i.test(base) ? 'music' : /movie|film/i.test(base) ? 'movies' : 'series')
     setAnime(/anime/i.test(base))
   }
   return (
@@ -284,7 +357,7 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
             </div>
             <div className="acc-list acc-list--scroll">
               {(tree.path ? tree.dirs : (tree.roots ?? tree.dirs)).map((d) => (
-                <ListRow key={d.path} title={d.name} sub={d.skip ? d.skip : d.videos ? `${d.videos} videos` : undefined} right={<span className="link-brand">Open</span>} onClick={() => go(d.path)} />
+                <ListRow key={d.path} title={d.name} sub={d.skip ? d.skip : [d.videos ? `${d.videos} videos` : '', d.audio ? `${d.audio} songs` : ''].filter(Boolean).join(' · ') || undefined} right={<span className="link-brand">Open</span>} onClick={() => go(d.path)} />
               ))}
             </div>
             {/* Cancel from the first list too: it was only offered inside a folder. */}
@@ -323,11 +396,14 @@ function AddFolder({ onDone, run }: { onDone: () => void; run: Run }) {
           </Field>
           <div className="ffield">
             <span className="ffield__label">Type</span>
-            <RadioList value={kind} options={KINDS} onChange={setKind} />
+            <RadioList value={kind} options={NEW_KINDS} onChange={setKind} />
           </div>
-          <ToggleRow title="Anime" hint="Look titles up on AniList first, then TMDB." on={anime} onChange={setAnime} />
+          {kind !== 'music' && <ToggleRow title="Anime" hint="Look titles up on AniList first, then TMDB." on={anime} onChange={setAnime} />}
           <div className="acc-actions">
-            <ActionButton onClick={() => run(() => api.addFolder({ path: chosen, name: name.trim() || chosen, kind, anime }), onDone)} disabled={!name.trim()}>
+            <ActionButton
+              onClick={() => run(() => (kind === 'music' ? music.addFolder(chosen, name.trim() || chosen) : api.addFolder({ path: chosen, name: name.trim() || chosen, kind, anime })), onDone)}
+              disabled={!name.trim()}
+            >
               Add and scan
             </ActionButton>
             <button className="btn btn--grey" onClick={() => setChosen(null)}>

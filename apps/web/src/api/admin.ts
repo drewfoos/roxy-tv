@@ -108,6 +108,8 @@ export interface BrowseDir {
   name: string
   path: string
   videos?: number
+  /** Audio files in it, counted the same way (absent on older servers). */
+  audio?: number
   /** Why a scan leaves this folder alone (download folder, extras...); empty when it doesn't. */
   skip?: string
 }

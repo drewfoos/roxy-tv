@@ -3,8 +3,9 @@ import { NavLink, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
 import { session } from '../api/session'
 import { useSession } from '../app/useSession'
-import { IconBookmarkOutline, IconClose, IconEdit, IconExpand, IconExplore, IconGrid, IconHistory, IconHome, IconLogout, IconMenu, IconSearch, IconSettings, IconSwap, WitchHat } from './Icons'
+import { IconBookmarkOutline, IconClose, IconEdit, IconExpand, IconExplore, IconGrid, IconHistory, IconHome, IconLogout, IconMenu, IconMusicNote, IconSearch, IconSettings, IconSwap, WitchHat } from './Icons'
 import { BottomNav, PhoneHomeHeader } from './PhoneChrome'
+import { useHasMusic } from '../music/MusicBarHost'
 
 /**
  * The top bar, measured from Crunchyroll's: a solid grey bar the full width with no
@@ -28,6 +29,7 @@ export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
   const [q, setQ] = useState('')
   const [drawer, setDrawer] = useState<'none' | 'account' | 'menu'>('none')
   const searchRef = useRef<HTMLInputElement>(null)
+  const hasMusic = useHasMusic()
 
   useEffect(() => {
     if (searching) searchRef.current?.focus()
@@ -75,6 +77,11 @@ export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
           <NavLink to="/browse?c=movies" className={link}>
             Movies
           </NavLink>
+          {hasMusic && (
+            <NavLink to="/music" className={link}>
+              Music
+            </NavLink>
+          )}
         </nav>
         <div className="topbar__spacer" />
         {searching ? (
@@ -146,6 +153,11 @@ export function TopBar({ phone = 'bar' }: { phone?: PhoneChrome }) {
             <NavLink to="/browse?c=movies" className="drawer__item" onClick={close}>
               <IconGrid size={22} /> Browse Movies
             </NavLink>
+            {hasMusic && (
+              <NavLink to="/music" className="drawer__item" onClick={close}>
+                <IconMusicNote size={22} /> Music
+              </NavLink>
+            )}
           </div>
           <div className="drawer__group">
             <NavLink to="/lists" className="drawer__item" onClick={close}>

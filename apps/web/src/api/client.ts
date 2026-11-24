@@ -150,6 +150,9 @@ function q(params: Record<string, string | number | boolean | undefined>): strin
   return parts.length ? '?' + parts.join('&') : ''
 }
 
+/** The request helpers, for the API's other sections (music.ts) that live in files of their own. */
+export const call = { get, post, del, put, patch, q }
+
 export interface ItemsQuery {
   type: string
   parent?: string

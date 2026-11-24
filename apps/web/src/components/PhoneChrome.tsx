@@ -3,7 +3,8 @@ import { Link, NavLink, useNavigate } from 'react-router'
 import { api, px } from '../api/client'
 import { useSession } from '../app/useSession'
 import { Avatar } from './TopBar'
-import { IconBookmarkOutline, IconClose, IconExplore, IconGrid, IconHome, IconMore, IconSearch, WitchHat } from './Icons'
+import { IconBookmarkOutline, IconClose, IconExplore, IconGrid, IconHome, IconMore, IconMusicNote, IconSearch, WitchHat } from './Icons'
+import { useHasMusic } from '../music/MusicBarHost'
 
 /*
  * The phone app's chrome, translated from apps/android ui/phone (PhoneRoot.kt,
@@ -15,6 +16,7 @@ export function BottomNav() {
   const s = useSession()
   const avatar = s?.profileId && s.profileHasAvatar ? api.profileAvatarUrl(s.profileId, px(26) * 2, s.profileAvatarKey) : null
   const cls = ({ isActive }: { isActive: boolean }) => 'bnav__tab' + (isActive ? ' bnav__tab--on' : '')
+  const hasMusic = useHasMusic()
   return (
     <nav className="bnav phone-only" aria-label="Tabs">
       <NavLink to="/" end className={cls}>
@@ -29,6 +31,12 @@ export function BottomNav() {
         <IconGrid size={26} />
         <span>Browse</span>
       </NavLink>
+      {hasMusic && (
+        <NavLink to="/music" className={cls}>
+          <IconMusicNote size={26} />
+          <span>Music</span>
+        </NavLink>
+      )}
       <NavLink to="/lists" className={cls}>
         <IconBookmarkOutline size={26} />
         <span>My Lists</span>

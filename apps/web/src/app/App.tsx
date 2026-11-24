@@ -27,6 +27,9 @@ const DiscoverTitle = lazyPage(() => import("../pages/DiscoverTitle"), (m) => m.
 const Legal = lazyPage(() => import("../pages/Legal"), (m) => m.Legal);
 const LinkEnter = lazyPage(() => import("../pages/LinkTv"), (m) => m.LinkEnter);
 const LinkTv = lazyPage(() => import("../pages/LinkTv"), (m) => m.LinkTv);
+const Music = lazyPage(() => import("../pages/Music"), (m) => m.Music);
+const MusicArtist = lazyPage(() => import("../pages/Music"), (m) => m.MusicArtistPage);
+const MusicAlbum = lazyPage(() => import("../pages/Music"), (m) => m.MusicAlbumPage);
 
 /** Signed out -> login; signed in without a profile -> "Who's watching?"; else the app. */
 export default function App() {
@@ -115,6 +118,9 @@ export default function App() {
         <Route path="/series/:id" element={<Series />} />
         <Route path="/movie/:id" element={<Movie />} />
         <Route path="/watch/:id" element={<Watch />} />
+        <Route path="/music" element={<Music />} />
+        <Route path="/music/artist/:id" element={<MusicArtist />} />
+        <Route path="/music/album/:id" element={<MusicAlbum />} />
         <Route path="/legal/:doc" element={<Legal />} />
         <Route path="/link" element={<LinkEnter />} />
         <Route path="/link/:code" element={<LinkTv />} />
