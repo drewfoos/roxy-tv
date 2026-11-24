@@ -292,7 +292,7 @@ describe('the player bar', () => {
     expect(cover().getAttribute('aria-label')).toBe('Close now playing')
     expect(bar()).toContain('mbar--now') // the arrow points down: a press closes
     // On another tab than the one the cover opens: the cover still closes.
-    await click(Array.from(document.body.querySelectorAll('.mnow__tabs button')).find((b) => b.textContent === 'Queue')!)
+    await click(document.body.querySelector('.mnow__switch button[aria-label="Queue"]'))
     await click(cover())
     expect(document.body.querySelector('.mnow')).toBeNull()
     expect(bar()).not.toContain('mbar--now')
@@ -346,20 +346,43 @@ describe('the player bar', () => {
     }
   })
 
-  it('opens the visualizer from the bar, with its styles to choose from', async () => {
+  it('opens the visualizer from the bar: it fills the panel, its style behind a button in its corner', async () => {
     await act(async () => player.playTracks(list, 0, { shuffle: false }))
     await renderBar()
-    await click(button('Visualizer'))
-    expect($('.mnow canvas')).not.toBeNull()
-    const styles = () => $$('.mviz__styles button')
+    const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+    const all = (sel: string) => Array.from(document.body.querySelectorAll<HTMLElement>(sel))
+    await click(q('.mbar button[aria-label="Visualizer"]'))
+    expect(q('.mnow .mviz canvas')).not.toBeNull()
+    // What is beside the song is chosen from icons in the panel's corner, each with its name.
+    expect(all('.mnow__switch button').map((b) => [b.getAttribute('aria-label'), b.getAttribute('aria-selected')])).toEqual([['Lyrics', 'false'], ['Visualizer', 'true'], ['Queue', 'false']])
+    expect(all('.mnow__switch button').every((b) => b.querySelector('svg') && !b.textContent)).toBe(true)
+    // No row of styles over the picture: they are in a menu.
+    expect(q('.menu')).toBeNull()
+    await click(q('.mviz__tools button[aria-label="Visualizer style"]'))
+    const styles = () => all('.menu [role="menuitemradio"]')
     expect(styles().map((b) => b.textContent)).toEqual(['Bars', 'Mirror', 'Wave', 'Ring'])
     expect(styles().find((b) => b.getAttribute('aria-checked') === 'true')!.textContent).toBe('Bars')
     await click(styles()[3])
     expect(musicPrefs.get().visualizer).toBe('ring')
-    expect(styles().find((b) => b.getAttribute('aria-checked') === 'true')!.textContent).toBe('Ring')
+    expect(styles().find((b) => b.getAttribute('aria-checked') === 'true')!.textContent).toBe('Ring') // it stays open, to try another
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(q('.menu')).toBeNull()
+    expect(q('.mnow')).not.toBeNull() // Escape closed the menu, not the player under it
+    // It can take the whole of "now playing", the song stepping aside, and come back.
+    expect(q('.mnow')!.className).not.toContain('mnow--wide')
+    await click(q('.mviz__tools button[aria-label="Fill the window"]'))
+    expect(q('.mnow')!.className).toContain('mnow--wide')
+    expect(q('.mviz__caption')!.textContent).toBe('Song a · Artist a')
+    // Only the visualizer does: on another tab the song is back beside it.
+    await click(q('.mnow__switch button[aria-label="Queue"]'))
+    expect(q('.mnow')!.className).not.toContain('mnow--wide')
+    await click(q('.mnow__switch button[aria-label="Visualizer"]'))
+    await click(q('.mviz__tools button[aria-label="Back beside the song"]'))
+    expect(q('.mnow')!.className).not.toContain('mnow--wide')
+    expect(q('.mviz__caption')).toBeNull()
     // A second press on the bar's button closes it.
-    await click(button('Visualizer'))
-    expect($('.mnow')).toBeNull()
+    await click(q('.mbar button[aria-label="Visualizer"]'))
+    expect(q('.mnow')).toBeNull()
   })
 
   it('changes how songs are sent from the playback settings, and says what this song gets', async () => {
@@ -401,7 +424,7 @@ describe('the player bar', () => {
     await click($$('.mlyrics__line')[2])
     expect(FakeAudio.made[0].currentTime).toBe(60)
     // The other tab is the queue.
-    await click($$('.mnow__tabs button').find((b) => b.textContent === 'Queue')!)
+    await click(document.body.querySelector('.mnow__switch button[aria-label="Queue"]'))
     expect($$('.mnow .qrow').length).toBe(3)
     await click(button('Close'))
     expect($('.mnow')).toBeNull()

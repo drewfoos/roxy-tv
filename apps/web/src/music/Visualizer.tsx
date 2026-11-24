@@ -1,7 +1,9 @@
 // The sound, drawn: what is playing right now, as bars, mirrored bars, a wave or a ring.
 // It reads the player's analyser (the real audio on its way out), so it shows nothing
 // for a paused song and needs Web Audio.
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { IconCheck, IconFullscreen, IconFullscreenExit, IconTune } from '../components/Icons'
+import { FloatingMenu, type MenuAt } from './Menus'
 import { player } from './player'
 import { musicPrefs, VISUALIZERS, type VisualizerStyle } from './prefs'
 import { usePlayer } from './usePlayer'
@@ -11,6 +13,8 @@ import { usePrefs } from './usePrefs'
 const BARS = 56
 const MIN_HZ = 32
 const MAX_HZ = 16000
+/** The part of the height, under the bars, that their reflection takes. */
+const REFLECTION = 0.22
 
 /**
  * The stretch of the analyser's bins each bar covers, as places among them (bin 3.4 is
@@ -104,8 +108,9 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, style: Visual
   const gap = Math.max(2, w / n / 5)
   const bw = (w - gap * (n - 1)) / n
   const mirror = style === 'mirror'
-  const base = mirror ? h / 2 : h
-  const full = mirror ? h / 2 - 2 : h - 4
+  // Bars stand on a floor a little above the bottom and are reflected in it.
+  const base = mirror ? h / 2 : Math.round(h * (1 - REFLECTION))
+  const full = mirror ? h / 2 - 2 : base - 4
   const grad = ctx.createLinearGradient(0, base, 0, base - full)
   grad.addColorStop(0, '#1b5fa8')
   grad.addColorStop(0.6, accent)
@@ -124,6 +129,13 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, style: Visual
       // The highest each bar reached lately, coming down slowly.
       ctx.fillStyle = 'rgba(255,255,255,0.85)'
       ctx.fillRect(x, base - Math.max(2, peaks[i] * full) - 3, bw, 2)
+      // Its reflection in the floor: shorter, and fading away from it.
+      const rh = Math.min(h - base, bh * (REFLECTION / (1 - REFLECTION)))
+      const fade = ctx.createLinearGradient(0, base, 0, base + (h - base))
+      fade.addColorStop(0, 'rgba(62,166,255,0.34)')
+      fade.addColorStop(1, 'rgba(62,166,255,0)')
+      ctx.fillStyle = fade
+      ctx.fillRect(x, base + 2, bw, Math.max(0, rh - 2))
     }
   }
 }
@@ -186,24 +198,52 @@ export function Visualizer({ style }: { style: VisualizerStyle }) {
   return <canvas ref={canvas} className="mviz__canvas" aria-hidden="true" />
 }
 
-/** The visualizer with its styles to choose from, for "now playing". */
-export function VisualizerPanel() {
+/**
+ * The visualizer for "now playing": it fills its panel, and what there is to set (its
+ * style, taking the whole window) is behind two small buttons in its corner, which show
+ * when the pointer is over it.
+ */
+export function VisualizerPanel({ wide = false, onWide, caption }: { wide?: boolean; onWide?: (wide: boolean) => void; caption?: string }) {
   const prefs = usePrefs()
   const state = usePlayer()
+  const [menu, setMenu] = useState<MenuAt | null>(null)
   const ready = player.analyser() != null
   return (
-    <div className="mviz">
-      <div className="mviz__styles" role="radiogroup" aria-label="Visualizer style">
-        {VISUALIZERS.map((v) => (
-          <button key={v.id} type="button" role="radio" aria-checked={prefs.visualizer === v.id} className={prefs.visualizer === v.id ? 'on' : ''} onClick={() => musicPrefs.set({ visualizer: v.id })}>
-            {v.label}
+    <div className={'mviz' + (menu ? ' mviz--menu' : '')}>
+      <Visualizer style={prefs.visualizer} />
+      {!ready && <div className="mviz__note">{state.playing ? 'This browser gives no access to the sound, so there is nothing to draw.' : 'Press play to see the sound.'}</div>}
+      {caption && <div className="mviz__caption">{caption}</div>}
+      <div className="mviz__tools">
+        {onWide && (
+          <button type="button" className="micon" onClick={() => onWide(!wide)} aria-pressed={wide} aria-label={wide ? 'Back beside the song' : 'Fill the window'} title={wide ? 'Back beside the song' : 'Fill the window'}>
+            {wide ? <IconFullscreenExit size={22} /> : <IconFullscreen size={22} />}
           </button>
-        ))}
+        )}
+        <button
+          type="button"
+          className={'micon' + (menu ? ' micon--on' : '')}
+          onClick={(e) => {
+            const box = e.currentTarget.getBoundingClientRect()
+            setMenu((m) => (m ? null : { x: box.right, y: box.bottom, box }))
+          }}
+          aria-label="Visualizer style"
+          title="Style"
+          aria-haspopup="menu"
+          aria-expanded={!!menu}
+        >
+          <IconTune size={22} />
+        </button>
       </div>
-      <div className="mviz__stage">
-        <Visualizer style={prefs.visualizer} />
-        {!ready && <div className="mviz__note">{state.playing ? 'This browser gives no access to the sound, so there is nothing to draw.' : 'Press play to see the sound.'}</div>}
-      </div>
+      {menu && (
+        <FloatingMenu at={menu} onClose={() => setMenu(null)}>
+          {VISUALIZERS.map((v) => (
+            <button key={v.id} type="button" role="menuitemradio" aria-checked={prefs.visualizer === v.id} className={'mmenu__pick' + (prefs.visualizer === v.id ? ' on' : '')} onClick={() => musicPrefs.set({ visualizer: v.id })}>
+              <span className="mmenu__name">{v.label}</span>
+              {prefs.visualizer === v.id && <IconCheck size={18} />}
+            </button>
+          ))}
+        </FloatingMenu>
+      )}
     </div>
   )
 }

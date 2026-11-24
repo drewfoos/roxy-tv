@@ -101,3 +101,5 @@ export const IconPlaylistAdd = (p: P) => <Svg {...p}><path d="M14 10H3v2h11v-2zm
 export const IconPlaylist = (p: P) => <Svg {...p}><path d="M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm13-1v8l6-4z" /></Svg>
 export const IconTune = (p: P) => <Svg {...p}><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z" /></Svg>
 export const IconSpectrum = (p: P) => <Svg {...p}><path d="M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z" /></Svg>
+export const IconLyrics = (p: P) => <Svg {...p}><path d="M14 9c0-2.04 1.24-3.79 3-4.57V4c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v18l4-4h9c1.1 0 2-.9 2-2v-2.43c-1.76-.78-3-2.53-3-4.57zm-4 5H6v-2h4v2zm3-3H6V9h7v2zm0-3H6V6h7v2z" /><path d="M20 6.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V3h2V1h-4v5.18z" /></Svg>
+export const IconFullscreenExit = (p: P) => <Svg {...p}><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" /></Svg>

@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { Link, useLocation } from 'react-router'
 import { clock, codecName, isHiRes, longDuration, music, qualityLabel, type MusicTrack } from '../api/music'
 import { useAsync } from '../hooks/useAsync'
-import { IconClose, IconDrag, IconExpand, IconMic, IconPause, IconPlay, IconPlaylistAdd, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconSkipNext, IconSkipPrevious, IconSpectrum, IconTune, IconVolume, IconVolumeOff } from '../components/Icons'
+import { IconClose, IconDrag, IconExpand, IconLyrics, IconPause, IconPlay, IconPlaylistAdd, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconSkipNext, IconSkipPrevious, IconSpectrum, IconTune, IconVolume, IconVolumeOff } from '../components/Icons'
 import { FloatingMenu, MoreButton, NameDialog, SongsMenu, type MenuAt } from './Menus'
 import { ArtistLinks, Cover, Empty, Equalizer, HeartButton } from './Parts'
 import { playlistsChanged } from './changes'
@@ -147,7 +147,7 @@ export function MusicBar() {
           </button>
           {track.lyrics && (
             <button type="button" className={'micon' + (open === 'now' && tab === 'lyrics' ? ' micon--on' : '')} onClick={() => showNow('lyrics')} aria-label="Lyrics" title="Lyrics">
-              <IconMic size={20} />
+              <IconLyrics size={20} />
             </button>
           )}
           <button type="button" className={'micon mbar__viz' + (open === 'now' && tab === 'visualizer' ? ' micon--on' : '')} onClick={() => showNow('visualizer')} aria-label="Visualizer" title="Visualizer">
@@ -489,13 +489,16 @@ function NowPlaying({ track, state, tab, onTab, onClose, closing = false }: { tr
   const art = music.artUrl(track.art, 640)
   const [menu, setMenu] = useState<MenuAt | null>(null)
   const repeatLabel = state.repeat === 'off' ? 'Repeat' : state.repeat === 'all' ? 'Repeat one' : 'Repeat off'
-  const tabs: [NowTab, string][] = [
-    ['lyrics', 'Lyrics'],
-    ['visualizer', 'Visualizer'],
-    ['queue', 'Queue'],
+  // The visualizer taking the whole of "now playing", the song a line under it.
+  const [wide, setWide] = useState(false)
+  const tabs: [NowTab, string, typeof IconLyrics][] = [
+    ['lyrics', 'Lyrics', IconLyrics],
+    ['visualizer', 'Visualizer', IconSpectrum],
+    ['queue', 'Queue', IconQueue],
   ]
+  const filled = wide && tab === 'visualizer'
   return (
-    <div className={'mnow' + (closing ? ' mnow--closing' : '')} role="dialog" aria-label="Now playing" aria-hidden={closing || undefined}>
+    <div className={'mnow' + (closing ? ' mnow--closing' : '') + (filled ? ' mnow--wide' : '')} role="dialog" aria-label="Now playing" aria-hidden={closing || undefined}>
       {art && <div className="mnow__back" key={art} style={{ backgroundImage: `url(${art})` }} />}
       <div className="mnow__shade" />
       <button type="button" className="micon mnow__close" onClick={onClose} aria-label="Close">
@@ -526,20 +529,23 @@ function NowPlaying({ track, state, tab, onTab, onClose, closing = false }: { tr
           </div>
         </div>
         <div className="mnow__side">
-          <div className="mnow__tabs" role="tablist">
-            {tabs.map(([id, label]) => (
-              <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => onTab(id)}>
-                {label}
+          {/* What is beside the song fills its panel; it is chosen from a few icons in the panel's corner. */}
+          <div className="mnow__panel" key={tab}>
+            {tab === 'lyrics' && <LyricsView track={track} />}
+            {tab === 'visualizer' && <VisualizerPanel wide={wide} onWide={setWide} caption={filled ? `${track.title} · ${track.artist}` : undefined} />}
+            {tab === 'queue' && (
+              <div className="mnow__queue">
+                <QueueList />
+              </div>
+            )}
+          </div>
+          <div className="mnow__switch" role="tablist" aria-label="Beside the song">
+            {tabs.map(([id, label, Icon]) => (
+              <button key={id} type="button" role="tab" aria-selected={tab === id} aria-label={label} title={label} className={tab === id ? 'on' : ''} onClick={() => onTab(id)}>
+                <Icon size={22} />
               </button>
             ))}
           </div>
-          {tab === 'lyrics' && <LyricsView track={track} />}
-          {tab === 'visualizer' && <VisualizerPanel />}
-          {tab === 'queue' && (
-            <div className="mnow__queue">
-              <QueueList />
-            </div>
-          )}
         </div>
       </div>
       {menu && <SongsMenu at={menu} onClose={() => setMenu(null)} tracks={async () => [track]} single={track} />}
@@ -578,7 +584,7 @@ function LyricsView({ track }: { track: MusicTrack }) {
   if (!track.lyrics)
     return (
       <div className="mlyrics mlyrics--none">
-        <Empty small icon={<IconMic size={30} />} title="No lyrics for this song">
+        <Empty small icon={<IconLyrics size={30} />} title="No lyrics for this song">
           A file named like the song, ending in .lrc or .txt, beside it in the music folder gives it some.
         </Empty>
       </div>
