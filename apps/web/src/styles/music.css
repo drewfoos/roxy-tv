@@ -148,6 +148,10 @@ a.mtile__name:hover { color: var(--accent-light); }
 .trow--bone { cursor: default; }
 .trow--bone:hover { background: none; }
 .trow__n { position: relative; display: grid; place-items: center; height: 36px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+button.trow__n { width: 100%; padding: 0; border: 0; background: none; font: inherit; font-size: 14px; cursor: pointer; border-radius: 6px; }
+.trow__n:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.trow__n:focus-visible .trow__play { opacity: 1; transform: none; }
+.trow__n:focus-visible .trow__num, .trow__n:focus-visible .meq { opacity: 0; }
 .trow__num, .trow__n .meq { transition: opacity 120ms; }
 .trow__play { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; opacity: 0; transform: scale(0.7); transition: opacity 120ms, transform 160ms var(--ease-out); }
 .trow:not(.trow--head):hover .trow__play { opacity: 1; transform: none; }
@@ -393,7 +397,22 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
 .mnow--wide .mnow__song { display: none; }
 .mviz__note { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: rgba(255, 255, 255, 0.6); text-align: center; }
 
+/* For a screen reader alone: said, not shown. */
+.msr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.mviz__still { flex-direction: column; gap: 14px; display: flex; align-items: center; justify-content: center; }
+.mviz__still p { margin: 0; }
+
 @media (prefers-reduced-motion: reduce) {
+  /* Whatever of the music interface is not named below: nothing glides, slides or
+     scrolls by itself. (Things that leave are taken away by a timer, not by their
+     animation's end, so they still leave.) */
+  .music *, .mbar *, .mqueue *, .mnow *, .mmenu *, .mdialog *, .mset *, .mtoast, .mtile *, .trow * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .trow:hover .mcover, .mtile:hover .mtile__art { transform: none; }
   .meq--on i { animation: none; height: 70%; }
   .mbar, .mqueue, .mnow, .mnow__cover, .mnow__back, .music__tab, .mhero, .mmenu, .mdialog, .mheart--on svg, .mempty, .mempty__icon { animation: none; }
   .mempty__ring { animation: none; opacity: 0.25; transform: scale(1.3); }

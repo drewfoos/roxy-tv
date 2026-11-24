@@ -223,9 +223,9 @@ export const api = {
   // ---- server and auth ----
   systemInfo: () => get<SystemInfo>('/v1/system/info', false),
   setupStatus: () => get<SetupStatus>('/v1/setup', false),
-  /** First-time setup: makes the admin (only while no account exists, from the home network) and signs this browser in. */
-  setupAdmin: (name: string, password: string) =>
-    request<LoginResponse>('POST', '/v1/setup/admin', { name, password, client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false),
+  /** First-time setup: makes the admin (only while no account exists, from the home network, with the server's setup code) and signs this browser in. */
+  setupAdmin: (name: string, password: string, code = '') =>
+    request<LoginResponse>('POST', '/v1/setup/admin', { name, password, code, client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false),
   async login(username: string, password: string): Promise<LoginResponse> {
     return request<LoginResponse>('POST', '/v1/auth/login', { username, password, client: 'roxy-web', device: deviceName(), deviceId: session.deviceId(), version: APP_VERSION }, false)
   },

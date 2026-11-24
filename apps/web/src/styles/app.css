@@ -522,6 +522,11 @@ img { display: block; }
 .signin__eye { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9px; color: var(--muted); }
 .signin__eye:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
 .signin__hint { margin-top: -6px; font-size: 13px; color: #f5c451; }
+/* Over the form: the page was reached unencrypted from outside the home network. */
+.signin__clear { width: min(440px, 100%); padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(245, 196, 81, 0.5); background: rgba(245, 196, 81, 0.1); color: #f5d98a; font-size: 13.5px; line-height: 1.45; }
+/* Under a field: where the thing asked for is found. */
+.signin__where { font-size: 13px; line-height: 1.45; color: #b8bcc6; font-weight: 400; }
+.signin__where code { font-size: 12.5px; color: #d6d9e0; }
 .signin__error { padding: 11px 13px; border-radius: 12px; font-size: 14px; line-height: 1.45; color: #ffb4ab; background: rgba(255,82,82,0.10); border: 1px solid rgba(255,82,82,0.28); }
 
 .signin__primary, .signin__secondary { display: flex; align-items: center; justify-content: center; gap: 10px; height: 50px; border-radius: 12px; font-size: 15.5px; font-weight: 700; transition: filter 120ms, background-color 120ms, border-color 120ms; }

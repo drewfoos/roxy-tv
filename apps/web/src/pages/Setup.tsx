@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { UNENCRYPTED_WARNING, unencryptedOutside } from '../app/transport'
 import { api, ApiError, APP_VERSION } from '../api/client'
 import type { SetupStatus } from '../api/types'
 import { session } from '../api/session'
@@ -70,7 +71,7 @@ export function SetupWizard({ status, onCancel, onFinish }: { status?: SetupStat
         <div className="signin__card setup__card">
           {step !== STEP_WELCOME && <StepHeader step={step} onBack={step === STEP_ACCOUNT && signedIn ? undefined : back} />}
           {step === STEP_WELCOME && <Welcome status={status} onStart={() => go(STEP_ACCOUNT)} onCancel={onCancel} />}
-          {step === STEP_ACCOUNT && <AccountStep onDone={() => go(STEP_DETAILS)} onShow={setDoc} />}
+          {step === STEP_ACCOUNT && <AccountStep needsCode={!!status?.code} onDone={() => go(STEP_DETAILS)} onShow={setDoc} />}
           {step === STEP_DETAILS && <DetailsStep onNext={() => go(STEP_MEDIA)} />}
           {step === STEP_MEDIA && <MediaStep onNext={() => go(STEP_DONE)} />}
           {step === STEP_DONE && <DoneStep onFinish={finish} />}
@@ -149,7 +150,7 @@ function StepTitle({ title, children }: { title: string; children: ReactNode }) 
   )
 }
 
-function AccountStep({ onDone, onShow }: { onDone: () => void; onShow: (doc: 'terms' | 'privacy') => void }) {
+function AccountStep({ needsCode, onDone, onShow }: { needsCode: boolean; onDone: () => void; onShow: (doc: 'terms' | 'privacy') => void }) {
   const s = session.get()
   const [name, setName] = useState('')
   const [pw, setPw] = useState('')
@@ -159,6 +160,9 @@ function AccountStep({ onDone, onShow }: { onDone: () => void; onShow: (doc: 'te
   const [version, setVersion] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // The server's setup code: what shows that the person here is the server's owner and
+  // not merely somebody on its network. The server says whether it asks for one (needsCode).
+  const [code, setCode] = useState('')
   useEffect(() => {
     api.legal('terms').then((d) => setVersion(d.version)).catch(() => setVersion(null))
   }, [])
@@ -185,10 +189,11 @@ function AccountStep({ onDone, onShow }: { onDone: () => void; onShow: (doc: 'te
 
   // A new server: agreeing is always asked here, like a first sign-in.
   const terms: Terms = { version, needed: true, agreed, setAgreed, show: onShow }
-  const ready = name.trim() !== '' && pw.length >= 8 && pw === pw2 && agreed && !busy
+  const ready = name.trim() !== '' && pw.length >= 8 && pw === pw2 && agreed && !busy && (!needsCode || code.trim() !== '')
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (busy) return
+    if (needsCode && !code.trim()) return setErr("Enter the server's setup code.")
     if (!name.trim()) return setErr('Enter a name to sign in with.')
     if (pw.length < 8) return setErr('The password needs at least 8 characters.')
     if (pw !== pw2) return setErr("The two passwords don't match.")
@@ -196,7 +201,7 @@ function AccountStep({ onDone, onShow }: { onDone: () => void; onShow: (doc: 'te
     setBusy(true)
     setErr(null)
     try {
-      const r = await api.setupAdmin(name.trim(), pw)
+      const r = await api.setupAdmin(name.trim(), pw, code.trim())
       await recordTerms(r.token, version)
       // The flag first, so the signed-in app opens back here instead of on Home.
       setSetupInProgress(r.user.id)
@@ -211,7 +216,21 @@ function AccountStep({ onDone, onShow }: { onDone: () => void; onShow: (doc: 'te
   return (
     <>
       <StepTitle title="Create your account">You're the admin: you'll manage the server and can add your family later, each with their own account and profiles.</StepTitle>
+      {unencryptedOutside() && (
+        <div className="signin__clear" role="note">
+          {UNENCRYPTED_WARNING}
+        </div>
+      )}
       <form className="signin__form" onSubmit={submit} noValidate>
+        {needsCode && (
+          <label className="signin__field">
+            <span>Setup code</span>
+            <input value={code} onChange={(e) => (setCode(e.target.value), setErr(null))} placeholder="XXXX-XXXX" autoComplete="off" autoCapitalize="characters" spellCheck={false} aria-describedby="setup-code-where" />
+            <span id="setup-code-where" className="signin__where">
+              Roxy Server wrote it into its log when it started, and into <code>setup-code.txt</code> in its data folder. It shows this server is yours.
+            </span>
+          </label>
+        )}
         <label className="signin__field">
           <span>Your name (what you'll sign in with)</span>
           <input value={name} onChange={(e) => (setName(e.target.value), setErr(null))} autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus />

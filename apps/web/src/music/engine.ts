@@ -38,6 +38,8 @@ export interface EngineTrack {
   gainDb: number
   /** Worth decoding into memory for an exact join (it runs on into, or from, its neighbour). */
   exact: boolean
+  /** How many channels the file has, when the library knows (two is taken otherwise). */
+  channels?: number
 }
 
 export type EngineEvent =
@@ -144,10 +146,27 @@ function deviceBudget(): number {
   return exactBudget(typeof memory === 'number' ? memory : undefined, coarse)
 }
 
-/** The longest song (seconds) that is decoded for an output of `rate` samples a second, within `budget` bytes. */
-export function exactSeconds(rate: number, budget = 256 * MB): number {
-  return Math.min(EXACT_MAX_SECONDS, budget / (Math.max(8000, rate) * 2 * 4))
+/**
+ * The longest song (seconds) that is decoded for an output of `rate` samples a second,
+ * within `budget` bytes. A decoded song is four bytes a sample for every channel the
+ * file has: a 5.1 recording takes three times what a stereo one does, and a third of
+ * the length fits.
+ */
+export function exactSeconds(rate: number, budget = 256 * MB, channels = 2): number {
+  return Math.min(EXACT_MAX_SECONDS, budget / decodedBytes(1, rate, channels))
 }
+
+/** What `seconds` of decoded sound take in memory. */
+export function decodedBytes(seconds: number, rate: number, channels = 2): number {
+  return seconds * Math.max(8000, rate) * Math.max(1, Math.round(channels) || 2) * 4
+}
+
+/**
+ * The estimate above is made from what the library says of a file (its length, its
+ * channels). What counts is what the decoder hands back, so that is measured too: a
+ * decoded song over the budget by more than this is not kept, and is not decoded again.
+ */
+export const BUDGET_SLACK = 1.02
 /**
  * How long before an element's end the buffer that follows it is put on the clock. Long
  * enough that a tab in the background, whose events come once a second, has a few
@@ -186,6 +205,8 @@ export class Engine {
   private joinAt = 0
   /** Fetches of songs being decoded, by address: stopped when the song is let go. */
   private fetching = new Map<string, AbortController>()
+  /** Songs that turned out larger than the budget once fetched or decoded: joined through elements from then on. */
+  private tooLarge = new Set<string>()
   /** Decodes run one after another: this is the end of the line. */
   private decoding: Promise<unknown> = Promise.resolve()
   private budget = deviceBudget()
@@ -435,9 +456,18 @@ export class Engine {
   /** Whether a song can be decoded into memory here. */
   canDecode(track: EngineTrack): boolean {
     if (!track.exact || this.noContext || !contextClass() || typeof fetch !== 'function') return false
+    if (this.tooLarge.has(track.url)) return false
     // Before the sound output is open its rate is not known: 48 kHz is the usual one. A
     // device given no memory for this has no length of song that fits.
-    return track.duration > 0 && track.duration <= exactSeconds(this.ctx?.sampleRate ?? 48000, this.budget)
+    return track.duration > 0 && track.duration <= exactSeconds(this.ctx?.sampleRate ?? 48000, this.budget, track.channels)
+  }
+
+  /** A song found to take more than the budget: let go, and not tried again. */
+  private refuse(url: string, why: string): Error {
+    this.tooLarge.add(url)
+    // Remembered for as long as it is likely to come up again, not for ever.
+    if (this.tooLarge.size > 64) this.tooLarge.delete(this.tooLarge.values().next().value as string)
+    return new Error('too large to hold decoded: ' + why)
   }
 
   /** The decoded songs held now, and what they take (for the page that says how the player is doing). */
@@ -467,6 +497,11 @@ export class Engine {
     }
   }
 
+  /** How many fetches the engine could still stop (for tests: none may be left behind). */
+  pendingFetches(): number {
+    return this.fetching.size
+  }
+
   private decode(track: EngineTrack): Promise<AudioBuffer> {
     const had = this.buffers.get(track.url)
     if (had) return had
@@ -481,27 +516,48 @@ export class Engine {
       return fetch(url, { credentials: 'same-origin', signal: stop?.signal })
         .then((r) => {
           if (!r.ok) throw new Error('HTTP ' + r.status)
+          // The file itself is in memory while it is decoded, beside what it decodes to.
+          // One larger than the whole budget is not downloaded at all (decoded it is
+          // larger still): the answer is let go before its body is read.
+          const size = Number(r.headers?.get?.('Content-Length') ?? NaN)
+          if (Number.isFinite(size) && size > this.budget) {
+            stop?.abort()
+            throw this.refuse(url, `the file is ${Math.round(size / MB)} MB`)
+          }
           return r.arrayBuffer()
         })
         .then((bytes) => {
           if (this.buffers.get(url) !== made) throw new Error('no longer wanted')
+          if (bytes.byteLength > this.budget) throw this.refuse(url, `the file is ${Math.round(bytes.byteLength / MB)} MB`)
           return ctx.decodeAudioData(bytes)
+        })
+        .then((buffer) => {
+          // What it really takes: the library's length or channel count may be off, and
+          // a file can hold more channels than its tags say.
+          const takes = buffer.length * buffer.numberOfChannels * 4
+          if (takes > this.budget * BUDGET_SLACK) throw this.refuse(url, `decoded it takes ${Math.round(takes / MB)} MB`)
+          return buffer
         })
     })
     this.decoding = made.catch(() => undefined)
     this.buffers.set(url, made)
     if (stop) this.fetching.set(url, stop)
+    // This decode's own entry, and no other's: a song let go and asked for again while
+    // its first fetch was still ending has a new entry under the same address, and the
+    // old fetch, settling late, must not take that one away (it could then no longer be
+    // stopped) nor leave its own behind.
+    const forget = () => {
+      if (stop && this.fetching.get(url) === stop) this.fetching.delete(url)
+    }
     made.then(
       (buffer) => {
-        this.fetching.delete(url)
+        forget()
         // Decoded for a song that was let go meanwhile: not kept.
         if (this.buffers.get(url) === made) this.readyBuffers.set(url, buffer)
       },
       () => {
-        if (this.buffers.get(url) === made) {
-          this.buffers.delete(url)
-          this.fetching.delete(url)
-        }
+        forget()
+        if (this.buffers.get(url) === made) this.buffers.delete(url)
       },
     )
     return made

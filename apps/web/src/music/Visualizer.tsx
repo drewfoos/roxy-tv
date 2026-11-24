@@ -1,6 +1,7 @@
 // The sound, drawn: what is playing right now, as bars, mirrored bars, a wave or a ring.
 // It reads the player's analyser (the real audio on its way out), so it shows nothing
 // for a paused song and needs Web Audio.
+import { lessMotionAsked } from './motion'
 import { useEffect, useRef, useState } from 'react'
 import { IconCheck, IconFullscreen, IconFullscreenExit, IconTune } from '../components/Icons'
 import { FloatingMenu, type MenuAt } from './Menus'
@@ -208,10 +209,22 @@ export function VisualizerPanel({ wide = false, onWide, caption }: { wide?: bool
   const state = usePlayer()
   const [menu, setMenu] = useState<MenuAt | null>(null)
   const ready = player.analyser() != null
+  // Where less motion was asked for (a setting of the system's) the picture stays still
+  // until it is asked for here: it is nothing but motion, and it never stops by itself.
+  const [still, setStill] = useState(() => lessMotionAsked())
   return (
     <div className={'mviz' + (menu ? ' mviz--menu' : '')}>
-      <Visualizer style={prefs.visualizer} />
-      {!ready && <div className="mviz__note">{state.playing ? 'This browser gives no access to the sound, so there is nothing to draw.' : 'Press play to see the sound.'}</div>}
+      {still ? (
+        <div className="mviz__note mviz__still">
+          <p>The picture is still: this device asks for less motion.</p>
+          <button type="button" className="btn btn--ghost" onClick={() => setStill(false)}>
+            Show it moving
+          </button>
+        </div>
+      ) : (
+        <Visualizer style={prefs.visualizer} />
+      )}
+      {!still && !ready && <div className="mviz__note">{state.playing ? 'This browser gives no access to the sound, so there is nothing to draw.' : 'Press play to see the sound.'}</div>}
       {caption && <div className="mviz__caption">{caption}</div>}
       <div className="mviz__tools">
         {onWide && (

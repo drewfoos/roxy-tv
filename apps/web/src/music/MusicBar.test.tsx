@@ -8,7 +8,7 @@ import { session } from '../api/session'
 import { clearAsyncCache } from '../hooks/useAsync'
 import { FakeAudio } from './fakeAudio'
 import { musicPrefs } from './prefs'
-import { LEAVE_MS, MusicBar } from './MusicBar'
+import { LEAVE_MS, MusicBar, nowPlayingLine } from './MusicBar'
 import { MusicBarHost } from './MusicBarHost'
 import { AlbumTile, TrackList } from './Parts'
 import { toast } from './toast'
@@ -385,6 +385,32 @@ describe('the player bar', () => {
     expect(q('.mnow')).toBeNull()
   })
 
+  it('keeps the visualizer still where less motion is asked for, until it is asked for here', async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('prefers-reduced-motion') }))
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+    await click(q('.mbar button[aria-label="Visualizer"]'))
+    expect(q('.mnow .mviz')).not.toBeNull()
+    expect(q('.mnow .mviz canvas')).toBeNull()
+    expect(q('.mviz__still')!.textContent).toContain('less motion')
+    await click(q('.mviz__still button'))
+    expect(q('.mnow .mviz canvas')).not.toBeNull()
+    expect(q('.mviz__still')).toBeNull()
+  })
+
+  it('says the song to a screen reader when it changes', async () => {
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    const said = () => document.body.querySelector('.mbar [role="status"][aria-live="polite"]')!.textContent
+    expect(said()).toBe(nowPlayingLine(list[0]))
+    expect(said()).toContain(list[0].title)
+    await act(async () => player.next())
+    expect(said()).toBe(nowPlayingLine(list[1]))
+    expect(nowPlayingLine({ title: 'Song', artist: 'Somebody' })).toBe('Now playing: Song, by Somebody')
+    expect(nowPlayingLine({ title: 'Song' })).toBe('Now playing: Song')
+  })
+
   it('changes how songs are sent from the playback settings, and says what this song gets', async () => {
     await act(async () => player.playTracks(list, 2, { shuffle: false }))
     await renderBar()
@@ -430,6 +456,8 @@ describe('the player bar', () => {
     expect($('.mlyrics__line.on')!.textContent).toBe('First line')
     await act(async () => FakeAudio.made[0].playTo(31, 200))
     expect($('.mlyrics__line.on')!.textContent).toBe('Second line')
+    // The line being sung is named as the current one, not only lit.
+    expect($$('.mlyrics__line[aria-current="true"]').map((l) => l.textContent)).toEqual(['Second line'])
     await click($$('.mlyrics__line')[2])
     expect(FakeAudio.made[0].currentTime).toBe(60)
     // The other tab is the queue.
@@ -464,6 +492,22 @@ describe('a list of songs', () => {
     await click($$('.trow')[1])
     expect(player.get().playing).toBe(false)
     expect(currentTrack()!.id).toBe('b')
+  })
+
+  it('can be played from the keyboard: each row has a button that is the row\'s own press', async () => {
+    await renderList()
+    const buttons = () => $$('.trow:not(.trow--head) button.trow__n')
+    expect(buttons().map((b) => b.getAttribute('aria-label'))).toEqual(list.map((t) => 'Play ' + t.title))
+    expect($$('.trow[aria-current]').length).toBe(0)
+    await click(buttons()[1]) // Enter or Space on a button is a press on it
+    expect(currentTrack()!.id).toBe('b')
+    expect(player.get().playing).toBe(true)
+    expect(buttons()[1].getAttribute('aria-label')).toBe('Pause ' + list[1].title)
+    expect($$('.trow[aria-current="true"]').length).toBe(1)
+    expect($$('.trow')[1].getAttribute('aria-current')).toBe('true')
+    await click(buttons()[1])
+    expect(player.get().playing).toBe(false)
+    expect(buttons()[1].getAttribute('aria-label')).toBe('Play ' + list[1].title)
   })
 
   it('plays in the order shown even when shuffle is on', async () => {

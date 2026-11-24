@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { UNENCRYPTED_WARNING, unencryptedOutside } from '../app/transport'
 import { api, ApiError, APP_VERSION } from '../api/client'
 import type { LoginResponse, SetupStatus } from '../api/types'
 import { session } from '../api/session'
@@ -236,6 +237,11 @@ function PasswordSignIn({ terms, onPhone }: { terms: Terms; onPhone: () => void 
   return (
     <>
       <h1 className="signin__title">Sign in</h1>
+      {unencryptedOutside() && (
+        <div className="signin__clear" role="note">
+          {UNENCRYPTED_WARNING}
+        </div>
+      )}
       <form className="signin__form" onSubmit={submit} noValidate>
         <label className="signin__field">
           <span>Username</span>

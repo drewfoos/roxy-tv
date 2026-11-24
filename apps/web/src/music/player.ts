@@ -98,6 +98,7 @@ function engineTrack(index: number): { track: EngineTrack; stream: Stream } | nu
       duration: t.durationMs / 1000,
       gainDb: levelGain(t, prefs.levelling, inAlbumRun(state.queue, index)),
       exact: prefs.gapless && runsOn(state.queue, index),
+      channels: t.channels,
     },
   }
 }

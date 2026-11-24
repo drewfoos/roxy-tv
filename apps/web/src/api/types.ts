@@ -439,6 +439,8 @@ export interface SystemInfo {
 export interface SetupStatus {
   required?: boolean
   allowed?: boolean
+  /** Setup asks for the server's setup code (in its log and its data folder). */
+  code?: boolean
   tmdb?: boolean
   serverName?: string
 }

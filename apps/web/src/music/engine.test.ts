@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Engine, EXACT_MAX_SECONDS, exactBudget, exactSeconds, HANDOVER_SECONDS, Heard, type EngineEvent, type EngineTrack } from './engine'
+import { decodedBytes, Engine, EXACT_MAX_SECONDS, exactBudget, exactSeconds, HANDOVER_SECONDS, Heard, type EngineEvent, type EngineTrack } from './engine'
 import { FakeAudio } from './fakeAudio'
 
 // A stand-in for Web Audio: its clock is moved by the test, and every start and stop of a
@@ -31,6 +31,8 @@ class FakeContext {
   static latency: number | undefined = undefined
   /** Set, decodes wait here until let go (to look at the engine while one runs). */
   static holdDecode: ((go: () => void) => void) | null = null
+  /** How many channels a decoded file turns out to have. */
+  static channels = 2
   baseLatency = FakeContext.latency
   currentTime = 100
   sampleRate = FakeContext.rate
@@ -61,12 +63,13 @@ class FakeContext {
   }
   /** A file's length is told by its size here: a byte a second, in stereo at this context's rate. */
   decodeAudioData(bytes: ArrayBuffer) {
-    const buffer = { duration: bytes.byteLength, length: bytes.byteLength * this.sampleRate, numberOfChannels: 2 }
+    const buffer = { duration: bytes.byteLength, length: bytes.byteLength * this.sampleRate, numberOfChannels: FakeContext.channels }
     const hold = FakeContext.holdDecode
     return hold ? new Promise((resolve) => hold(() => resolve(buffer))) : Promise.resolve(buffer)
   }
 }
 
+const MB = 1024 * 1024
 const track = (id: string, over: Partial<EngineTrack> = {}): EngineTrack => ({ id, url: `/s/${id}`, duration: 200, gainDb: 0, exact: true, ...over })
 let events: EngineEvent['type'][]
 let fetched: string[]
@@ -87,6 +90,7 @@ beforeEach(() => {
   FakeContext.rate = 48000
   FakeContext.latency = undefined
   FakeContext.holdDecode = null
+  FakeContext.channels = 2
   events = []
   fetched = []
   vi.stubGlobal('Audio', FakeAudio)
@@ -434,6 +438,114 @@ describe('songs that follow each other', () => {
     waiting[1]()
     await settle()
     expect(engine.memory().songs).toBe(1)
+  })
+
+  it('counts every channel of a recording, not two', async () => {
+    // 5.1 takes three times what stereo does: a third of the length fits.
+    expect(Math.round(exactSeconds(48000, 256 * MB, 6))).toBe(233)
+    expect(Math.round(exactSeconds(48000, 256 * MB, 1))).toBe(1398 > EXACT_MAX_SECONDS ? EXACT_MAX_SECONDS : 1398)
+    expect(exactSeconds(48000, 256 * MB)).toBe(exactSeconds(48000, 256 * MB, 2))
+    expect(decodedBytes(200, 48000, 6)).toBe(200 * 48000 * 6 * 4)
+    expect(decodedBytes(200, 48000)).toBe(200 * 48000 * 2 * 4)
+    engine.load(track('a'), true)
+    // Here a song may take 192 MB: 200 seconds of stereo is 73 MB, of 5.1 it is 220 MB.
+    expect(engine.canDecode(track('stereo', { duration: 200, channels: 2 }))).toBe(true)
+    expect(engine.canDecode(track('surround', { duration: 200, channels: 6 }))).toBe(false)
+    expect(engine.canDecode(track('short surround', { duration: 100, channels: 6 }))).toBe(true)
+    expect(engine.canDecode(track('not told', { duration: 200, channels: undefined }))).toBe(true)
+    fetched.length = 0
+    engine.setNext(track('surround', { duration: 200, channels: 6 }))
+    await settle()
+    expect(fetched).not.toContain('/s/surround')
+    expect(el('surround')).toBeTruthy()
+  })
+
+  it('goes by what the decoder hands back, not by what the library said of the file', async () => {
+    // The library says stereo; the file holds six channels. Decoded it takes 220 MB.
+    FakeContext.channels = 6
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(fetched).toEqual(['/s/b'])
+    expect(engine.memory()).toEqual({ songs: 0, bytes: 0 })
+    expect(engine.canDecode(track('b'))).toBe(false)
+    // Not downloaded and decoded a second time to find the same thing out.
+    engine.setNext(track('b'))
+    engine.load(track('a2', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(fetched).toEqual(['/s/b'])
+    // It follows through an element, like any song that is not held decoded.
+    expect(el('b')).toBeTruthy()
+  })
+
+  it('does not keep a song that turns out longer than it was said to be', async () => {
+    // Said to be 200 seconds; the file decodes to 600 (220 MB in stereo).
+    vi.stubGlobal('fetch', vi.fn((url: string) => (fetched.push(url), Promise.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(600) }))))
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(engine.memory().songs).toBe(0)
+    expect(engine.canDecode(track('b'))).toBe(false)
+  })
+
+  it('does not download a file larger than a decoded song may be', async () => {
+    let read = 0
+    const stops: AbortSignal[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: { signal?: AbortSignal }) => {
+        fetched.push(url)
+        if (init?.signal) stops.push(init.signal)
+        return Promise.resolve({ ok: true, headers: { get: (k: string) => (k === 'Content-Length' ? String(300 * MB) : null) }, arrayBuffer: async () => (read++, new ArrayBuffer(200)) })
+      }),
+    )
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(fetched).toEqual(['/s/b'])
+    expect(read).toBe(0) // the answer's body was never read
+    expect(stops[0]?.aborted).toBe(true) // and the transfer was let go
+    expect(engine.memory().songs).toBe(0)
+    expect(engine.canDecode(track('b'))).toBe(false)
+    expect(engine.pendingFetches()).toBe(0)
+  })
+
+  it('keeps hold of a fetch when an earlier one for the same song settles late', async () => {
+    const asked: { url: string; signal?: AbortSignal; send: () => void }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: { signal?: AbortSignal }) => new Promise((resolve, reject) => {
+        const entry = { url, signal: init?.signal, send: () => resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(200) }) }
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        asked.push(entry)
+      })),
+    )
+    const release: (() => void)[] = []
+    FakeContext.holdDecode = (go) => release.push(go)
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    asked[0].send() // b's file is here and is being decoded
+    await settle()
+    expect(release.length).toBe(1)
+    // b is let go while it is decoded (that cannot be stopped), then wanted again: a
+    // second fetch for the same address, waiting its turn behind the first decode.
+    engine.setNext(track('c', { exact: false }))
+    engine.setNext(track('b'))
+    await settle()
+    expect(engine.pendingFetches()).toBe(1)
+    // The first decode ends now. Its being over must not take the second fetch's entry.
+    release[0]()
+    await settle()
+    expect(asked.map((x) => x.url)).toEqual(['/s/b', '/s/b'])
+    expect(engine.pendingFetches()).toBe(1)
+    // So that the second can still be stopped when b is let go once more.
+    engine.setNext(track('d', { exact: false }))
+    expect(asked[1].signal?.aborted).toBe(true)
+    await settle()
+    expect(engine.pendingFetches()).toBe(0)
+    expect(engine.memory().songs).toBe(0)
   })
 
   it('fetches and decodes one song at a time, and stops fetching one that is let go', async () => {

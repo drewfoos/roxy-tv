@@ -19,6 +19,7 @@ import { inAlbumRun, levelGain } from './stream'
 import { toast } from './toast'
 import { usePlayer, useProgress } from './usePlayer'
 import { usePrefs } from './usePrefs'
+import { animates } from './motion'
 import { VisualizerPanel } from './Visualizer'
 import '../styles/music.css'
 
@@ -28,10 +29,11 @@ type NowTab = 'lyrics' | 'visualizer' | 'queue'
 /** How long "now playing" and the queue take to leave (the length of their closing animation). */
 export const LEAVE_MS = 240
 
-/** Whether things may move here: not where less motion was asked for, nor where that cannot be asked. */
-function animates(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+/** What is said when a song begins: its name and who it is by. */
+export function nowPlayingLine(track: { title: string; artist?: string }): string {
+  return 'Now playing: ' + track.title + (track.artist ? ', by ' + track.artist : '')
 }
+
 
 /**
  * What is open, and what was open a moment ago and is still on its way out: a panel that
@@ -98,6 +100,10 @@ export function MusicBar() {
       {(open === 'now' || leaving === 'now') && <NowPlaying track={track} state={state} tab={tab} onTab={setTab} onClose={() => setOpen('none')} closing={open !== 'now'} />}
       {(open === 'queue' || leaving === 'queue') && <QueueDrawer onClose={() => setOpen('none')} closing={open !== 'queue'} />}
       <div className={'mbar' + (open !== 'none' ? ' mbar--open' : '') + (open === 'now' ? ' mbar--now' : '')} role="region" aria-label="Music player">
+        {/* Said to a screen reader when the song changes; the names below are read only when gone to. */}
+        <div className="msr" role="status" aria-live="polite">
+          {nowPlayingLine(track)}
+        </div>
         <div className="mbar__song">
           {/* The cover opens "now playing" and, whatever tab that is on, closes it: its arrow points the way it will go. */}
           <button type="button" className="mbar__cover" onClick={() => (open === 'now' ? setOpen('none') : showNow(first))} aria-label={open === 'now' ? 'Close now playing' : 'Now playing'} title={open === 'now' ? 'Close' : 'Now playing'} aria-expanded={open === 'now'}>
@@ -582,7 +588,7 @@ function LyricsView({ track }: { track: MusicTrack }) {
     if (!el || active < 0 || Date.now() < handsOff.current) return
     const line = el.querySelector<HTMLElement>(`[data-line="${active}"]`)
     if (!line) return
-    el.scrollTo({ top: line.offsetTop - el.clientHeight / 2 + line.clientHeight / 2, behavior: 'smooth' })
+    el.scrollTo({ top: line.offsetTop - el.clientHeight / 2 + line.clientHeight / 2, behavior: animates() ? 'smooth' : 'auto' })
   }, [active])
   useEffect(() => {
     box.current?.scrollTo({ top: 0 })
@@ -605,7 +611,7 @@ function LyricsView({ track }: { track: MusicTrack }) {
     <div className={'mlyrics' + (synced ? ' mlyrics--synced' : '')} ref={box} onWheel={touched} onTouchMove={touched}>
       {lines.map((l, i) =>
         synced ? (
-          <button type="button" key={i} data-line={i} className={'mlyrics__line' + (i === active ? ' on' : '') + (i < active ? ' sung' : '')} onClick={() => player.seek(l.ms / 1000)}>
+          <button type="button" key={i} data-line={i} className={'mlyrics__line' + (i === active ? ' on' : '') + (i < active ? ' sung' : '')} aria-current={i === active ? 'true' : undefined} onClick={() => player.seek(l.ms / 1000)}>
             {l.text || '♪'}
           </button>
         ) : (

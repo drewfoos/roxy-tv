@@ -302,7 +302,7 @@ export function NameDialog({ title, action, initial = '', onSubmit, onClose }: {
   }
   return createPortal(
     <div className="mdialog__scrim" onPointerDown={(e) => e.target === e.currentTarget && onClose()} onClick={(e) => e.stopPropagation()}>
-      <form className="mdialog" onSubmit={submit} role="dialog" aria-label={title}>
+      <form className="mdialog" onSubmit={submit} role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         <input ref={input} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="Name" aria-label="Name" />
         {error && <div className="mdialog__error">{error}</div>}

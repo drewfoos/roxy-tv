@@ -196,6 +196,7 @@ export function TrackList({ tracks, numbers = 'index', hideAlbum = false, hideCo
             <div
               role="listitem"
               className={'trow' + (current ? ' trow--current' : '') + (open ? ' trow--open' : '') + reorder.rowClass(i)}
+              aria-current={current ? 'true' : undefined}
               onClick={() => (current ? player.toggle() : player.playTracks(tracks, i, { shuffle: false }))}
               onContextMenu={(e) => {
                 e.preventDefault()
@@ -207,10 +208,11 @@ export function TrackList({ tracks, numbers = 'index', hideAlbum = false, hideCo
                   <IconDrag size={18} />
                 </button>
               )}
-              <span className="trow__n">
+              {/* The row's own press, as something the keyboard reaches: a press here is the row's (it rises to it). */}
+              <button type="button" className="trow__n" aria-label={(current && playing ? 'Pause ' : 'Play ') + t.title}>
                 {current ? <Equalizer moving={playing} /> : <span className="trow__num">{numbers === 'track' ? t.track || i + 1 : i + 1}</span>}
                 <span className="trow__play">{current && playing ? <IconPause size={20} /> : <IconPlay size={20} />}</span>
-              </span>
+              </button>
               {!hideCover && <Cover art={t.art} size={40} />}
               <span className="trow__main">
                 <span className="trow__title">{t.title}</span>
