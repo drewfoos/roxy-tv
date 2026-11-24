@@ -12,6 +12,7 @@ export class FakeAudio {
   paused = true
   ended = false
   readyState = 4
+  seeking = false
   volume = 1
   muted = false
   error: unknown = null

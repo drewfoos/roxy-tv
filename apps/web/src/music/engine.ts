@@ -10,15 +10,24 @@
 //
 // How one song joins the next:
 //  - buffer to buffer: the next is scheduled on the audio clock at the sample the current
-//    one ends. Exact.
-//  - element to buffer: the next is scheduled from the element's own clock a moment
-//    before it ends. Within a few milliseconds.
+//    one ends. Exact, and nothing the page does (a hidden tab's slowed timers, a busy
+//    moment) can move it: the audio thread plays what is on its clock.
+//  - element to buffer: the next is scheduled from the element's own clock a few seconds
+//    before it ends, and the estimate is kept up to date until just before. Within a few
+//    milliseconds. If the element stops to load in those seconds, or is paused by
+//    something else, the next song is taken off the clock again.
 //  - element to element (no Web Audio, or songs that need no exact join): the next
 //    element, already loaded, is started when the current one says it ended.
 //
 // Pauses: the player's own pauses of an element are marked on that element, so a pause
 // reported by an element that was not marked is someone else's (a headset button, the
 // browser): no timing is guessed at.
+//
+// Memory: a decoded song is 8 bytes for every moment of stereo sound at the rate of the
+// sound output (23 MB a minute at 48 kHz, 46 at 96 kHz). At most two are held, the one
+// playing and the one after it; a song is let go the moment it is neither. How large a
+// song may be depends on the device (exactBudget), and songs are fetched and decoded one
+// at a time, so that only one file's bytes are in memory beside them.
 
 export interface EngineTrack {
   id: string
@@ -114,21 +123,41 @@ type Voice = ElementVoice | BufferVoice
 
 /** Songs longer than this are not decoded into memory, whatever they would take. */
 export const EXACT_MAX_SECONDS = 15 * 60
-/**
- * The most memory one decoded song may take. Decoded sound is 8 bytes a moment for
- * stereo at the rate of the sound output (not the file's): 23 MB a minute at 48 kHz, 46
- * at 96 kHz. Three songs are kept, so this bounds the player at about 750 MB.
- */
-export const EXACT_MAX_BYTES = 256 * 1024 * 1024
 
-/** The longest song (seconds) that is decoded for an output of `rate` samples a second. */
-export function exactSeconds(rate: number): number {
-  return Math.min(EXACT_MAX_SECONDS, EXACT_MAX_BYTES / (Math.max(8000, rate) * 2 * 4))
+const MB = 1024 * 1024
+
+/**
+ * The most memory one decoded song may take on this device (two are held at most). A
+ * browser that says how much memory the device has is taken at its word: 8 GB or more
+ * gives a song 256 MB, 4 GB half that, less than 4 GB none (songs are joined through
+ * elements). One that does not say (Safari, Firefox) gets 192 MB on a computer and 64
+ * MB on a phone or tablet, where a tab that takes too much is closed without a word.
+ */
+export function exactBudget(deviceMemory: number | undefined, coarsePointer: boolean): number {
+  if (deviceMemory != null) return deviceMemory >= 8 ? 256 * MB : deviceMemory >= 4 ? 128 * MB : 0
+  return coarsePointer ? 64 * MB : 192 * MB
 }
-/** How long before an element's end the buffer that follows it is put on the clock. */
-const HANDOVER_SECONDS = 0.35
-/** Decoded songs kept: the one playing, the next, and the one before (Previous). */
-const BUFFERS_KEPT = 3
+
+function deviceBudget(): number {
+  const memory = (navigator as { deviceMemory?: number }).deviceMemory
+  const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+  return exactBudget(typeof memory === 'number' ? memory : undefined, coarse)
+}
+
+/** The longest song (seconds) that is decoded for an output of `rate` samples a second, within `budget` bytes. */
+export function exactSeconds(rate: number, budget = 256 * MB): number {
+  return Math.min(EXACT_MAX_SECONDS, budget / (Math.max(8000, rate) * 2 * 4))
+}
+/**
+ * How long before an element's end the buffer that follows it is put on the clock. Long
+ * enough that a tab in the background, whose events come once a second, has a few
+ * chances at it.
+ */
+export const HANDOVER_SECONDS = 3
+/** This close to the end the start is no longer moved: a node moved now might start late. */
+const HANDOVER_SETTLED = 0.4
+/** A new estimate of the end moves the start when it differs by more than this (seconds). */
+const HANDOVER_TOLERANCE = 0.003
 
 const dbToGain = (db: number) => Math.pow(10, db / 20)
 
@@ -153,6 +182,13 @@ export class Engine {
   private nextTrack: EngineTrack | null = null
   /** The next buffer is on the clock to start when the current one ends. */
   private joined = false
+  /** The audio-clock time it is on the clock for, when it follows an element. */
+  private joinAt = 0
+  /** Fetches of songs being decoded, by address: stopped when the song is let go. */
+  private fetching = new Map<string, AbortController>()
+  /** Decodes run one after another: this is the end of the line. */
+  private decoding: Promise<unknown> = Promise.resolve()
+  private budget = deviceBudget()
   private wanted = false
   private volume = 1
   private muted = false
@@ -196,12 +232,36 @@ export class Engine {
       this.ctx = ctx
       this.master = master
       this.analyserNode = analyser
+      ctx.onstatechange = () => this.contextState()
       for (const el of this.elements) this.wire(el)
       this.applyVolume()
     } catch {
       this.noContext = true
     }
     return this.ctx
+  }
+
+  /**
+   * The sound output was taken away under a song that plays (a phone call, the system
+   * suspending it): that is a pause by something else, and is shown as one. Nothing is
+   * left on the clock to start by itself when the output returns.
+   */
+  private contextState() {
+    const ctx = this.ctx
+    if (!ctx || ctx.state === 'running' || ctx.state === 'closed' || !this.wanted || !this.started) return
+    const v = this.current
+    if (!v) return
+    this.unjoin()
+    this.heardNow.close(this.positionOf(v))
+    if (v.kind === 'buffer') this.stopBuffer(v)
+    else this.quiet(v.el)
+    this.wanted = false
+    this.tick(false)
+    this.emit({ type: 'paused' })
+  }
+  /** The output has run at least once: before that "not running" is only "not started yet". */
+  private get started(): boolean {
+    return (this.ctx?.currentTime ?? 0) > 0
   }
 
   private wire(el: HTMLAudioElement) {
@@ -292,9 +352,13 @@ export class Engine {
     })
     el.addEventListener('waiting', () => {
       if (!this.isCurrent(el)) return
+      // It has stopped to load: it will end later than was reckoned, so what was put on
+      // the clock to follow it comes off, and goes back on when it plays again.
+      this.unjoin()
       this.heardNow.close(el.currentTime)
       if (this.wanted) this.emit({ type: 'waiting' })
     })
+    el.addEventListener('seeking', () => this.isCurrent(el) && this.unjoin())
     el.addEventListener('ended', () => {
       if (!this.isCurrent(el)) return
       this.heardNow.close(this.duration())
@@ -306,6 +370,9 @@ export class Engine {
     })
     el.addEventListener('pause', () => {
       if (this.ownPause.delete(el) || !this.isCurrent(el) || el.ended) return
+      // Paused by something else, perhaps with the next song already on the clock: it
+      // must not start by itself under a paused player.
+      this.unjoin()
       this.heardNow.close(el.currentTime)
       if (this.wanted) {
         this.wanted = false
@@ -340,54 +407,102 @@ export class Engine {
 
   private onElementTime(el: HTMLAudioElement) {
     this.emit({ type: 'time' })
-    // A buffer that follows an element is put on the audio clock from the element's own
-    // time, just before the end: the element's "ended" comes too late to join cleanly.
+    this.handOver(el)
+  }
+
+  /**
+   * Puts the buffer that follows an element on the audio clock for the moment the element
+   * will end: the element's own "ended" comes too late to join cleanly. The moment is
+   * reckoned from the element's clock a few seconds ahead, and reckoned again with every
+   * reading until just before, so the last one counts; it does not depend on a reading
+   * arriving in the last fraction of a second (a hidden tab gets one a second).
+   */
+  private handOver(el: HTMLAudioElement) {
     const next = this.next
-    if (!this.wanted || !this.ctx || next?.kind !== 'buffer' || this.joined || !Number.isFinite(el.duration)) return
+    if (!this.wanted || !this.ctx || next?.kind !== 'buffer' || !this.isCurrent(el)) return
+    if (el.paused || el.seeking || el.readyState < 3 || !Number.isFinite(el.duration)) return
     const left = el.duration - el.currentTime
-    if (left > 0 && left <= HANDOVER_SECONDS) {
-      this.startBuffer(next, 0, this.ctx.currentTime + left)
-      this.joined = true
-    }
+    if (!(left > 0) || left > HANDOVER_SECONDS) return
+    const when = this.ctx.currentTime + left
+    if (this.joined && (left < HANDOVER_SETTLED || Math.abs(when - this.joinAt) < HANDOVER_TOLERANCE)) return
+    this.startBuffer(next, 0, when)
+    this.joined = true
+    this.joinAt = when
   }
 
   // ---- buffers ----
 
   /** Whether a song can be decoded into memory here. */
   canDecode(track: EngineTrack): boolean {
-    if (!track.exact || this.noContext || !contextClass() || typeof fetch !== 'function') return false
+    if (!track.exact || this.noContext || !contextClass() || typeof fetch !== 'function' || this.budget <= 0) return false
     // Before the sound output is open its rate is not known: 48 kHz is the usual one.
-    if (!(track.duration > 0) || track.duration > exactSeconds(this.ctx?.sampleRate ?? 48000)) return false
-    const memory = (navigator as { deviceMemory?: number }).deviceMemory
-    return memory == null || memory >= 4
+    return track.duration > 0 && track.duration <= exactSeconds(this.ctx?.sampleRate ?? 48000, this.budget)
+  }
+
+  /** The decoded songs held now, and what they take (for the page that says how the player is doing). */
+  memory(): { songs: number; bytes: number } {
+    let bytes = 0
+    for (const b of this.readyBuffers.values()) bytes += b.length * b.numberOfChannels * 4
+    return { songs: this.readyBuffers.size, bytes }
+  }
+
+  /** Whether a decoded copy of the song at `url` is still of use: it plays, or it is next. */
+  private keeps(url: string): boolean {
+    return url === this.current?.track.url || url === this.nextTrack?.url
+  }
+
+  /**
+   * Lets go of every decoded song that is neither playing nor next, and stops fetching
+   * the ones on their way. Called whenever what plays or what follows changes, so a song
+   * is held no longer than it is of use (an album that has ended leaves nothing behind).
+   */
+  private trim() {
+    for (const url of [...this.buffers.keys()]) {
+      if (this.keeps(url)) continue
+      this.buffers.delete(url)
+      this.readyBuffers.delete(url)
+      this.fetching.get(url)?.abort()
+      this.fetching.delete(url)
+    }
   }
 
   private decode(track: EngineTrack): Promise<AudioBuffer> {
     const had = this.buffers.get(track.url)
-    if (had) {
-      this.buffers.delete(track.url) // most recently used last
-      this.buffers.set(track.url, had)
-      return had
-    }
+    if (had) return had
     const ctx = this.graph()
     if (!ctx) return Promise.reject(new Error('no audio context'))
-    const made = fetch(track.url, { credentials: 'same-origin' })
-      .then((r) => {
-        if (!r.ok) throw new Error('HTTP ' + r.status)
-        return r.arrayBuffer()
-      })
-      .then((bytes) => ctx.decodeAudioData(bytes))
-    this.buffers.set(track.url, made)
+    const { url } = track
+    const stop = typeof AbortController === 'function' ? new AbortController() : null
+    // One at a time: a file's bytes and its decoded sound are both in memory while it is
+    // decoded, and two hi-res files at once is a lot of both.
+    const made: Promise<AudioBuffer> = this.decoding.then(() => {
+      if (this.buffers.get(url) !== made) throw new Error('no longer wanted')
+      return fetch(url, { credentials: 'same-origin', signal: stop?.signal })
+        .then((r) => {
+          if (!r.ok) throw new Error('HTTP ' + r.status)
+          return r.arrayBuffer()
+        })
+        .then((bytes) => {
+          if (this.buffers.get(url) !== made) throw new Error('no longer wanted')
+          return ctx.decodeAudioData(bytes)
+        })
+    })
+    this.decoding = made.catch(() => undefined)
+    this.buffers.set(url, made)
+    if (stop) this.fetching.set(url, stop)
     made.then(
-      (buffer) => this.buffers.get(track.url) === made && this.readyBuffers.set(track.url, buffer),
-      () => this.buffers.get(track.url) === made && this.buffers.delete(track.url),
+      (buffer) => {
+        this.fetching.delete(url)
+        // Decoded for a song that was let go meanwhile: not kept.
+        if (this.buffers.get(url) === made) this.readyBuffers.set(url, buffer)
+      },
+      () => {
+        if (this.buffers.get(url) === made) {
+          this.buffers.delete(url)
+          this.fetching.delete(url)
+        }
+      },
     )
-    for (const url of this.buffers.keys()) {
-      if (this.buffers.size <= BUFFERS_KEPT) break
-      if (url === this.current?.track.url || url === this.nextTrack?.url || url === track.url) continue
-      this.buffers.delete(url)
-      this.readyBuffers.delete(url)
-    }
     return made
   }
 
@@ -415,9 +530,31 @@ export class Engine {
       }
     }
     v.node = node
-    v.zero = when - offset
-    v.at = offset
-    node.start(Math.max(when, ctx.currentTime), Math.max(0, Math.min(offset, v.buffer.duration)))
+    // Two things make a start exactly what it is said to be, which the join after it
+    // depends on (both measured in a browser: see docs/api/music.md, "Joins").
+    //  - It is asked for a little ahead. A start asked for "now" happens some blocks of
+    //    sound later than the clock read here says (the audio thread is that far on), and
+    //    the song would end later than reckoned: the next one came in early, over its end.
+    //  - It is on a sample. A start between two samples makes the browser play the whole
+    //    song between samples (each one worked out from its two neighbours), which is
+    //    not the file's own sound and dulls the top of it.
+    const rate = ctx.sampleRate
+    const onSample = (t: number) => Math.round(t * rate) / rate
+    const at = onSample(Math.max(when, ctx.currentTime + this.lead()))
+    const from = onSample(Math.max(0, Math.min(offset, v.buffer.duration)))
+    v.zero = at - from
+    v.at = from
+    node.start(at, from)
+  }
+
+  /**
+   * How far ahead a start is asked for: as much sound as the browser hands the system at
+   * a time (its base latency), which is how far the audio thread can be ahead of the
+   * clock read on the page, and a little more.
+   */
+  private lead(): number {
+    const base = this.ctx?.baseLatency
+    return Math.min(0.3, (typeof base === 'number' && base > 0 ? base : 0.04) + 0.02)
   }
 
   private stopBuffer(v: BufferVoice) {
@@ -437,7 +574,9 @@ export class Engine {
   private positionOf(v: Voice): number {
     if (v.kind === 'element') return v.el.currentTime
     if (!v.node || !this.ctx) return v.at
-    return Math.max(0, Math.min(v.buffer.duration, this.ctx.currentTime - v.zero))
+    // Not before where it was started from: in the moment before a start asked for a
+    // little ahead comes, the clock is still short of it.
+    return Math.max(v.at, Math.min(v.buffer.duration, this.ctx.currentTime - v.zero))
   }
 
   // ---- what plays ----
@@ -516,11 +655,9 @@ export class Engine {
         el.load()
       }
       voice = { kind: 'element', track, el }
-      // A song that joins its neighbours exactly is decoded as well, to take over from
-      // the element at the next seek or pause (never in the middle of the sound).
-      if (this.canDecode(track) && this.graph()) void this.decode(track).catch(() => undefined)
     }
     this.current = voice
+    this.trim()
     this.setVoiceGain(voice)
     if (voice.kind === 'element') {
       try {
@@ -558,6 +695,7 @@ export class Engine {
     this.release(this.next)
     this.next = null
     this.nextTrack = track
+    this.trim()
     if (!track) return
     // The player says what follows again and again while a song plays (each time with a
     // new object for the same song): what is still wanted is told by the song's address,
@@ -579,6 +717,15 @@ export class Engine {
         if (!now) return
         this.next = this.bufferVoice(now, buffer)
         this.join()
+        const cur = this.current
+        if (cur?.kind !== 'element') return
+        // It may have arrived with the element playing already near its end.
+        this.handOver(cur.el)
+        // The song playing is decoded as well when it plays from an element, and only
+        // now, after the one that follows (which the join cannot do without): it takes
+        // over from the element at the next seek or pause (never in the middle of the
+        // sound), and its end can then be joined to the sample.
+        if (this.canDecode(cur.track)) void this.decode(cur.track).catch(() => undefined)
       }, asElement)
     } else asElement()
   }
@@ -642,6 +789,7 @@ export class Engine {
       if (next.el.currentTime > 0) next.el.currentTime = 0
       this.startElement(next.el)
     }
+    this.trim()
     this.tick(true)
     this.emit({ type: 'advanced', exact: wasJoined && onClock })
   }
@@ -733,6 +881,8 @@ export class Engine {
       el.removeAttribute('src')
       el.load()
     }
+    for (const stop of this.fetching.values()) stop.abort()
+    this.fetching.clear()
     this.buffers.clear()
     this.readyBuffers.clear()
     this.tick(false)

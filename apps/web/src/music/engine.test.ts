@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Engine, EXACT_MAX_BYTES, EXACT_MAX_SECONDS, exactSeconds, Heard, type EngineEvent, type EngineTrack } from './engine'
+import { Engine, EXACT_MAX_SECONDS, exactBudget, exactSeconds, HANDOVER_SECONDS, Heard, type EngineEvent, type EngineTrack } from './engine'
 import { FakeAudio } from './fakeAudio'
 
 // A stand-in for Web Audio: its clock is moved by the test, and every start and stop of a
@@ -28,8 +28,13 @@ class FakeNode {
 class FakeContext {
   static last: FakeContext | null = null
   static rate = 48000
+  static latency: number | undefined = undefined
+  baseLatency = FakeContext.latency
   currentTime = 100
   sampleRate = FakeContext.rate
+  state = 'running'
+  onstatechange: (() => void) | null = null
+  resumed = 0
   destination = {}
   nodes: FakeNode[] = []
   constructor() {
@@ -48,11 +53,13 @@ class FakeContext {
     return new FakeNode(this)
   }
   resume() {
+    this.resumed++
+    this.state = 'running'
     return Promise.resolve()
   }
-  /** A file's length is told by its size here: a byte a second. */
+  /** A file's length is told by its size here: a byte a second, in stereo at this context's rate. */
   decodeAudioData(bytes: ArrayBuffer) {
-    return Promise.resolve({ duration: bytes.byteLength })
+    return Promise.resolve({ duration: bytes.byteLength, length: bytes.byteLength * this.sampleRate, numberOfChannels: 2 })
   }
 }
 
@@ -60,8 +67,10 @@ const track = (id: string, over: Partial<EngineTrack> = {}): EngineTrack => ({ i
 let events: EngineEvent['type'][]
 let fetched: string[]
 let engine: Engine
+/** How far ahead a start is asked for here (the stand-in output says nothing of its own latency). */
+const LEAD = 0.06
 const settle = async () => {
-  for (let i = 0; i < 6; i++) await Promise.resolve()
+  for (let i = 0; i < 40; i++) await Promise.resolve()
 }
 const el = (id: string) => FakeAudio.made.find((a) => a.src.endsWith('/s/' + id))!
 /** The buffer node last put on the clock that was not stopped since. */
@@ -72,6 +81,7 @@ beforeEach(() => {
   FakeAudio.broken = false
   FakeContext.last = null
   FakeContext.rate = 48000
+  FakeContext.latency = undefined
   events = []
   fetched = []
   vi.stubGlobal('Audio', FakeAudio)
@@ -222,24 +232,40 @@ describe('songs that follow each other', () => {
     engine.play()
     const [b2, c2] = live().slice(-2)
     expect(b2.started!.offset).toBeCloseTo(49.8, 3)
-    expect(c2.started!.when).toBeCloseTo(ctx.currentTime + 150.2, 3) // what is left of b
+    expect(c2.started!.when).toBeCloseTo(ctx.currentTime + LEAD + 150.2, 3) // what is left of b, from when it really starts again
     // A seek moves the end, and the join with it.
     engine.seek(190)
     const c3 = live().at(-1)!
-    expect(c3.started!.when).toBeCloseTo(ctx.currentTime + 10, 3)
+    expect(c3.started!.when).toBeCloseTo(ctx.currentTime + LEAD + 10, 3)
     expect(c2.stopped).toBe(true)
   })
 
   it('moves a song from its element to memory at a seek, never in the middle of the sound', async () => {
     engine.load(track('a'), true)
-    await settle() // decoded meanwhile, for later
+    engine.setNext(track('b'))
+    await settle() // both decoded meanwhile: b to follow, a to take over from its element
+    expect(fetched).toEqual(['/s/b', '/s/a']) // the one that follows first: the join needs it
     expect(engine.voice()).toBe('element')
     expect(live().length).toBe(0)
     engine.seek(40)
     expect(engine.voice()).toBe('buffer')
-    expect(live()[0].started!.offset).toBe(40)
+    const [a, b] = live()
+    expect(a.started!.offset).toBe(40)
+    expect(b.started!.when).toBe(a.started!.when + 160) // and b is on the clock for a's end, to the sample
     expect(el('a').paused).toBe(true)
     expect(events.filter((e) => e === 'paused')).toEqual([]) // the element's pause was the engine's own
+  })
+
+  it('does not decode the song playing when nothing is to follow it exactly', async () => {
+    engine.load(track('a'), true)
+    await settle()
+    expect(fetched).toEqual([]) // a second download and its memory, for a seek that may never come
+    expect(engine.memory()).toEqual({ songs: 0, bytes: 0 })
+    engine.setNext(track('b', { exact: false }))
+    await settle()
+    expect(fetched).toEqual([])
+    engine.seek(40)
+    expect(engine.voice()).toBe('element')
   })
 
   it('plays songs that need no exact join through elements alone', async () => {
@@ -264,15 +290,25 @@ describe('songs that follow each other', () => {
     expect(el('long')).toBeTruthy() // made ready in an element instead
   })
 
-  it('bounds a decoded song by the memory it takes at the output\'s rate, not by its length alone', async () => {
-    // 8 bytes a moment for stereo: at 48 kHz the budget is 11 minutes, at 96 kHz half that,
+  it('bounds a decoded song by the memory it takes at the output\'s rate, and by what the device has', async () => {
+    const MB = 1024 * 1024
+    // What a device is given: a browser that says how much memory it has is taken at its word.
+    expect(exactBudget(8, false)).toBe(256 * MB)
+    expect(exactBudget(16, true)).toBe(256 * MB)
+    expect(exactBudget(4, false)).toBe(128 * MB)
+    expect(exactBudget(2, false)).toBe(0) // too little: songs join through elements
+    expect(exactBudget(undefined, false)).toBe(192 * MB) // not told, a computer
+    expect(exactBudget(undefined, true)).toBe(64 * MB) // not told, a phone or tablet
+    // 8 bytes a moment for stereo: at 48 kHz 256 MB is 11 minutes, at 96 kHz half that,
     // and a slow output never lifts the limit on length.
-    expect(exactSeconds(48000)).toBeCloseTo(EXACT_MAX_BYTES / (48000 * 8), 6)
-    expect(Math.round(exactSeconds(48000))).toBe(699)
-    expect(Math.round(exactSeconds(96000))).toBe(350)
-    expect(Math.round(exactSeconds(192000))).toBe(175)
-    expect(exactSeconds(8000)).toBe(EXACT_MAX_SECONDS)
-    // A six-minute song: decoded for a 48 kHz output, played from an element at 96 kHz.
+    expect(Math.round(exactSeconds(48000, 256 * MB))).toBe(699)
+    expect(Math.round(exactSeconds(96000, 256 * MB))).toBe(350)
+    expect(Math.round(exactSeconds(192000, 256 * MB))).toBe(175)
+    expect(Math.round(exactSeconds(48000, 64 * MB))).toBe(175)
+    expect(exactSeconds(8000, 256 * MB)).toBe(EXACT_MAX_SECONDS)
+    expect(exactSeconds(48000, 0)).toBe(0)
+    // Here (not told, a computer: 192 MB) a six-minute song is decoded for a 48 kHz
+    // output, and played from an element for a 96 kHz one, where it would take 276 MB.
     const six = track('six', { duration: 360 })
     engine.load(track('a'), true)
     expect(engine.canDecode(six)).toBe(true)
@@ -281,12 +317,284 @@ describe('songs that follow each other', () => {
     hi.load(track('a'), true)
     expect(hi.outputRate()).toBe(96000)
     expect(hi.canDecode(six)).toBe(false)
-    expect(hi.canDecode(track('five', { duration: 300 }))).toBe(true)
+    expect(hi.canDecode(track('four', { duration: 240 }))).toBe(true)
     fetched.length = 0
     hi.setNext(six)
     await settle()
     expect(fetched).not.toContain('/s/six')
     expect(el('six')).toBeTruthy()
+    // A device with little memory decodes nothing at all.
+    vi.stubGlobal('navigator', { deviceMemory: 2 })
+    FakeContext.rate = 48000
+    const small = new Engine()
+    small.load(track('a'), true)
+    expect(small.canDecode(track('short', { duration: 30 }))).toBe(false)
+  })
+
+  it('starts a decoded song a little ahead and on a sample, so that it ends when it is reckoned to', async () => {
+    // What the browser hands the system at a time here: 30 ms. A start asked for "now"
+    // would happen up to that much later than the clock read on the page says.
+    FakeContext.latency = 0.03
+    FakeContext.rate = 44100
+    const e = new Engine()
+    e.load(track('a'), true)
+    e.setNext(track('b'))
+    await settle()
+    const ctx = FakeContext.last!
+    ctx.currentTime = 100 + 1 / 3 // a time that is on no sample
+    e.seek(40.00001) // nor is this place in the song
+    const [a, b] = live()
+    const onSample = (t: number) => Math.abs(t * 44100 - Math.round(t * 44100)) < 1e-6
+    expect(a.started!.when).toBeGreaterThanOrEqual(ctx.currentTime + 0.05) // the 30 ms, and 20 more
+    expect(a.started!.when).toBeLessThan(ctx.currentTime + 0.0501)
+    expect(onSample(a.started!.when)).toBe(true) // between two samples the whole song would be played between samples
+    expect(onSample(a.started!.offset)).toBe(true)
+    // The next song is on the clock for the sample this one ends at: what is left of it, from when it really starts.
+    expect(onSample(b.started!.when)).toBe(true)
+    expect(Math.round((b.started!.when - a.started!.when) * 44100)).toBe(Math.round((200 - a.started!.offset) * 44100))
+    // Until the start comes the song stands where it will start from, not before it.
+    expect(e.position()).toBe(a.started!.offset)
+    ctx.currentTime = a.started!.when + 5
+    expect(e.position()).toBeCloseTo(a.started!.offset + 5, 9)
+    // An output that says nothing of its latency is given 40 ms, and no output more than 300.
+    FakeContext.latency = undefined
+    expect(LEAD).toBe(0.06)
+    FakeContext.latency = 5
+    const slow = new Engine()
+    slow.load(track('a'), true)
+    slow.setNext(track('b'))
+    await settle()
+    const c2 = FakeContext.last!
+    slow.seek(10)
+    expect(live().find((n) => n.started!.offset === 10)!.started!.when).toBeCloseTo(c2.currentTime + 0.3, 3)
+  })
+
+  it('holds two decoded songs at most, and lets one go the moment it is neither playing nor next', async () => {
+    const perSong = 200 * 48000 * 2 * 4 // 200 seconds, stereo, 4 bytes a sample
+    engine.load(track('a'), true)
+    engine.setNext(track('b'))
+    await settle()
+    expect(engine.memory()).toEqual({ songs: 2, bytes: 2 * perSong })
+    // b takes over; c is made ready: a is gone at once, not kept for a press on Previous.
+    const a = el('a')
+    a.duration = 200
+    a.currentTime = 199.9
+    a.emit('timeupdate')
+    a.finish()
+    expect(engine.memory()).toEqual({ songs: 1, bytes: perSong })
+    engine.setNext(track('c'))
+    await settle()
+    expect(engine.memory().songs).toBe(2)
+    // What follows changes: the song that was to follow is let go, the new one held.
+    engine.setNext(track('d'))
+    await settle()
+    expect(engine.memory().songs).toBe(2)
+    expect(fetched.filter((u) => u === '/s/d').length).toBe(1)
+    // Nothing follows: only the song playing is held.
+    engine.setNext(null)
+    expect(engine.memory()).toEqual({ songs: 1, bytes: perSong })
+    // The album is over and another song plays: nothing of it is left behind.
+    engine.load(track('x', { exact: false }), true)
+    expect(engine.memory()).toEqual({ songs: 0, bytes: 0 })
+  })
+
+  it('fetches and decodes one song at a time, and stops fetching one that is let go', async () => {
+    const asked: { url: string; signal?: AbortSignal; send: () => void }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: { signal?: AbortSignal }) => new Promise((resolve, reject) => {
+        const entry = { url, signal: init?.signal, send: () => resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(200) }) }
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+        asked.push(entry)
+      })),
+    )
+    engine.load(track('a'), true)
+    engine.setNext(track('b'))
+    await settle()
+    // Only b is on its way: a's file (and the memory for it) waits its turn.
+    expect(asked.map((x) => x.url)).toEqual(['/s/b'])
+    asked[0].send()
+    await settle()
+    expect(asked.map((x) => x.url)).toEqual(['/s/b', '/s/a'])
+    expect(asked[1].signal?.aborted).toBe(false)
+    // Another song plays before a's file is here: the fetch is stopped, nothing is kept.
+    engine.load(track('x', { exact: false }), true)
+    expect(asked[1].signal?.aborted).toBe(true)
+    await settle()
+    expect(engine.memory().songs).toBe(0)
+    // A song let go while it waited its turn is never fetched at all.
+    engine.load(track('m'), true)
+    engine.setNext(track('n'))
+    engine.setNext(track('o'))
+    await settle()
+    expect(asked.map((x) => x.url)).toEqual(['/s/b', '/s/a', '/s/o'])
+  })
+
+  it('puts the next song on the clock a few seconds ahead and keeps the moment up to date until just before', async () => {
+    const ctx = () => FakeContext.last!
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    const a = el('a')
+    a.duration = 200
+    // Further from the end than the hand-over reaches: nothing yet.
+    a.currentTime = 200 - HANDOVER_SECONDS - 0.5
+    a.emit('timeupdate')
+    expect(live().length).toBe(0)
+    a.currentTime = 197.5
+    ctx().currentTime = 500
+    a.emit('timeupdate')
+    const first = live()[0]
+    expect(first.started!.when).toBeCloseTo(502.5, 6)
+    // A second later the element is 10 ms behind where it was reckoned to be: the start moves with it.
+    a.currentTime = 198.49
+    ctx().currentTime = 501
+    a.emit('timeupdate')
+    const second = live()[0]
+    expect(first.stopped).toBe(true)
+    expect(second).not.toBe(first)
+    expect(second.started!.when).toBeCloseTo(502.51, 6)
+    // A reading that agrees to within what can be heard moves nothing.
+    a.currentTime = 199.001
+    ctx().currentTime = 501.51
+    a.emit('timeupdate')
+    expect(live()[0]).toBe(second)
+    // Nor does one in the last moment, when a node moved might start late.
+    a.currentTime = 199.95
+    ctx().currentTime = 502.4
+    a.emit('timeupdate')
+    expect(live()[0]).toBe(second)
+    a.finish()
+    expect(engine.stats).toEqual({ exactJoins: 0, clockJoins: 1, plainJoins: 0 })
+  })
+
+  it('joins on the clock in a tab whose events come once a second', async () => {
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    const a = el('a')
+    a.duration = 200
+    const ctx = FakeContext.last!
+    // Readings a second apart, none of them in the last third of a second.
+    for (const t of [195.6, 196.6, 197.6, 198.6, 199.6]) {
+      a.currentTime = t
+      ctx.currentTime = 400 + t
+      a.emit('timeupdate')
+    }
+    expect(live().length).toBe(1)
+    expect(live()[0].started!.when).toBeCloseTo(600, 6)
+    a.finish()
+    expect(engine.stats.clockJoins).toBe(1)
+    expect(engine.stats.plainJoins).toBe(0)
+  })
+
+  it('takes the next song off the clock when the one playing stops to load, and puts it back when it plays again', async () => {
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    const a = el('a')
+    const ctx = FakeContext.last!
+    a.duration = 200
+    a.currentTime = 198
+    ctx.currentTime = 300
+    a.emit('timeupdate')
+    const planned = live()[0]
+    expect(planned.started!.when).toBeCloseTo(302, 6)
+    // The connection drops with two seconds to go: a will end later than that.
+    a.readyState = 2
+    a.emit('waiting')
+    expect(planned.stopped).toBe(true) // b must not start over a song that has not ended
+    expect(live().length).toBe(0)
+    expect(events.at(-1)).toBe('waiting')
+    ctx.currentTime = 309 // nine seconds of loading
+    a.emit('timeupdate')
+    expect(live().length).toBe(0) // still loading: nothing is reckoned from a clock that stands still
+    a.readyState = 4
+    a.emit('playing')
+    a.currentTime = 198.3
+    ctx.currentTime = 309.3
+    a.emit('timeupdate')
+    expect(live()[0].started!.when).toBeCloseTo(311, 6)
+    a.finish()
+    expect(engine.stats.clockJoins).toBe(1)
+  })
+
+  it('takes the next song off the clock when the one playing is paused by something else', async () => {
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle()
+    const a = el('a')
+    a.duration = 200
+    a.currentTime = 198.5
+    a.emit('timeupdate')
+    const planned = live()[0]
+    expect(planned).toBeTruthy()
+    a.pause() // a headset button, a second and a half before the end
+    expect(events.at(-1)).toBe('paused')
+    expect(planned.stopped).toBe(true) // or b would start by itself under a paused player
+    expect(live().length).toBe(0)
+    // Played again: on the clock again for the new end.
+    const ctx = FakeContext.last!
+    ctx.currentTime = 900
+    engine.play()
+    a.emit('timeupdate')
+    expect(live()[0].started!.when).toBeCloseTo(901.5, 6)
+  })
+
+  it('puts a song on the clock at once when it is decoded with the one before it already near its end', async () => {
+    let send: () => void = () => undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        fetched.push(url)
+        return new Promise((resolve) => (send = () => resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(200) })))
+      }),
+    )
+    engine.load(track('a', { exact: false }), true)
+    engine.setNext(track('b'))
+    await settle() // b's file is asked for
+    const a = el('a')
+    const ctx = FakeContext.last!
+    a.duration = 200
+    a.currentTime = 199
+    ctx.currentTime = 700
+    a.emit('timeupdate') // b is not here yet
+    expect(live().length).toBe(0)
+    send()
+    await settle()
+    expect(live()[0].started!.when).toBeCloseTo(701, 6) // without waiting for another reading
+  })
+
+  it('shows a pause when the sound output is taken away, and leaves nothing on the clock', async () => {
+    engine.load(track('a'), true)
+    engine.setNext(track('b'))
+    await settle()
+    engine.seek(10) // a plays from memory, b is on the clock for its end
+    const ctx = FakeContext.last!
+    const [a, b] = live()
+    ctx.currentTime += 20
+    ctx.state = 'interrupted' // a phone call
+    ctx.onstatechange!()
+    expect(events.at(-1)).toBe('paused')
+    expect(a.stopped && b.stopped).toBe(true)
+    expect(engine.position()).toBeCloseTo(30 - LEAD, 3) // twenty seconds after a start that came a moment after it was asked for
+    // The output is back: nothing starts by itself. A press on Play goes on from there.
+    ctx.state = 'running'
+    ctx.onstatechange!()
+    expect(live().length).toBe(0)
+    engine.play()
+    expect(live()[0].started!.offset).toBeCloseTo(30 - LEAD, 3)
+    // An output that has not run yet is not one that was taken away.
+    FakeContext.last = null
+    const fresh = new Engine()
+    const seen: string[] = []
+    fresh.on((e) => seen.push(e.type))
+    fresh.load(track('z', { exact: false }), true)
+    const c2 = FakeContext.last! as FakeContext
+    c2.currentTime = 0
+    c2.state = 'suspended'
+    c2.onstatechange!()
+    expect(seen).not.toContain('paused')
   })
 
   it('plays what follows as soon as it can when it was not ready in time', async () => {

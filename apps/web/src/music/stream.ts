@@ -103,18 +103,24 @@ export function runsOn(q: Queue, index: number): boolean {
  * Played among other songs of its album, the album's loudness is used, so the quiet
  * song of an album stays quieter than the loud one. Without a measurement the file's
  * ReplayGain tag is used; without either the song is left alone. A song is never turned
- * up so far that its peaks would clip.
+ * up so far that its peaks would clip; as part of its album the room there is to turn it
+ * up is the album's (its highest peak), so that every song of the album is turned by the
+ * same amount: by each song's own peak the loud ones would be held back and the quiet
+ * ones not, and the album's balance would be gone.
  */
 export function levelGain(t: MusicTrack, mode: Levelling, amongItsAlbum: boolean): number {
   if (mode === 'off') return 0
   let loudness: number | undefined
-  if (amongItsAlbum && t.albumLoudness != null) loudness = t.albumLoudness
-  else if (t.loudness != null) loudness = t.loudness
+  let peak = t.peak
+  if (amongItsAlbum && t.albumLoudness != null) {
+    loudness = t.albumLoudness
+    peak = t.albumPeak ?? t.peak
+  } else if (t.loudness != null) loudness = t.loudness
   // ReplayGain says how far a song is from -18 LUFS.
   else if (amongItsAlbum && t.gainAlbum != null) loudness = -18 - t.gainAlbum
   else if (t.gainTrack != null) loudness = -18 - t.gainTrack
   if (loudness == null || loudness <= -70) return 0
   let gain = TARGET_LUFS - loudness
-  if (t.peak != null && gain > -t.peak) gain = -t.peak
+  if (peak != null && gain > -peak) gain = -peak
   return Math.round(Math.max(MAX_CUT, Math.min(MAX_BOOST, gain)) * 10) / 10
 }

@@ -272,6 +272,8 @@ export const player = {
   analyser: () => engine.analyser(),
   /** The rate sound leaves the browser at, once known. */
   outputRate: () => engine.outputRate(),
+  /** The decoded songs held in memory now, and what they take. */
+  memory: () => engine.memory(),
   /** How songs have followed each other since the page opened. */
   joins: () => ({ ...engine.stats, voice: engine.voice() }),
 

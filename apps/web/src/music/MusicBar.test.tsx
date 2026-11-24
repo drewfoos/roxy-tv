@@ -402,6 +402,15 @@ describe('the player bar', () => {
     expect(facts()['Sent as']).toBe('Opus, 128 kbit/s (converted)')
     expect($('.mbar__quality')!.textContent).toBe('Opus · 128 kbps')
     expect($('.mbar__quality')!.className).not.toContain('hires') // what is heard is not hi-res any more
+    // What is held decoded in memory is said, when anything is (here nothing: no sound output to decode for).
+    expect(facts()['In memory']).toBeUndefined()
+    const held = vi.spyOn(player, 'memory').mockReturnValue({ songs: 2, bytes: 148 * 1024 * 1024 })
+    await act(async () => musicPrefs.set({ visualizer: 'mirror' })) // anything that draws the panel again
+    expect(facts()['In memory']).toContain('2 songs, 148 MB')
+    held.mockReturnValue({ songs: 1, bytes: 70.4 * 1024 * 1024 })
+    await act(async () => musicPrefs.set({ visualizer: 'bars' }))
+    expect(facts()['In memory']).toContain('One song, 70 MB')
+    held.mockRestore()
     const switches = $$('.mset__switch input') as HTMLInputElement[]
     expect(switches.map((i) => i.checked)).toEqual([true, true])
     await click(switches[0])

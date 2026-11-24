@@ -45,10 +45,11 @@ export interface MusicTrack {
   lyrics?: string
   gainTrack?: number
   gainAlbum?: number
-  /** Measured by the server: the song's loudness (LUFS), its true peak (dBTP), its album's loudness. */
+  /** Measured by the server: the song's loudness (LUFS) and true peak (dBTP), and those of its album measured as one. */
   loudness?: number
   peak?: number
   albumLoudness?: number
+  albumPeak?: number
   favorite: boolean
   playCount: number
   lastPlayedAt?: string

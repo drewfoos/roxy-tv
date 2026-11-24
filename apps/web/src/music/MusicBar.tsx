@@ -309,6 +309,7 @@ function PlaybackSettings({ at, track, state, onClose }: { at: MenuAt; track: Mu
   const out = player.outputRate()
   const gain = levelGain(track, prefs.levelling, inAlbumRun(state.queue, state.queue.index))
   const joins = player.joins()
+  const memory = player.memory()
   const converted = state.stream?.converted
   return (
     <FloatingMenu at={at} onClose={onClose} wide>
@@ -353,6 +354,15 @@ function PlaybackSettings({ at, track, state, onClose }: { at: MenuAt; track: Mu
           )}
           <dt>Levelling</dt>
           <dd>{prefs.levelling === 'off' ? 'Off' : track.loudness == null && track.gainTrack == null ? 'Not measured yet' : `${gain > 0 ? '+' : ''}${gain.toFixed(1)} dB`}</dd>
+          {memory.songs > 0 && (
+            <>
+              <dt>In memory</dt>
+              <dd>
+                {memory.songs === 1 ? 'One song' : `${memory.songs} songs`}, {Math.round(memory.bytes / (1024 * 1024))} MB
+                <small>Decoded so that this album's songs join without a gap. A song is let go when it is no longer playing or next.</small>
+              </dd>
+            </>
+          )}
           {joins.exactJoins + joins.clockJoins + joins.plainJoins > 0 && (
             <>
               <dt>Joins</dt>

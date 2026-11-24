@@ -67,6 +67,22 @@ describe('levelling', () => {
     expect(levelGain(song({ loudness: -9 }), 'on', true)).toBe(-5) // album not measured yet: the song's own
   })
 
+  it("turns every song of an album by the same amount: the room to turn up is the album's, not each song's", () => {
+    // A quiet album (-20 LUFS): 6 dB up would bring it to the common loudness. Its
+    // loudest song peaks at -3 dBTP, so the album can go up 3 dB, all of it.
+    const loudSong = song({ loudness: -17, peak: -3, albumLoudness: -20, albumPeak: -3 })
+    const softSong = song({ loudness: -27, peak: -14, albumLoudness: -20, albumPeak: -3 })
+    expect(levelGain(loudSong, 'on', true)).toBe(3)
+    expect(levelGain(softSong, 'on', true)).toBe(3) // by its own peak it would go up 6, and the balance would be gone
+    // Each by itself is another matter: its own loudness, its own peak.
+    expect(levelGain(softSong, 'on', false)).toBe(9)
+    expect(levelGain(loudSong, 'on', false)).toBe(3)
+    // An album whose peak is not known yet: the song's own is the best there is.
+    expect(levelGain(song({ loudness: -27, peak: -14, albumLoudness: -20 }), 'on', true)).toBe(6)
+    // An album that is to come down is not held by any peak.
+    expect(levelGain(song({ loudness: -6, peak: 0.2, albumLoudness: -8, albumPeak: 0.8 }), 'on', true)).toBe(-6)
+  })
+
   it('falls back on the ReplayGain tag', () => {
     expect(levelGain(song({ gainTrack: -7 }), 'on', false)).toBe(-3) // -18 - (-7) = -11 LUFS
     expect(levelGain(song({ gainTrack: -7, gainAlbum: -5 }), 'on', true)).toBe(-1)
