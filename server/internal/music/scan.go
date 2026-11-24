@@ -33,11 +33,12 @@ type Service struct {
 	// Workers is how many files are read at once.
 	Workers int
 
-	mu       sync.Mutex
-	scanning bool
-	again    bool // a scan was asked for while one ran
-	againAll bool // ... and it was a forced one
-	status   Status
+	mu        sync.Mutex
+	scanning  bool
+	measuring bool // a loudness pass is running (loudness.go)
+	again     bool // a scan was asked for while one ran
+	againAll  bool // ... and it was a forced one
+	status    Status
 
 	picMu sync.Mutex
 	pics  map[string]picture // folder pictures already read, by path
@@ -135,6 +136,10 @@ func (s *Service) Run(ctx context.Context, interval time.Duration, now, again bo
 		if !first || now {
 			if err := s.Scan(ctx, false); err != nil && ctx.Err() == nil {
 				slog.Warn("music: scan failed", "err", err)
+			}
+			// What the scan brought in (or a changed file) is measured for loudness.
+			if _, err := s.MeasureLoudness(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("music: loudness pass failed", "err", err)
 			}
 		}
 		if !again {

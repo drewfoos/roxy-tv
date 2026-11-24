@@ -53,7 +53,16 @@ func newTestLib(t *testing.T) *testLib {
 	if err := os.WriteFile(probe, []byte("#!/bin/sh\nfor a; do f=\"$a\"; done\n[ -f \"$f.probe\" ] || { echo \"$f: Invalid data found when processing input\" >&2; exit 1; }\ncat \"$f.probe\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(mpeg, []byte("#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = \"-i\" ] && f=\"$2\"; shift; done\n[ -f \"$f.pic\" ] || exit 1\ncat \"$f.pic\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(mpeg, []byte("#!/bin/sh\n"+
+		"# ffmpeg stand-in. Measuring loudness: prints <file>.loud. Converting (the last argument is a\n"+
+		"# file): writes a few bytes there. Otherwise: the picture kept beside the file.\n"+
+		"for a; do out=\"$a\"; done\nloud=0\nwhile [ $# -gt 0 ]; do [ \"$1\" = \"-i\" ] && f=\"$2\"; case \"$1\" in *ebur128*) loud=1;; esac; shift; done\n"+
+		"echo \"$out\" >> \"$(dirname \"$0\")/ffmpeg.calls\"\n"+
+		"if [ $loud = 1 ]; then [ -f \"$f.loud\" ] || exit 1; cat \"$f.loud\" >&2; exit 0; fi\n"+
+		"# Asked about itself (-filters, -encoders: no input): it says nothing, and writes nothing.\n"+
+		"[ -n \"$f\" ] || exit 0\n"+
+		"case \"$out\" in /*) [ -f \"$f.noconvert\" ] && exit 1; printf 'converted %s' \"$f\" > \"$out\"; exit 0;; esac\n"+
+		"[ -f \"$f.pic\" ] || exit 1\ncat \"$f.pic\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(filepath.Join(data, "t.db"))
@@ -361,11 +370,54 @@ func TestScanReadsOnlyWhatChanged(t *testing.T) {
 	}
 }
 
+// What makes two reports of a listen one listen is the time the player gave for it, as
+// it gave it; the time it is kept as has no part in that.
+func TestAListenIsCountedOnce(t *testing.T) {
+	l := newTestLib(t)
+	l.put("A/song.mp3", song{tags: tags("title", "Song", "artist", "A")})
+	l.scan(false)
+	id := l.tracks()[0].ID
+	now := time.Now()
+	count := func(at time.Time, reported int64) bool {
+		t.Helper()
+		counted, err := l.st.RecordMusicPlay(l.ctx, l.scope, id, at, reported)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return counted
+	}
+	// The same report three times (two retries): one listen.
+	if !count(now, 1700000000000) || count(now, 1700000000000) || count(now.Add(time.Hour), 1700000000000) {
+		t.Error("a report sent again was counted again")
+	}
+	// Two listens the player timed differently, kept as the same moment (both were too
+	// old to be believed and dated on arrival): two listens.
+	if !count(now, 1600000000000) || !count(now, 1600000000001) {
+		t.Error("two listens kept as the same moment were counted as one")
+	}
+	// Reports that give no time are each a listen, also in the same millisecond.
+	if !count(now, 0) || !count(now, 0) || !count(now, 0) {
+		t.Error("reports without a time of their own were taken for one another")
+	}
+	if n, _ := l.st.MusicPlayCount(l.ctx, l.scope, id); n != 6 || l.tracks()[0].PlayCount != 6 {
+		t.Errorf("listens logged %d, counted %d, want 6", n, l.tracks()[0].PlayCount)
+	}
+	// Another profile's listen at the same time is its own.
+	const other = "another-profile"
+	if _, err := l.st.DB().ExecContext(l.ctx, `INSERT INTO profiles (id, user_id, name, is_default, created_at) VALUES (?, 'u', 'Q', 0, ?)`, other, store.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if counted, err := l.st.RecordMusicPlay(l.ctx, other, id, now, 1700000000000); err != nil || !counted {
+		t.Errorf("another profile's listen: %v %v", counted, err)
+	}
+}
+
 // plays and a favourite mark: what must follow a song wherever its file goes.
 func (l *testLib) markHeard(id string, plays int) {
 	l.t.Helper()
 	for i := 0; i < plays; i++ {
-		if err := l.st.RecordMusicPlay(l.ctx, l.scope, id, time.Now()); err != nil {
+		// Each listen has its own time.
+		if _, err := l.st.RecordMusicPlay(l.ctx, l.scope, id, time.Now().Add(time.Duration(i-plays)*time.Minute), 0); err != nil {
 			l.t.Fatal(err)
 		}
 	}
@@ -442,7 +494,12 @@ func TestCopyThatStaysInheritsTheHistory(t *testing.T) {
 		t.Fatalf("two files of one song are two rows while both are there: %+v", l.tracks())
 	}
 	l.markHeard(mp3.ID, 4)
-	if err := l.st.RecordMusicPlay(l.ctx, l.scope, flac.ID, time.Now()); err != nil {
+	if _, err := l.st.RecordMusicPlay(l.ctx, l.scope, flac.ID, time.Now(), 0); err != nil {
+		t.Fatal(err)
+	}
+	// A playlist holds the MP3.
+	list, err := l.st.CreateMusicPlaylist(l.ctx, l.scope, "Mix", []string{mp3.ID})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -454,6 +511,10 @@ func TestCopyThatStaysInheritsTheHistory(t *testing.T) {
 	left := l.tracks()
 	if len(left) != 1 || left[0].ID != flac.ID || left[0].PlayCount != 5 || !left[0].Favorite {
 		t.Errorf("the copy that stayed: %+v", left)
+	}
+	// The playlist holds the song still: the copy that stayed.
+	if entries, _ := l.st.MusicPlaylistEntries(l.ctx, l.scope, list.ID); len(entries) != 1 || entries[0].ID != flac.ID {
+		t.Errorf("the playlist after the MP3 went: %+v", entries)
 	}
 }
 

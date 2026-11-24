@@ -254,7 +254,8 @@ func (s *Store) SaveMusicTrack(ctx context.Context, t *MusicTrackRow) error {
 			bit_depth = excluded.bit_depth, channels = excluded.channels, art = excluded.art, lyrics = excluded.lyrics,
 			lyrics_text = excluded.lyrics_text, mb_recording = excluded.mb_recording, mb_album = excluded.mb_album,
 			gain_track = excluded.gain_track, peak_track = excluded.peak_track, gain_album = excluded.gain_album,
-			peak_album = excluded.peak_album, search = excluded.search, missing_since = NULL, updated_at = excluded.updated_at`,
+			peak_album = excluded.peak_album, search = excluded.search, missing_since = NULL, updated_at = excluded.updated_at,
+			loudness_tries = CASE WHEN music_tracks.mtime <> excluded.mtime OR music_tracks.size <> excluded.size THEN 0 ELSE music_tracks.loudness_tries END`,
 		t.ID, t.FolderID, t.Path, t.Size, t.Mtime, t.Identity, t.Title, t.SortTitle, t.Artist, t.Credits[0].ID, albumID, t.Album.title(), t.AlbumArtist,
 		t.Disc, t.Track, t.Year, genres, t.DurationMs, t.Container, t.Codec, t.Bitrate, t.SampleRate, t.BitDepth, t.Channels,
 		t.Art, t.Lyrics, t.LyricsText, t.MBRecording, t.MBAlbum, nullF(t.GainTrack), nullF(t.PeakTrack), nullF(t.GainAlbum), nullF(t.PeakAlbum), t.Search,
@@ -347,6 +348,13 @@ func (s *Store) MoveMusicUserData(ctx context.Context, fromID, toID string) erro
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM music_user_data WHERE kind = 'track' AND ref_id = ?`, fromID); err != nil {
+		return err
+	}
+	// Playlists that hold the song go on holding it, and its listens are the heir's.
+	if err := movePlaylistEntries(ctx, tx, fromID, toID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE OR IGNORE music_plays SET track_id = ? WHERE track_id = ?`, toID, fromID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -490,7 +498,8 @@ type MusicTrackQuery struct {
 
 const musicTrackCols = `t.id, t.title, t.artist, t.artist_id, COALESCE(t.album_id, ''), t.album, t.album_artist, t.disc, t.track, t.year,
 	t.duration_ms, t.container, t.codec, t.bitrate, t.sample_rate, t.bit_depth, t.channels, t.size,
-	CASE WHEN t.art <> '' THEN t.art ELSE COALESCE(al.art, '') END, t.lyrics, t.gain_track, t.gain_album, t.added_at, t.path,
+	CASE WHEN t.art <> '' THEN t.art ELSE COALESCE(al.art, '') END, t.lyrics, t.gain_track, t.gain_album, t.added_at, t.path, t.mtime,
+	t.loudness, t.true_peak, al.loudness,
 	COALESCE(u.is_favorite, 0), COALESCE(u.play_count, 0), u.last_played_at`
 
 const musicTrackFrom = ` FROM music_tracks t
@@ -500,14 +509,23 @@ const musicTrackFrom = ` FROM music_tracks t
 
 func scanMusicTrack(rows interface{ Scan(...any) error }) (model.MusicTrack, error) {
 	var t model.MusicTrack
-	var gt, ga sql.NullFloat64
+	var gt, ga, loud, peak, albumLoud sql.NullFloat64
 	var added string
 	var last sql.NullString
 	var fav int
 	if err := rows.Scan(&t.ID, &t.Title, &t.Artist, &t.ArtistID, &t.AlbumID, &t.Album, &t.AlbumArtist, &t.Disc, &t.Track, &t.Year,
 		&t.DurationMs, &t.Container, &t.Codec, &t.Bitrate, &t.SampleRate, &t.BitDepth, &t.Channels, &t.Size,
-		&t.Art, &t.Lyrics, &gt, &ga, &added, &t.Path, &fav, &t.PlayCount, &last); err != nil {
+		&t.Art, &t.Lyrics, &gt, &ga, &added, &t.Path, &t.Mtime, &loud, &peak, &albumLoud, &fav, &t.PlayCount, &last); err != nil {
 		return t, err
+	}
+	if loud.Valid {
+		t.Loudness = &loud.Float64
+	}
+	if peak.Valid {
+		t.Peak = &peak.Float64
+	}
+	if albumLoud.Valid {
+		t.AlbumLoudness = &albumLoud.Float64
 	}
 	if gt.Valid {
 		t.GainTrack = &gt.Float64
@@ -874,14 +892,153 @@ func (s *Store) SetMusicFavorite(ctx context.Context, scope, kind, id string, on
 	return err
 }
 
-// RecordMusicPlay counts one play of a track for a profile, at the time it was heard.
-func (s *Store) RecordMusicPlay(ctx context.Context, scope, trackID string, at time.Time) error {
+// RecordMusicPlay counts one listen of a track by a profile, kept as listened to at `at`.
+// `reported` is the time the player itself gave for the listen (Unix ms): a report with
+// the same one is the same listen sent again (a retry), and is not counted twice;
+// counted says whether this report was new. 0 means the player gave no time: every such
+// report is a listen of its own.
+func (s *Store) RecordMusicPlay(ctx context.Context, scope, trackID string, at time.Time, reported int64) (counted bool, err error) {
 	stamp := at.UTC().Format(TimeFormat)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO music_user_data (scope_id, kind, ref_id, play_count, last_played_at) VALUES (?, 'track', ?, 1, ?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	own := reported > 0
+	if !own {
+		reported = at.UnixMilli()
+	}
+	for tries := 0; ; tries++ {
+		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO music_plays (scope_id, track_id, reported, played_at) VALUES (?, ?, ?, ?)`, scope, trackID, reported, stamp)
+		if err != nil {
+			return false, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			break
+		}
+		// A report that names its time is the one already counted. One that names none
+		// only met another of the same millisecond: it takes the next free one.
+		if own || tries > 1000 {
+			return false, nil
+		}
+		reported++
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO music_user_data (scope_id, kind, ref_id, play_count, last_played_at) VALUES (?, 'track', ?, 1, ?)
 		ON CONFLICT(scope_id, kind, ref_id) DO UPDATE SET play_count = music_user_data.play_count + 1,
 			last_played_at = CASE WHEN music_user_data.last_played_at IS NULL OR music_user_data.last_played_at < excluded.last_played_at
-				THEN excluded.last_played_at ELSE music_user_data.last_played_at END`, scope, trackID, stamp)
+				THEN excluded.last_played_at ELSE music_user_data.last_played_at END`, scope, trackID, stamp); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// MusicPlayCount is how often a profile has listened to a track.
+func (s *Store) MusicPlayCount(ctx context.Context, scope, trackID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM music_plays WHERE scope_id = ? AND track_id = ?`, scope, trackID).Scan(&n)
+	return n, err
+}
+
+// ---- loudness ----
+
+// MusicUnmeasured is a track whose loudness is not measured for the file as it is now.
+type MusicUnmeasured struct {
+	ID    string
+	Path  string
+	Mtime int64
+}
+
+// MusicLoudnessMaxTries is how many failed measurements a file gets before it is left alone.
+const MusicLoudnessMaxTries = 3
+
+// MusicTracksToMeasure lists tracks whose loudness has to be measured (files that are
+// there, not yet measured as they are, and not given up on), and how many there are.
+func (s *Store) MusicTracksToMeasure(ctx context.Context, limit int) ([]MusicUnmeasured, int, error) {
+	const where = ` FROM music_tracks WHERE missing_since IS NULL AND loudness_mtime <> mtime AND loudness_tries < ?`
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, MusicLoudnessMaxTries).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, path, mtime`+where+` ORDER BY added_at DESC, id LIMIT ?`, MusicLoudnessMaxTries, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []MusicUnmeasured
+	for rows.Next() {
+		var u MusicUnmeasured
+		if err := rows.Scan(&u.ID, &u.Path, &u.Mtime); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, u)
+	}
+	return out, total, rows.Err()
+}
+
+// SetMusicLoudness records a measurement for the file as it was at mtime. A file that
+// changed meanwhile keeps being listed for measuring.
+func (s *Store) SetMusicLoudness(ctx context.Context, id string, mtime int64, lufs, peak float64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE music_tracks SET loudness = ?, true_peak = ?, loudness_mtime = ?, loudness_tries = 0 WHERE id = ?`, lufs, peak, mtime, id)
 	return err
+}
+
+// MusicLoudnessFailed notes a measurement that failed.
+func (s *Store) MusicLoudnessFailed(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE music_tracks SET loudness_tries = loudness_tries + 1 WHERE id = ?`, id)
+	return err
+}
+
+// MusicLoudnessCounts says how many songs are measured, of how many there are.
+func (s *Store) MusicLoudnessCounts(ctx context.Context) (measured, total int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(loudness IS NOT NULL AND loudness_mtime = mtime), 0), COUNT(*) FROM music_tracks WHERE missing_since IS NULL`).Scan(&measured, &total)
+	return
+}
+
+// MusicAlbumTrackLoudness is one song's part in its album's loudness.
+type MusicAlbumTrackLoudness struct {
+	AlbumID    string
+	DurationMs int64
+	Loudness   *float64 // nil: not measured
+}
+
+// MusicAlbumLoudnessInputs lists, for every album, its songs' lengths and loudness.
+func (s *Store) MusicAlbumLoudnessInputs(ctx context.Context) ([]MusicAlbumTrackLoudness, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT album_id, duration_ms, loudness FROM music_tracks WHERE album_id IS NOT NULL AND missing_since IS NULL ORDER BY album_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MusicAlbumTrackLoudness
+	for rows.Next() {
+		var t MusicAlbumTrackLoudness
+		var l sql.NullFloat64
+		if err := rows.Scan(&t.AlbumID, &t.DurationMs, &l); err != nil {
+			return nil, err
+		}
+		if l.Valid {
+			t.Loudness = &l.Float64
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// SetMusicAlbumLoudness sets every album's loudness: the ones named, and none for the rest.
+func (s *Store) SetMusicAlbumLoudness(ctx context.Context, byAlbum map[string]float64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE music_albums SET loudness = NULL WHERE loudness IS NOT NULL`); err != nil {
+		return err
+	}
+	for id, l := range byAlbum {
+		if _, err := tx.ExecContext(ctx, `UPDATE music_albums SET loudness = ? WHERE id = ?`, l, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // MusicExists reports whether there is a track, album or artist with this id.

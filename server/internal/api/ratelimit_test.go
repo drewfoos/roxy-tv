@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 // A request refused because the address as a whole is over its limit costs the client's
 // own bucket nothing (and one refused by the client's own bucket costs the address
@@ -34,5 +38,46 @@ func TestRateLimitRefusalCostsNothing(t *testing.T) {
 	}
 	if got := rl.buckets[ip].tokens; got != 8 {
 		t.Errorf("address bucket after 4 allowed and 6 refused = %v tokens, want 8", got)
+	}
+}
+
+// A page of music tiles asks for a cover each, and a song is read in ranges: neither is
+// counted against the limit for JSON calls. The lists themselves still are.
+func TestMusicMediaIsNotRateLimited(t *testing.T) {
+	for path, exempt := range map[string]bool{
+		"/v1/music/art/afcf5ef500f46ecc0f2157c8ec3310e3439e6143": true,
+		"/v1/music/tracks/8e0053e3/stream":                       true,
+		"/v1/stream/abc":                                         true,
+		"/v1/music/tracks":                                       false,
+		"/v1/music/tracks/8e0053e3/lyrics":                       false,
+		"/v1/music/tracks/8e0053e3/played":                       false,
+		"/v1/music/playlists":                                    false,
+		"/v1/music":                                              false,
+		"/v1/items":                                              false,
+	} {
+		if got := exemptFromRateLimit(path); got != exempt {
+			t.Errorf("exemptFromRateLimit(%q) = %v, want %v", path, got, exempt)
+		}
+	}
+	// Through the middleware: 200 covers in a burst all pass, where 200 list calls do not.
+	rl := newRateLimiter(20, 60)
+	h := rl.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	count := func(path string) (refused int) {
+		for i := 0; i < 200; i++ {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.RemoteAddr = "192.0.2.7:5555"
+			h.ServeHTTP(rec, req)
+			if rec.Code == http.StatusTooManyRequests {
+				refused++
+			}
+		}
+		return refused
+	}
+	if n := count("/v1/music/art/afcf5ef500f46ecc0f2157c8ec3310e3439e6143"); n != 0 {
+		t.Errorf("%d of 200 cover requests were refused", n)
+	}
+	if n := count("/v1/music/tracks"); n == 0 {
+		t.Error("200 list calls in a burst were all let through: the limiter is not working in this test")
 	}
 }

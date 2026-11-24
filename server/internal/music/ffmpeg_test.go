@@ -106,6 +106,35 @@ func TestRealFilesAreRead(t *testing.T) {
 		t.Errorf("Opus (tags on the audio stream): %+v", info)
 	}
 
+	// Loudness: a full-scale-ish sine has a loudness and a peak worth the name.
+	loudness, err := MeasureFile(ctx, ff, flac)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loudness.LUFS > 0 || loudness.LUFS < -40 || loudness.Peak > 1 || loudness.Peak < -40 {
+		t.Errorf("the tone's loudness: %+v", loudness)
+	}
+	// Conversion: each format comes out as what it says, readable, about as long.
+	tc := NewTranscoder(ff, filepath.Join(filepath.Dir(l.root), "data", "cache", "music", "converted"), 1<<30)
+	for _, f := range []AudioFormat{{"opus", 128}, {"mp3", 192}, {"aac", 192}, {Codec: "flac"}} {
+		out, err := tc.File(ctx, Source{TrackID: "t", Path: flac, Size: 1, Mtime: 1, SampleRate: 96000, Channels: 2}, f)
+		if err != nil {
+			t.Errorf("converting to %s: %v", f.Codec, err)
+			continue
+		}
+		got, err := ReadFile(ctx, ff, out)
+		if err != nil {
+			t.Errorf("reading the %s back: %v", f.Codec, err)
+			continue
+		}
+		if got.Codec != f.Codec || got.DurationMs < 1800 || got.DurationMs > 2400 {
+			t.Errorf("%s came out as %s, %d ms", f.Codec, got.Codec, got.DurationMs)
+		}
+		if f.Codec == "flac" && (got.SampleRate != 48000 || got.BitDepth != 16) {
+			t.Errorf("the lossless conversion of a 24-bit/96 kHz file: %d-bit %d Hz", got.BitDepth, got.SampleRate)
+		}
+	}
+
 	// A file that is not audio at all, under an audio name.
 	junk := filepath.Join(l.root, "Loose", "notes.mp3")
 	if err := os.WriteFile(junk, []byte("these are not the bytes of a song"), 0o644); err != nil {

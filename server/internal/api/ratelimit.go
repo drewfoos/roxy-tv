@@ -10,8 +10,8 @@ import (
 
 // rateLimiter is a per-client token bucket for the JSON API: a misbehaving client
 // (a loop of list calls, a reconnect storm) gets 429s instead of starving playback.
-// Media bytes (/v1/stream, images, trickplay, attachments) are exempt: a player
-// legitimately issues many range requests, and images are fetched in bursts.
+// Media bytes (/v1/stream, images, trickplay, attachments, music covers and songs) are
+// exempt: a player legitimately issues many range requests, and images are fetched in bursts.
 //
 // Defaults: 20 requests/s sustained with a burst of 60 per client IP. A client is
 // identified by its remote IP (behind RealIP middleware) plus the bearer token when
@@ -91,7 +91,11 @@ func (rl *rateLimiter) sweep() {
 func exemptFromRateLimit(path string) bool {
 	return strings.HasPrefix(path, "/v1/stream/") || strings.HasPrefix(path, "/stream/") ||
 		strings.Contains(path, "/images/") || strings.Contains(path, "/trickplay") ||
-		strings.Contains(path, "/attachments/") || strings.Contains(path, "/subtitles/")
+		strings.Contains(path, "/attachments/") || strings.Contains(path, "/subtitles/") ||
+		// Music: a page of tiles asks for a cover each (a hundred at once on a large
+		// screen), and a song is read in ranges like a film.
+		strings.HasPrefix(path, "/v1/music/art/") ||
+		(strings.HasPrefix(path, "/v1/music/tracks/") && strings.HasSuffix(path, "/stream"))
 }
 
 // humanWait: "30 seconds", "2 minutes".

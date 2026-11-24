@@ -27,6 +27,9 @@ import (
 // removed files. A pass over an unchanged library only lists its folders.
 const musicScanEvery = 10 * time.Minute
 
+// musicConvertedMax is how much room converted songs may take (the longest unused go first).
+const musicConvertedMax = 2 << 30
+
 // musicPageMax is the most tracks one request lists.
 const musicPageMax = 1000
 
@@ -243,7 +246,10 @@ func (s *Server) musicLyrics(w http.ResponseWriter, r *http.Request) {
 	writeError(w, 404, "this song has no lyrics")
 }
 
-// GET|HEAD /v1/music/tracks/{id}/stream: the audio file as it is, with HTTP ranges.
+// GET|HEAD /v1/music/tracks/{id}/stream[?format=opus|mp3|aac|flac&bitrate=<kbit/s>]: the
+// audio file as it is, or (with format) converted, both with HTTP ranges. A converted
+// song is made whole before the first byte is sent and kept, so it can be sought in like
+// any file; the first request for it waits for the conversion (a second or two a song).
 func (s *Server) musicStream(w http.ResponseWriter, r *http.Request) {
 	t, _ := s.musicTrackFromURL(w, r)
 	if t == nil {
@@ -252,6 +258,25 @@ func (s *Server) musicStream(w http.ResponseWriter, r *http.Request) {
 	path, ok := mediaFile(w, t.Path)
 	if !ok {
 		return
+	}
+	ctype, name := audioMime(t.Container, t.Codec), filepath.Base(t.Path)
+	if format := r.URL.Query().Get("format"); format != "" && format != "original" {
+		f, err := music.ParseAudioFormat(format, r.URL.Query().Get("bitrate"))
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		converted, err := s.musicTC.File(r.Context(), music.Source{TrackID: t.ID, Path: path, Size: t.Size, Mtime: t.Mtime, SampleRate: t.SampleRate, Channels: t.Channels}, f)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return // the player left; the conversion goes on for the next request
+			}
+			slog.Warn("music: conversion failed", "track", t.ID, "format", f.Codec, "err", err)
+			writeError(w, 500, "this song could not be converted")
+			return
+		}
+		path, ctype = converted, f.Mime()
+		name = strings.TrimSuffix(name, filepath.Ext(name)) + "." + f.Ext()
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -264,12 +289,12 @@ func (s *Server) musicStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", audioMime(t.Container, t.Codec))
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("ETag", fmt.Sprintf(`"%x-%x"`, fi.ModTime().UnixNano(), fi.Size()))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
-	w.Header().Set("Content-Disposition", contentDisposition("inline", filepath.Base(t.Path)))
-	http.ServeContent(w, r, filepath.Base(t.Path), fi.ModTime(), f)
+	w.Header().Set("Content-Disposition", contentDisposition("inline", name))
+	http.ServeContent(w, r, name, fi.ModTime(), f)
 }
 
 // audioMime names an audio file's type for a browser's player.
@@ -299,35 +324,45 @@ func audioMime(container, codec string) string {
 	return "application/octet-stream"
 }
 
-// POST /v1/music/tracks/{id}/played -> {playCount}. A player sends it once per listen,
-// when half the song (or four minutes) has been heard. A second report for the same song
-// within moments is the same listen and is not counted.
+// POST /v1/music/tracks/{id}/played {at} -> {playCount, counted}. A player sends it once
+// per listen, when half the song (or four minutes) has been played. `at` is when the
+// player counted it (Unix milliseconds; now when left out): it names the listen, so the
+// same report sent again after a lost answer is not a second listen, and a report kept
+// while the server was away keeps its own time.
 func (s *Server) musicPlayed(w http.ResponseWriter, r *http.Request) {
 	t, p := s.musicTrackFromURL(w, r)
 	if t == nil {
 		return
 	}
-	now := time.Now()
-	if t.LastPlayedAt != nil && now.Sub(*t.LastPlayedAt) < samePlayWindow(t.DurationMs) {
-		writeJSON(w, 200, map[string]any{"playCount": t.PlayCount})
-		return
+	var b struct {
+		At int64 `json:"at"`
 	}
-	if err := s.store.RecordMusicPlay(r.Context(), p.ScopeID, t.ID, now); err != nil {
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&b)
+	now := time.Now()
+	at := now
+	if b.At > 0 {
+		at = time.UnixMilli(b.At)
+		// A clock that is ahead cannot put a listen in the future; one that is far behind
+		// (or a report kept for months) is taken as now.
+		if at.After(now.Add(2*time.Minute)) || at.Before(now.Add(-musicPlayMaxAge)) {
+			at = now
+		}
+	}
+	// The time as the player gave it tells this report from another, whatever it was kept as.
+	counted, err := s.store.RecordMusicPlay(r.Context(), p.ScopeID, t.ID, at, max(b.At, 0))
+	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"playCount": t.PlayCount + 1})
+	count := t.PlayCount
+	if counted {
+		count++
+	}
+	writeJSON(w, 200, map[string]any{"playCount": count, "counted": counted})
 }
 
-// samePlayWindow is how soon after a counted play another report is the same listen:
-// half the song's length, 30 seconds at most.
-func samePlayWindow(durationMs int64) time.Duration {
-	d := time.Duration(durationMs/2) * time.Millisecond
-	if d <= 0 || d > 30*time.Second {
-		return 30 * time.Second
-	}
-	return d
-}
+// musicPlayMaxAge is how old a kept listen may be and still be dated as the player says.
+const musicPlayMaxAge = 30 * 24 * time.Hour
 
 // GET /v1/music/artists?q=&guests=1&favorite=1&limit=&offset= -> {total, artists}
 // The artists who lead at least one song; guests=1 adds those who only appear on others'.
@@ -556,7 +591,7 @@ func (s *Server) musicFolders(w http.ResponseWriter, r *http.Request) {
 	for _, f := range folders {
 		list = append(list, out{MusicFolder: f, Reachable: isDir(f.Root), Tracks: counts[f.ID]})
 	}
-	writeJSON(w, 200, map[string]any{"folders": list, "scan": s.music.Status()})
+	writeJSON(w, 200, map[string]any{"folders": list, "scan": s.music.Status(), "loudness": s.musicLoudness(r)})
 }
 
 // POST /v1/music/folders {path, name} -> folder (and a scan starts)
@@ -588,7 +623,7 @@ func (s *Server) musicAddFolder(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetRootRemoved(r.Context(), root, false)
 	library.GuardMediaRoots(r.Context(), s.store, s.cfg.MediaRoots)
 	slog.Info("music folder added", "name", f.Name, "root", root)
-	go func() { _ = s.music.Scan(context.Background(), false) }()
+	go s.musicScanNow(false)
 	writeJSON(w, 201, f)
 }
 
@@ -630,15 +665,35 @@ func (s *Server) musicScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, 200, s.music.Status())
+		writeJSON(w, 200, struct {
+			music.Status
+			Loudness map[string]any `json:"loudness"`
+		}{s.music.Status(), s.musicLoudness(r)})
 		return
 	}
 	var b struct {
 		Force bool `json:"force"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&b)
-	go func() { _ = s.music.Scan(context.Background(), b.Force) }()
+	go s.musicScanNow(b.Force)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// musicScanNow reads the music folders and then measures what is new for loudness.
+func (s *Server) musicScanNow(force bool) {
+	ctx := context.Background()
+	if err := s.music.Scan(ctx, force); err != nil {
+		slog.Warn("music: scan failed", "err", err)
+	}
+	if _, err := s.music.MeasureLoudness(ctx); err != nil {
+		slog.Warn("music: loudness pass failed", "err", err)
+	}
+}
+
+// musicLoudness says how far the loudness measuring is: {measured, total, measuring}.
+func (s *Server) musicLoudness(r *http.Request) map[string]any {
+	measured, total, _ := s.store.MusicLoudnessCounts(r.Context())
+	return map[string]any{"measured": measured, "total": total, "measuring": s.music.Measuring()}
 }
 
 // checkNewMusicRoot: an existing, readable folder that is not already a music folder,

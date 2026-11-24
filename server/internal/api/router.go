@@ -44,11 +44,12 @@ type Server struct {
 	discover   *discover.Service // nil without TMDB
 	hooks      *arrhook.Service
 	transcoder *transcode.Detector
-	hub        *sessions.Hub   // "Play on": connected players and their command queues
-	board      *activity.Board // "Now playing": who is watching what, and how it is sent
-	links      *linkStore      // TV sign-in codes waiting for a phone's approval
-	voice      *voiceCasts     // anime casts per language (voicecast.go); nil without AniList
-	music      *music.Service  // the music folders' scanner and cover pictures (music.go)
+	hub        *sessions.Hub     // "Play on": connected players and their command queues
+	board      *activity.Board   // "Now playing": who is watching what, and how it is sent
+	links      *linkStore        // TV sign-in codes waiting for a phone's approval
+	voice      *voiceCasts       // anime casts per language (voicecast.go); nil without AniList
+	music      *music.Service    // the music folders' scanner and cover pictures (music.go)
+	musicTC    *music.Transcoder // songs converted for players that ask (music.go)
 	start      time.Time
 }
 
@@ -83,6 +84,7 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 	// Music: read the music folders at start and look at them again every so often, as
 	// the video libraries are scanned at start and watched (the same two switches).
 	s.music = music.New(st, ff, filepath.Join(cfg.CacheDir(), "music", "art"))
+	s.musicTC = music.NewTranscoder(ff, filepath.Join(cfg.CacheDir(), "music", "converted"), musicConvertedMax)
 	if cfg.ScanOnStart || cfg.Watch {
 		go s.music.Run(ctx, musicScanEvery, cfg.ScanOnStart, cfg.Watch)
 	}
@@ -263,6 +265,14 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 			r.Get("/music/art/{hash}", s.musicArt)
 			r.Post("/music/favorites/{kind}/{id}", s.musicFavorite)
 			r.Delete("/music/favorites/{kind}/{id}", s.musicFavorite)
+			r.Get("/music/playlists", s.musicPlaylists)
+			r.Post("/music/playlists", s.musicCreatePlaylist)
+			r.Get("/music/playlists/{id}", s.musicPlaylist)
+			r.Patch("/music/playlists/{id}", s.musicRenamePlaylist)
+			r.Delete("/music/playlists/{id}", s.musicDeletePlaylist)
+			r.Post("/music/playlists/{id}/tracks", s.musicPlaylistAdd)
+			r.Post("/music/playlists/{id}/remove", s.musicPlaylistRemove)
+			r.Put("/music/playlists/{id}/order", s.musicPlaylistOrder)
 			r.Get("/music/folders", s.musicFolders)
 			r.Post("/music/folders", s.musicAddFolder)
 			r.Delete("/music/folders/{id}", s.musicRemoveFolder)

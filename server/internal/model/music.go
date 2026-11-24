@@ -67,14 +67,20 @@ type MusicTrack struct {
 	// Lyrics says where lyrics come from ("lrc", "txt", "embedded"); empty when there are none.
 	Lyrics string `json:"lyrics,omitempty"`
 	// ReplayGain as the file is tagged, in dB (nil when it has none).
-	GainTrack    *float64   `json:"gainTrack,omitempty"`
-	GainAlbum    *float64   `json:"gainAlbum,omitempty"`
-	Favorite     bool       `json:"favorite"`
-	PlayCount    int        `json:"playCount"`
-	LastPlayedAt *time.Time `json:"lastPlayedAt,omitempty"`
-	AddedAt      time.Time  `json:"addedAt"`
+	GainTrack *float64 `json:"gainTrack,omitempty"`
+	GainAlbum *float64 `json:"gainAlbum,omitempty"`
+	// Loudness measured by the server: the song's integrated loudness (LUFS), its true
+	// peak (dBTP) and its album's loudness. Nil until measured.
+	Loudness      *float64   `json:"loudness,omitempty"`
+	Peak          *float64   `json:"peak,omitempty"`
+	AlbumLoudness *float64   `json:"albumLoudness,omitempty"`
+	Favorite      bool       `json:"favorite"`
+	PlayCount     int        `json:"playCount"`
+	LastPlayedAt  *time.Time `json:"lastPlayedAt,omitempty"`
+	AddedAt       time.Time  `json:"addedAt"`
 
 	Path       string `json:"-"`
+	Mtime      int64  `json:"-"`
 	LyricsText string `json:"-"`
 }
 
@@ -86,4 +92,23 @@ func LosslessCodec(codec string) bool {
 	}
 	// Plain PCM (wav, aiff) and DSD.
 	return len(codec) > 4 && (codec[:4] == "pcm_" || codec[:4] == "dsd_")
+}
+
+// MusicPlaylist is a profile's list of songs.
+type MusicPlaylist struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	TrackCount int    `json:"trackCount"` // songs whose files are there
+	DurationMs int64  `json:"durationMs"`
+	// Art is the pictures of its first songs (up to four, one of each), for a cover.
+	Art       []string  `json:"art"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// PlaylistEntry is one place in a playlist: a song, and the entry's own id (a song can
+// be in a list twice).
+type PlaylistEntry struct {
+	EntryID int64 `json:"entryId"`
+	MusicTrack
 }
