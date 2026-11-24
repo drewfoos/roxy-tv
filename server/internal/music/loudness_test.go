@@ -2,14 +2,18 @@ package music
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/roxy-media/roxy/server/internal/model"
 )
 
 // What ffmpeg prints while and when ebur128 is done (a real run, cut short): a line for
@@ -440,6 +444,157 @@ func TestAnUnmountedDriveCostsNoTries(t *testing.T) {
 	}
 }
 
+// Each music folder is judged by itself. With one drive away the songs on another were
+// not measured either: the pass counted files that would not open across every folder
+// and stopped altogether at twenty.
+func TestADriveAwayDoesNotStopAnotherFolder(t *testing.T) {
+	l := newTestLib(t)
+	// A second music folder, on "another drive".
+	other := filepath.Join(filepath.Dir(l.root), "Second") // after the first, however the songs are put in order
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	second := model.MusicFolder{Name: "More", Root: other}
+	if err := l.st.CreateMusicFolder(l.ctx, &second); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		p := l.put(fmt.Sprintf("A/song%02d.mp3", i), song{tags: tags("title", fmt.Sprintf("Away %02d", i), "artist", "A")})
+		os.WriteFile(p+".loud", loud("-10.0", "-1.0"), 0o644)
+	}
+	// The same stand-in files in the second folder (put writes under the first root).
+	for i := 0; i < 12; i++ {
+		p := l.put(fmt.Sprintf("B/here%02d.mp3", i), song{tags: tags("title", fmt.Sprintf("Here %02d", i), "artist", "B")})
+		os.WriteFile(p+".loud", loud("-12.0", "-1.0"), 0o644)
+	}
+	if err := os.Rename(filepath.Join(l.root, "B"), filepath.Join(other, "B")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.svc.Scan(l.ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(l.tracks()); n != 52 {
+		t.Fatalf("%d songs scanned, want 52", n)
+	}
+	// Anything measured by the scan's own pass is put back to "not measured".
+	if _, err := l.st.DB().ExecContext(l.ctx, `UPDATE music_tracks SET loudness = NULL, loudness_mtime = 0, loudness_blocks = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	// The songs of the folder that will be away came in last, so the pass reaches them
+	// first: forty that will not open, in a row, before any that will.
+	if _, err := l.st.DB().ExecContext(l.ctx, `UPDATE music_tracks SET added_at = added_at + 1000 WHERE path LIKE ?`, l.root+string(filepath.Separator)+"%"); err != nil {
+		t.Fatal(err)
+	}
+	calls := func() int {
+		b, _ := os.ReadFile(filepath.Join(filepath.Dir(l.root), "ffmpeg.calls"))
+		return strings.Count(string(b), "\n")
+	}
+	// The first folder's drive goes away.
+	away := l.root + ".away"
+	if err := os.Rename(l.root, away); err != nil {
+		t.Fatal(err)
+	}
+	before := calls()
+	n, err := l.svc.MeasureLoudness(l.ctx)
+	if err != nil || n != 12 {
+		t.Fatalf("one folder away: measured %d of the other folder's 12, %v", n, err)
+	}
+	if got := calls() - before; got != 12 {
+		t.Errorf("ffmpeg was run %d times, want once for each of the 12 songs that are there", got)
+	}
+	for _, tr := range l.tracks() {
+		if tries, _ := l.st.MusicLoudnessTries(l.ctx, tr.ID); tries != 0 {
+			t.Fatalf("%s has %d failed tries", tr.Title, tries)
+		}
+	}
+	// Back: the rest is measured.
+	if err := os.Rename(away, l.root); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := l.svc.MeasureLoudness(l.ctx); n != 40 || err != nil {
+		t.Fatalf("with the drive back: measured %d of 40, %v", n, err)
+	}
+}
+
+// reachOf: the longest folder a file lies under is its folder, and a name that only
+// begins like a folder's is not in it.
+func TestSongsAreCountedInTheirOwnFolder(t *testing.T) {
+	a, deep, b := &folderReach{root: "/m/Music"}, &folderReach{root: "/m/Music/Live"}, &folderReach{root: "/m/Music2"}
+	loose := &folderReach{}
+	all := []*folderReach{a, deep, b}
+	for path, want := range map[string]*folderReach{
+		"/m/Music/A/song.mp3":      a,
+		"/m/Music/Live/B/song.mp3": deep,
+		"/m/Music2/C/song.mp3":     b,
+		"/m/Musical/D/song.mp3":    loose,
+		"/elsewhere/song.mp3":      loose,
+	} {
+		if got := reachOf(all, loose, path); got != want {
+			t.Errorf("%s is counted in %q, want %q", path, got.root, want.root)
+		}
+	}
+}
+
+// Nobody waits for a loudness measurement: while the server converts a film for somebody
+// no new song is begun, and the pass goes on when that is over.
+func TestMeasuringGivesWayToConversions(t *testing.T) {
+	old := busyPoll
+	busyPoll = 10 * time.Millisecond
+	t.Cleanup(func() { busyPoll = old })
+	l := newTestLib(t)
+	for i := 0; i < 6; i++ {
+		p := l.put(fmt.Sprintf("A/song%02d.mp3", i), song{tags: tags("title", fmt.Sprintf("Song %02d", i), "artist", "A")})
+		os.WriteFile(p+".loud", loud("-10.0", "-1.0"), 0o644)
+	}
+	var busy atomic.Bool
+	busy.Store(true)
+	l.svc.Busy = busy.Load
+	l.scan(false) // the scan's own pass waits behind the conversion too
+	calls := func() int {
+		b, _ := os.ReadFile(filepath.Join(filepath.Dir(l.root), "ffmpeg.calls"))
+		return strings.Count(string(b), "\n")
+	}
+	before := calls()
+	done := make(chan int, 1)
+	go func() { n, _ := l.svc.MeasureLoudness(l.ctx); done <- n }()
+	time.Sleep(300 * time.Millisecond)
+	if got := calls() - before; got != 0 {
+		t.Fatalf("%d songs were measured while a film was being converted", got)
+	}
+	select {
+	case n := <-done:
+		t.Fatalf("the pass ended (%d measured) instead of waiting", n)
+	default:
+	}
+	busy.Store(false)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pass did not go on once the conversion was over")
+	}
+	for _, tr := range l.tracks() {
+		if tr.Loudness == nil {
+			t.Fatalf("%s was not measured", tr.Title)
+		}
+	}
+	// A pass that is waiting ends with the server.
+	p := l.put("A/late.mp3", song{tags: tags("title", "Late", "artist", "A")})
+	os.WriteFile(p+".loud", loud("-10.0", "-1.0"), 0o644)
+	busy.Store(true)
+	ctx, cancel := context.WithCancel(l.ctx)
+	go func() { time.Sleep(100 * time.Millisecond); cancel() }()
+	if err := l.svc.Scan(ctx, false); err != nil && ctx.Err() == nil {
+		t.Fatal(err)
+	}
+	ended := make(chan struct{})
+	go func() { _, _ = l.svc.MeasureLoudness(ctx); close(ended) }()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a waiting pass did not end when the server stopped")
+	}
+}
+
 // A long file prints more lines than a run's output may hold; it is measured all the same.
 func TestALongFileIsMeasured(t *testing.T) {
 	l := newTestLib(t)
@@ -524,7 +679,7 @@ func TestTranscoderKeepsAndTrims(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			p, err := tc.File(context.Background(), a, AudioFormat{"opus", 128})
+			p, err := tc.File(context.Background(), "", a, AudioFormat{"opus", 128})
 			if err != nil {
 				t.Error(err)
 			}
@@ -550,14 +705,14 @@ func TestTranscoderKeepsAndTrims(t *testing.T) {
 	// A changed source file (another time) is another version.
 	changed := a
 	changed.Mtime = 2
-	p2, _ := tc.File(context.Background(), changed, AudioFormat{"opus", 128})
+	p2, _ := tc.File(context.Background(), "", changed, AudioFormat{"opus", 128})
 	if p2 == paths[0] || calls() != 2 {
 		t.Errorf("a changed file was served from the old conversion: %s, %d conversions", p2, calls())
 	}
 	// A conversion that fails keeps nothing, and the next request tries again.
 	bad := src("bad.mp3")
 	os.WriteFile(bad.Path+".noconvert", nil, 0o644)
-	if _, err := tc.File(context.Background(), bad, AudioFormat{"mp3", 192}); err == nil {
+	if _, err := tc.File(context.Background(), "", bad, AudioFormat{"mp3", 192}); err == nil {
 		t.Error("a failed conversion gave a file")
 	}
 	left, _ := filepath.Glob(filepath.Join(dir, "*", "*.part"))
@@ -565,7 +720,7 @@ func TestTranscoderKeepsAndTrims(t *testing.T) {
 		t.Errorf("half-made files left: %v", left)
 	}
 	os.Remove(bad.Path + ".noconvert")
-	if _, err := tc.File(context.Background(), bad, AudioFormat{"mp3", 192}); err != nil {
+	if _, err := tc.File(context.Background(), "", bad, AudioFormat{"mp3", 192}); err != nil {
 		t.Errorf("the retry: %v", err)
 	}
 
@@ -573,7 +728,7 @@ func TestTranscoderKeepsAndTrims(t *testing.T) {
 	small := NewTranscoder(l.svc.ff, dir, 60)
 	old := time.Now().Add(-48 * time.Hour)
 	os.Chtimes(paths[0], old, old)
-	newest, err := small.File(context.Background(), src("c.mp3"), AudioFormat{"opus", 128})
+	newest, err := small.File(context.Background(), "", src("c.mp3"), AudioFormat{"opus", 128})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,5 +737,113 @@ func TestTranscoderKeepsAndTrims(t *testing.T) {
 	}
 	if _, err := os.Stat(newest); err != nil {
 		t.Errorf("the file just made was removed: %v", err)
+	}
+}
+
+// The queue of conversions has an end. It had none: every song in every format could be
+// asked for at once, each was converted though nobody waited for it any more, and the
+// next person's song stood behind them all.
+func TestTranscoderQueueIsBounded(t *testing.T) {
+	l := newTestLib(t)
+	dir := filepath.Join(filepath.Dir(l.root), "data", "cache", "music", "converted")
+	tc := NewTranscoder(l.svc.ff, dir, 1<<20)
+	tc.MaxPending, tc.PerClient = 5, 3
+	held := map[string]string{}
+	src := func(name string) Source {
+		p := l.put(name, song{tags: tags("title", name, "artist", "A")})
+		if err := os.WriteFile(p+".hold", nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		held[name] = p
+		return Source{TrackID: name, Path: p, Size: 10, Mtime: 1, SampleRate: 44100, Channels: 2}
+	}
+	started := func(name string) int {
+		b, _ := os.ReadFile(held[name] + ".started")
+		return len(b) / 2
+	}
+	opus := AudioFormat{"opus", 128}
+	type call struct {
+		cancel context.CancelFunc
+		done   chan error
+	}
+	ask := func(client string, s Source) call {
+		ctx, cancel := context.WithCancel(context.Background())
+		c := call{cancel, make(chan error, 1)}
+		go func() { _, err := tc.File(ctx, client, s, opus); c.done <- err }()
+		return c
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		for i := 0; i < 400 && !ok(); i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !ok() {
+			t.Fatalf("never: %s", what)
+		}
+	}
+	// One client asks for three songs: two run (the converter's two places), one waits.
+	s1, s2, s3, s4 := src("1.mp3"), src("2.mp3"), src("3.mp3"), src("4.mp3")
+	c1, c2 := ask("phone", s1), ask("phone", s2)
+	waitFor("the first two running", func() bool { return started("1.mp3") == 1 && started("2.mp3") == 1 })
+	c3 := ask("phone", s3)
+	waitFor("the third waiting", func() bool { return tc.Pending() == 3 })
+	// One that should be refused is refused at once; were it taken instead it would wait
+	// behind the held ones, so the question is given a moment and no more.
+	refused := func(client string, s Source) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, err := tc.File(ctx, client, s, opus)
+		return err
+	}
+	// A fourth of its own is refused; the same song again joins the conversion on its way.
+	if err := refused("phone", s4); !errors.Is(err, ErrBusy) {
+		t.Fatalf("a client past its share: err = %v, want ErrBusy", err)
+	}
+	again := ask("phone", s3)
+	// Somebody else is not held up by that client's share...
+	o1, o2 := src("o1.mp3"), src("o2.mp3")
+	c5 := ask("tv", o1)
+	waitFor("another client's song waiting", func() bool { return tc.Pending() == 4 })
+	c6 := ask("tv", o2)
+	waitFor("and a second", func() bool { return tc.Pending() == 5 })
+	// ...until the whole queue is full.
+	if err := refused("browser", src("b.mp3")); !errors.Is(err, ErrBusy) {
+		t.Fatalf("a full queue: err = %v, want ErrBusy", err)
+	}
+	// The third song's two requests leave before its turn: it is not converted at all,
+	// and its place in the queue is free at once.
+	c3.cancel()
+	again.cancel()
+	<-c3.done
+	<-again.done
+	waitFor("the dropped one gone from the queue", func() bool { return tc.Pending() == 4 })
+	// A running one whose request leaves is finished all the same (the next request finds it done).
+	c1.cancel()
+	<-c1.done
+	for _, n := range []string{"1.mp3", "2.mp3", "o1.mp3", "o2.mp3"} {
+		_ = os.Remove(held[n] + ".hold")
+	}
+	for _, c := range []call{c2, c5, c6} {
+		if err := <-c.done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor("the queue empty", func() bool { return tc.Pending() == 0 })
+	if p, err := tc.File(context.Background(), "phone", s1, opus); err != nil || p == "" {
+		t.Fatalf("the song whose request left was not kept: %v", err)
+	}
+	if n := started("1.mp3"); n != 1 {
+		t.Errorf("the first song was converted %d times, want once", n)
+	}
+	if n := started("3.mp3"); n != 0 {
+		t.Errorf("a song nobody waited for was converted (%d times)", n)
+	}
+	// Asked for again, the dropped song is converted like any other.
+	_ = os.Remove(held["3.mp3"] + ".hold")
+	if _, err := tc.File(context.Background(), "phone", s3, opus); err != nil {
+		t.Fatal(err)
+	}
+	if n := started("3.mp3"); n != 1 {
+		t.Errorf("the dropped song, asked for again, was converted %d times", n)
 	}
 }

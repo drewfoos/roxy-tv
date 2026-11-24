@@ -238,7 +238,9 @@ show a Skip button or skip automatically (a viewer preference).
 
 ### 4.9 Accounts and sign-in
 
-- **First run:** the setup wizard creates the admin (from the LAN only).
+- **First run:** the setup wizard creates the admin: from the LAN only, and with the setup
+  code the server wrote into its log and data folder (an address on the LAN does not show
+  that somebody owns the server). See `docs/SECURITY.md`.
 - **Logins** with bcrypt passwords and sign-in throttling; each has up to six profiles with
   AniList-character avatars.
 - **Devices:** every sign-in is a device with its own opaque token

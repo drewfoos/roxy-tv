@@ -111,6 +111,7 @@ func trustedRealIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
 			peer := peerIP(r)
 			r = r.WithContext(context.WithValue(r.Context(), peerKey{}, peer))
 			if len(trusted) > 0 && inNets(peer, trusted) {
+				r = r.WithContext(context.WithValue(r.Context(), viaProxyKey{}, true))
 				xff := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 				client := strings.TrimSpace(xff[len(xff)-1])
 				if client == "" {
@@ -123,6 +124,28 @@ func trustedRealIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// viaProxyKey marks a request that came through a configured reverse proxy.
+type viaProxyKey struct{}
+
+// encrypted reports whether the request travelled encrypted as far as the server can
+// know: over TLS to the server itself, or to a configured reverse proxy that says so.
+// (A proxy's word counts only from ROXY_TRUSTED_PROXIES; anyone can write the header.)
+// A private network is not this: on the home network, and through a proxy the server
+// was not told about, the request is in the clear or unknown.
+func encrypted(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	via, _ := r.Context().Value(viaProxyKey{}).(bool)
+	return via && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+// inClearFromOutside: a request that reached the server unencrypted from an address
+// outside the private networks. What it carries could be read on the way.
+func inClearFromOutside(r *http.Request) bool {
+	return !encrypted(r) && !isLocalIP(peerIP(r))
 }
 
 // connPeer: the connection's own address (before trustedRealIP), else RemoteAddr's.

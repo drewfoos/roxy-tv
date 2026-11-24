@@ -16,13 +16,16 @@ import (
 )
 
 // First-time setup (Jellyfin's wizard). A new server has no accounts; the first person
-// to open the app on the home network creates the admin. After that this door is shut:
+// to open the app on the home network creates the admin, with the setup code the server
+// wrote into its log and its data folder when it started (setupCode: an address on the
+// home network alone is not proof of being the owner). After that this door is shut:
 // every other step (TMDB key, media folders, Sonarr / Radarr) uses the normal admin API.
 // ROXY_ADMIN_PASSWORD skips it (the admin is created at start, as before).
 
 var setupMu sync.Mutex
 
-// GET /v1/setup -> {required, allowed, tmdb, serverName}. Public: the app asks before sign-in.
+// GET /v1/setup -> {required, allowed, code, tmdb, serverName}. Public: the app asks before
+// sign-in. code: setup asks for the server's setup code (never given out here).
 func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 	n, err := s.store.CountUsers(r.Context())
 	if err != nil {
@@ -32,13 +35,14 @@ func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"required":   n == 0,
 		"allowed":    n == 0 && fromHomeNetwork(r),
+		"code":       n == 0 && s.setup.required(),
 		"tmdb":       s.meta != nil && s.meta.TMDB() != nil,
 		"serverName": s.store.ServerName(r.Context()),
 	})
 }
 
-// POST /v1/setup/admin {name, password, device, deviceId, version, client?} -> sign-in response.
-// Only while no account exists, and only from the home network.
+// POST /v1/setup/admin {name, password, code, device, deviceId, version, client?} -> sign-in response.
+// Only while no account exists, only from the home network, and only with the setup code.
 func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	if !fromHomeNetwork(r) {
 		writeError(w, 403, "setup only works from the server's home network")
@@ -47,6 +51,7 @@ func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Name     string `json:"name"`
 		Password string `json:"password"`
+		Code     string `json:"code"`
 		Device   string `json:"device"`
 		DeviceID string `json:"deviceId"`
 		Version  string `json:"version"`
@@ -71,6 +76,16 @@ func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "this server is already set up; sign in instead")
 		return
 	}
+	// After everything else about the request has been found in order: a wrong name or
+	// password is not counted as a wrong code.
+	if !s.setup.matches(b.Code) {
+		slog.Warn("setup: wrong setup code", "from", peerIP(r))
+		writeJSON(w, 403, map[string]any{
+			"code":  "setup_code",
+			"error": "That is not this server's setup code. It is in the server's log from when it started, and in " + setupCodeFile + " in its data folder.",
+		})
+		return
+	}
 	hash, err := auth.HashPassword(b.Password)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -81,6 +96,7 @@ func (s *Server) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	s.setup.done()
 	slog.Warn("setup: admin account created", "name", u.Name, "from", peerIP(r))
 	client := strings.TrimSpace(b.Client)
 	if client == "" || len(client) > 40 {

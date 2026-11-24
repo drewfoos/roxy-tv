@@ -118,7 +118,7 @@ func TestRealFilesAreRead(t *testing.T) {
 	// Conversion: each format comes out as what it says, readable, about as long.
 	tc := NewTranscoder(ff, filepath.Join(filepath.Dir(l.root), "data", "cache", "music", "converted"), 1<<30)
 	for _, f := range []AudioFormat{{"opus", 128}, {"mp3", 192}, {"aac", 192}, {Codec: "flac"}} {
-		out, err := tc.File(ctx, Source{TrackID: "t", Path: flac, Size: 1, Mtime: 1, SampleRate: 96000, Channels: 2}, f)
+		out, err := tc.File(ctx, "", Source{TrackID: "t", Path: flac, Size: 1, Mtime: 1, SampleRate: 96000, Channels: 2}, f)
 		if err != nil {
 			t.Errorf("converting to %s: %v", f.Codec, err)
 			continue

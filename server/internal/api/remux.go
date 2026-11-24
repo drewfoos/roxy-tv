@@ -26,13 +26,19 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	select {
-	case remuxSlots <- struct{}{}:
-		defer func() { <-remuxSlots }()
-	default:
+	client := conversionClient(r)
+	if !s.conv.mayStart(client) {
+		tooManyConversions(w)
+		return
+	}
+	ctx, superseded, end := s.conv.begin(r.Context(), "remux", client)
+	defer end()
+	r = r.WithContext(ctx)
+	if !takeSlot(ctx, remuxSlots, superseded) {
 		writeError(w, 503, "the server is already remuxing as much as it can")
 		return
 	}
+	defer func() { <-remuxSlots }()
 	defer s.streaming(r, src, activity.Stream{Method: activity.Remux, AudioIndex: req.AudioIndex, Web: true})()
 	s.pipeFFmpeg(w, r, "remux", ffmpeg.LocalInputs(transcode.RemuxArgs(req)), "source", src.ID, "audio", req.AudioIndex, "codec", req.Codec, "start", req.StartSec)
 }

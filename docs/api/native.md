@@ -140,7 +140,13 @@ as-is (MP4 `mov_text` becomes SRT), so it plays like direct play at a lower bitr
   at 160 kb/s). At 480p-class settings (height 480 or less, or under 2.5 Mb/s) every
   track is stereo AAC at 128 kb/s.
 - HDR sources are tone-mapped to SDR (`tonemapx`) when the build has the filter.
-- At most 4 transcodes run at once; a fifth gets `503`.
+- At most 4 transcodes run at once (8 remuxes); one more gets `503`.
+- One device has at most 2 of each. A third from the same device is not refused: it ends
+  that device's oldest (a seek or a change of quality asks for the next stream before
+  the old one has gone), so a player never has to wait for its own leftovers, and no
+  device can take every place.
+- Starts are counted per device: 30 at once, then one a second. Past that the answer is
+  `429` with `Retry-After`; a player that seeks about stays far under it.
 - The apps offer 4K (40 Mb/s), 1440p (16), 1080p (8), 720p (4) and 480p (1.5), listing
   only the ones below the file's own resolution; the file itself is shown as its
   resolution ("1080p", "4K"). A default per network (Wi-Fi, mobile data) lives in the

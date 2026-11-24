@@ -61,6 +61,8 @@ docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d --build 
 ```
 
 Open `http://<server address>:8096` from a computer on the same network. The setup wizard
+asks for the server's **setup code** (Roxy Server writes it into its log when it starts
+without an account: `docker compose logs roxy`, or `setup-code.txt` in its config folder),
 creates your admin account, asks for a free [TMDB](https://www.themoviedb.org/settings/api)
 API key for posters and descriptions, and lets you pick the media folders.
 

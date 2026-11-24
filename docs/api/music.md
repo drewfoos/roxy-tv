@@ -42,7 +42,10 @@ signed-in user; plays, favourites and playlists belong to the profile named by
   second a song): its integrated loudness and its true peak. A file that changes is
   measured again; one that cannot be decoded is given up on after three tries, until it
   changes. A file that cannot be *opened* is not counted as a try: a drive that is away
-  costs no song anything, and twenty such files in a row end the pass.
+  costs no song anything, and twenty such files in a row leave that music folder for
+  the next pass. Each folder is judged by itself: the songs on another drive are
+  measured all the same. Nobody waits for a measurement, so it gives way: its ffmpeg
+  runs at a low priority, and no new song is begun while a film is being transcoded.
 - **An album's loudness is measured as if the album were one file**, not worked out from
   its songs' figures. The standard measures in blocks of 400 ms and leaves out the ones
   more than 10 LU under the level of the whole, and which those are depends on the whole
@@ -114,6 +117,12 @@ be in a playlist more than once; removing and ordering go by `entryId`, never by
 | GET, HEAD | `/v1/music/tracks/{id}/stream?format=&bitrate=` | the song converted, with HTTP ranges like a file. `format`: `opus` (Ogg, default 128), `mp3` (192), `aac` (MP4, 192) or `flac` (16 bits, 48 kHz at most: for a lossless file the player has no decoder for). `bitrate` in kbit/s is taken to the nearest of 64, 96, 128, 160, 192, 256, 320 (Opus stops at 256). More than two channels become stereo. Anything else is 400. |
 | POST | `/v1/music/tracks/{id}/played` | body `{at}` -> `{playCount, counted}`. Counts one listen. A player sends it **once per play, when half the song or four minutes has been heard** (time skipped over is not heard), with `at` = the time it counted it, Unix ms. |
 | POST, DELETE | `/v1/music/favorites/{kind}/{id}` | 204. `kind` is `track`, `album` or `artist`. |
+
+**Conversions have a queue with an end:** two run at a time, 32 may be waiting or
+running, and one client (a device) may have asked for 6 of those. Past either the answer
+is `429` with `Retry-After` (a request for a conversion already on its way always joins
+it). A conversion still waiting for its turn when nobody waits for it any more is not
+made.
 
 **Conversions** are made once and kept: the first request for a song in a format waits
 until the whole file is converted (a few seconds), every later one is served from the

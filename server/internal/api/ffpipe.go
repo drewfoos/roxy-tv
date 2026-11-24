@@ -71,11 +71,22 @@ func (s *Server) pipe(w http.ResponseWriter, r *http.Request, what string, args 
 	buf := make([]byte, 256*1024)
 	flusher, _ := w.(http.Flusher)
 	rc := http.NewResponseController(w)
+	// The stream is ended from outside (its client's next conversion took its place, see
+	// conversions.begin; the server stops): a player that holds the connection open and
+	// reads nothing would keep this handler in its write, and the conversion's place with
+	// it, until pipeStall. The write is given up now.
+	defer context.AfterFunc(ctx, func() { _ = rc.SetWriteDeadline(time.Now()) })()
 	playerGone := false
 	for {
 		n, rerr := stdout.Read(buf)
 		if n > 0 {
 			_ = rc.SetWriteDeadline(time.Now().Add(pipeStall)) // not supported by every writer: then no limit
+			// Looked at after the deadline was set: an ending that comes from here on
+			// cuts the write short itself.
+			if ctx.Err() != nil {
+				playerGone = true
+				break
+			}
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				playerGone = true
 				cancel() // stop ffmpeg now; nothing reads its output any more

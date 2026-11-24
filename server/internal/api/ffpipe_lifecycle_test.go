@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/roxy-media/roxy/server/internal/auth"
 	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/model"
@@ -94,8 +95,17 @@ func newPipeWorldWith(t *testing.T, encoder, gpu string) *pipeWorld {
 		t.Fatal(err)
 	}
 	s := &Server{cfg: &config.Config{DataDir: data}, store: st, ff: &ffmpeg.FFmpeg{FFmpeg: fake},
-		transcoder: transcode.NewDetector(fake, encoder, "")}
+		transcoder: transcode.NewDetector(fake, encoder, ""), conv: newConversions()}
 	r := chi.NewRouter()
+	// A request may say which signed-in device it comes from (openAs).
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			if d := req.Header.Get("X-Test-Device"); d != "" {
+				req = req.WithContext(auth.WithPrincipal(req.Context(), &model.Principal{UserID: "u", DeviceID: d}))
+			}
+			next.ServeHTTP(rw, req)
+		})
+	})
 	r.Get("/v1/sources/{id}/transcode", s.transcodeStream)
 	r.Get("/v1/sources/{id}/remux", s.remuxStream)
 	w := &pipeWorld{srv: httptest.NewServer(r), pids: pids, args: args, base: base, s: s}
@@ -130,18 +140,38 @@ func waitUntil(t *testing.T, what string, within time.Duration, cond func() bool
 	t.Fatalf("timed out after %v waiting for %s", within, what)
 }
 
-// open starts a stream and returns its response with the first bytes read.
-func (w *pipeWorld) open(t *testing.T, path string) *http.Response {
+// get asks for path as a device ("" = not signed in: the address is all that is known).
+func (w *pipeWorld) get(t *testing.T, device, path string) *http.Response {
 	t.Helper()
-	resp, err := http.Get(w.srv.URL + path)
+	req, err := http.NewRequest("GET", w.srv.URL+path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if device != "" {
+		req.Header.Set("X-Test-Device", device)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// open starts a stream and returns its response with the first bytes read.
+func (w *pipeWorld) open(t *testing.T, path string) *http.Response { return w.openAs(t, "", path) }
+
+// openAs is open for a signed-in device.
+func (w *pipeWorld) openAs(t *testing.T, device, path string) *http.Response {
+	t.Helper()
+	resp := w.get(t, device, path)
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		t.Fatalf("%s: %d %s", path, resp.StatusCode, b)
 	}
+	// Closed with the test at the latest: a stream left open by a test that failed would
+	// keep its handler writing, and the test server's own closing waiting on that.
+	t.Cleanup(func() { resp.Body.Close() })
 	if _, err := io.ReadFull(resp.Body, make([]byte, 64<<10)); err != nil {
 		t.Fatal(err)
 	}
@@ -216,13 +246,10 @@ func TestConcurrentTranscodesAreBounded(t *testing.T) {
 	w := newPipeWorld(t)
 	var open []*http.Response
 	for i := 0; i < cap(transcodeSlots); i++ {
-		open = append(open, w.open(t, "/v1/sources/src/transcode"))
+		open = append(open, w.openAs(t, "device"+strconv.Itoa(i), "/v1/sources/src/transcode"))
 	}
 	waitUntil(t, "every transcode running", 5*time.Second, func() bool { return len(w.running()) == cap(transcodeSlots) })
-	resp, err := http.Get(w.srv.URL + "/v1/sources/src/transcode")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := w.get(t, "one-more", "/v1/sources/src/transcode")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("a transcode past the slot count: %d, want 503", resp.StatusCode)
@@ -232,12 +259,110 @@ func TestConcurrentTranscodesAreBounded(t *testing.T) {
 	}
 	open[0].Body.Close()
 	waitUntil(t, "a slot to come back", 10*time.Second, func() bool { return len(transcodeSlots) < cap(transcodeSlots) })
-	open[0] = w.open(t, "/v1/sources/src/transcode")
+	open[0] = w.openAs(t, "device0", "/v1/sources/src/transcode")
 	for _, r := range open {
 		r.Body.Close()
 	}
 	waitUntil(t, "every ffmpeg to stop", 10*time.Second, func() bool { return len(w.running()) == 0 })
 	waitUntil(t, "every slot to be free", 5*time.Second, func() bool { return len(transcodeSlots) == 0 })
+}
+
+// One device could take every place the server has: four conversions asked for by one
+// player, and nobody else could convert anything. A device has two at most (the stream
+// it plays and the one replacing it), and its next does not get a third place: it ends
+// that device's oldest, which its player has left behind.
+func TestOneDeviceCannotTakeEveryConversion(t *testing.T) {
+	for _, kind := range []string{"transcode", "remux"} {
+		t.Run(kind, func(t *testing.T) {
+			w := newPipeWorld(t)
+			slots := transcodeSlots
+			if kind == "remux" {
+				slots = remuxSlots
+			}
+			path := "/v1/sources/src/" + kind
+			first := w.openAs(t, "tv", path)
+			defer first.Body.Close()
+			second := w.openAs(t, "tv", path)
+			defer second.Body.Close()
+			waitUntil(t, "two running", 5*time.Second, func() bool { return len(w.running()) == 2 })
+			// A seek, a change of quality: the next one, with the first two still open.
+			third := w.openAs(t, "tv", path)
+			defer third.Body.Close()
+			waitUntil(t, "the oldest to be ended", 5*time.Second, func() bool { return len(w.running()) == 2 && len(slots) == 2 })
+			if n := w.s.conv.count(kind, "device|tv"); n != 2 {
+				t.Fatalf("the device has %d conversions, want 2", n)
+			}
+			// The one ended is the oldest: its stream is over, the second's goes on.
+			done := make(chan error, 1)
+			go func() { _, err := io.Copy(io.Discard, first.Body); done <- err }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the oldest stream was not ended")
+			}
+			if _, err := io.ReadFull(second.Body, make([]byte, 64<<10)); err != nil {
+				t.Fatalf("the newer stream was ended too: %v", err)
+			}
+			// Other devices fill the rest of the server's places...
+			var others []*http.Response
+			for i := 0; len(slots) < cap(slots); i++ {
+				others = append(others, w.openAs(t, "other"+strconv.Itoa(i), path))
+			}
+			// ...and the device's next still starts: it only ever trades one of its own.
+			fourth := w.openAs(t, "tv", path)
+			defer fourth.Body.Close()
+			waitUntil(t, "the trade", 5*time.Second, func() bool { return len(w.running()) == cap(slots) && len(slots) == cap(slots) })
+			if n := w.s.conv.count(kind, "device|tv"); n != 2 {
+				t.Fatalf("the device has %d conversions after its fourth, want 2", n)
+			}
+			// While somebody with none is told the server is busy, as before.
+			resp := w.get(t, "latecomer", path)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("a device with none, the server full: %d, want 503", resp.StatusCode)
+			}
+			for _, r := range append(others, first, second, third, fourth) {
+				r.Body.Close()
+			}
+			waitUntil(t, "every ffmpeg to stop", 10*time.Second, func() bool { return len(w.running()) == 0 })
+			waitUntil(t, "every slot to be free", 5*time.Second, func() bool { return len(slots) == 0 })
+			waitUntil(t, "nothing left counted", 5*time.Second, func() bool { return w.s.conv.count(kind, "device|tv") == 0 })
+		})
+	}
+}
+
+// Conversions are counted as they start, each client for itself: a loop that asks for
+// one after another does not get an ffmpeg per turn. (The limit for JSON calls allows
+// twenty a second, and a song's stream is not counted by it at all.)
+func TestConversionStartsAreCounted(t *testing.T) {
+	w := newPipeWorld(t)
+	w.s.conv.starts = newRateLimiter(0.001, 3) // three, then next to none
+	for _, kind := range []string{"transcode", "remux", "transcode"} {
+		resp := w.openAs(t, "phone", "/v1/sources/src/"+kind)
+		resp.Body.Close()
+	}
+	started := len(strings.Split(strings.TrimSpace(readFile(t, w.args)), "\n"))
+	resp := w.get(t, "phone", "/v1/sources/src/transcode")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("a fourth start at once: %d (Retry-After %q), want 429 with a time to wait", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+	if n := len(strings.Split(strings.TrimSpace(readFile(t, w.args)), "\n")); n != started {
+		t.Fatalf("a refused start ran ffmpeg (%d runs, %d before)", n, started)
+	}
+	// Somebody else is not counted with them.
+	other := w.openAs(t, "tv", "/v1/sources/src/transcode")
+	other.Body.Close()
+	waitUntil(t, "every ffmpeg to stop", 10*time.Second, func() bool { return len(w.running()) == 0 })
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // gpuScript makes the fake ffmpeg's VAAPI encoder a GPU that can leave: once the file

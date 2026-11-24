@@ -61,7 +61,7 @@ func newTestLib(t *testing.T) *testLib {
 		"if [ $loud = 1 ]; then [ -f \"$f.loud\" ] || exit 1; cat \"$f.loud\" >&2; exit 0; fi\n"+
 		"# Asked about itself (-filters, -encoders: no input): it says nothing, and writes nothing.\n"+
 		"[ -n \"$f\" ] || exit 0\n"+
-		"case \"$out\" in /*) [ -f \"$f.noconvert\" ] && exit 1; printf 'converted %s' \"$f\" > \"$out\"; exit 0;; esac\n"+
+		"case \"$out\" in /*) [ -f \"$f.noconvert\" ] && exit 1; echo x >> \"$f.started\"; while [ -f \"$f.hold\" ]; do sleep 0.02; done; printf 'converted %s' \"$f\" > \"$out\"; exit 0;; esac\n"+
 		"[ -f \"$f.pic\" ] || exit 1\ncat \"$f.pic\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

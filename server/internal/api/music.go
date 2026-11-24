@@ -266,10 +266,16 @@ func (s *Server) musicStream(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, err.Error())
 			return
 		}
-		converted, err := s.musicTC.File(r.Context(), music.Source{TrackID: t.ID, Path: path, Size: t.Size, Mtime: t.Mtime, SampleRate: t.SampleRate, Channels: t.Channels}, f)
+		converted, err := s.musicTC.File(r.Context(), conversionClient(r), music.Source{TrackID: t.ID, Path: path, Size: t.Size, Mtime: t.Mtime, SampleRate: t.SampleRate, Channels: t.Channels}, f)
 		if err != nil {
 			if r.Context().Err() != nil {
-				return // the player left; the conversion goes on for the next request
+				return // the player left; a conversion that had begun goes on for the next request
+			}
+			if errors.Is(err, music.ErrBusy) {
+				// More songs asked for at once than a player asks for (see Transcoder.MaxPending).
+				w.Header().Set("Retry-After", "3")
+				writeError(w, http.StatusTooManyRequests, "too many songs are being converted; try again in a moment")
+				return
 			}
 			slog.Warn("music: conversion failed", "track", t.ID, "format", f.Codec, "err", err)
 			writeError(w, 500, "this song could not be converted")

@@ -33,6 +33,11 @@ type Service struct {
 	// Workers is how many files are read at once.
 	Workers int
 
+	// Busy, when set, says that the server has something to do that somebody is waiting
+	// for (a film being converted for a player). Measuring loudness waits while it does:
+	// nobody is waiting for that. See MeasureLoudness.
+	Busy func() bool
+
 	mu        sync.Mutex
 	scanning  bool
 	measuring bool // a loudness pass is running (loudness.go)

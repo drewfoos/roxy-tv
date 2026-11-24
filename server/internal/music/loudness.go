@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -265,7 +266,7 @@ func MeasureFile(ctx context.Context, ff *ffmpeg.FFmpeg, path string) (Loudness,
 	var r loudnessReader
 	// framelog=info: a line for every block, read as it comes and not kept (an hour of
 	// sound prints five megabytes of them).
-	err := ff.RunLines(ctx, r.line, "-hide_banner", "-nostats", "-v", "info", "-i", path, "-map", "0:a:0",
+	err := ff.RunLinesLow(ctx, r.line, "-hide_banner", "-nostats", "-v", "info", "-i", path, "-map", "0:a:0",
 		"-af", "ebur128=peak=true:framelog=info", "-f", "null", "-")
 	if err != nil {
 		return Loudness{}, fmt.Errorf("measuring %s: %w", filepath.Base(path), err)
@@ -286,9 +287,48 @@ func loudnessWorkers() int {
 	return n
 }
 
-// unreachableLimit: this many files in a row that cannot be opened is a drive that is
-// gone, not that many broken files, and the pass stops there.
+// unreachableLimit: this many files of one music folder in a row that cannot be opened is
+// a drive that is gone, not that many broken files, and the pass leaves that folder.
 const unreachableLimit = 20
+
+// busyPoll is how often a pass that is waiting for the server to be free looks again.
+var busyPoll = 2 * time.Second
+
+// folderReach is what a pass knows of one music folder's files: how many in a row could
+// not be opened, and whether the folder was given up on for this pass.
+type folderReach struct {
+	root   string
+	missed atomic.Int32
+	gone   atomic.Bool
+}
+
+// reachOf finds the folder a file is in (the longest root it lies under); a file under
+// no folder still listed gets one of its own kind, so it is counted somewhere.
+func reachOf(folders []*folderReach, loose *folderReach, path string) *folderReach {
+	var best *folderReach
+	for _, f := range folders {
+		if (path == f.root || strings.HasPrefix(path, f.root+string(filepath.Separator))) && (best == nil || len(f.root) > len(best.root)) {
+			best = f
+		}
+	}
+	if best == nil {
+		return loose
+	}
+	return best
+}
+
+// waitWhileBusy holds a pass back while the server converts a film for somebody; false
+// when ctx ended meanwhile.
+func (s *Service) waitWhileBusy(ctx context.Context) bool {
+	for s.Busy != nil && s.Busy() {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(busyPoll):
+		}
+	}
+	return ctx.Err() == nil
+}
 
 // albumRefreshEvery: during a long pass albums get their loudness as their songs are
 // done, this often.
@@ -301,7 +341,14 @@ const albumRefreshEvery = 30 * time.Second
 //
 // A file that cannot be opened is not a file that cannot be measured: it is skipped
 // without a mark against it (an unmounted drive would otherwise use up every song's
-// tries), and a run of them ends the pass.
+// tries), and a run of them in one music folder leaves that folder for the next pass.
+// Each folder is judged by itself: one drive away does not stop the songs on another
+// from being measured, and songs that open on one do not hide that the other is gone.
+//
+// Nobody waits for a measurement, so the pass gives way: its ffmpeg runs at a low
+// priority, and no new file is begun while the server says it is Busy (a film being
+// converted for a player), which on a small machine would otherwise share its
+// processors with up to four measurements.
 func (s *Service) MeasureLoudness(ctx context.Context) (int, error) {
 	s.mu.Lock()
 	if s.measuring {
@@ -332,9 +379,15 @@ func (s *Service) MeasureLoudness(ctx context.Context) (int, error) {
 		firstErr    error
 		touched     = map[string]bool{} // albums with a song measured since they were last worked out
 		lastRefresh = time.Now()
-		unreachable atomic.Int32 // in a row
-		gone        atomic.Bool
+		waited      atomic.Bool
 	)
+	var folders []*folderReach
+	if roots, ferr := s.store.MusicFolders(ctx); ferr == nil {
+		for _, f := range roots {
+			folders = append(folders, &folderReach{root: filepath.Clean(f.Root)})
+		}
+	}
+	loose := &folderReach{}
 	fail := func(err error) {
 		mu.Lock()
 		if firstErr == nil {
@@ -369,19 +422,31 @@ func (s *Service) MeasureLoudness(ctx context.Context) (int, error) {
 				if ctx.Err() != nil {
 					continue
 				}
+				reach := reachOf(folders, loose, t.Path)
+				if reach.gone.Load() {
+					mu.Lock()
+					skipped++
+					mu.Unlock()
+					continue
+				}
+				if s.Busy != nil && s.Busy() {
+					waited.Store(true)
+					if !s.waitWhileBusy(ctx) {
+						continue
+					}
+				}
 				if f, err := os.Open(t.Path); err != nil {
 					mu.Lock()
 					skipped++
 					mu.Unlock()
-					if unreachable.Add(1) >= unreachableLimit {
-						gone.Store(true)
-						stop()
+					if reach.missed.Add(1) >= unreachableLimit && !reach.gone.Swap(true) {
+						slog.Warn("music: loudness left for later in one folder: its files cannot be opened (a drive that is not there?)", "folder", reach.root)
 					}
 					continue
 				} else {
 					f.Close()
 				}
-				unreachable.Store(0)
+				reach.missed.Store(0)
 				l, err := MeasureFile(ctx, s.ff, t.Path)
 				if err != nil {
 					if ctx.Err() != nil {
@@ -430,17 +495,11 @@ feed:
 	flush(true)
 	err = firstErr
 	mu.Unlock()
-	switch {
-	case gone.Load():
-		slog.Warn("music: loudness left for later: the music files cannot be opened (a drive that is not there?)", "measured", done, "notOpened", skipped)
-	case done > 0 || failed > 0:
-		slog.Info("music: loudness measured", "songs", done, "failed", failed, "notOpened", skipped, "took", time.Since(started).Round(time.Millisecond))
+	if done > 0 || failed > 0 || skipped > 0 {
+		slog.Info("music: loudness measured", "songs", done, "failed", failed, "notOpened", skipped, "gaveWayToConversions", waited.Load(), "took", time.Since(started).Round(time.Millisecond))
 	}
 	if err != nil {
 		return done, err
-	}
-	if gone.Load() {
-		return done, nil
 	}
 	return done, ctx.Err()
 }

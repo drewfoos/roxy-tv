@@ -12,6 +12,11 @@
 
 x-common: &common
   restart: unless-stopped
+  # The server drops to PUID:PGID as it starts (entrypoint.sh) and nothing in the
+  # container may climb back: a media file that got the better of ffmpeg stays that user.
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 4096
   environment:
     PUID: "1000"
     PGID: "1000"

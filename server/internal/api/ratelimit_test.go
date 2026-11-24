@@ -55,8 +55,30 @@ func TestMusicMediaIsNotRateLimited(t *testing.T) {
 		"/v1/music":                                              false,
 		"/v1/items":                                              false,
 	} {
-		if got := exemptFromRateLimit(path); got != exempt {
+		if got := exemptFromRateLimit("GET", path); got != exempt {
 			t.Errorf("exemptFromRateLimit(%q) = %v, want %v", path, got, exempt)
+		}
+	}
+	// Only reading media is exempt. A path that looks like a picture's but is its upload,
+	// or the list of pictures a provider offers (a call to the provider each time), is
+	// limited like any other call.
+	for _, c := range []struct {
+		method, path string
+		exempt       bool
+	}{
+		{"GET", "/v1/items/abc/images/poster", true},
+		{"HEAD", "/v1/items/abc/images/poster", true},
+		{"PUT", "/v1/items/abc/images/poster", false},
+		{"DELETE", "/v1/items/abc/images/poster", false},
+		{"GET", "/v1/items/abc/images/poster/candidates", false},
+		{"POST", "/v1/stream/abc", false},
+		{"GET", "/v1/sources/abc/subtitles/3", true},
+		// Conversions are counted by the limit for JSON calls AND by their own (convlimit.go).
+		{"GET", "/v1/sources/abc/transcode", false},
+		{"GET", "/v1/sources/abc/remux", false},
+	} {
+		if got := exemptFromRateLimit(c.method, c.path); got != c.exempt {
+			t.Errorf("exemptFromRateLimit(%s %q) = %v, want %v", c.method, c.path, got, c.exempt)
 		}
 	}
 	// Through the middleware: 200 covers in a burst all pass, where 200 list calls do not.

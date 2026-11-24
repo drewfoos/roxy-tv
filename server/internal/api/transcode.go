@@ -78,13 +78,21 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 			req.Subtitles = append(req.Subtitles, st.Codec)
 		}
 	}
-	select {
-	case transcodeSlots <- struct{}{}:
-		defer func() { <-transcodeSlots }()
-	default:
+	// Limits of the conversion's own, per client (see conversions): how fast they may be
+	// started, and one client's newest ends its oldest rather than taking a third place.
+	client := conversionClient(r)
+	if !s.conv.mayStart(client) {
+		tooManyConversions(w)
+		return
+	}
+	ctx, superseded, end := s.conv.begin(r.Context(), "transcode", client)
+	defer end()
+	r = r.WithContext(ctx)
+	if !takeSlot(ctx, transcodeSlots, superseded) {
 		writeError(w, 503, "the server is already transcoding as much as it can")
 		return
 	}
+	defer func() { <-transcodeSlots }()
 	audioIndex := -1
 	if req.WebAudio != nil {
 		audioIndex = req.WebAudio.Index

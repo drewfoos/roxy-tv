@@ -1,6 +1,9 @@
 module github.com/roxy-media/roxy/server
 
-go 1.27
+// The patch release is a floor, not a habit: older ones have known holes in the standard
+// library (1.27.4: a request could crash the HTTP server; see the Security workflow,
+// which runs govulncheck and says when this needs raising).
+go 1.27.4
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0

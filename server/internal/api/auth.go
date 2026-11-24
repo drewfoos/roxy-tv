@@ -38,6 +38,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if ci.Client == "" {
 		ci.Client = "Roxy"
 	}
+	if inClearFromOutside(r) {
+		// Not refused: the server cannot tell the internet from a home network that uses
+		// public addresses (IPv6 does), and the password has been sent by now anyway. The
+		// apps and the web page say it to the person before they send; this is the admin's copy.
+		slog.Warn("sign-in: a password arrived unencrypted from outside the private networks; put Roxy behind HTTPS or reach it over a VPN", "from", peerIP(r), "client", ci.Client)
+	}
 	u, d, token, err := s.authSvc.Login(r.Context(), body.Username, body.Password, ci)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		slog.Warn("login failed", "user", body.Username, "from", ci.Address)

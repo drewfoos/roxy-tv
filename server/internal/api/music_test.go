@@ -64,7 +64,7 @@ func newMusicWorld(t *testing.T) *musicWorld {
 		"if [ $loud = 1 ]; then [ -f \"$f.loud\" ] || exit 1; cat \"$f.loud\" >&2; exit 0; fi\n"+
 		"# Asked about itself (-filters, -encoders: no input): it says nothing, and writes nothing.\n"+
 		"[ -n \"$f\" ] || exit 0\n"+
-		"case \"$out\" in /*) [ -f \"$f.noconvert\" ] && exit 1; printf 'converted %s' \"$f\" > \"$out\"; exit 0;; esac\n"+
+		"case \"$out\" in /*) [ -f \"$f.noconvert\" ] && exit 1; while [ -f \"$f.hold\" ]; do sleep 0.02; done; printf 'converted %s' \"$f\" > \"$out\"; exit 0;; esac\n"+
 		"[ -f \"$f.pic\" ] || exit 1\ncat \"$f.pic\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -878,6 +878,70 @@ func TestMusicConversion(t *testing.T) {
 	// A song ffmpeg cannot convert is an error, and nothing half-made is kept or served.
 	if rec = w.do("GET", "/v1/music/tracks/"+broken+"/stream?format=opus", w.aliceTok, nil); rec.Code != 500 {
 		t.Errorf("a failed conversion: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// One client asks for more conversions at once than a player ever does: it is told to
+// come back (429, with a time), not queued without end; what it had asked for is still
+// converted, and somebody else's song is not held up by its share.
+func TestMusicConversionsHaveAShare(t *testing.T) {
+	w := newMusicWorld(t)
+	song := w.song("A/song.mp3", nil, "title", "Song", "artist", "A")
+	if rec := w.do("POST", "/v1/music/folders", w.adminTok, map[string]string{"path": w.root}); rec.Code != 201 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	w.scanned()
+	var list musicList
+	w.get("/v1/music/tracks?sort=title", w.aliceTok, 200, &list)
+	stream := "/v1/music/tracks/" + list.Tracks[0].ID + "/stream"
+	if err := os.WriteFile(song+".hold", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	formats := []string{"opus&bitrate=64", "opus&bitrate=96", "opus&bitrate=128", "mp3&bitrate=128", "mp3&bitrate=192", "mp3&bitrate=320"}
+	codes := make(chan int, len(formats))
+	for _, f := range formats {
+		go func(f string) { codes <- w.do("GET", stream+"?format="+f, w.aliceTok, nil).Code }(f)
+	}
+	// The six are in once two of them are being converted (the converter's two places)
+	// and the rest have had a moment to join the queue behind those.
+	for i := 0; i < 500; i++ {
+		b, _ := os.ReadFile(filepath.Join(filepath.Dir(w.root), "ffmpeg.calls"))
+		if strings.Count(string(b), "converted") >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	// The seventh is refused (asked a few times over: one that were not refused would be
+	// given up after a moment, and then not converted).
+	refused := false
+	for i := 0; i < 5 && !refused; i++ {
+		rec := w.do("GET", stream+"?format=aac&bitrate=128", w.aliceTok, nil, func(r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
+			t.Cleanup(cancel)
+			*r = *r.WithContext(ctx)
+		})
+		refused = rec.Code == http.StatusTooManyRequests && rec.Header().Get("Retry-After") != ""
+	}
+	if !refused {
+		t.Fatal("a seventh conversion at once was never refused with 429 and a time to wait")
+	}
+	// Somebody else still gets a place in the queue (their request waits; it is not refused).
+	other := w.do("GET", stream+"?format=aac&bitrate=96", w.adminTok, nil, func(r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
+		t.Cleanup(cancel)
+		*r = *r.WithContext(ctx)
+	})
+	if other.Code == http.StatusTooManyRequests {
+		t.Fatal("another client was refused because of the first one's share")
+	}
+	if err := os.Remove(song + ".hold"); err != nil {
+		t.Fatal(err)
+	}
+	for range formats {
+		if code := <-codes; code != 200 {
+			t.Errorf("a conversion asked for within the share: %d", code)
+		}
 	}
 }
 

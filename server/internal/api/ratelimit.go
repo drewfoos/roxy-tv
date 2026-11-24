@@ -12,6 +12,9 @@ import (
 // (a loop of list calls, a reconnect storm) gets 429s instead of starving playback.
 // Media bytes (/v1/stream, images, trickplay, attachments, music covers and songs) are
 // exempt: a player legitimately issues many range requests, and images are fetched in bursts.
+// Only reading them is: a path that merely looks like one (an image's upload, the list of
+// pictures a provider offers, which asks the provider) is limited like any call. What
+// costs an ffmpeg run has limits of its own (see conversions).
 //
 // Defaults: 20 requests/s sustained with a burst of 60 per client IP. A client is
 // identified by its remote IP (behind RealIP middleware) plus the bearer token when
@@ -59,6 +62,18 @@ func (rl *rateLimiter) allowBoth(key, ipKey string) bool {
 	return true
 }
 
+// allow takes one token from key's bucket alone.
+func (rl *rateLimiter) allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	b := rl.refill(key, 1, time.Now())
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
 // refill returns key's bucket topped up to now. Call with the lock held.
 func (rl *rateLimiter) refill(key string, scale float64, now time.Time) *bucket {
 	b := rl.buckets[key]
@@ -88,7 +103,13 @@ func (rl *rateLimiter) sweep() {
 	}
 }
 
-func exemptFromRateLimit(path string) bool {
+func exemptFromRateLimit(method, path string) bool {
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+	if strings.HasSuffix(path, "/candidates") {
+		return false
+	}
 	return strings.HasPrefix(path, "/v1/stream/") || strings.HasPrefix(path, "/stream/") ||
 		strings.Contains(path, "/images/") || strings.Contains(path, "/trickplay") ||
 		strings.Contains(path, "/attachments/") || strings.Contains(path, "/subtitles/") ||
@@ -108,7 +129,7 @@ func humanWait(secs int) string {
 
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if exemptFromRateLimit(r.URL.Path) {
+		if exemptFromRateLimit(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

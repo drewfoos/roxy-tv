@@ -144,20 +144,39 @@ type Transcoder struct {
 	// Limit is how long one conversion may take.
 	Limit time.Duration
 
+	// MaxPending is how many conversions may be waiting or running at once, and
+	// PerClient how many of those one client may have asked for. Past either a new
+	// conversion is refused with ErrBusy (a request for one already on its way always
+	// joins it). Without them the queue had no end: every song in every format could be
+	// asked for in one go, each conversion ran to its end though nobody waited for it,
+	// and everybody else's song stood behind them.
+	MaxPending int
+	PerClient  int
+
 	mu    sync.Mutex
 	calls map[string]*conversion
 	slots chan struct{} // conversions running at once
 }
 
 type conversion struct {
-	done chan struct{}
-	err  error
+	done    chan struct{}
+	err     error
+	client  string // who asked for it first: it counts against them until it is done
+	waiters int    // requests waiting for it now
+	started bool   // ffmpeg runs: it is finished whoever is left
+	dropped bool   // nobody waited any more before its turn came: it never ran
 }
+
+// ErrBusy: too many conversions are waiting; the caller asks again in a moment.
+var ErrBusy = errors.New("too many songs are being converted")
+
+// errDropped ends a conversion that never ran; nobody is left to see it.
+var errDropped = errors.New("conversion dropped: nobody waited for it")
 
 // NewTranscoder keeps converted songs under dir (inside the data folder), up to
 // maxBytes of them, converting at most two at a time.
 func NewTranscoder(ff *ffmpeg.FFmpeg, dir string, maxBytes int64) *Transcoder {
-	return &Transcoder{ff: ff, dir: dir, maxBytes: maxBytes, Limit: 10 * time.Minute, calls: map[string]*conversion{}, slots: make(chan struct{}, 2)}
+	return &Transcoder{ff: ff, dir: dir, maxBytes: maxBytes, Limit: 10 * time.Minute, MaxPending: 32, PerClient: 6, calls: map[string]*conversion{}, slots: make(chan struct{}, 2)}
 }
 
 // Source is the file to convert, and what tells one version of it from another.
@@ -172,9 +191,11 @@ type Source struct {
 
 // File returns the converted song's path, converting it first when it is not in the
 // cache. Requests for the same song in the same format while it is being converted wait
-// for that one conversion. The conversion goes on when the request that started it
-// leaves (the next one finds it done); ctx only ends this caller's wait.
-func (t *Transcoder) File(ctx context.Context, src Source, f AudioFormat) (string, error) {
+// for that one conversion. A conversion that has begun goes on when the request that
+// started it leaves (the next one finds it done); one still waiting for its turn with
+// nobody waiting for it any more is dropped. ctx only ends this caller's wait. client
+// names who asks (a device, a login or an address), for PerClient.
+func (t *Transcoder) File(ctx context.Context, client string, src Source, f AudioFormat) (string, error) {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d|%s|%d", src.TrackID, src.Size, src.Mtime, f.Codec, f.BitrateK)))
 	key := hex.EncodeToString(sum[:16])
 	path := filepath.Join(t.dir, key[:2], key+"."+f.Ext())
@@ -186,16 +207,29 @@ func (t *Transcoder) File(ctx context.Context, src Source, f AudioFormat) (strin
 	t.mu.Lock()
 	c := t.calls[key]
 	if c == nil {
-		c = &conversion{done: make(chan struct{})}
+		mine := 0
+		for _, other := range t.calls {
+			if other.client == client {
+				mine++
+			}
+		}
+		if (t.MaxPending > 0 && len(t.calls) >= t.MaxPending) || (t.PerClient > 0 && mine >= t.PerClient) {
+			t.mu.Unlock()
+			return "", ErrBusy
+		}
+		c = &conversion{done: make(chan struct{}), client: client}
 		t.calls[key] = c
 		go func() {
-			c.err = t.convert(src, f, path)
+			c.err = t.convert(c, src, f, path)
 			t.mu.Lock()
-			delete(t.calls, key)
+			if t.calls[key] == c {
+				delete(t.calls, key)
+			}
 			t.mu.Unlock()
 			close(c.done)
 		}()
 	}
+	c.waiters++
 	t.mu.Unlock()
 	select {
 	case <-c.done:
@@ -204,13 +238,38 @@ func (t *Transcoder) File(ctx context.Context, src Source, f AudioFormat) (strin
 		}
 		return path, nil
 	case <-ctx.Done():
+		t.mu.Lock()
+		c.waiters--
+		if c.waiters == 0 && !c.started {
+			// Its turn has not come and nobody wants it: it is not converted, and it
+			// leaves the queue now (the next request for the song starts afresh).
+			c.dropped = true
+			if t.calls[key] == c {
+				delete(t.calls, key)
+			}
+		}
+		t.mu.Unlock()
 		return "", ctx.Err()
 	}
 }
 
-func (t *Transcoder) convert(src Source, f AudioFormat, path string) error {
+// Pending is how many conversions are waiting or running.
+func (t *Transcoder) Pending() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.calls)
+}
+
+func (t *Transcoder) convert(c *conversion, src Source, f AudioFormat, path string) error {
 	t.slots <- struct{}{}
 	defer func() { <-t.slots }()
+	t.mu.Lock()
+	if c.dropped {
+		t.mu.Unlock()
+		return errDropped
+	}
+	c.started = true
+	t.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), t.Limit)
 	defer cancel()
 	if err := safefs.MkdirAll(filepath.Dir(path), 0o755); err != nil {

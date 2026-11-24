@@ -28,7 +28,10 @@ go test ./... >/tmp/roxy-deploy-tests.log 2>&1 || { tail -40 /tmp/roxy-deploy-te
 
 echo "== rebuild and restart ($live, built from $src @ $(git -C "$src" rev-parse --short HEAD))"
 cd "$live"
-docker compose up -d --build
+# The base images first (Go, Node, Debian): a build from a stale local copy ships their
+# old holes. Best effort: with the registry out of reach the copies at hand are used.
+docker compose build --pull || docker compose build
+docker compose up -d
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8097/healthz >/dev/null 2>&1; then
     echo "Roxy is up."

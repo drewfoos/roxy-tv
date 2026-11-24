@@ -1,0 +1,25 @@
+# What Roxy is built from, checked every week for new releases and known holes. A pull
+# request per update; the CI workflow runs on each, so a bump that breaks something says so.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /server
+    schedule: { interval: weekly }
+    groups:
+      go: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule: { interval: weekly }
+    groups:
+      web: { patterns: ["*"], update-types: [minor, patch] }
+  - package-ecosystem: gradle
+    directory: /apps/android
+    schedule: { interval: weekly }
+    groups:
+      android: { patterns: ["*"], update-types: [minor, patch] }
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

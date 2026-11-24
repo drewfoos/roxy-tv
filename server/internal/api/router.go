@@ -46,7 +46,9 @@ type Server struct {
 	transcoder *transcode.Detector
 	hub        *sessions.Hub     // "Play on": connected players and their command queues
 	board      *activity.Board   // "Now playing": who is watching what, and how it is sent
+	conv       *conversions      // each client's share of the ffmpeg runs it may ask for (convlimit.go)
 	links      *linkStore        // TV sign-in codes waiting for a phone's approval
+	setup      *setupCode        // what first-time setup asks for (setupcode.go)
 	voice      *voiceCasts       // anime casts per language (voicecast.go); nil without AniList
 	music      *music.Service    // the music folders' scanner and cover pictures (music.go)
 	musicTC    *music.Transcoder // songs converted for players that ask (music.go)
@@ -67,6 +69,10 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 	s.hooks = arrhook.New(st, lib)
 	s.hub = sessions.New()
 	s.board = activity.New()
+	s.conv = newConversions()
+	// A server without an account makes its setup code now, so it is in the log from the start.
+	users, uerr := st.CountUsers(ctx)
+	s.setup = newSetupCode(cfg.DataDir, uerr == nil && users == 0)
 	s.links = newLinkStore()
 	s.links.abandoned = func(deviceID string) {
 		// Approved, and the device never came for its token: nobody can be using it.
@@ -84,6 +90,8 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 	// Music: read the music folders at start and look at them again every so often, as
 	// the video libraries are scanned at start and watched (the same two switches).
 	s.music = music.New(st, ff, filepath.Join(cfg.CacheDir(), "music", "art"))
+	// Measuring loudness waits while a film is being converted for somebody.
+	s.music.Busy = func() bool { return len(transcodeSlots) > 0 }
 	s.musicTC = music.NewTranscoder(ff, filepath.Join(cfg.CacheDir(), "music", "converted"), musicConvertedMax)
 	if cfg.ScanOnStart || cfg.Watch {
 		go s.music.Run(ctx, musicScanEvery, cfg.ScanOnStart, cfg.Watch)

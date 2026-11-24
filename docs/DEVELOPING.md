@@ -31,7 +31,8 @@ ROXY_MEDIA_ROOTS=/data/media ROXY_DATA_DIR=./data ROXY_LISTEN=0.0.0.0:8096 ./bin
 
 A new server has no accounts: open the Roxy app or `http://<server>:8096/` from the same
 network and the setup wizard creates the admin. Setup only answers from the home network
-(the real connection; `X-Forwarded-For` counts only from `ROXY_TRUSTED_PROXIES`). To skip
+(the real connection; `X-Forwarded-For` counts only from `ROXY_TRUSTED_PROXIES`), and asks
+for the setup code the server logged at start (also in `<data dir>/setup-code.txt`). To skip
 the wizard, set `ROXY_ADMIN_PASSWORD` (and optionally `ROXY_ADMIN_USER`, default `roxy`)
 and the admin is created at start; a weak password logs a warning. Put a TMDB key in `ROXY_TMDB_API_KEY` or in
 `<data dir>/tmdb.key`; a fanart.tv key, and the Sonarr and Radarr settings, are entered in

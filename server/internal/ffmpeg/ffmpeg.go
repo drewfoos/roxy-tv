@@ -174,6 +174,17 @@ func (f *FFmpeg) RunCombined(ctx context.Context, args ...string) ([]byte, error
 // printed ten times a second reaches in under an hour of sound). A line longer than 64
 // KiB comes in pieces. The slice handed to line is only good until line returns.
 func (f *FFmpeg) RunLines(ctx context.Context, line func([]byte), args ...string) error {
+	return f.runLines(ctx, false, line, args)
+}
+
+// RunLinesLow is RunLines for work nobody is waiting for (measuring a library): the
+// process runs at a low priority, so a film being converted for somebody who is watching
+// it gets the processors first.
+func (f *FFmpeg) RunLinesLow(ctx context.Context, line func([]byte), args ...string) error {
+	return f.runLines(ctx, true, line, args)
+}
+
+func (f *FFmpeg) runLines(ctx context.Context, low bool, line func([]byte), args []string) error {
 	ctx, cancel := limited(ctx, RunLimit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, f.FFmpeg, LocalInputs(args)...)
@@ -205,7 +216,13 @@ func (f *FFmpeg) RunLines(ctx context.Context, line func([]byte), args ...string
 			}
 		}
 	}()
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		if low {
+			lowPriority(cmd.Process.Pid)
+		}
+		err = cmd.Wait()
+	}
 	_ = pw.Close()
 	last := <-read
 	if err != nil {
