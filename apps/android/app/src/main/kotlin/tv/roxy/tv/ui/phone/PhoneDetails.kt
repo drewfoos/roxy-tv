@@ -28,7 +28,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import tv.roxy.tv.ui.castLanguageLabel
 import androidx.compose.material3.Text
@@ -225,7 +224,7 @@ private fun CastLanguagePicker(shown: tv.roxy.tv.ui.ShownCast, modifier: Modifie
             Text(shown.name.ifBlank { shown.language }, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Icon(Icons.Filled.ArrowDropDown, null, tint = Color.White, modifier = Modifier.size(20.dp))
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+        PageMenu(expanded = open, onDismissRequest = { open = false }) {
             shown.groups.forEach { g ->
                 val on = g.language == shown.language
                 DropdownMenuItem(

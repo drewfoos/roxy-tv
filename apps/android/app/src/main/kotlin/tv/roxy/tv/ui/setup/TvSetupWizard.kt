@@ -81,6 +81,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -146,6 +147,7 @@ internal fun TvSetupWizard(serverUrl: String, serverName: String, onCancel: (() 
     var pw by rememberSaveable { mutableStateOf("") }
     var pw2 by rememberSaveable { mutableStateOf("") }
     var agreed by rememberSaveable { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
     var backFromTerms by remember { mutableStateOf(false) }
     // Bumped when a folder is added, changed or removed: the Media step reloads and focuses Continue.
     var foldersChanged by remember { mutableIntStateOf(0) }
@@ -184,6 +186,7 @@ internal fun TvSetupWizard(serverUrl: String, serverName: String, onCancel: (() 
                             STEP_ACCOUNT -> TvAccountStep(
                                 serverUrl,
                                 name, { name = it }, pw, { pw = it }, pw2, { pw2 = it }, agreed, { agreed = it },
+                                code, { code = it },
                                 backFromTerms = backFromTerms,
                                 onDone = { backFromTerms = false; step = STEP_DETAILS },
                                 onReadTerms = { readingTerms = true },
@@ -281,6 +284,7 @@ private fun TvAccountStep(
     pw: String, onPw: (String) -> Unit,
     pw2: String, onPw2: (String) -> Unit,
     agreed: Boolean, onAgreed: (Boolean) -> Unit,
+    code: String, onCode: (String) -> Unit,
     backFromTerms: Boolean,
     onDone: () -> Unit, onReadTerms: () -> Unit,
 ) {
@@ -310,17 +314,20 @@ private fun TvAccountStep(
     var err by remember { mutableStateOf<String?>(null) }
     var pwEdit by remember { mutableIntStateOf(0) }
     var pw2Edit by remember { mutableIntStateOf(0) }
+    var nameEdit by remember { mutableIntStateOf(0) }
     val agreeReq = remember { FocusRequester() }
     val createReq = remember { FocusRequester() }
+    // The server's setup code, when it asks for one: the form's first field then.
+    val needsCode = setupNeedsCode(serverUrl)
     // Back from the Terms: focus returns to the box beside them, not the top of the form.
-    FocusOnStart(if (backFromTerms) agreeReq else first, Unit)
-    val ready = name.isNotBlank() && pw.length >= 8 && pw == pw2 && agreed && !busy
+    FocusOnStart(if (backFromTerms) agreeReq else first, needsCode)
+    val ready = accountReady(name, pw, pw2, agreed, busy, needsCode, code)
     val create: () -> Unit = {
         if (ready) {
             busy = true
             scope.launch {
                 val deviceId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
-                runCatching { app.api.setupAdmin(serverUrl, name.trim(), pw, "${Build.MANUFACTURER} ${Build.MODEL}", deviceId, BuildConfig.VERSION_NAME) }
+                runCatching { app.api.setupAdmin(serverUrl, name.trim(), pw, "${Build.MANUFACTURER} ${Build.MODEL}", deviceId, BuildConfig.VERSION_NAME, code.trim()) }
                     .onSuccess { resp ->
                         val terms = runCatching { app.api.legalAt(serverUrl, "terms").version }.getOrDefault("")
                         tv.roxy.tv.ui.login.rememberServerIdentity(app, serverUrl.trimEnd('/'))
@@ -344,9 +351,16 @@ private fun TvAccountStep(
             }
         },
     ) {
+        if (needsCode) {
+            TvTextField(
+                code, { onCode(it); err = null }, placeholder = "Setup code", icon = Icons.Outlined.Lock,
+                modifier = Modifier.focusRequester(first).testTag("setup-code"), onNext = { nameEdit++ },
+            )
+            Text(SetupCodeWhere, fontSize = 13.sp, lineHeight = 18.sp, color = RoxyColors.muted)
+        }
         TvTextField(
             name, { onName(it); err = null }, placeholder = "Your name (what you'll sign in with)", icon = Icons.Outlined.Person,
-            modifier = Modifier.focusRequester(first), onNext = { pwEdit++ },
+            modifier = if (needsCode) Modifier else Modifier.focusRequester(first), editRequest = nameEdit, onNext = { pwEdit++ },
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             TvTextField(

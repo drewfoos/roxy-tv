@@ -69,6 +69,7 @@ import androidx.navigation.toRoute
 import tv.roxy.tv.RoxyApp
 import tv.roxy.tv.ui.components.widthPx
 import tv.roxy.tv.ui.nav.Route
+import tv.roxy.tv.ui.nav.openTitleFromPlayer
 import tv.roxy.tv.ui.profiles.AvatarCircle
 import tv.roxy.tv.ui.theme.RoxyColors
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -391,7 +392,7 @@ fun PhoneRoot(onUnauthorized: () -> Unit) {
                 composable<Route.Episode> { e ->
                     Page {
                         val r = e.toRoute<Route.Episode>()
-                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, fromStart = r.fromStart, startMs = r.startMs.takeIf { it >= 0 }, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) }, onOpenPerson = { nav.navigate(Route.Person(it.tmdbId, it.name)) })
+                        PhoneEpisode(episodeId = r.id, fallbackTitle = r.title, fromStart = r.fromStart, startMs = r.startMs.takeIf { it >= 0 }, onBack = { nav.popBackStack() }, onOpenEpisode = { openEpisode(it) }, onOpenPerson = { nav.navigate(Route.Person(it.tmdbId, it.name)) }, onOpenTitle = { t -> app.items.put(t); nav.openTitleFromPlayer(t, online = app.server.online.value, downloaded = app.downloads.title(t.id) != null) })
                     }
                 }
                 composable<Route.Movie> { e ->

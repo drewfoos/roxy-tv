@@ -5,11 +5,20 @@ import org.junit.Test
 import tv.roxy.tv.api.Item
 
 class ContinueLineTest {
-    // "Episode #" and nothing else: no season, no title, specials alike; nothing for a film.
-    @Test fun episodeNumberOnly() {
-        assertEquals("Episode 2", continueLine(Item(id = "e", type = "episode", title = "An Explosion", seasonAired = 3, indexAired = 2)))
+    // The season in its short form, then the episode: with several seasons "Episode 2" alone does not say which.
+    @Test fun theSeasonIsNamedShortBeforeTheEpisode() {
+        assertEquals("S3 · Episode 2", continueLine(Item(id = "e", type = "episode", title = "An Explosion", seasonAired = 3, indexAired = 2)))
+        assertEquals("S1 · Episode 12", continueLine(Item(id = "e", type = "episode", title = "First season", seasonAired = 1, indexAired = 12)))
+        // An episode counted through the whole show (no number within its season) keeps the season it sits in.
+        assertEquals("S2 · Episode 30", continueLine(Item(id = "a", type = "episode", title = "Absolute", seasonAired = 2, indexAbsolute = 30)))
+    }
+
+    // No title; a special or an episode of no known season has no season to name; nothing for a film.
+    @Test fun noSeasonWhereThereIsNoneToName() {
         assertEquals("Episode 3", continueLine(Item(id = "s", type = "episode", title = "OVA", seasonAired = 0, indexAired = 3)))
+        assertEquals("Episode 7", continueLine(Item(id = "n", type = "episode", title = "No season", indexAired = 7)))
         assertEquals("", continueLine(Item(id = "x", type = "episode", title = "Odd file")))
+        assertEquals("", continueLine(Item(id = "x", type = "episode", title = "Odd file in a season", seasonAired = 2)))
         assertEquals("", continueLine(Item(id = "m", type = "movie", title = "Film", year = 2019)))
     }
 }

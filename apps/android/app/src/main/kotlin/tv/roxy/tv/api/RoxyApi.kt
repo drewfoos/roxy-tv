@@ -161,10 +161,10 @@ class RoxyApi(private val prefs: Prefs) {
         execute<SetupStatus>(Request.Builder().url(serverUrl.trimEnd('/') + "/v1/setup").get().build())
     }
 
-    /** Creates the server's admin and signs in as them. */
-    suspend fun setupAdmin(serverUrl: String, name: String, password: String, device: String, deviceId: String, version: String): LoginResponse =
+    /** Creates the server's admin and signs in as them. [code]: the server's setup code, when it asks for one ([SetupStatus.code]). */
+    suspend fun setupAdmin(serverUrl: String, name: String, password: String, device: String, deviceId: String, version: String, code: String = ""): LoginResponse =
         withContext(Dispatchers.IO) {
-            val body = SetupAdmin(name, password, device, deviceId, version)
+            val body = SetupAdmin(name, password, device, deviceId, version, code)
             execute<LoginResponse>(
                 Request.Builder().url(serverUrl.trimEnd('/') + "/v1/setup/admin")
                     .post(json.encodeToString(SetupAdmin.serializer(), body).toRequestBody(JSON_TYPE)).build(),
@@ -1724,10 +1724,14 @@ data class IdentifyResults(val candidates: List<MatchCandidate>? = null, val que
 private data class ScanMode(val mode: String)
 
 @Serializable
-data class SetupStatus(val required: Boolean = false, val allowed: Boolean = false, val tmdb: Boolean = false, val serverName: String = "")
+data class SetupStatus(
+    val required: Boolean = false, val allowed: Boolean = false, val tmdb: Boolean = false, val serverName: String = "",
+    /** Setup asks for the server's setup code: it is in the server's log from when it started, and in setup-code.txt in its data folder. */
+    val code: Boolean = false,
+)
 
 @Serializable
-private data class SetupAdmin(val name: String, val password: String, val device: String, val deviceId: String, val version: String)
+private data class SetupAdmin(val name: String, val password: String, val device: String, val deviceId: String, val version: String, val code: String = "")
 
 @Serializable
 data class TmdbSettings(val set: Boolean = false, val source: String = "")

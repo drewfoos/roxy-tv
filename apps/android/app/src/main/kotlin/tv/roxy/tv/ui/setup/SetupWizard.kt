@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -275,8 +276,14 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
     var agreed by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf<String?>(null) }
+    var code by rememberSaveable { mutableStateOf("") }
+    val needsCode = setupNeedsCode(serverUrl)
     StepTitle("Create your account", "You're the admin: you'll manage the server and can add your family later, each with their own account and profiles.")
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (needsCode) {
+            RoxyTextField(code, { code = it; err = null }, label = "Setup code", modifier = Modifier.testTag("setup-code"))
+            Text(SetupCodeWhere, fontSize = 12.sp, lineHeight = 17.sp, color = RoxyColors.muted)
+        }
         RoxyTextField(name, { name = it; err = null }, label = "Your name (what you'll sign in with)")
         RoxyTextField(pw, { pw = it; err = null }, label = "Password", password = true)
         RoxyTextField(pw2, { pw2 = it; err = null }, label = "Password again", password = true, imeAction = ImeAction.Done)
@@ -287,7 +294,7 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
             Text("Terms of Use", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onReadTerms).padding(vertical = 6.dp))
         }
         err?.let { Text(it, fontSize = 13.sp, color = RoxyColors.error) }
-        val ready = name.isNotBlank() && pw.length >= 8 && pw == pw2 && agreed && !busy
+        val ready = accountReady(name, pw, pw2, agreed, busy, needsCode, code)
         PlayButton(
             if (busy) "Creating…" else "Create account", icon = Icons.Filled.Check, height = 52.dp, pill = true,
             container = if (ready) RoxyColors.accent else RoxyColors.accent.copy(alpha = 0.3f), content = if (ready) OnBrand else OnBrand.copy(alpha = 0.6f),
@@ -297,7 +304,7 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
                 busy = true
                 scope.launch {
                     val deviceId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
-                    runCatching { app.api.setupAdmin(serverUrl, name.trim(), pw, "${Build.MANUFACTURER} ${Build.MODEL}", deviceId, BuildConfig.VERSION_NAME) }
+                    runCatching { app.api.setupAdmin(serverUrl, name.trim(), pw, "${Build.MANUFACTURER} ${Build.MODEL}", deviceId, BuildConfig.VERSION_NAME, code.trim()) }
                         .onSuccess { resp ->
                             val terms = runCatching { app.api.legalAt(serverUrl, "terms").version }.getOrDefault("")
                             tv.roxy.tv.ui.login.rememberServerIdentity(app, serverUrl.trimEnd('/'))
@@ -311,6 +318,25 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
         )
     }
 }
+
+/**
+ * Where the setup code is found. A new server asks for it: being on the server's network
+ * does not show that somebody is its owner (a guest on the Wi-Fi is on it too), reading
+ * the server's own log does.
+ */
+internal const val SetupCodeWhere = "Roxy Server wrote it into its log when it started, and into setup-code.txt in its data folder. It shows this server is yours."
+
+/** Whether the server at [serverUrl] asks for its setup code; false until it has said so (an older server never does). */
+@Composable
+internal fun setupNeedsCode(serverUrl: String): Boolean {
+    val app = RoxyApp.get(LocalContext.current)
+    val needs by androidx.compose.runtime.produceState(false, serverUrl) { value = runCatching { app.api.setupStatus(serverUrl).code }.getOrDefault(false) }
+    return needs
+}
+
+/** The account form can be sent: a name, a password of eight or more typed twice alike, the Terms agreed to, and the setup code when the server asks for one. */
+internal fun accountReady(name: String, pw: String, pw2: String, agreed: Boolean, busy: Boolean, needsCode: Boolean, code: String): Boolean =
+    name.isNotBlank() && pw.length >= 8 && pw == pw2 && agreed && !busy && (!needsCode || code.isNotBlank())
 
 @Composable
 internal fun PasswordHint(pw: String, pw2: String) {

@@ -51,7 +51,6 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -72,6 +71,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Brush
@@ -495,7 +497,7 @@ fun TitlePageScaffold(
                 Box {
                     var open by remember { mutableStateOf(false) }
                     HeaderIcon(Icons.Filled.MoreVert, "More", onClick = { open = true })
-                    DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+                    PageMenu(expanded = open, onDismissRequest = { open = false }) {
                         val what = if (markAll) "all" else "movie"
                         DropdownMenuItem(text = { Text("Mark $what as watched", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Check, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(true) })
                         DropdownMenuItem(text = { Text("Mark $what as unwatched", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.RemoveDone, null, tint = Color.White) }, onClick = { open = false; onMarkWatched(false) })
@@ -583,23 +585,54 @@ fun TitleBanner(item: Item, api: RoxyApi, listState: LazyListState) {
 /** [TitleBanner]'s picture from any URL: Discover's title pages pass TMDB's art (nothing is saved). */
 @Composable
 fun TitleBannerArt(url: String?, title: String, listState: LazyListState, warm: String? = null) {
-    val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
     val top = (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() - 6.dp).coerceAtLeast(0.dp)
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
-            val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
-            // Crunchyroll's: the picture stays where it is and darkens steadily as the page
-            // slides up over it; it is nearly black by the time the logo reaches the header.
-            translationY = off
-            // Gone by the time the header turns solid (the logo reaching it).
-            alpha = (1f - off / (heightPx - LogoOverlap.toPx() + 30.dp.toPx())).coerceIn(0f, 1f)
-        },
-    ) {
+    PinnedBanner(listState, top) {
         RoxyImage(url, title, modifier = Modifier.fillMaxSize(), placeholderTextSize = 16, placeholderKey = warm)
         // A short fade from the black status bar into the art, which the X and icons sit on.
         val fadePx = with(LocalDensity.current) { (HeaderRow + 40.dp).toPx() }
         Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(colorStops = arrayOf(0f to Color.Black, 0.35f to Color(0x99000000), 1f to Color.Transparent), startY = 0f, endY = fadePx)))
     }
+}
+
+/**
+ * A title page's picture, the first item of its list: it stays where it is and darkens
+ * steadily as the page slides up over it (Crunchyroll's), nearly black by the time the
+ * logo reaches the header.
+ *
+ * The page slides over it, so whatever in the list does not paint its own ground lets it
+ * through: the title block under it is solid, the rows after that are not (a film's own
+ * row, episodes, headings), and on a page with a short title block they reached the
+ * picture while it was still half there. So the picture ends at the title block's foot
+ * ([bannerFoot]): nothing under that block has it behind it, whatever the row.
+ */
+@Composable
+internal fun PinnedBanner(listState: LazyListState, top: Dp = 0.dp, content: @Composable BoxScope.() -> Unit) {
+    val heightPx = with(LocalDensity.current) { BannerHeight.toPx() }
+    val topPx = with(LocalDensity.current) { top.toPx() }
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = top).height(BannerHeight).graphicsLayer {
+            val off = if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else heightPx
+            translationY = off
+            // Gone by the time the header turns solid (the logo reaching it).
+            alpha = (1f - off / (heightPx - LogoOverlap.toPx() + 30.dp.toPx())).coerceIn(0f, 1f)
+        }.drawWithContent {
+            val foot = bannerFoot(listState)?.let { it - topPx }
+            if (foot == null || foot >= size.height) drawContent()
+            else if (foot > 0f) clipRect(bottom = foot) { this@drawWithContent.drawContent() }
+        },
+        content = content,
+    )
+}
+
+/**
+ * Where the title block (the item after the picture) ends, in the list's own measure;
+ * null when it is not on screen. The picture is pinned to the list's top while it is the
+ * first item, so this is also where it is cut off.
+ */
+internal fun bannerFoot(listState: LazyListState): Float? {
+    if (listState.firstVisibleItemIndex != 0) return null
+    val block = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 1 } ?: return null
+    return (block.offset + block.size).toFloat()
 }
 
 /** The title block has nothing to say yet: the page is being read and the card that opened it carried only a name. */
@@ -820,7 +853,7 @@ internal fun EpisodeMenu(ep: Item, api: RoxyApi, onMarkWatched: (Boolean) -> Uni
     var info by remember { mutableStateOf(false) }
     Box(modifier) {
         Icon(Icons.Filled.MoreHoriz, contentDescription = "More", tint = RoxyColors.onBackground.copy(alpha = 0.85f), modifier = Modifier.size(36.dp).clip(CircleShape).clickable { open = true }.padding(6.dp))
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+        PageMenu(expanded = open, onDismissRequest = { open = false }) {
             val watched = ep.isWatched // a rewatch under way is in progress, not watched
             DropdownMenuItem(
                 text = { Text(if (watched) "Mark as unwatched" else "Mark as watched", color = Color.White) },
@@ -830,7 +863,11 @@ internal fun EpisodeMenu(ep: Item, api: RoxyApi, onMarkWatched: (Boolean) -> Uni
             DropdownMenuItem(text = { Text("File info", color = Color.White) }, leadingIcon = { Icon(Icons.Outlined.Info, null, tint = Color.White) }, onClick = { open = false; info = true })
         }
     }
-    if (info) EpisodeInfoDialog(ep, api) { info = false }
+    if (info) {
+        // On the player's page a video plays under it: see [ClosedForPip].
+        ClosedForPip { info = false }
+        EpisodeInfoDialog(ep, api) { info = false }
+    }
 }
 
 @Composable

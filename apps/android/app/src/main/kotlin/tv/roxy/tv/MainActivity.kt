@@ -66,9 +66,13 @@ import tv.roxy.tv.ui.theme.RoxyTheme
 
 class MainActivity : ComponentActivity() {
 
-    private companion object {
+    internal companion object {
         /** How long after the window lost the focus the app looks at who has it (see [onWindowFocusChanged]). */
         const val LEAVING_LOOK_MS = 50L
+        /** While a window of the page's own holds the focus over a playing video, how often the app looks whether it still does (see [leavingLook]). */
+        const val OWN_WINDOW_LOOK_MS = 100L
+        /** How long a window the app has just opened is given to take the focus before it is no longer waited for (see [leavingLook]). */
+        const val OPENING_MS = 500L
         /** The page fades to see-through this fast when the app is left for the PiP window. */
         const val LEAVING_FADE_MS = 120
     }
@@ -105,6 +109,17 @@ class MainActivity : ComponentActivity() {
         pipByHand = false
         // Left towards PiP and back without one (the system did not make the window).
         if (!isInPictureInPictureMode) pipLeaving = false
+        // Back with a menu or File info still open: it has the focus again and the page's
+        // window is told nothing, so the looking starts here.
+        lookWhileUnfocused()
+    }
+
+    /** Starts the looks of [leavingLook] when a video plays and this window has not the focus (a window of the page's own may). */
+    private fun lookWhileUnfocused() {
+        val decor = window?.decorView ?: return
+        if (!pip.armed || hasWindowFocus() || isInPictureInPictureMode) return
+        decor.removeCallbacks(leavingLook)
+        decor.postDelayed(leavingLook, LEAVING_LOOK_MS)
     }
 
     override fun onPause() {
@@ -165,7 +180,11 @@ class MainActivity : ComponentActivity() {
     /** Called by the page's player: whether it plays, and where the picture is in the (whole) window. */
     fun updatePip(owner: Any, playing: Boolean, source: android.graphics.Rect?) {
         val decor = window?.decorView
+        val was = pip.armed
         sendPip(pip.playing(owner, playing, source, decor?.width ?: 0, decor?.height ?: 0))
+        // It began to play with a window of the page's own holding the focus (the next
+        // episode starting under an open sheet): from now on leaving has to be looked for.
+        if (!was && pip.armed) lookWhileUnfocused()
     }
 
     /** Leave PiP support behind when the page closes, so other screens never shrink. */
@@ -189,6 +208,8 @@ class MainActivity : ComponentActivity() {
         super.onWindowFocusChanged(hasFocus)
         val decor = window?.decorView
         decor?.removeCallbacks(leavingLook)
+        ownWindowHadFocus = false
+        ownWindowLostOnce = false
         if (hasFocus) {
             if (!isInPictureInPictureMode) pipLeaving = false
             return
@@ -219,18 +240,73 @@ class MainActivity : ComponentActivity() {
     private fun inFront(): Boolean =
         !isInPictureInPictureMode && !isDestroyed && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
 
-    private val leavingLook = Runnable {
+    /**
+     * Who has the focus, a moment after the page's window lost it.
+     *
+     * A window of the page's own (a menu, File info, a sheet): the page is in use. But from
+     * then on the page's window hears nothing: the Home gesture with File info open takes
+     * the focus from the dialog, not from the page, and the app shrank into the PiP window
+     * with the dialog lying over the picture. So for as long as such a window holds the
+     * focus over a playing video the app keeps looking, a few times a second.
+     *
+     * Nobody of the app's: it is being left. Two things look the same for a moment and
+     * are not that:
+     *  - a window the app has just opened and that has not the focus yet. The system takes
+     *    the focus from the old window when the new one is asked for and gives it when the
+     *    new one is drawn, frames later (the menu to File info; the page to a menu on a
+     *    busy phone). Such a window is waited for, up to [OPENING_MS]; one that takes no
+     *    focus at all (a tooltip) is not;
+     *  - a window of the app's that has just closed, in the instant before the page's own
+     *    window is told it has the focus back. So after one of the app's windows had the
+     *    focus, "nobody" is believed only at a second look.
+     */
+    private val leavingLook: Runnable = Runnable {
         if (!inFront()) return@Runnable
-        val own = ownWindowFocused()
-        if (own == true) pipLeaving = false
-        else if (pip.leftByFocus(hasWindowFocus(), isInMultiWindowMode, own)) pipLeaving = true
+        val decor = window?.decorView
+        val windows = ownWindows()
+        val now = android.os.SystemClock.uptimeMillis()
+        windows?.forEach { if (it.hasWindowFocus()) hadFocusOnce[it] = true else firstSeen.getOrPut(it) { now } }
+        val own = windows?.any { it.hasWindowFocus() }
+        fun again(ms: Long) { decor?.removeCallbacks(leavingLook); decor?.postDelayed(leavingLook, ms) }
+        if (own == true) {
+            pipLeaving = false
+            ownWindowHadFocus = true
+            ownWindowLostOnce = false
+            if (pip.armed) again(OWN_WINDOW_LOOK_MS)
+            return@Runnable
+        }
+        if (own == false && !hasWindowFocus() && pip.armed) {
+            val opening = windows.orEmpty().any { takesFocus(it) && hadFocusOnce[it] != true && now - (firstSeen[it] ?: now) < OPENING_MS }
+            if (opening) return@Runnable again(LEAVING_LOOK_MS)
+            if (ownWindowHadFocus && !ownWindowLostOnce) {
+                ownWindowLostOnce = true
+                return@Runnable again(LEAVING_LOOK_MS)
+            }
+        }
+        ownWindowHadFocus = false
+        ownWindowLostOnce = false
+        if (pip.leftByFocus(hasWindowFocus(), isInMultiWindowMode, own)) pipLeaving = true
     }
 
-    /** Whether another window of this app (a dialog, a menu) has the focus; null when it cannot be told. */
-    private fun ownWindowFocused(): Boolean? {
+    /** A window of the page's own had the focus at the last look ([leavingLook]). */
+    private var ownWindowHadFocus = false
+    /** ... and at the look after that nobody of the app's had it: one more look decides. */
+    private var ownWindowLostOnce = false
+    /** The app's other windows that have had the focus at some look, and when each of the others was first seen without it. */
+    private val hadFocusOnce = java.util.WeakHashMap<android.view.View, Boolean>()
+    private val firstSeen = java.util.WeakHashMap<android.view.View, Long>()
+
+    /** Whether a window is one that takes the focus when it opens (a dialog, a menu), by its root view. */
+    private fun takesFocus(root: android.view.View): Boolean {
+        val flags = (root.layoutParams as? android.view.WindowManager.LayoutParams)?.flags ?: return true
+        return flags and android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0
+    }
+
+    /** The app's windows other than this one (dialogs, menus, sheets), by their root views; null when they cannot be listed (Android 9). */
+    private fun ownWindows(): List<android.view.View>? {
         if (android.os.Build.VERSION.SDK_INT < 29) return null
         val decor = window?.decorView
-        return runCatching { android.view.inspector.WindowInspector.getGlobalWindowViews().any { it !== decor && it.hasWindowFocus() } }.getOrNull()
+        return runCatching { android.view.inspector.WindowInspector.getGlobalWindowViews().filter { it !== decor } }.getOrNull()
     }
 
     /** The settings page (a window of its own) lost the focus with a video playing: it has closed itself, and the app is being left. */

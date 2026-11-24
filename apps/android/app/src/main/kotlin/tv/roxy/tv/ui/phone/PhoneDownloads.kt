@@ -42,7 +42,6 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -104,6 +103,7 @@ fun rememberDownloadStarter(): (items: List<Item>, title: Item, seasonName: Stri
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var short by remember { mutableStateOf<Pair<Long, Long>?>(null) } // (needed, free) when there is not enough room
     short?.let { (needed, free) ->
+        ClosedForPip { short = null }
         AlertDialog(
             onDismissRequest = { short = null },
             containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
@@ -181,7 +181,7 @@ fun DownloadButton(item: Item, onDownload: () -> Unit, modifier: Modifier = Modi
                 Icon(glyph, contentDescription = null, tint = if (running || entry.state == DownloadState.Queued) RoxyColors.accent else RoxyColors.muted, modifier = Modifier.size(size * 0.5f))
             }
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+        PageMenu(expanded = open, onDismissRequest = { open = false }) {
             when (entry?.state) {
                 DownloadState.Done -> {
                     DropdownMenuItem(text = { Text(entry.sizeLine(), color = RoxyColors.muted, fontSize = 12.sp) }, onClick = { open = false }, enabled = false)
@@ -284,7 +284,7 @@ fun SeasonDownloadRow(episodes: List<Item>, seasonLabel: String, onDownloadAll: 
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
             Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = tint, modifier = Modifier.padding(start = 10.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+        PageMenu(expanded = open, onDismissRequest = { open = false }) {
             if (active.isNotEmpty()) {
                 DropdownMenuItem(text = { Text("Pause season download", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Pause, null, tint = Color.White) }, onClick = { open = false; app.downloads.pauseAll(active.map { it.itemId }) })
                 DropdownMenuItem(text = { Text("Cancel remaining", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.Delete, null, tint = Color.White) }, onClick = { open = false; active.forEach { app.downloads.delete(it.itemId) } })
@@ -556,6 +556,7 @@ private fun StorageBar(used: Long, free: Long, wifiOnly: Boolean, onWifiOnly: (B
 
 @Composable
 internal fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    ClosedForPip(onClose = onDismiss)
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = RoxyColors.surfaceHigh,

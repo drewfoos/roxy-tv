@@ -253,13 +253,52 @@ private fun ContinueCard(item: Item, api: RoxyApi, width: Dp, image: ((Item, Str
 }
 
 /**
- * The second line of a Continue Watching card: "Episode 2" and nothing else (no season, no
- * episode title, specials alike); empty for a film, which has no episode.
+ * The second line of a Continue Watching card: "S2 · Episode 5", the season in its short
+ * form before the episode (a card says which show and which episode, and with several
+ * seasons "Episode 5" alone does not say which). No episode title. A special, or an
+ * episode whose season is not known, has no season to name: "Episode 3". Empty for a
+ * film, which has no episode.
  */
 fun continueLine(item: Item): String {
     if (!item.isEpisode) return ""
     val n = item.indexAired ?: item.indexAbsolute ?: return ""
-    return "Episode $n"
+    val season = item.seasonAired?.takeIf { it > 0 } ?: return "Episode $n"
+    return "S$season · Episode $n"
+}
+
+/** The activity a page is drawn in, through whatever its context is wrapped in (a dialog's theme). */
+internal tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** The app is on its way into the PiP window, or is it (see MainActivity.pipLeaving). */
+@Composable
+internal fun leftForPip(): Boolean {
+    val context = LocalContext.current
+    val main = remember(context) { context.findActivity() as? tv.roxy.tv.MainActivity }
+    return main != null && (main.pipLeaving || main.inPip)
+}
+
+/**
+ * Beside a window a page opens over itself (a menu, File info, a sheet): closes it when
+ * the app is left for the PiP window. The system makes that window by shrinking the
+ * app's as it is, and whatever lies over the picture shrinks with it and stays over it:
+ * File info, open when Home was swiped, sat in the small window on top of the video.
+ */
+@Composable
+internal fun ClosedForPip(open: Boolean = true, onClose: () -> Unit) {
+    val gone = leftForPip()
+    val close = androidx.compose.runtime.rememberUpdatedState(onClose)
+    LaunchedEffect(gone, open) { if (gone && open) close.value() }
+}
+
+/** The app's menus: [DropdownMenu] in the app's colour, closed when the app is left for the PiP window ([ClosedForPip]). */
+@Composable
+internal fun PageMenu(expanded: Boolean, onDismissRequest: () -> Unit, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    ClosedForPip(open = expanded, onClose = onDismissRequest)
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, containerColor = RoxyColors.surfaceHigh, content = content)
 }
 
 /** Translucent ring with a play triangle, drawn over thumbnails. */
@@ -516,7 +555,7 @@ fun CardMenu(item: Item, api: RoxyApi, onPlay: () -> Unit, modifier: Modifier = 
             Icons.Filled.MoreVert, contentDescription = "More", tint = tint,
             modifier = Modifier.size(22.dp).clickable { open = true },
         )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RoxyColors.surfaceHigh) {
+        PageMenu(expanded = open, onDismissRequest = { open = false }) {
             if (item.isPlayable || item.isSeries) {
                 DropdownMenuItem(text = { Text("Watch now", color = Color.White) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null, tint = Color.White) }, onClick = { open = false; onPlay() })
                 when (entry?.state) {

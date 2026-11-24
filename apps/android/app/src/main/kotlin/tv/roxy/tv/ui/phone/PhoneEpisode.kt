@@ -1,8 +1,5 @@
 package tv.roxy.tv.ui.phone
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.view.OrientationEventListener
@@ -39,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -81,7 +79,7 @@ import tv.roxy.tv.ui.theme.RoxyColors
  * autoplay moves to the next episode, the text follows.
  */
 @Composable
-fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = false, startMs: Long? = null, onBack: () -> Unit, onOpenEpisode: (Item) -> Unit, onOpenPerson: (CastMember) -> Unit = {}) {
+fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = false, startMs: Long? = null, onBack: () -> Unit, onOpenEpisode: (Item) -> Unit, onOpenPerson: (CastMember) -> Unit = {}, onOpenTitle: (Item) -> Unit = { onBack() }) {
     val context = LocalContext.current
     val app = RoxyApp.get(context)
     val scope = rememberCoroutineScope()
@@ -177,7 +175,10 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
     }
     var castSheet by remember { mutableStateOf(false) }
     host.cast = { castSheet = true }
-    if (castSheet) CastSheet(onDismiss = { castSheet = false })
+    if (castSheet) {
+        ClosedForPip { castSheet = false }
+        CastSheet(onDismiss = { castSheet = false })
+    }
     // Playing state is reported on change only; the picture's place changes on rotation,
     // so push it as well when it moves. Once it has stopped moving: the page slides in, and
     // every frame of that was a call to the system.
@@ -361,7 +362,9 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
                     CastSection(d, onOpenPerson = onOpenPerson) { Text("Cast", fontSize = 18.sp, color = RoxyColors.onBackground, modifier = Modifier.padding(vertical = 6.dp)) }
                 }
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {
-                    Text(if (ep.isMovie) "Back to the movie" else "All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 16.dp, vertical = 8.dp))
+                    // To the title's own page, wherever the player was opened from (see openTitleFromPlayer).
+                    val title = playerTitle(ep, series)
+                    Text(if (ep.isMovie) "Back to the movie" else "All Episodes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RoxyColors.accent, modifier = Modifier.testTag("to-title").clickable { if (title != null) onOpenTitle(title) else onBack() }.padding(horizontal = 16.dp, vertical = 8.dp))
                 }
             } else if (error == null) {
                 Spacer(Modifier.height(1.dp))
@@ -374,6 +377,17 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
  * Three lines of synopsis with "...Read more" inline at the end of the third, the way
  * Crunchyroll does it; tapping anywhere expands, and a synopsis that fits gets no link.
  */
+/**
+ * The title a player page belongs to: the film itself, an episode's series ([series]
+ * when it has been read, else what the episode says of it); null for an episode that
+ * names no series.
+ */
+internal fun playerTitle(playing: Item, series: Item?): Item? = when {
+    playing.isMovie -> playing
+    series != null && series.id == playing.seriesId -> series
+    else -> playing.seriesId?.let { Item(id = it, type = "series", title = playing.seriesTitle.orEmpty()) }
+}
+
 @Composable
 internal fun ExpandableSynopsis(text: String, expanded: Boolean, onToggle: () -> Unit) {
     val style = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = RoxyColors.onBackground.copy(alpha = 0.92f))
@@ -461,11 +475,6 @@ private fun rememberPhysicalOrientation(): Boolean? {
     return landscape
 }
 
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
-}
 
 /**
  * What the episode page plays when it (re)starts: the route's episode with its start
