@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MusicTrack } from '../api/music'
 import { session } from '../api/session'
-import { ERROR_SHOWN_MS, currentTrack, player, resetPlayerForTests, restorePlayer } from './player'
+import { ERROR_SHOWN_MS, currentTrack, player, resetPlayerForTests, restorePlayer, sendPlays } from './player'
 import { FakeAudio } from './fakeAudio'
+import { musicPrefs } from './prefs'
 
 const song = (id: string, seconds = 200): MusicTrack => ({ id, title: 'Song ' + id, artist: 'A', artistId: 'a', durationMs: seconds * 1000, container: 'mp3', codec: 'mp3', lossless: false, size: 1, favorite: false, playCount: 0, addedAt: '' })
 const songs = (...ids: string[]) => ids.map((id) => song(id))
@@ -21,6 +22,9 @@ beforeEach(() => {
   calls = []
   library = songs('a', 'b', 'c', 'd')
   vi.stubGlobal('Audio', FakeAudio)
+  // jsdom plays nothing: here the browser plays every file as it is.
+  vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('probably')
+  musicPrefs.reset()
   vi.stubGlobal(
     'fetch',
     vi.fn((url: string, init?: { method?: string }) => {
@@ -37,6 +41,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 const counted = () => calls.filter((c) => c.method === 'POST' && c.url.endsWith('/played')).map((c) => c.url.split('/')[4])
@@ -176,25 +181,46 @@ describe('counting a listen', () => {
     expect(counted()).toEqual([]) // 25 seconds heard of 200
   })
 
-  it('does not count a jump the song made by itself, and does count slow reports of the time', () => {
+  it('counts by where the song is, however seldom the browser reports the time', () => {
     player.playTracks(library, 0, { shuffle: false })
     const el = sounding()!
     el.duration = 200
-    // The time is reported every three seconds (a tab the browser has slowed down).
-    for (const t of [3, 6, 9, 12]) {
+    // A tab the browser has slowed down reports every thirty seconds.
+    for (const t of [30, 60, 90]) {
       el.currentTime = t
       el.emit('timeupdate')
     }
-    // Then it is suddenly far ahead, by nothing the player did.
-    el.currentTime = 150
+    expect(counted()).toEqual([])
+    el.currentTime = 120
     el.emit('timeupdate')
+    expect(counted()).toEqual(['a'])
+  })
+
+  it('counts a part of the song heard twice only once', () => {
+    player.playTracks(library, 0, { shuffle: false })
+    const el = sounding()!
+    el.playTo(60, 200)
+    player.seek(0) // the first minute again, and again
+    el.playTo(60)
+    player.seek(0)
+    el.playTo(60)
+    expect(counted()).toEqual([]) // three minutes of listening, one minute of the song
+    el.playTo(101)
+    expect(counted()).toEqual(['a'])
+  })
+
+  it('does not count while the sound has stopped to load', () => {
+    player.playTracks(library, 0, { shuffle: false })
+    const el = sounding()!
+    el.playTo(40, 200)
+    el.emit('waiting') // the connection dropped: the song stands still
+    el.currentTime = 40
+    player.seek(150) // moved on by hand meanwhile
+    el.emit('playing')
     el.playTo(190)
-    expect(counted()).toEqual([]) // 12 + 40 seconds heard of 200
+    expect(counted()).toEqual([]) // 40 + 40 seconds
     el.playTo(200)
-    el.currentTime = 0 // (not a new play: the same one, wound back by hand)
-    el.emit('timeupdate')
-    el.playTo(40)
-    expect(counted()).toEqual(['a']) // 12 + 50 + 40: half the song by now
+    expect(counted()).toEqual([])
   })
 
   it('counts a long song after four minutes', () => {
@@ -206,15 +232,17 @@ describe('counting a listen', () => {
     expect(counted()).toEqual(['long'])
   })
 
-  it('counts each time round when a song repeats', () => {
+  it('counts each time round when a song repeats', async () => {
     player.playTracks([song('a')], 0, { shuffle: false })
     player.cycleRepeat()
     player.cycleRepeat() // one
     const el = sounding()!
+    vi.useFakeTimers({ toFake: ['Date'] })
     el.playTo(150, 200)
     el.finish()
+    vi.setSystemTime(Date.now() + 200_000) // the second time round is minutes later
     el.playTo(150)
-    expect(counted()).toEqual(['a', 'a'])
+    await vi.waitFor(() => expect(counted()).toEqual(['a', 'a']))
   })
 })
 
@@ -368,5 +396,144 @@ describe('across a reload', () => {
     expect(currentTrack()).toBeNull()
     expect(player.get().playing).toBe(false)
     expect(el.paused).toBe(true)
+  })
+})
+
+describe('what a reload or another profile must not lose', () => {
+  it('writes the place in the song down for the profile that was listening when another takes over', async () => {
+    player.playTracks(library, 1, { shuffle: false })
+    sounding()!.playTo(42, 200) // no pause, no reload: just a switch of profile
+    session.set({ ...S, profileId: 'other' })
+    const saved = JSON.parse(localStorage.getItem('roxy.music.p')!)
+    expect(saved.ids).toEqual(['a', 'b', 'c', 'd'])
+    expect(saved.index).toBe(1)
+    expect(saved.position).toBe(42)
+    expect(localStorage.getItem('roxy.music.other')).toBeNull() // nothing of it under the new profile
+    // Back: the queue, at the place.
+    session.set(S)
+    await restorePlayer()
+    expect(playing()).toBe('b')
+    expect(player.progress().position).toBe(42)
+  })
+
+  it('saves the place as the song goes, not only when something is pressed', () => {
+    player.playTracks(library, 0, { shuffle: false })
+    sounding()!.playTo(37, 200)
+    const saved = JSON.parse(localStorage.getItem('roxy.music.p')!)
+    expect(saved.position).toBeGreaterThanOrEqual(35) // within a few seconds of where it is
+  })
+
+  it('brings shuffle back with the order it will return to', async () => {
+    const order = songs('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h')
+    library = order
+    player.playTracks(order, 3, { shuffle: true })
+    const shuffledOrder = player.get().queue.tracks.map((t) => t.id)
+    expect(shuffledOrder[0]).toBe('d')
+    player.pause() // saved
+    resetPlayerForTests()
+    await restorePlayer()
+    expect(player.get().shuffle).toBe(true)
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(shuffledOrder)
+    player.setShuffle(false)
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])
+    expect(playing()).toBe('d')
+  })
+})
+
+describe('reports of a listen', () => {
+  const posts = () => calls.filter((c) => c.method === 'POST' && c.url.endsWith('/played'))
+
+  it('are kept when the server does not answer, and sent later with the time they were counted at', async () => {
+    let up = false
+    const bodies: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: { method?: string; body?: string }) => {
+        calls.push({ method: init?.method ?? 'GET', url })
+        if (init?.body) bodies.push(init.body)
+        if (!up) return Promise.reject(new TypeError('Failed to fetch'))
+        return Promise.resolve({ ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => '{"playCount":1,"counted":true}' })
+      }),
+    )
+    player.playTracks(library, 0, { shuffle: false })
+    sounding()!.playTo(120, 200)
+    await vi.waitFor(() => expect(posts().length).toBe(1))
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('roxy.music.plays.p')!)).toHaveLength(1))
+    const kept = JSON.parse(localStorage.getItem('roxy.music.plays.p')!)[0]
+    expect(kept.id).toBe('a')
+    await new Promise((r) => setTimeout(r, 0)) // the failed attempt has ended
+    // The server is back: sent again, as the same listen.
+    up = true
+    await sendPlays()
+    expect(posts().length).toBe(2)
+    expect(JSON.parse(bodies[0]).at).toBe(kept.at)
+    expect(JSON.parse(bodies[1]).at).toBe(kept.at)
+    expect(localStorage.getItem('roxy.music.plays.p')).toBeNull()
+    // Nothing left: nothing sent.
+    await sendPlays()
+    expect(posts().length).toBe(2)
+  })
+
+  it('are dropped when the server says the song is gone', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: { method?: string }) => {
+        calls.push({ method: init?.method ?? 'GET', url })
+        return Promise.resolve({ ok: false, status: 404, headers: { get: () => 'application/json' }, json: async () => ({ error: 'song not found' }), text: async () => '{"error":"song not found"}' })
+      }),
+    )
+    player.playTracks(library, 0, { shuffle: false })
+    sounding()!.playTo(120, 200)
+    await vi.waitFor(() => expect(posts().length).toBe(1))
+    await vi.waitFor(() => expect(localStorage.getItem('roxy.music.plays.p')).toBeNull())
+  })
+})
+
+describe('how a song is sent and how loud', () => {
+  it('asks for a conversion when a lower quality is set, and reloads the song where it is when the setting changes', () => {
+    library = [{ ...song('big'), codec: 'flac', container: 'flac', lossless: true, bitrate: 2_800_000 }, song('small')]
+    library[1] = { ...library[1], bitrate: 128_000 }
+    player.playTracks(library, 0, { shuffle: false })
+    expect(player.get().stream).toEqual({ url: '/v1/music/tracks/big/stream' })
+    sounding()!.playTo(50, 200)
+    musicPrefs.set({ quality: 128 })
+    expect(player.get().stream?.converted).toEqual({ codec: 'opus', kbps: 128 })
+    const el = FakeAudio.made.find((a) => a.src.includes('format=opus'))!
+    expect(el.src).toBe('/v1/music/tracks/big/stream?format=opus&bitrate=128')
+    expect(el.currentTime).toBe(50)
+    expect(el.paused).toBe(false)
+    // A file already that small goes as it is.
+    player.next()
+    expect(player.get().stream).toEqual({ url: '/v1/music/tracks/small/stream' })
+  })
+
+  it('turns a loud song down, and leaves it alone with levelling off', () => {
+    library = [{ ...song('loud'), loudness: -8 }, song('plain')]
+    player.playTracks(library, 0, { shuffle: false })
+    const el = sounding()!
+    expect(el.volume).toBeCloseTo(Math.pow(10, -6 / 20), 3) // -8 LUFS to -14
+    musicPrefs.set({ levelling: 'off' })
+    expect(el.volume).toBe(1)
+    musicPrefs.set({ levelling: 'on' })
+    player.setVolume(0.5)
+    expect(el.volume).toBeCloseTo(0.5 * Math.pow(10, -6 / 20), 3)
+  })
+})
+
+describe('the queue rearranged', () => {
+  it('moves a song without disturbing the one that plays, and what follows it follows', () => {
+    player.playTracks(library, 1, { shuffle: false }) // a [b] c d
+    const el = sounding()!
+    player.move(3, 2) // a [b] d c
+    expect(player.get().queue.tracks.map((t) => t.id).join('')).toBe('abdc')
+    expect(playing()).toBe('b')
+    expect(el.paused).toBe(false)
+    player.move(1, 0) // the song playing itself, moved up: [b] a d c
+    expect(player.get().queue.index).toBe(0)
+    expect(playing()).toBe('b')
+    el.finish()
+    expect(playing()).toBe('a')
+    player.move(9, 0) // nowhere: nothing
+    expect(player.get().queue.tracks.map((t) => t.id).join('')).toBe('badc')
   })
 })

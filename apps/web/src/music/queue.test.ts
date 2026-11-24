@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MusicTrack } from '../api/music'
-import { append, emptyQueue, heardEnough, insertNext, lyricIndexAt, nextIndex, previousIndex, removeAt, replaceTrack, setShuffle, shuffled, startQueue, type Queue } from './queue'
+import { append, emptyQueue, heardEnough, insertNext, lyricIndexAt, moveItem, nextIndex, previousIndex, removeAt, replaceTrack, setShuffle, shuffled, startQueue, type Queue } from './queue'
 
 const song = (id: string): MusicTrack => ({ id, title: 'Song ' + id, artist: 'A', artistId: 'a', durationMs: 180000, container: 'mp3', codec: 'mp3', lossless: false, size: 1, favorite: false, playCount: 0, addedAt: '' })
 const songs = (...ids: string[]) => ids.map(song)
@@ -139,5 +139,28 @@ describe('the lyrics line being sung', () => {
     expect(lyricIndexAt(lines, 5000)).toBe(2) // two lines at one time: the later of them
     expect(lyricIndexAt(lines, 99999)).toBe(3)
     expect(lyricIndexAt([], 5)).toBe(-1)
+  })
+})
+
+describe('moving a song in the queue', () => {
+  const q = () => startQueue(songs('a', 'b', 'c', 'd', 'e'), 2, false) // a b [c] d e
+  const order = (x: Queue) => ids(x) + ':' + x.tracks[x.index].id
+  it('keeps the song playing the song playing', () => {
+    expect(order(moveItem(q(), 0, 4))).toBe('bcdea:c') // from before it to after it
+    expect(order(moveItem(q(), 4, 0))).toBe('eabcd:c') // from after it to before it
+    expect(order(moveItem(q(), 3, 4))).toBe('abced:c') // among what follows
+    expect(order(moveItem(q(), 0, 1))).toBe('bacde:c') // among what was played
+    expect(order(moveItem(q(), 2, 0))).toBe('cabde:c') // the song playing itself
+    expect(order(moveItem(q(), 2, 4))).toBe('abdec:c')
+    expect(order(moveItem(q(), 1, 2))).toBe('acbde:c') // onto its place from before
+    expect(order(moveItem(q(), 3, 2))).toBe('abdce:c') // onto its place from after
+  })
+  it('does nothing for a place that is not there, and forgets the order from before shuffle', () => {
+    const queue = q()
+    expect(moveItem(queue, 0, 0)).toBe(queue)
+    expect(moveItem(queue, -1, 2)).toBe(queue)
+    expect(moveItem(queue, 1, 9)).toBe(queue)
+    const shuffledQueue = setShuffle(queue, true, first)
+    expect(moveItem(shuffledQueue, 3, 4).unshuffled).toBeNull()
   })
 })

@@ -1,12 +1,15 @@
 // What the music pages and the player bar are built from: covers, the song list, the
-// tiles for albums and artists, and the favourite mark.
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router'
+// tiles for songs, albums, artists and playlists, and the favourite mark.
+import { Fragment, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import { px } from '../api/client'
-import { clock, music, qualityLabel, qualityMark, type FavoriteKind, type MusicAlbum, type MusicArtist, type MusicTrack } from '../api/music'
+import { clock, music, qualityLabel, qualityMark, type FavoriteKind, type MusicAlbum, type MusicArtist, type MusicPlaylist, type MusicTrack } from '../api/music'
 import { session } from '../api/session'
-import { IconAlbum, IconHeart, IconHeartOutline, IconMore, IconMusicNote, IconPause, IconPerson, IconPlay } from '../components/Icons'
+import { IconAlbum, IconDrag, IconHeart, IconHeartOutline, IconMusicNote, IconPause, IconPerson, IconPlay, IconPlaylist } from '../components/Icons'
+import { MoreButton, SongsMenu, useMenu, type MenuItem } from './Menus'
 import { player } from './player'
+import { useReorder } from './Reorder'
+import { toast } from './toast'
 import { useCurrentTrackId, usePlayer } from './usePlayer'
 
 // ---- favourites ----
@@ -77,15 +80,27 @@ export function HeartButton({ kind, id, loaded, size = 20, className = '' }: { k
  * wider than it is tall). Without a picture, or while it loads, a note (or a person, a
  * disc) on the placeholder colour.
  */
-export function Cover({ art, size, round = false, kind = 'track', className = '' }: { art?: string; size: number; round?: boolean; kind?: 'track' | 'album' | 'artist'; className?: string }) {
+export function Cover({ art, size, round = false, kind = 'track', className = '' }: { art?: string; size: number; round?: boolean; kind?: 'track' | 'album' | 'artist' | 'playlist'; className?: string }) {
   const url = music.artUrl(art, px(size))
   const [broken, setBroken] = useState(false)
   useEffect(() => setBroken(false), [url])
-  const Icon = kind === 'artist' ? IconPerson : kind === 'album' ? IconAlbum : IconMusicNote
+  const Icon = kind === 'artist' ? IconPerson : kind === 'album' ? IconAlbum : kind === 'playlist' ? IconPlaylist : IconMusicNote
   return (
     <span className={'mcover' + (round ? ' mcover--round' : '') + (className ? ' ' + className : '')}>
       <Icon size={Math.max(16, Math.round(size * 0.4))} />
-      {url && !broken && <img src={url} alt="" loading="lazy" decoding="async" onError={() => setBroken(true)} />}
+      {url && !broken && <img src={url} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />}
+    </span>
+  )
+}
+
+/** A playlist's cover: the pictures of its first songs, four in a square when it has four. */
+export function PlaylistCover({ art, size, className = '' }: { art: string[]; size: number; className?: string }) {
+  if (art.length < 4) return <Cover art={art[0]} size={size} kind="playlist" className={className} />
+  return (
+    <span className={'mcover mcover--four' + (className ? ' ' + className : '')}>
+      {art.slice(0, 4).map((hash, i) => (
+        <img key={i} src={music.artUrl(hash, px(size / 2)) ?? undefined} alt="" loading="lazy" decoding="async" draggable={false} />
+      ))}
     </span>
   )
 }
@@ -128,45 +143,82 @@ export interface TrackListProps {
   hideAlbum?: boolean
   /** Leave the picture out (an album's own page: every row would show the same one). */
   hideCover?: boolean
+  /** Leave out the line of artists under a title when it only repeats this name (an album's own artist). */
+  hideArtist?: string
   /** Show how many times each song was played. */
   plays?: boolean
+  /** The names of the columns over the list. */
+  header?: boolean
+  /** Rows can be dragged to another place: told where one was dropped. */
+  onMove?: (from: number, to: number) => void
+  /** More entries for a row's menu ("Remove from playlist"). */
+  rowMenu?: (track: MusicTrack, index: number) => MenuItem[]
+  /** A row's key when a song can be in the list twice (a playlist's entry id). */
+  rowKey?: (track: MusicTrack, index: number) => string | number
 }
 
 /**
  * Songs as rows. A press on a row plays the list from that song; the names of its
- * artists and its album are links; the heart and the menu act on that one song.
+ * artists and its album are links; the heart and the menu (the ⋮, or the right mouse
+ * button anywhere on the row) act on that one song.
  */
-export function TrackList({ tracks, numbers = 'index', hideAlbum = false, hideCover = false, plays = false }: TrackListProps) {
+export function TrackList({ tracks, numbers = 'index', hideAlbum = false, hideCover = false, hideArtist, plays = false, header = false, onMove, rowMenu, rowKey }: TrackListProps) {
   const currentId = useCurrentTrackId()
   const playing = usePlayer().playing
   const discs = new Set(tracks.map((t) => t.disc ?? 0)).size
+  // The line of column names is a row to look at, not one of the rows that move.
+  const reorder = useReorder(tracks.length, onMove ?? (() => undefined), '.trow:not(.trow--head)')
+  const [menu, setMenu] = useState<{ index: number; at: { x: number; y: number; box?: DOMRect } } | null>(null)
+  const cls = 'tlist' + (hideAlbum ? ' tlist--noalbum' : '') + (hideCover ? ' tlist--nocover' : '') + (onMove ? ' tlist--move' : '') + (reorder.dragging != null ? ' tlist--dragging' : '')
+  const menuTrack = menu ? tracks[menu.index] : null
   return (
-    <div className={'tlist' + (hideAlbum ? ' tlist--noalbum' : '') + (hideCover ? ' tlist--nocover' : '')} role="list">
+    <div className={cls} role="list" ref={reorder.listRef}>
+      {header && (
+        <div className="trow trow--head" aria-hidden="true">
+          {onMove && <span />}
+          <span className="trow__n">#</span>
+          {!hideCover && <span />}
+          <span>Title</span>
+          {!hideAlbum && <span className="trow__album">Album</span>}
+          <span className="trow__mark" />
+          <span />
+          <span className="trow__time">Time</span>
+          <span />
+        </div>
+      )}
       {tracks.map((t, i) => {
         const current = t.id === currentId
         const newDisc = numbers === 'track' && discs > 1 && (i === 0 || (tracks[i - 1].disc ?? 0) !== (t.disc ?? 0))
+        const open = menu?.index === i
         return (
-          <Fragment key={t.id}>
+          <Fragment key={rowKey ? rowKey(t, i) : t.id}>
             {newDisc && <div className="tlist__disc">Disc {t.disc || 1}</div>}
             <div
               role="listitem"
-              className={'trow' + (current ? ' trow--current' : '')}
+              className={'trow' + (current ? ' trow--current' : '') + (open ? ' trow--open' : '') + reorder.rowClass(i)}
               onClick={() => (current ? player.toggle() : player.playTracks(tracks, i, { shuffle: false }))}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setMenu({ index: i, at: { x: e.clientX, y: e.clientY } })
+              }}
             >
+              {onMove && (
+                <button type="button" className="trow__grip" data-reorder-handle aria-label={'Move ' + t.title} title="Drag to move" {...reorder.handle(i)}>
+                  <IconDrag size={18} />
+                </button>
+              )}
               <span className="trow__n">
-                {current ? (
-                  <Equalizer moving={playing} />
-                ) : (
-                  <span className="trow__num">{numbers === 'track' ? t.track || i + 1 : i + 1}</span>
-                )}
+                {current ? <Equalizer moving={playing} /> : <span className="trow__num">{numbers === 'track' ? t.track || i + 1 : i + 1}</span>}
                 <span className="trow__play">{current && playing ? <IconPause size={20} /> : <IconPlay size={20} />}</span>
               </span>
               {!hideCover && <Cover art={t.art} size={40} />}
               <span className="trow__main">
                 <span className="trow__title">{t.title}</span>
-                <span className="trow__artist">
-                  <ArtistLinks track={t} />
-                </span>
+                {!(hideArtist && t.artist === hideArtist) && (
+                  <span className="trow__artist">
+                    <ArtistLinks track={t} />
+                  </span>
+                )}
               </span>
               {!hideAlbum && (
                 <span className="trow__album">
@@ -182,61 +234,22 @@ export function TrackList({ tracks, numbers = 'index', hideAlbum = false, hideCo
               </span>
               <HeartButton kind="track" id={t.id} loaded={t.favorite} size={18} className="trow__heart" />
               <span className="trow__time">{clock(t.durationMs)}</span>
-              <TrackMenu track={t} />
+              <span className="trow__menu" onClick={(e) => e.stopPropagation()}>
+                <MoreButton
+                  label={'More for ' + t.title}
+                  open={open}
+                  onClick={(e) => {
+                    const box = e.currentTarget.getBoundingClientRect()
+                    setMenu(open ? null : { index: i, at: { x: box.right, y: box.bottom, box } })
+                  }}
+                />
+              </span>
             </div>
           </Fragment>
         )
       })}
+      {menu && menuTrack && <SongsMenu at={menu.at} onClose={() => setMenu(null)} tracks={async () => [menuTrack]} single={menuTrack} extra={rowMenu?.(menuTrack, menu.index)} />}
     </div>
-  )
-}
-
-/** The ⋮ on a song: put it in the queue, or go to where it comes from. */
-export function TrackMenu({ track, up = false }: { track: MusicTrack; up?: boolean }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLSpanElement>(null)
-  const nav = useNavigate()
-  useEffect(() => {
-    if (!open) return
-    const away = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-    document.addEventListener('mousedown', away)
-    document.addEventListener('keydown', key)
-    return () => {
-      document.removeEventListener('mousedown', away)
-      document.removeEventListener('keydown', key)
-    }
-  }, [open])
-  const act = (fn: () => void) => () => {
-    setOpen(false)
-    fn()
-  }
-  return (
-    <span className="trow__menu" ref={ref} onClick={(e) => e.stopPropagation()}>
-      <button type="button" className="micon" onClick={() => setOpen((o) => !o)} aria-label={'More for ' + track.title} aria-expanded={open}>
-        <IconMore size={20} />
-      </button>
-      {open && (
-        <div className={'menu' + (up ? ' menu--up' : '')} role="menu">
-          <button role="menuitem" onClick={act(() => player.playNext([track]))}>
-            Play next
-          </button>
-          <button role="menuitem" onClick={act(() => player.addToQueue([track]))}>
-            Add to queue
-          </button>
-          <button role="menuitem" onClick={act(() => nav('/music/artist/' + track.artistId))}>
-            Go to artist
-          </button>
-          {track.albumId && (
-            <button role="menuitem" onClick={act(() => nav('/music/album/' + track.albumId))}>
-              Go to album
-            </button>
-          )}
-        </div>
-      )}
-    </span>
   )
 }
 
@@ -247,50 +260,112 @@ export function TrackTile({ track, list, index }: { track: MusicTrack; list: Mus
   const currentId = useCurrentTrackId()
   const playing = usePlayer().playing
   const current = currentId === track.id
+  const menu = useMenu()
   return (
-    <div className={'mtile' + (current ? ' mtile--current' : '')}>
-      <button
-        type="button"
-        className="mtile__art"
-        onClick={() => (current ? player.toggle() : player.playTracks(list, index, { shuffle: false }))}
-        aria-label={(current && playing ? 'Pause ' : 'Play ') + track.title}
-      >
-        <Cover art={track.art} size={220} />
-        <span className="mtile__play">{current && playing ? <IconPause size={26} /> : <IconPlay size={26} />}</span>
-      </button>
-      <div className="mtile__name">{track.title}</div>
+    <div className={'mtile' + (current ? ' mtile--current' : '') + (menu.at ? ' mtile--open' : '')} onContextMenu={menu.context}>
+      <div className="mtile__art">
+        <button type="button" className="mtile__hit" onClick={() => (current ? player.toggle() : player.playTracks(list, index, { shuffle: false }))} aria-label={(current && playing ? 'Pause ' : 'Play ') + track.title}>
+          <Cover art={track.art} size={240} />
+        </button>
+        <span className="mtile__play" aria-hidden="true">
+          {current && playing ? <IconPause size={26} /> : <IconPlay size={26} />}
+        </span>
+        <MoreButton label={'More for ' + track.title} open={!!menu.at} onClick={menu.toggle} className="mtile__more" />
+      </div>
+      <div className="mtile__name" title={track.title}>
+        {track.title}
+      </div>
       <div className="mtile__sub">
         <ArtistLinks track={track} />
       </div>
+      {menu.at && <SongsMenu at={menu.at} onClose={menu.close} tracks={async () => [track]} single={track} />}
     </div>
   )
 }
 
+/** Plays what a tile stands for, fetched when its button is pressed. */
+function useTilePlay(load: () => Promise<MusicTrack[]>) {
+  const [busy, setBusy] = useState(false)
+  const play = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const tracks = await load()
+      if (tracks.length) player.playTracks(tracks, 0, { shuffle: false })
+    } catch {
+      toast.show('That could not be read from the server')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return { busy, play }
+}
+
+/** A tile that opens a page, with a button on its picture that plays it and a menu. */
+function PageTile({ to, name, sub, cover, load, round = false, label }: { to: string; name: string; sub: ReactNode; cover: ReactNode; load: () => Promise<MusicTrack[]>; round?: boolean; label: string }) {
+  const { busy, play } = useTilePlay(load)
+  const menu = useMenu()
+  return (
+    <div className={'mtile' + (round ? ' mtile--artist' : '') + (menu.at ? ' mtile--open' : '')} onContextMenu={menu.context}>
+      <div className="mtile__art">
+        <Link to={to} className="mtile__hit" aria-label={name}>
+          {cover}
+        </Link>
+        <button type="button" className="mtile__play mtile__play--button" onClick={() => void play()} aria-label={'Play ' + label} aria-busy={busy}>
+          <IconPlay size={26} />
+        </button>
+        <MoreButton label={'More for ' + label} open={!!menu.at} onClick={menu.toggle} className="mtile__more" />
+      </div>
+      <Link to={to} className="mtile__name" title={name}>
+        {name}
+      </Link>
+      <div className="mtile__sub">{sub}</div>
+      {menu.at && <SongsMenu at={menu.at} onClose={menu.close} tracks={load} play />}
+    </div>
+  )
+}
+
+export const albumTracks = (id: string) => () => music.album(id).then((r) => r.tracks)
+export const artistTracks = (id: string) => () => music.artist(id).then((r) => r.tracks)
+export const playlistTracks = (id: string) => () => music.playlist(id).then((r) => r.tracks)
+
 export function AlbumTile({ album, sub }: { album: MusicAlbum; sub?: ReactNode }) {
   return (
-    <div className="mtile">
-      <Link to={'/music/album/' + album.id} className="mtile__art" aria-label={album.title}>
-        <Cover art={album.art} size={220} kind="album" />
-      </Link>
-      <Link to={'/music/album/' + album.id} className="mtile__name">
-        {album.title}
-      </Link>
-      <div className="mtile__sub">{sub ?? <Link to={'/music/artist/' + album.artistId}>{album.artist}</Link>}</div>
-    </div>
+    <PageTile
+      to={'/music/album/' + album.id}
+      name={album.title}
+      label={album.title}
+      cover={<Cover art={album.art} size={240} kind="album" />}
+      load={albumTracks(album.id)}
+      sub={sub ?? <Link to={'/music/artist/' + album.artistId}>{album.artist}</Link>}
+    />
   )
 }
 
 export function ArtistTile({ artist }: { artist: MusicArtist }) {
   return (
-    <Link to={'/music/artist/' + artist.id} className="mtile mtile--artist">
-      <span className="mtile__art">
-        <Cover art={artist.art} size={220} round kind="artist" />
-      </span>
-      <span className="mtile__name">{artist.name}</span>
-      <span className="mtile__sub">
-        {artist.trackCount} {artist.trackCount === 1 ? 'song' : 'songs'}
-      </span>
-    </Link>
+    <PageTile
+      round
+      to={'/music/artist/' + artist.id}
+      name={artist.name}
+      label={artist.name}
+      cover={<Cover art={artist.art} size={240} round kind="artist" />}
+      load={artistTracks(artist.id)}
+      sub={`${artist.trackCount} ${artist.trackCount === 1 ? 'song' : 'songs'}`}
+    />
+  )
+}
+
+export function PlaylistTile({ playlist }: { playlist: MusicPlaylist }) {
+  return (
+    <PageTile
+      to={'/music/playlist/' + playlist.id}
+      name={playlist.name}
+      label={playlist.name}
+      cover={<PlaylistCover art={playlist.art} size={240} />}
+      load={playlistTracks(playlist.id)}
+      sub={`${playlist.trackCount} ${playlist.trackCount === 1 ? 'song' : 'songs'}`}
+    />
   )
 }
 
@@ -300,7 +375,7 @@ export function TileSkeleton({ count = 12, round = false }: { count?: number; ro
     <div className="mgrid" aria-hidden="true">
       {Array.from({ length: count }).map((_, i) => (
         <div key={i} className="mtile">
-          <div className="bone" style={{ aspectRatio: '1 / 1', borderRadius: round ? '50%' : 4 }} />
+          <div className="bone" style={{ aspectRatio: '1 / 1', borderRadius: round ? '50%' : 6 }} />
           <div className="bone bone--line" style={{ width: '70%', marginTop: 12 }} />
         </div>
       ))}

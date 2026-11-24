@@ -114,6 +114,24 @@ function withoutOne(list: MusicTrack[], id: string): MusicTrack[] {
   return at < 0 ? list : list.filter((_, i) => i !== at)
 }
 
+/**
+ * A song moved from one place of the queue to another (`to` is where it ends up). The
+ * song playing stays the song playing, wherever it or the others go.
+ */
+export function moveItem(q: Queue, from: number, to: number): Queue {
+  const n = q.tracks.length
+  if (from < 0 || from >= n || to < 0 || to >= n || from === to) return q
+  const tracks = q.tracks.slice()
+  const [moved] = tracks.splice(from, 1)
+  tracks.splice(to, 0, moved)
+  let index = q.index
+  if (from === q.index) index = to
+  else if (from < q.index && to >= q.index) index = q.index - 1
+  else if (from > q.index && to <= q.index) index = q.index + 1
+  // An order made by hand is the order: there is no "before shuffle" to go back to.
+  return { tracks, index, unshuffled: null }
+}
+
 /** A song in the queue replaced by its newer self (its favourite mark changed). */
 export function replaceTrack(q: Queue, track: MusicTrack): Queue {
   const swap = (list: MusicTrack[]) => (list.some((t) => t.id === track.id) ? list.map((t) => (t.id === track.id ? track : t)) : list)

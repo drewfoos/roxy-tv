@@ -1,57 +1,87 @@
 // The player bar along the bottom of every page while there is a queue, with what opens
-// from it: the queue (a drawer at the right) and "now playing" (the cover large, with
-// the lyrics or the queue beside it). Three parts, as music players lay them out: the
-// song at the left, the controls over the seek line in the middle, the rest at the right.
+// from it: the queue (a drawer at the right), "now playing" (the cover large, with the
+// lyrics, the visualizer or the queue beside it) and how the sound is played. Three
+// parts, as music players lay them out: the song at the left, the controls over the seek
+// line in the middle, the rest at the right.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useLocation } from 'react-router'
-import { clock, isHiRes, longDuration, music, qualityLabel, type MusicTrack } from '../api/music'
+import { clock, codecName, isHiRes, longDuration, music, qualityLabel, type MusicTrack } from '../api/music'
 import { useAsync } from '../hooks/useAsync'
-import { IconClose, IconExpand, IconMic, IconPause, IconPlay, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconSkipNext, IconSkipPrevious, IconVolume, IconVolumeOff } from '../components/Icons'
-import { ArtistLinks, Cover, Equalizer, HeartButton, TrackMenu } from './Parts'
-import { claimMediaKeys, currentTrack, player } from './player'
+import { IconClose, IconDrag, IconExpand, IconMic, IconPause, IconPlay, IconPlaylistAdd, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconSkipNext, IconSkipPrevious, IconSpectrum, IconTune, IconVolume, IconVolumeOff } from '../components/Icons'
+import { FloatingMenu, MoreButton, NameDialog, SongsMenu, type MenuAt } from './Menus'
+import { ArtistLinks, Cover, Equalizer, HeartButton } from './Parts'
+import { playlistsChanged } from './changes'
+import { claimMediaKeys, currentTrack, player, type PlayerState } from './player'
+import { musicPrefs, QUALITIES } from './prefs'
 import { lyricIndexAt } from './queue'
+import { useReorder } from './Reorder'
+import { inAlbumRun, levelGain } from './stream'
+import { toast } from './toast'
 import { usePlayer, useProgress } from './usePlayer'
+import { usePrefs } from './usePrefs'
+import { VisualizerPanel } from './Visualizer'
 import '../styles/music.css'
 
 type Open = 'none' | 'queue' | 'now'
-type NowTab = 'lyrics' | 'queue'
+type NowTab = 'lyrics' | 'visualizer' | 'queue'
+
+/** How the song playing is sent, in the words on the bar ("Opus · 128 kbps" for a conversion). */
+function streamLabel(track: MusicTrack, state: PlayerState): string {
+  const c = state.stream?.converted
+  if (!c) return qualityLabel(track)
+  if (c.codec === 'flac') return 'FLAC · 16-bit'
+  return `${codecName({ codec: c.codec, container: c.codec })} · ${c.kbps} kbps`
+}
 
 export function MusicBar() {
   const state = usePlayer()
   const track = currentTrack(state)
   const [open, setOpen] = useState<Open>('none')
   const [tab, setTab] = useState<NowTab>('lyrics')
+  const [settings, setSettings] = useState<MenuAt | null>(null)
   const loc = useLocation()
   useEffect(() => claimMediaKeys(), [])
   // Going to another page closes "now playing" (a link in it was followed); the queue
   // drawer stays, like the bar.
   useEffect(() => setOpen((o) => (o === 'now' ? 'none' : o)), [loc.pathname])
   useEffect(() => {
-    if (open === 'none') return
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen('none')
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && open !== 'none') setOpen('none')
+      // Space plays and pauses on the music pages (and with the player open), unless
+      // something that takes typing or pressing has the keyboard.
+      if (e.key !== ' ' || e.repeat || !(open !== 'none' || loc.pathname.startsWith('/music'))) return
+      const t = e.target as HTMLElement | null
+      if (t?.closest('input, textarea, select, button, a, [contenteditable], [role="slider"], [role="tab"], [role="menu"], [role="dialog"] form')) return
+      e.preventDefault()
+      player.toggle()
+    }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-  }, [open])
+  }, [open, loc.pathname])
   if (!track) return null
   const showNow = (t: NowTab) => {
     setTab(t)
     setOpen((o) => (o === 'now' && tab === t ? 'none' : 'now'))
   }
+  const first: NowTab = track.lyrics ? 'lyrics' : 'visualizer'
   const repeatLabel = state.repeat === 'off' ? 'Repeat' : state.repeat === 'all' ? 'Repeat one' : 'Repeat off'
   return (
     <>
-      {open === 'now' && <NowPlaying track={track} tab={tab} onTab={setTab} onClose={() => setOpen('none')} />}
+      {open === 'now' && <NowPlaying track={track} state={state} tab={tab} onTab={setTab} onClose={() => setOpen('none')} />}
       {open === 'queue' && <QueueDrawer onClose={() => setOpen('none')} />}
-      <div className="mbar" role="region" aria-label="Music player">
+      <div className={'mbar' + (open !== 'none' ? ' mbar--open' : '')} role="region" aria-label="Music player">
         <div className="mbar__song">
-          <button type="button" className="mbar__cover" onClick={() => showNow(track.lyrics ? 'lyrics' : 'queue')} aria-label="Now playing" title="Now playing">
+          <button type="button" className="mbar__cover" onClick={() => showNow(first)} aria-label="Now playing" title="Now playing">
             <Cover art={track.art} size={60} />
             <span className="mbar__grow">
               <IconExpand size={22} />
             </span>
           </button>
-          <div className="mbar__names">
-            <div className="mbar__title">{track.title}</div>
+          {/* On a narrow screen the names are one thing to press (their links are off there): "now playing". */}
+          <div className="mbar__names" onClick={(e) => (e.target as HTMLElement).closest('a') == null && window.matchMedia?.('(max-width: 860px)').matches && showNow(first)}>
+            <div className="mbar__title" title={track.title}>
+              {track.title}
+            </div>
             <div className="mbar__artist">
               <ArtistLinks track={track} />
             </div>
@@ -61,39 +91,39 @@ export function MusicBar() {
               </div>
             )}
           </div>
+          <HeartButton kind="track" id={track.id} loaded={track.favorite} className="mbar__like" />
         </div>
 
         <div className="mbar__middle">
-          <div className="mbar__buttons">
-            <button type="button" className={'micon' + (state.shuffle ? ' micon--on' : '')} onClick={() => player.setShuffle(!state.shuffle)} aria-pressed={state.shuffle} aria-label="Shuffle" title="Shuffle">
-              <IconShuffle size={20} />
-            </button>
-            <button type="button" className="micon" onClick={() => player.previous()} aria-label="Previous" title="Previous">
-              <IconSkipPrevious size={26} />
-            </button>
-            <button type="button" className="mbar__play" onClick={() => player.toggle()} aria-label={state.playing ? 'Pause' : 'Play'} title={state.playing ? 'Pause' : 'Play'} aria-busy={state.waiting}>
-              {state.playing ? <IconPause size={26} /> : <IconPlay size={26} />}
-            </button>
-            <button type="button" className="micon" onClick={() => player.next()} aria-label="Next" title="Next">
-              <IconSkipNext size={26} />
-            </button>
-            <button type="button" className={'micon' + (state.repeat !== 'off' ? ' micon--on' : '')} onClick={() => player.cycleRepeat()} aria-label={repeatLabel} title={repeatLabel}>
-              {state.repeat === 'one' ? <IconRepeatOne size={20} /> : <IconRepeat size={20} />}
-            </button>
-          </div>
+          <Transport state={state} repeatLabel={repeatLabel} />
           <SeekLine />
         </div>
 
         <div className="mbar__rest">
-          <span className={'mbar__quality' + (isHiRes(track) ? ' mbar__quality--hires' : '')} title="How this file is encoded">
-            {qualityLabel(track)}
-          </span>
-          <HeartButton kind="track" id={track.id} loaded={track.favorite} />
+          <button
+            type="button"
+            className={'mbar__quality' + (isHiRes(track) && !state.stream?.converted ? ' mbar__quality--hires' : '')}
+            onClick={(e) => {
+              const box = e.currentTarget.getBoundingClientRect()
+              setSettings((s) => (s ? null : { x: box.right, y: box.top, box }))
+            }}
+            title="How this song is played"
+            aria-haspopup="dialog"
+            aria-expanded={!!settings}
+          >
+            {streamLabel(track, state)}
+          </button>
+          <button type="button" className="micon mbar__settings" onClick={(e) => setSettings((s) => (s ? null : { x: 0, y: 0, box: e.currentTarget.getBoundingClientRect() }))} aria-label="Playback settings" title="Playback settings" aria-expanded={!!settings}>
+            <IconTune size={20} />
+          </button>
           {track.lyrics && (
             <button type="button" className={'micon' + (open === 'now' && tab === 'lyrics' ? ' micon--on' : '')} onClick={() => showNow('lyrics')} aria-label="Lyrics" title="Lyrics">
               <IconMic size={20} />
             </button>
           )}
+          <button type="button" className={'micon mbar__viz' + (open === 'now' && tab === 'visualizer' ? ' micon--on' : '')} onClick={() => showNow('visualizer')} aria-label="Visualizer" title="Visualizer">
+            <IconSpectrum size={20} />
+          </button>
           <button type="button" className={'micon' + (open === 'queue' ? ' micon--on' : '')} onClick={() => setOpen((o) => (o === 'queue' ? 'none' : 'queue'))} aria-label="Queue" title="Queue" aria-expanded={open === 'queue'}>
             <IconQueue size={22} />
           </button>
@@ -108,12 +138,37 @@ export function MusicBar() {
           </div>
         )}
       </div>
+      {settings && <PlaybackSettings at={settings} track={track} state={state} onClose={() => setSettings(null)} />}
     </>
   )
 }
 
+/** Shuffle, previous, play or pause, next, repeat. */
+function Transport({ state, repeatLabel, large = false }: { state: PlayerState; repeatLabel: string; large?: boolean }) {
+  const big = large ? 34 : 26
+  return (
+    <div className={'mbar__buttons' + (large ? ' mbar__buttons--large' : '')}>
+      <button type="button" className={'micon' + (state.shuffle ? ' micon--on' : '')} onClick={() => player.setShuffle(!state.shuffle)} aria-pressed={state.shuffle} aria-label="Shuffle" title="Shuffle">
+        <IconShuffle size={large ? 24 : 20} />
+      </button>
+      <button type="button" className="micon" onClick={() => player.previous()} aria-label="Previous" title="Previous">
+        <IconSkipPrevious size={big} />
+      </button>
+      <button type="button" className="mbar__play" onClick={() => player.toggle()} aria-label={state.playing ? 'Pause' : 'Play'} title={state.playing ? 'Pause' : 'Play'} aria-busy={state.waiting}>
+        {state.playing ? <IconPause size={big} /> : <IconPlay size={big} />}
+      </button>
+      <button type="button" className="micon" onClick={() => player.next()} aria-label="Next" title="Next">
+        <IconSkipNext size={big} />
+      </button>
+      <button type="button" className={'micon' + (state.repeat !== 'off' ? ' micon--on' : '')} onClick={() => player.cycleRepeat()} aria-label={repeatLabel} title={repeatLabel}>
+        {state.repeat === 'one' ? <IconRepeatOne size={large ? 24 : 20} /> : <IconRepeat size={large ? 24 : 20} />}
+      </button>
+    </div>
+  )
+}
+
 /** A slider drawn as a line: dragged or pressed with the pointer, moved with the arrow keys. */
-function Slider({ value, max, onChange, onCommit, label, text, step, className = '' }: { value: number; max: number; onChange?: (v: number) => void; onCommit: (v: number) => void; label: string; text: string; step: number; className?: string }) {
+function Slider({ value, max, onChange, onCommit, label, text, step, className = '' }: { value: number; max: number; onChange?: (v: number | null) => void; onCommit: (v: number) => void; label: string; text: string; step: number; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const shown = drag ?? value
@@ -123,7 +178,7 @@ function Slider({ value, max, onChange, onCommit, label, text, step, className =
   }
   const down = (e: ReactPointerEvent) => {
     if (!(max > 0)) return
-    ref.current!.setPointerCapture(e.pointerId)
+    ref.current!.setPointerCapture?.(e.pointerId)
     const v = at(e)
     setDrag(v)
     onChange?.(v)
@@ -161,7 +216,10 @@ function Slider({ value, max, onChange, onCommit, label, text, step, className =
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
-      onPointerCancel={() => setDrag(null)}
+      onPointerCancel={() => {
+        setDrag(null)
+        onChange?.(null)
+      }}
       onKeyDown={key}
     >
       <div className="mslider__line">
@@ -207,8 +265,76 @@ function Volume() {
       <button type="button" className="micon" onClick={() => player.toggleMute()} aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'}>
         {shown === 0 ? <IconVolumeOff size={20} /> : <IconVolume size={20} />}
       </button>
-      <Slider value={shown * 100} max={100} step={5} label="Volume" text={Math.round(shown * 100) + '%'} onChange={(v) => player.setVolume(v / 100)} onCommit={(v) => player.setVolume(v / 100)} className="mslider--volume" />
+      <Slider value={shown * 100} max={100} step={5} label="Volume" text={Math.round(shown * 100) + '%'} onChange={(v) => v != null && player.setVolume(v / 100)} onCommit={(v) => player.setVolume(v / 100)} className="mslider--volume" />
     </div>
+  )
+}
+
+// ---- how the sound is played ----
+
+const kHz = (rate: number) => (Number.isInteger(rate / 1000) ? String(rate / 1000) : (rate / 1000).toFixed(1)) + ' kHz'
+
+/** The settings of the sound, and what is happening to the song that plays. */
+function PlaybackSettings({ at, track, state, onClose }: { at: MenuAt; track: MusicTrack; state: PlayerState; onClose: () => void }) {
+  const prefs = usePrefs()
+  const out = player.outputRate()
+  const gain = levelGain(track, prefs.levelling, inAlbumRun(state.queue, state.queue.index))
+  const joins = player.joins()
+  const converted = state.stream?.converted
+  return (
+    <FloatingMenu at={at} onClose={onClose} wide>
+      <div className="mset" role="dialog" aria-label="Playback settings">
+        <h3>Streaming quality</h3>
+        <div className="mset__options" role="radiogroup" aria-label="Streaming quality">
+          {QUALITIES.map((q) => (
+            <button key={q.id} type="button" role="radio" aria-checked={prefs.quality === q.id} className={prefs.quality === q.id ? 'on' : ''} onClick={() => musicPrefs.set({ quality: q.id })}>
+              <b>{q.label}</b>
+              <span>{q.hint}</span>
+            </button>
+          ))}
+        </div>
+        <label className="mset__switch">
+          <span>
+            <b>Volume levelling</b>
+            <small>Songs play as loud as each other; an album keeps its own balance.</small>
+          </span>
+          <input type="checkbox" checked={prefs.levelling === 'on'} onChange={(e) => musicPrefs.set({ levelling: e.target.checked ? 'on' : 'off' })} />
+        </label>
+        <label className="mset__switch">
+          <span>
+            <b>Gapless albums</b>
+            <small>Songs that run into each other on an album are joined without a gap.</small>
+          </span>
+          <input type="checkbox" checked={prefs.gapless} onChange={(e) => musicPrefs.set({ gapless: e.target.checked })} />
+        </label>
+        <h3>This song</h3>
+        <dl className="mset__facts">
+          <dt>File</dt>
+          <dd>{qualityLabel(track)}</dd>
+          <dt>Sent as</dt>
+          <dd>{converted ? (converted.codec === 'flac' ? 'FLAC, 16-bit (converted)' : `${codecName({ codec: converted.codec, container: converted.codec })}, ${converted.kbps} kbit/s (converted)`) : 'The file itself'}</dd>
+          {out != null && (
+            <>
+              <dt>Output</dt>
+              <dd>
+                {kHz(out)}
+                {(track.sampleRate ?? 0) > out && !converted && <small>This song is {kHz(track.sampleRate!)}. Your system's sound output is set lower, so it is converted on the way out.</small>}
+              </dd>
+            </>
+          )}
+          <dt>Levelling</dt>
+          <dd>{prefs.levelling === 'off' ? 'Off' : track.loudness == null && track.gainTrack == null ? 'Not measured yet' : `${gain > 0 ? '+' : ''}${gain.toFixed(1)} dB`}</dd>
+          {joins.exactJoins + joins.clockJoins + joins.plainJoins > 0 && (
+            <>
+              <dt>Joins</dt>
+              <dd>
+                {joins.exactJoins} exact, {joins.clockJoins} timed, {joins.plainJoins} plain
+              </dd>
+            </>
+          )}
+        </dl>
+      </div>
+    </FloatingMenu>
   )
 }
 
@@ -217,12 +343,16 @@ function Volume() {
 function QueueList() {
   const state = usePlayer()
   const { tracks, index } = state.queue
-  const currentRef = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLDivElement | null>(null)
+  const reorder = useReorder(tracks.length, (from, to) => player.move(from, to), '.qrow')
+  const [menu, setMenu] = useState<{ index: number; at: MenuAt } | null>(null)
+  const [saving, setSaving] = useState(false)
   // Opened on the song that is playing, not at the top of a long queue.
   useLayoutEffect(() => {
-    currentRef.current?.scrollIntoView({ block: 'center' })
+    box.current?.querySelector('.qrow--current')?.scrollIntoView({ block: 'center' })
   }, [])
   const left = tracks.slice(index + 1).reduce((ms, t) => ms + t.durationMs, 0)
+  const menuTrack = menu ? tracks[menu.index] : null
   return (
     <>
       <div className="mqueue__head">
@@ -231,18 +361,33 @@ function QueueList() {
           {tracks.length} {tracks.length === 1 ? 'song' : 'songs'}
           {left > 0 && ` · ${longDuration(left)} left`}
         </span>
+        <button type="button" className="micon" onClick={() => setSaving(true)} aria-label="Save the queue as a playlist" title="Save as playlist">
+          <IconPlaylistAdd size={20} />
+        </button>
         <button type="button" className="link-brand" onClick={() => player.clear()}>
           Clear
         </button>
       </div>
-      <div className="mqueue__list">
+      <div
+        className={'mqueue__list' + (reorder.dragging != null ? ' mqueue__list--dragging' : '')}
+        ref={(el) => {
+          box.current = el
+          reorder.listRef(el)
+        }}
+      >
         {tracks.map((t, i) => (
           <div
             key={t.id + ':' + i}
-            ref={i === index ? currentRef : undefined}
-            className={'qrow' + (i === index ? ' qrow--current' : '') + (i < index ? ' qrow--played' : '')}
+            className={'qrow' + (i === index ? ' qrow--current' : '') + (i < index ? ' qrow--played' : '') + (menu?.index === i ? ' qrow--open' : '') + reorder.rowClass(i)}
             onClick={() => (i === index ? player.toggle() : player.jump(i))}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMenu({ index: i, at: { x: e.clientX, y: e.clientY } })
+            }}
           >
+            <button type="button" className="qrow__grip" data-reorder-handle aria-label={'Move ' + t.title} title="Drag to move" {...reorder.handle(i)}>
+              <IconDrag size={18} />
+            </button>
             <span className="qrow__art">
               <Cover art={t.art} size={40} />
               {i === index && (
@@ -256,21 +401,44 @@ function QueueList() {
               <span className="qrow__artist">{t.artist}</span>
             </span>
             <span className="qrow__time">{clock(t.durationMs)}</span>
-            <button
-              type="button"
-              className="micon qrow__remove"
-              onClick={(e) => {
-                e.stopPropagation()
-                player.remove(i)
-              }}
-              aria-label={'Remove ' + t.title + ' from the queue'}
-              title="Remove"
-            >
-              <IconClose size={18} />
-            </button>
+            <span className="qrow__menu" onClick={(e) => e.stopPropagation()}>
+              <MoreButton
+                label={'More for ' + t.title}
+                open={menu?.index === i}
+                onClick={(e) => {
+                  const b = e.currentTarget.getBoundingClientRect()
+                  setMenu(menu?.index === i ? null : { index: i, at: { x: b.right, y: b.bottom, box: b } })
+                }}
+              />
+            </span>
           </div>
         ))}
       </div>
+      {menu && menuTrack && (
+        <SongsMenu
+          at={menu.at}
+          onClose={() => setMenu(null)}
+          tracks={async () => [menuTrack]}
+          single={menuTrack}
+          extra={[
+            ...(menu.index > index + 1 ? [{ label: 'Move to next', onSelect: () => player.move(menu.index, index + 1) }] : []),
+            ...(menu.index < tracks.length - 1 ? [{ label: 'Move to the end', onSelect: () => player.move(menu.index, tracks.length - 1) }] : []),
+            { label: 'Remove from the queue', onSelect: () => player.remove(menu.index), danger: true },
+          ]}
+        />
+      )}
+      {saving && (
+        <NameDialog
+          title="Save the queue as a playlist"
+          action="Save"
+          onClose={() => setSaving(false)}
+          onSubmit={async (name) => {
+            const made = await music.createPlaylist(name, tracks.map((t) => t.id))
+            playlistsChanged()
+            toast.show(`Saved as ${made.name}`)
+          }}
+        />
+      )}
     </>
   )
 }
@@ -288,18 +456,25 @@ function QueueDrawer({ onClose }: { onClose: () => void }) {
 
 // ---- now playing ----
 
-function NowPlaying({ track, tab, onTab, onClose }: { track: MusicTrack; tab: NowTab; onTab: (t: NowTab) => void; onClose: () => void }) {
+function NowPlaying({ track, state, tab, onTab, onClose }: { track: MusicTrack; state: PlayerState; tab: NowTab; onTab: (t: NowTab) => void; onClose: () => void }) {
   const art = music.artUrl(track.art, 640)
+  const [menu, setMenu] = useState<MenuAt | null>(null)
+  const repeatLabel = state.repeat === 'off' ? 'Repeat' : state.repeat === 'all' ? 'Repeat one' : 'Repeat off'
+  const tabs: [NowTab, string][] = [
+    ['lyrics', 'Lyrics'],
+    ['visualizer', 'Visualizer'],
+    ['queue', 'Queue'],
+  ]
   return (
     <div className="mnow" role="dialog" aria-label="Now playing">
-      {art && <div className="mnow__back" style={{ backgroundImage: `url(${art})` }} />}
+      {art && <div className="mnow__back" key={art} style={{ backgroundImage: `url(${art})` }} />}
       <div className="mnow__shade" />
       <button type="button" className="micon mnow__close" onClick={onClose} aria-label="Close">
         <IconClose size={26} />
       </button>
       <div className="mnow__body">
         <div className="mnow__song">
-          <Cover art={track.art} size={520} className="mnow__cover" />
+          <Cover art={track.art} size={520} className="mnow__cover" key={track.art ?? track.id} />
           <div className="mnow__title">{track.title}</div>
           <div className="mnow__artist">
             <ArtistLinks track={track} />
@@ -311,29 +486,34 @@ function NowPlaying({ track, tab, onTab, onClose }: { track: MusicTrack; tab: No
             </div>
           )}
           <div className="mnow__facts">
-            <span className={'mbar__quality' + (isHiRes(track) ? ' mbar__quality--hires' : '')}>{qualityLabel(track)}</span>
+            <span className={'mbar__quality' + (isHiRes(track) && !state.stream?.converted ? ' mbar__quality--hires' : '')}>{streamLabel(track, state)}</span>
             <HeartButton kind="track" id={track.id} loaded={track.favorite} />
-            <TrackMenu track={track} up />
+            <MoreButton label={'More for ' + track.title} open={!!menu} onClick={(e) => setMenu(menu ? null : { x: 0, y: 0, box: e.currentTarget.getBoundingClientRect() })} />
+          </div>
+          {/* A narrow screen's bar has only play and next: the rest is here. */}
+          <div className="mnow__controls">
+            <SeekLine />
+            <Transport state={state} repeatLabel={repeatLabel} large />
           </div>
         </div>
         <div className="mnow__side">
           <div className="mnow__tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={tab === 'lyrics'} className={tab === 'lyrics' ? 'on' : ''} onClick={() => onTab('lyrics')}>
-              Lyrics
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'on' : ''} onClick={() => onTab('queue')}>
-              Queue
-            </button>
+            {tabs.map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => onTab(id)}>
+                {label}
+              </button>
+            ))}
           </div>
-          {tab === 'lyrics' ? (
-            <LyricsView track={track} />
-          ) : (
+          {tab === 'lyrics' && <LyricsView track={track} />}
+          {tab === 'visualizer' && <VisualizerPanel />}
+          {tab === 'queue' && (
             <div className="mnow__queue">
               <QueueList />
             </div>
           )}
         </div>
       </div>
+      {menu && <SongsMenu at={menu} onClose={() => setMenu(null)} tracks={async () => [track]} single={track} />}
     </div>
   )
 }

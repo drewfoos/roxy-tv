@@ -10,7 +10,11 @@ The full feature list, server and apps. The short version is in the [README](../
   first (an album is listed once two of its songs are there), artists told apart in
   joined tags, covers kept once each, synced and plain lyrics, plays and favourites per
   profile, the file itself streamed (lossless stays lossless). A song keeps its history
-  when its file is moved or replaced by a better copy.
+  when its file is moved or replaced by a better copy. Since the second round the same
+  day: playlists per profile (a song can be in one twice; entries are ordered and
+  removed by their own id), a log of every listen (a report sent twice is one listen),
+  loudness measured from the audio (EBU R 128, per song and per album) and conversion on
+  request (Opus, MP3, AAC, 16-bit FLAC), made once, kept and served with ranges.
 
 - Library scan of TRaSH-style folders (series/year/tvdb tag, SxxExx and absolute numbers,
   specials, sidecar subtitles, `S02E01v2`-style revisions, "<folder name> NN" files such as
@@ -120,10 +124,21 @@ a budget Google TV.
 
 (`apps/web/`, TypeScript, React, Vite; started 2026-10-26)
 
-- Music: a library by songs, artists and albums with search, and a player bar that stays
-  across pages (queue, shuffle, repeat, media keys, synced lyrics, the next song loaded
-  ahead so songs follow each other without a wait). Sound goes through the browser, so
-  through the system's own mixer.
+- Music: a library by songs, artists, albums and playlists with search, and a player bar
+  that stays across pages (queue, shuffle, repeat, media keys, synced lyrics). Sound goes
+  through the browser, so through the system's own mixer. Everything can be played next,
+  put at the end of the queue or added to a playlist from its menu (the three dots, or
+  the right mouse button); the queue and a playlist are put in another order by dragging
+  a row's handle (or the arrow keys on it). Songs that follow each other on an album are
+  joined on the audio clock, to the sample (the next one is decoded ahead; other joins
+  start the next element when the current one ends). Volume levelling from the server's
+  measurements, a streaming quality for slow connections, a visualizer (bars, mirror,
+  wave, ring) and a page that says how the song playing is sent and joined. Laid out
+  for a phone (two tiles and part of a third, "now playing" with its own controls), for
+  the desktop steps of the rest of the site, and for very wide screens (up to fourteen
+  tiles a row; an album's songs beside its cover, a list never wider than can be read
+  across). A listen is counted from what was heard, kept until the server has it, and
+  the queue with its place survives a reload and a change of profile.
 
 - The computer client: Crunchyroll's layout at desktop width (`docs/design/roxy-look.md`),
   the same `/v1` API as the Android app, served by the server itself at `/`.

@@ -45,6 +45,10 @@ export interface MusicTrack {
   lyrics?: string
   gainTrack?: number
   gainAlbum?: number
+  /** Measured by the server: the song's loudness (LUFS), its true peak (dBTP), its album's loudness. */
+  loudness?: number
+  peak?: number
+  albumLoudness?: number
   favorite: boolean
   playCount: number
   lastPlayedAt?: string
@@ -127,6 +131,20 @@ export interface MusicFolderResult {
   problems?: string[]
 }
 
+export interface MusicPlaylist {
+  id: string
+  name: string
+  trackCount: number
+  durationMs: number
+  /** The pictures of its first songs (up to four), for a cover. */
+  art: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** A song at a place in a playlist: the entry has its own id (a song can be in twice). */
+export type PlaylistEntry = MusicTrack & { entryId: number }
+
 export interface MusicScanStatus {
   scanning: boolean
   startedAt?: string
@@ -135,6 +153,8 @@ export interface MusicScanStatus {
   total: number
   folders?: MusicFolderResult[]
   error?: string
+  /** How far the server is with measuring loudness. */
+  loudness?: { measured: number; total: number; measuring: boolean }
 }
 
 export type TrackSort = 'title' | 'artist' | 'album' | 'added' | 'plays' | 'recent' | 'favorited'
@@ -165,10 +185,24 @@ export const music = {
   search: (query: string) => get<{ artists: MusicArtist[]; albums: MusicAlbum[]; tracks: MusicTrack[] }>('/v1/music/search' + q({ q: query })),
   lyrics: (id: string) => get<Lyrics>('/v1/music/tracks/' + encodeURIComponent(id) + '/lyrics'),
   favorite: (kind: FavoriteKind, id: string, on: boolean) => (on ? post<void> : del<void>)(`/v1/music/favorites/${kind}/${encodeURIComponent(id)}`),
-  /** Counts one listen. Sent once per play, when half the song (or four minutes) was heard. */
-  played: (id: string) => post<{ playCount: number }>('/v1/music/tracks/' + encodeURIComponent(id) + '/played'),
-  /** The audio file itself (the browser asks for it with its cookie). */
-  streamUrl: (id: string) => '/v1/music/tracks/' + encodeURIComponent(id) + '/stream',
+  /**
+   * Counts one listen, counted by the player at `at` (Unix ms). Sent again after a lost
+   * answer it is the same listen: the time names it.
+   */
+  played: (id: string, at: number) => post<{ playCount: number; counted: boolean }>('/v1/music/tracks/' + encodeURIComponent(id) + '/played', { at }),
+  /** The audio file itself, or (with a format) converted: the browser asks for it with its cookie. */
+  streamUrl: (id: string, convert?: { format: string; bitrate?: number }) =>
+    '/v1/music/tracks/' + encodeURIComponent(id) + '/stream' + (convert ? q({ format: convert.format, bitrate: convert.bitrate || undefined }) : ''),
+
+  // ---- playlists (the profile's own) ----
+  playlists: () => get<{ playlists: MusicPlaylist[] }>('/v1/music/playlists'),
+  playlist: (id: string) => get<{ playlist: MusicPlaylist; tracks: PlaylistEntry[] }>('/v1/music/playlists/' + encodeURIComponent(id)),
+  createPlaylist: (name: string, trackIds: string[] = []) => post<MusicPlaylist>('/v1/music/playlists', { name, trackIds }),
+  renamePlaylist: (id: string, name: string) => call.patch<MusicPlaylist>('/v1/music/playlists/' + encodeURIComponent(id), { name }),
+  deletePlaylist: (id: string) => del<void>('/v1/music/playlists/' + encodeURIComponent(id)),
+  addToPlaylist: (id: string, trackIds: string[]) => post<MusicPlaylist>('/v1/music/playlists/' + encodeURIComponent(id) + '/tracks', { trackIds }),
+  removeFromPlaylist: (id: string, entryIds: number[]) => post<MusicPlaylist>('/v1/music/playlists/' + encodeURIComponent(id) + '/remove', { entryIds }),
+  orderPlaylist: (id: string, entryIds: number[]) => call.put<MusicPlaylist>('/v1/music/playlists/' + encodeURIComponent(id) + '/order', { entryIds }),
   /** A cover's address, or null when there is no picture. Its content never changes. */
   artUrl: (hash: string | undefined, widthPx?: number): string | null => {
     if (!hash) return null

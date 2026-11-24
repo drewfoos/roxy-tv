@@ -663,7 +663,7 @@ function rowGeometry(el: HTMLElement) {
 }
 
 /** A titled horizontal row with hover arrows; the track snaps card to card; drag it with the mouse. */
-export function Row({ title, children, thumbs = false, more }: { title: string; children: ReactNode; thumbs?: boolean; more?: ReactNode }) {
+export function Row({ title, children, thumbs = false, squares = false, more }: { title: string; children: ReactNode; thumbs?: boolean; squares?: boolean; more?: ReactNode }) {
   const track = useRef<HTMLDivElement>(null)
   // Crunchyroll's arrows: a bare chevron in each gutter, shown only where there is more to see.
   const [ends, setEnds] = useState({ left: false, right: false })
@@ -675,7 +675,7 @@ export function Row({ title, children, thumbs = false, more }: { title: string; 
     const measure = () => {
       const max = el.scrollWidth - el.clientWidth
       setEnds({ left: el.scrollLeft > 4, right: el.scrollLeft < max - 4 })
-      setArtH(el.querySelector('.card__art, .ep__art')?.getBoundingClientRect().height ?? 0)
+      setArtH(el.querySelector('.card__art, .ep__art, .mtile__art')?.getBoundingClientRect().height ?? 0)
     }
     measure()
     el.addEventListener('scroll', measure, { passive: true })
@@ -729,7 +729,7 @@ export function Row({ title, children, thumbs = false, more }: { title: string; 
             <IconChevronLeft size={40} />
           </button>
         )}
-        <div ref={track} className={'row__track' + (thumbs ? ' row__track--thumbs' : '')}>
+        <div ref={track} className={'row__track' + (thumbs ? ' row__track--thumbs' : '') + (squares ? ' row__track--squares' : '')}>
           {children}
         </div>
         {ends.right && (

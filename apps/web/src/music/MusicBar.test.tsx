@@ -7,9 +7,11 @@ import type { MusicTrack } from '../api/music'
 import { session } from '../api/session'
 import { clearAsyncCache } from '../hooks/useAsync'
 import { FakeAudio } from './fakeAudio'
+import { musicPrefs } from './prefs'
 import { MusicBar } from './MusicBar'
 import { MusicBarHost } from './MusicBarHost'
-import { TrackList } from './Parts'
+import { AlbumTile, TrackList } from './Parts'
+import { toast } from './toast'
 import { currentTrack, player, resetPlayerForTests } from './player'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -37,10 +39,13 @@ const list = [song('a'), song('b'), flac]
 
 let host: HTMLDivElement
 let root: Root
-let calls: { method: string; url: string }[]
+let calls: { method: string; url: string; body?: unknown }[]
+let playlists: { id: string; name: string; trackCount: number; durationMs: number; art: string[] }[]
 let failFavorite = false
-const $ = (sel: string) => host.querySelector<HTMLElement>(sel)
-const $$ = (sel: string) => Array.from(host.querySelectorAll<HTMLElement>(sel))
+// Menus and small windows are drawn into the page's body, beside the host.
+const $ = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+const $$ = (sel: string) => Array.from(document.body.querySelectorAll<HTMLElement>(sel))
+const item = (text: string) => $$('.menu [role="menuitem"]').find((b) => b.textContent!.trim().startsWith(text)) ?? null
 const button = (label: string) => $$('button').find((b) => b.getAttribute('aria-label') === label) ?? null
 const click = (el: Element | null) => act(async () => { el!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })) })
 const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
@@ -49,19 +54,33 @@ beforeEach(() => {
   FakeAudio.made = []
   FakeAudio.broken = false
   calls = []
+  playlists = [{ id: 'pl1', name: 'Morning', trackCount: 4, durationMs: 1, art: [] }]
   failFavorite = false
   vi.stubGlobal('Audio', FakeAudio)
+  // jsdom has no canvas to draw on.
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  // jsdom plays nothing: here the browser plays every file as it is.
+  vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('probably')
+  musicPrefs.reset()
   vi.stubGlobal(
     'fetch',
-    vi.fn((url: string, init?: { method?: string }) => {
+    vi.fn((url: string, init?: { method?: string; body?: string }) => {
       const method = init?.method ?? 'GET'
-      calls.push({ method, url })
+      calls.push({ method, url, body: init?.body ? JSON.parse(init.body) : undefined })
+      if (url === '/v1/music/playlists' && method === 'POST') {
+        const made = { id: 'new', name: (JSON.parse(init!.body!) as { name: string }).name, trackCount: 0, durationMs: 0, art: [] }
+        return Promise.resolve({ ok: true, status: 201, headers: { get: () => 'application/json' }, json: async () => made, text: async () => JSON.stringify(made) })
+      }
       if (url.includes('/favorites/') && failFavorite) return Promise.resolve({ ok: false, status: 500, headers: { get: () => 'application/json' }, json: async () => ({ error: 'no' }), text: async () => '{"error":"no"}' })
       const body = url.endsWith('/lyrics')
         ? { source: 'lrc', synced: true, lines: [{ ms: 0, text: 'First line' }, { ms: 30000, text: 'Second line' }, { ms: 60000, text: 'Third line' }] }
         : url === '/v1/music'
           ? { counts: { tracks: 3, albums: 0, artists: 3 }, scanning: false }
-          : {}
+          : url === '/v1/music/playlists'
+            ? { playlists }
+            : url === '/v1/music/albums/al'
+              ? { album: { id: 'al', title: 'The Album' }, tracks: [song('m'), song('n')] }
+              : {}
       return Promise.resolve({ ok: true, status: method === 'GET' ? 200 : 204, headers: { get: () => 'application/json' }, json: async () => body, text: async () => (method === 'GET' ? JSON.stringify(body) : '') })
     }),
   )
@@ -82,6 +101,7 @@ afterEach(async () => {
   host.remove()
   document.body.className = ''
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 const renderBar = () => act(async () => root.render(<MemoryRouter><MusicBar /></MemoryRouter>))
@@ -165,11 +185,141 @@ describe('the player bar', () => {
     expect($('.qrow--current .qrow__title')!.textContent).toBe('Song a')
     await click($$('.qrow')[2])
     expect($('.mbar__title')!.textContent).toBe('Hi-Res Song')
-    await click(button('Remove Song b from the queue'))
+    await click(button('More for Song b'))
+    await click(item('Remove from the queue'))
     expect($$('.qrow').length).toBe(2)
     expect($('.mbar__title')!.textContent).toBe('Hi-Res Song') // the song playing is untouched
     await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
     expect($('.mqueue')).toBeNull()
+  })
+
+  const key = (el: Element, k: string) => act(async () => { el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })) })
+  const titles = () => $$('.qrow').map((r) => r.querySelector('.qrow__title')!.textContent)
+
+  it('puts the queue in another order: by the arrow keys on a handle, and from a row\'s menu', async () => {
+    await act(async () => player.playTracks([...list, song('d')], 0, { shuffle: false }))
+    await renderBar()
+    await click(button('Queue'))
+    // Down on the third row's handle: it changes places with the fourth.
+    await key(button('Move Hi-Res Song')!, 'ArrowDown')
+    expect(titles()).toEqual(['Song a', 'Song b', 'Song d', 'Hi-Res Song'])
+    await key(button('Move Hi-Res Song')!, 'ArrowUp')
+    await key(button('Move Hi-Res Song')!, 'ArrowUp')
+    expect(titles()).toEqual(['Song a', 'Hi-Res Song', 'Song b', 'Song d'])
+    // The first row cannot go further up, and the song playing is still the one playing.
+    await key(button('Move Song a')!, 'ArrowUp')
+    expect(titles()).toEqual(['Song a', 'Hi-Res Song', 'Song b', 'Song d'])
+    expect(currentTrack()!.id).toBe('a')
+    // A press on a handle is not a press on its row.
+    await click(button('Move Song d'))
+    expect(currentTrack()!.id).toBe('a')
+    // "Move to next" is offered for a song further down, not for the one already next.
+    await click(button('More for Hi-Res Song'))
+    expect(item('Move to next')).toBeNull()
+    expect(item('Move to the end')).not.toBeNull()
+    await click(button('More for Hi-Res Song'))
+    await click(button('More for Song d'))
+    expect(item('Move to the end')).toBeNull()
+    await click(item('Move to next'))
+    expect(titles()).toEqual(['Song a', 'Song d', 'Hi-Res Song', 'Song b'])
+  })
+
+  it('moves a queue row by dragging its handle to where the pointer is let go', async () => {
+    await act(async () => player.playTracks([...list, song('d')], 0, { shuffle: false }))
+    await renderBar()
+    await click(button('Queue'))
+    // jsdom lays nothing out: each row is given its place, 50 px a row.
+    $$('.qrow').forEach((r, i) => { r.getBoundingClientRect = () => ({ top: i * 50, bottom: i * 50 + 50, left: 0, right: 300, width: 300, height: 50, x: 0, y: i * 50, toJSON: () => ({}) }) })
+    const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
+    const grip = button('Move Song a')!
+    await pointer(grip, 'pointerdown', 20)
+    expect($$('.qrow')[0].className).toContain('is-dragged')
+    await pointer(grip, 'pointermove', 130) // past the middle of the third row
+    expect($$('.qrow')[2].className).toContain('drop-after')
+    await pointer(grip, 'pointerup', 130)
+    expect(titles()).toEqual(['Song b', 'Hi-Res Song', 'Song a', 'Song d'])
+    expect(currentTrack()!.id).toBe('a') // it went with its row
+    expect($('.is-dragged')).toBeNull()
+    // Let go where it was taken up: nothing moves.
+    await pointer(button('Move Song d')!, 'pointerdown', 170)
+    await pointer(button('Move Song d')!, 'pointerup', 170)
+    expect(titles()).toEqual(['Song b', 'Hi-Res Song', 'Song a', 'Song d'])
+  })
+
+  it('saves the queue as a playlist under the name typed', async () => {
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    await click(button('Queue'))
+    await click(button('Save the queue as a playlist'))
+    const input = $('.mdialog input') as HTMLInputElement
+    const save = $$('.mdialog button').find((b) => b.textContent === 'Save')! as HTMLButtonElement
+    expect(save.disabled).toBe(true) // no name yet
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '  Evening  ')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { $('.mdialog')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    await settle()
+    expect(calls.find((c) => c.method === 'POST' && c.url === '/v1/music/playlists')!.body).toEqual({ name: 'Evening', trackIds: ['a', 'b', 'hi'] })
+    expect($('.mdialog')).toBeNull()
+    expect(toast.text()).toBe('Saved as Evening')
+  })
+
+  it('opens "now playing" by a press on the song\'s names where the screen is narrow, and follows their links where it is wide', async () => {
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    const narrow = (yes: boolean) => vi.stubGlobal('matchMedia', (q: string) => ({ matches: yes && q === '(max-width: 860px)' }))
+    narrow(false)
+    await click(document.body.querySelector('.mbar__title'))
+    expect(document.body.querySelector('.mnow')).toBeNull()
+    narrow(true)
+    await click(document.body.querySelector('.mbar__title'))
+    expect(document.body.querySelector('.mnow')).not.toBeNull()
+    // The sheet has the whole transport (the narrow bar has only play and next).
+    expect(Array.from(document.body.querySelectorAll('.mnow__controls button')).map((b) => b.getAttribute('aria-label'))).toEqual(['Shuffle', 'Previous', 'Pause', 'Next', 'Repeat'])
+    expect(document.body.querySelector('.mnow__controls .mslider')!.getAttribute('aria-label')).toBe('Seek')
+  })
+
+  it('opens the visualizer from the bar, with its styles to choose from', async () => {
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    await click(button('Visualizer'))
+    expect($('.mnow canvas')).not.toBeNull()
+    const styles = () => $$('.mviz__styles button')
+    expect(styles().map((b) => b.textContent)).toEqual(['Bars', 'Mirror', 'Wave', 'Ring'])
+    expect(styles().find((b) => b.getAttribute('aria-checked') === 'true')!.textContent).toBe('Bars')
+    await click(styles()[3])
+    expect(musicPrefs.get().visualizer).toBe('ring')
+    expect(styles().find((b) => b.getAttribute('aria-checked') === 'true')!.textContent).toBe('Ring')
+    // A second press on the bar's button closes it.
+    await click(button('Visualizer'))
+    expect($('.mnow')).toBeNull()
+  })
+
+  it('changes how songs are sent from the playback settings, and says what this song gets', async () => {
+    await act(async () => player.playTracks(list, 2, { shuffle: false }))
+    await renderBar()
+    expect(FakeAudio.made[0].src).not.toContain('format=')
+    await click(button('Playback settings'))
+    const facts = () => Object.fromEntries($$('.mset__facts dt').map((dt) => [dt.textContent, dt.nextElementSibling!.textContent]))
+    expect(facts()['File']).toBe('FLAC · 24-bit / 96 kHz')
+    expect(facts()['Sent as']).toBe('The file itself')
+    const quality = (label: string) => $$('.mset__options button').find((b) => b.querySelector('b')!.textContent === label)!
+    await click(quality('Low'))
+    expect(musicPrefs.get().quality).toBe(128)
+    expect(quality('Low').getAttribute('aria-checked')).toBe('true')
+    expect(FakeAudio.made.at(-1)!.src).toContain('format=opus')
+    expect(FakeAudio.made.at(-1)!.src).toContain('bitrate=128')
+    expect(facts()['Sent as']).toBe('Opus, 128 kbit/s (converted)')
+    expect($('.mbar__quality')!.textContent).toBe('Opus · 128 kbps')
+    expect($('.mbar__quality')!.className).not.toContain('hires') // what is heard is not hi-res any more
+    const switches = $$('.mset__switch input') as HTMLInputElement[]
+    expect(switches.map((i) => i.checked)).toEqual([true, true])
+    await click(switches[0])
+    expect(musicPrefs.get().levelling).toBe('off')
+    expect(facts()['Levelling']).toBe('Off')
+    await click(switches[1])
+    expect(musicPrefs.get().gapless).toBe(false)
   })
 
   it('opens "now playing" with the lyrics, the line being sung lit, and a press on a line goes there', async () => {
@@ -254,12 +404,157 @@ describe('a list of songs', () => {
     await act(async () => player.playTracks([song('x'), song('y')], 0, { shuffle: false }))
     await renderList()
     await click(button('More for Song b'))
-    await click($$('.menu button').find((b) => b.textContent === 'Play next')!)
+    await click(item('Play next'))
     expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['x', 'b', 'y'])
     expect($('.menu')).toBeNull()
+    expect(toast.text()).toBe('Playing next')
     await click(button('More for Hi-Res Song'))
-    await click($$('.menu button').find((b) => b.textContent === 'Add to queue')!)
+    await click(item('Add to queue'))
     expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['x', 'b', 'y', 'hi'])
+    expect(toast.text()).toBe('Added to the queue')
+    expect(currentTrack()!.id).toBe('x') // neither started anything
+  })
+
+  it('opens the same menu with the right mouse button, and closes it with Escape or a press elsewhere', async () => {
+    await renderList()
+    await act(async () => { $$('.trow')[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 })) })
+    expect(item('Play next')).not.toBeNull()
+    expect(item('Go to artist')).not.toBeNull()
+    expect(item('Go to album')).toBeNull() // Song b has no album
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect($('.menu')).toBeNull()
+    await act(async () => { $$('.trow')[2].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+    expect(item('Go to album')).not.toBeNull()
+    await act(async () => { document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+    expect($('.menu')).toBeNull()
+    expect(currentTrack()).toBeNull()
+  })
+
+  it('closes a menu by a second press on its own ⋮, and moves it by a press on another row\'s', async () => {
+    await renderList()
+    // A real press is a pointer going down, then a click.
+    const press = async (el: Element) => {
+      await act(async () => { el.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+      await click(el)
+    }
+    const open = (title: string) => button('More for ' + title)!.getAttribute('aria-expanded')
+    await press(button('More for Song b')!)
+    expect(open('Song b')).toBe('true')
+    expect(item('Play next')).not.toBeNull()
+    await press(button('More for Song b')!)
+    expect(document.body.querySelector('.menu')).toBeNull() // closed, not closed and opened again
+    expect(open('Song b')).toBe('false')
+    await press(button('More for Song b')!)
+    await press(button('More for Song a')!)
+    expect([open('Song a'), open('Song b')]).toEqual(['true', 'false'])
+    expect(document.body.querySelectorAll('.menu').length).toBe(1)
+    // A press inside the menu does not close it before the entry is chosen.
+    await press(item('Add to queue')!)
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['a'])
+  })
+
+  it('adds a song to one of the profile\'s playlists from its menu', async () => {
+    await renderList()
+    await click(button('More for Song b'))
+    await click(item('Add to playlist'))
+    await settle()
+    expect(item('New playlist')).not.toBeNull()
+    expect(item('Morning')!.textContent).toContain('4')
+    await click(item('Morning'))
+    await settle()
+    expect(calls.find((c) => c.method === 'POST' && c.url === '/v1/music/playlists/pl1/tracks')!.body).toEqual({ trackIds: ['b'] })
+    expect(toast.text()).toBe('Added 1 song to Morning')
+    expect($('.menu')).toBeNull()
+  })
+
+  it('makes a new playlist with the song in it, and a press inside the name window does not close it', async () => {
+    await renderList()
+    await click(button('More for Hi-Res Song'))
+    await click(item('Add to playlist'))
+    await settle()
+    await click(item('New playlist'))
+    expect($('.menu')).toBeNull() // the window stands in for the menu
+    const input = $('.mdialog input') as HTMLInputElement
+    await act(async () => { input.dispatchEvent(new Event('pointerdown', { bubbles: true })) })
+    expect($('.mdialog')).not.toBeNull()
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Late')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { $('.mdialog')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    await settle()
+    expect(calls.find((c) => c.method === 'POST' && c.url === '/v1/music/playlists')!.body).toEqual({ name: 'Late', trackIds: ['hi'] })
+    expect(toast.text()).toBe('Added 1 song to Late')
+    expect($('.mdialog')).toBeNull()
+  })
+
+  it('drags a row to another place under a line of column names, which is not one of the rows', async () => {
+    const moved: [number, number][] = []
+    await act(async () => root.render(<MemoryRouter><TrackList tracks={[...list, song('d')]} header onMove={(a, b) => moved.push([a, b])} /></MemoryRouter>))
+    // jsdom lays nothing out: the names take the first 36 px, each song 50 px under them.
+    const place = (el: HTMLElement, top: number, height: number) => { el.getBoundingClientRect = () => ({ top, bottom: top + height, left: 0, right: 300, width: 300, height, x: 0, y: top, toJSON: () => ({}) }) }
+    place(document.body.querySelector<HTMLElement>('.trow--head')!, 0, 36)
+    const songRows = () => Array.from(document.body.querySelectorAll<HTMLElement>('.trow:not(.trow--head)'))
+    songRows().forEach((r, i) => place(r, 36 + i * 50, 50))
+    const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
+    const grip = button('Move Song a')!
+    await pointer(grip, 'pointerdown', 60)
+    await pointer(grip, 'pointermove', 170) // past the middle of the third song (136 to 186)
+    expect(songRows()[2].className).toContain('drop-after')
+    expect(document.body.querySelector('.trow--head')!.className).not.toContain('drop')
+    await pointer(grip, 'pointerup', 170)
+    expect(moved).toEqual([[0, 2]])
+    // Taken up and let go in its own place: nothing is asked for.
+    await pointer(button('Move Song b')!, 'pointerdown', 110)
+    await pointer(button('Move Song b')!, 'pointermove', 118)
+    await pointer(button('Move Song b')!, 'pointerup', 118)
+    expect(moved).toEqual([[0, 2]])
+    // The first row has nowhere to go up to, the last nowhere to go down to.
+    await act(async () => { button('Move Song a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })) })
+    await act(async () => { button('Move Song d')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+    expect(moved).toEqual([[0, 2]])
+    // The arrow keys keep the keyboard on the handle of the place the row went to.
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((f) => { f(0); return 0 })
+    await act(async () => { button('Move Song b')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+    expect(moved).toEqual([[0, 2], [1, 2]])
+    expect(document.activeElement).toBe(button('Move Hi-Res Song')) // the handle at the third place
+    raf.mockRestore()
+    expect(currentTrack()).toBeNull()
+  })
+
+  it('shows the names of the columns, and a handle on each row only where rows can be moved', async () => {
+    const moved: [number, number][] = []
+    await act(async () => root.render(<MemoryRouter><TrackList tracks={list} header onMove={(a, b) => moved.push([a, b])} rowMenu={(t) => [{ label: 'Remove ' + t.id, onSelect: () => moved.push([-1, -1]) }]} /></MemoryRouter>))
+    expect($('.trow--head')!.textContent).toContain('Title')
+    expect($$('.trow:not(.trow--head)').length).toBe(3)
+    await act(async () => { button('Move Song a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+    expect(moved).toEqual([[0, 1]])
+    expect(currentTrack()).toBeNull()
+    // The row's own entry is in its menu.
+    await click(button('More for Song b'))
+    await click(item('Remove b'))
+    expect(moved).toEqual([[0, 1], [-1, -1]])
+    await renderList()
+    expect(button('Move Song a')).toBeNull()
+    expect($('.trow--head')).toBeNull()
+  })
+})
+
+describe('a tile', () => {
+  it('plays an album from the button on its picture, or puts it in the queue from its menu', async () => {
+    const album = { id: 'al', title: 'The Album', artistId: 'ar', artist: 'Someone', trackCount: 2, durationMs: 1, addedAt: '', favorite: false }
+    await act(async () => root.render(<MemoryRouter><AlbumTile album={album} /></MemoryRouter>))
+    expect($('.mtile__name')!.getAttribute('href')).toBe('/music/album/al')
+    await click(button('Play The Album'))
+    await settle()
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['m', 'n'])
+    expect(player.get().playing).toBe(true)
+    await click(button('More for The Album'))
+    expect(item('Shuffle')).not.toBeNull()
+    await click(item('Add to queue'))
+    await settle()
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['m', 'n', 'm', 'n'])
+    expect(toast.text()).toBe('2 songs added to the queue')
   })
 })
 

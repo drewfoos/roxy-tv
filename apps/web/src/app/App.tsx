@@ -30,6 +30,7 @@ const LinkTv = lazyPage(() => import("../pages/LinkTv"), (m) => m.LinkTv);
 const Music = lazyPage(() => import("../pages/Music"), (m) => m.Music);
 const MusicArtist = lazyPage(() => import("../pages/Music"), (m) => m.MusicArtistPage);
 const MusicAlbum = lazyPage(() => import("../pages/Music"), (m) => m.MusicAlbumPage);
+const MusicPlaylist = lazyPage(() => import("../pages/Music"), (m) => m.MusicPlaylistPage);
 
 /** Signed out -> login; signed in without a profile -> "Who's watching?"; else the app. */
 export default function App() {
@@ -121,6 +122,7 @@ export default function App() {
         <Route path="/music" element={<Music />} />
         <Route path="/music/artist/:id" element={<MusicArtist />} />
         <Route path="/music/album/:id" element={<MusicAlbum />} />
+        <Route path="/music/playlist/:id" element={<MusicPlaylist />} />
         <Route path="/legal/:doc" element={<Legal />} />
         <Route path="/link" element={<LinkEnter />} />
         <Route path="/link/:code" element={<LinkTv />} />

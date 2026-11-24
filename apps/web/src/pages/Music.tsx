@@ -1,29 +1,47 @@
-// The Music pages: the library (home, songs, artists, albums, liked), an artist, an album.
-// Songs come first: most libraries are single songs, so a song is listed by itself and
-// an album appears once two of its songs are there.
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router'
-import { clock, longDuration, music, type MusicAlbum, type MusicHome, type MusicTrack, type TrackSort } from '../api/music'
+// The Music pages: the library (home, songs, artists, albums, playlists, liked), an
+// artist, an album, a playlist. Songs come first: most libraries are single songs, so a
+// song is listed by itself and an album appears once two of its songs are there.
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { clock, longDuration, music, type MusicAlbum, type MusicHome, type MusicTrack, type PlaylistEntry, type TrackSort } from '../api/music'
 import { useAsync, type AsyncState } from '../hooks/useAsync'
 import { useSession } from '../app/useSession'
 import { TopBar } from '../components/TopBar'
 import { Footer } from '../components/Footer'
+import { Row } from '../components/Cards'
 import { LoadError } from '../components/Connection'
-import { IconClose, IconPlay, IconSearch, IconShuffle } from '../components/Icons'
-import { AlbumTile, ArtistTile, Cover, HeartButton, ListSkeleton, TileSkeleton, TrackList, TrackTile } from '../music/Parts'
+import { IconAdd, IconClose, IconPlay, IconSearch, IconShuffle } from '../components/Icons'
+import { playlistsChanged, usePlaylistsVersion } from '../music/changes'
+import { MoreButton, NameDialog, SongsMenu, useMenu } from '../music/Menus'
+import { AlbumTile, ArtistTile, Cover, HeartButton, ListSkeleton, PlaylistCover, PlaylistTile, TileSkeleton, TrackList, TrackTile } from '../music/Parts'
 import { player } from '../music/player'
+import { toast } from '../music/toast'
 import '../styles/music.css'
 
-type Tab = 'home' | 'songs' | 'artists' | 'albums' | 'liked'
+type Tab = 'home' | 'songs' | 'artists' | 'albums' | 'playlists' | 'liked'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'home', label: 'Home' },
   { id: 'songs', label: 'Songs' },
   { id: 'artists', label: 'Artists' },
   { id: 'albums', label: 'Albums' },
+  { id: 'playlists', label: 'Playlists' },
   { id: 'liked', label: 'Liked' },
 ]
 
 const plural = (n: number, one: string, many = one + 's') => `${n.toLocaleString()} ${n === 1 ? one : many}`
+
+// "Explore" shows the same pick for as long as the page is open: a new one at every
+// refresh of the list behind it would shuffle the tiles under the pointer.
+const pickSeed = Math.random().toString(36).slice(2)
+function mix(text: string): number {
+  let h = 2166136261
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619)
+  return h >>> 0
+}
+/** Some of a list, in an order that is the same for the whole visit. */
+export function visitPick<T extends { id: string }>(all: T[], count: number, seed = pickSeed): T[] {
+  return [...all].sort((a, b) => mix(seed + a.id) - mix(seed + b.id) || a.id.localeCompare(b.id)).slice(0, count)
+}
 
 function Page({ children }: { children: ReactNode }) {
   return (
@@ -57,7 +75,7 @@ export function Music() {
   const empty = home.data != null && home.data.counts.tracks === 0
   return (
     <Page>
-      <div className="music__head">
+      <div className="music__head music__pad">
         <h1>Music</h1>
         <span className="music__spacer" />
         {!empty && (
@@ -78,18 +96,27 @@ export function Music() {
         <SearchResults query={query} />
       ) : (
         <>
-          <div className="mtabs" role="tablist">
+          <div className="mtabs music__pad" role="tablist">
             {TABS.map((t) => (
-              <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => change((p) => (t.id === 'home' ? p.delete('tab') : p.set('tab', t.id)))}>
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={tab === t.id}
+                className={tab === t.id ? 'on' : ''}
+                onClick={() => change((p) => (t.id === 'home' ? p.delete('tab') : p.set('tab', t.id)))}
+              >
                 {t.label}
               </button>
             ))}
           </div>
-          {tab === 'home' && <HomeTab home={home} />}
-          {tab === 'songs' && <SongsTab />}
-          {tab === 'artists' && <ArtistsTab />}
-          {tab === 'albums' && <AlbumsTab />}
-          {tab === 'liked' && <LikedTab />}
+          <div className="music__tab" key={tab}>
+            {tab === 'home' && <HomeTab home={home} />}
+            {tab === 'songs' && <SongsTab />}
+            {tab === 'artists' && <ArtistsTab />}
+            {tab === 'albums' && <AlbumsTab />}
+            {tab === 'playlists' && <PlaylistsTab />}
+            {tab === 'liked' && <LikedTab />}
+          </div>
         </>
       )}
     </Page>
@@ -105,7 +132,11 @@ function NoMusic({ scanning }: { scanning: boolean }) {
         'Songs appear here as they are read.'
       ) : s?.isAdmin ? (
         <>
-          Add a music folder in <Link to="/account/library" className="link-brand">Library settings</Link>: its songs are read from their tags.
+          Add a music folder in{' '}
+          <Link to="/account/library" className="link-brand">
+            Library settings
+          </Link>
+          : its songs are read from their tags.
         </>
       ) : (
         'This server has no music folder yet.'
@@ -130,7 +161,12 @@ function ShuffleAll({ label = 'Shuffle all' }: { label?: string }) {
     setBusy(true)
     try {
       const tracks = await allTracks()
-      if (tracks.length) player.playTracks(tracks, Math.floor(Math.random() * tracks.length), { shuffle: true })
+      if (tracks.length)
+        player.playTracks(tracks, Math.floor(Math.random() * tracks.length), {
+          shuffle: true,
+        })
+    } catch {
+      toast.show('The songs could not be read from the server')
     } finally {
       setBusy(false)
     }
@@ -144,59 +180,85 @@ function ShuffleAll({ label = 'Shuffle all' }: { label?: string }) {
 
 function HomeTab({ home }: { home: AsyncState<MusicHome> }) {
   const [, setParams] = useSearchParams()
-  if (home.loading && !home.data) return <TileSkeleton count={12} />
+  const changes = usePlaylistsVersion()
+  const lists = useAsync('music-playlists', () => music.playlists(), [changes])
+  const albums = useAsync('music-albums', () => music.albums({ sort: 'artist' }))
+  const artists = useAsync('music-artists', () => music.artists())
+  const explore = useMemo(() => visitPick(albums.data?.albums ?? [], 24), [albums.data])
+  // The artists with the most songs here.
+  const top = useMemo(() => [...(artists.data?.artists ?? [])].sort((a, b) => b.trackCount - a.trackCount).slice(0, 24), [artists.data])
+  if (home.loading && !home.data)
+    return (
+      <div className="music__pad">
+        <TileSkeleton count={12} />
+      </div>
+    )
   if (home.error && !home.data) return <LoadError error={home.error} onRetry={() => home.reload()} />
   const d = home.data
   if (!d) return null
   const added = d.recentlyAdded ?? []
   const recent = d.recentlyPlayed ?? []
   const most = d.mostPlayed ?? []
+  const playlists = lists.data?.playlists ?? []
   // A press on a lone song among "recently added" plays the lone songs from there on.
   const addedSongs = added.flatMap((e) => (e.track ? [e.track] : []))
+  const more = (tab: Tab, sort?: string) => (
+    <button className="link link-brand" onClick={() => setParams(sort ? { tab, sort } : { tab }, { replace: true })}>
+      See all
+    </button>
+  )
   return (
     <>
-      <div className="music__actions">
+      <div className="music__actions music__pad">
         <ShuffleAll />
         <button className="btn btn--grey" onClick={() => setParams({ tab: 'liked' }, { replace: true })}>
           Liked songs
         </button>
-        <span className="music__count" style={{ alignSelf: 'center' }}>
+        <span className="music__count">
           {plural(d.counts.tracks, 'song')} · {plural(d.counts.artists, 'artist')} · {plural(d.counts.albums, 'album')}
         </span>
       </div>
       {recent.length > 0 && (
-        <section className="msection">
-          <div className="msection__head">
-            <h2>Jump back in</h2>
-          </div>
-          <div className="mgrid mgrid--row">
-            {recent.map((t, i) => (
-              <TrackTile key={t.id} track={t} list={recent} index={i} />
-            ))}
-          </div>
-        </section>
+        <Row title="Jump back in" squares>
+          {recent.map((t, i) => (
+            <TrackTile key={t.id} track={t} list={recent} index={i} />
+          ))}
+        </Row>
       )}
       {added.length > 0 && (
-        <section className="msection">
-          <div className="msection__head">
-            <h2>Recently added</h2>
-            <button className="link-brand" onClick={() => setParams({ tab: 'songs', sort: 'added' }, { replace: true })}>
-              See all
-            </button>
-          </div>
-          <div className="mgrid mgrid--rows2">
-            {added.map((e) =>
-              e.album ? (
-                <AlbumTile key={'a' + e.album.id} album={e.album} />
-              ) : e.track ? (
-                <TrackTile key={e.track.id} track={e.track} list={addedSongs} index={addedSongs.indexOf(e.track)} />
-              ) : null,
-            )}
-          </div>
-        </section>
+        <Row title="Recently added" squares more={more('songs', 'added')}>
+          {added.map((e) =>
+            e.album ? (
+              <AlbumTile key={'a' + e.album.id} album={e.album} />
+            ) : e.track ? (
+              <TrackTile key={e.track.id} track={e.track} list={addedSongs} index={addedSongs.indexOf(e.track)} />
+            ) : null,
+          )}
+        </Row>
+      )}
+      {playlists.length > 0 && (
+        <Row title="Your playlists" squares more={more('playlists')}>
+          {playlists.map((p) => (
+            <PlaylistTile key={p.id} playlist={p} />
+          ))}
+        </Row>
+      )}
+      {explore.length > 0 && (
+        <Row title="Explore your albums" squares more={more('albums')}>
+          {explore.map((a) => (
+            <AlbumTile key={a.id} album={a} />
+          ))}
+        </Row>
+      )}
+      {top.length > 0 && (
+        <Row title="Top artists" squares more={more('artists')}>
+          {top.map((a) => (
+            <ArtistTile key={a.id} artist={a} />
+          ))}
+        </Row>
       )}
       {most.length > 0 && (
-        <section className="msection">
+        <section className="msection music__pad">
           <div className="msection__head">
             <h2>Most played</h2>
           </div>
@@ -214,6 +276,30 @@ const SORTS: { id: TrackSort; label: string }[] = [
   { id: 'plays', label: 'Most played' },
 ]
 
+function PlayButtons({ tracks, count, children }: { tracks: MusicTrack[]; count?: string; children?: ReactNode }) {
+  return (
+    <div className="music__bar">
+      <button className="btn btn--brand" onClick={() => player.playTracks(tracks, 0, { shuffle: false })} disabled={!tracks.length}>
+        <IconPlay size={20} /> Play
+      </button>
+      <button
+        className="btn btn--grey"
+        onClick={() =>
+          tracks.length &&
+          player.playTracks(tracks, Math.floor(Math.random() * tracks.length), {
+            shuffle: true,
+          })
+        }
+        disabled={!tracks.length}
+      >
+        <IconShuffle size={20} /> Shuffle
+      </button>
+      {children}
+      {count && <span className="music__count">{count}</span>}
+    </div>
+  )
+}
+
 function SongsTab() {
   const [params, setParams] = useSearchParams()
   const sort = (SORTS.find((s) => s.id === params.get('sort'))?.id ?? 'title') as TrackSort
@@ -225,18 +311,16 @@ function SongsTab() {
     else next.set('sort', s)
     setParams(next, { replace: true })
   }
-  if (songs.loading && !songs.data) return <ListSkeleton />
+  if (songs.loading && !songs.data)
+    return (
+      <div className="music__pad">
+        <ListSkeleton />
+      </div>
+    )
   if (songs.error && !songs.data) return <LoadError error={songs.error} onRetry={() => songs.reload()} />
   return (
-    <>
-      <div className="music__bar">
-        <button className="btn btn--brand" onClick={() => player.playTracks(tracks, 0, { shuffle: false })} disabled={!tracks.length}>
-          <IconPlay size={20} /> Play
-        </button>
-        <button className="btn btn--grey" onClick={() => tracks.length && player.playTracks(tracks, Math.floor(Math.random() * tracks.length), { shuffle: true })} disabled={!tracks.length}>
-          <IconShuffle size={20} /> Shuffle
-        </button>
-        <span className="music__count">{plural(tracks.length, 'song')}</span>
+    <div className="music__pad">
+      <PlayButtons tracks={tracks} count={plural(tracks.length, 'song')}>
         <span className="music__spacer" />
         <select className="music__sort" value={sort} onChange={(e) => setSort(e.target.value as TrackSort)} aria-label="Sort the songs by">
           {SORTS.map((s) => (
@@ -245,19 +329,24 @@ function SongsTab() {
             </option>
           ))}
         </select>
-      </div>
-      <TrackList tracks={tracks} plays={sort === 'plays'} />
-    </>
+      </PlayButtons>
+      <TrackList tracks={tracks} plays={sort === 'plays'} header />
+    </div>
   )
 }
 
 function ArtistsTab() {
   const artists = useAsync('music-artists', () => music.artists())
-  if (artists.loading && !artists.data) return <TileSkeleton round />
+  if (artists.loading && !artists.data)
+    return (
+      <div className="music__pad">
+        <TileSkeleton round />
+      </div>
+    )
   if (artists.error && !artists.data) return <LoadError error={artists.error} onRetry={() => artists.reload()} />
   const list = artists.data?.artists ?? []
   return (
-    <>
+    <div className="music__pad">
       <div className="music__bar">
         <span className="music__count">{plural(list.length, 'artist')}</span>
       </div>
@@ -266,13 +355,18 @@ function ArtistsTab() {
           <ArtistTile key={a.id} artist={a} />
         ))}
       </div>
-    </>
+    </div>
   )
 }
 
 function AlbumsTab() {
   const albums = useAsync('music-albums', () => music.albums({ sort: 'artist' }))
-  if (albums.loading && !albums.data) return <TileSkeleton />
+  if (albums.loading && !albums.data)
+    return (
+      <div className="music__pad">
+        <TileSkeleton />
+      </div>
+    )
   if (albums.error && !albums.data) return <LoadError error={albums.error} onRetry={() => albums.reload()} />
   const list = albums.data?.albums ?? []
   if (!list.length)
@@ -283,7 +377,7 @@ function AlbumsTab() {
       </div>
     )
   return (
-    <>
+    <div className="music__pad">
       <div className="music__bar">
         <span className="music__count">{plural(list.length, 'album')}</span>
       </div>
@@ -292,13 +386,67 @@ function AlbumsTab() {
           <AlbumTile key={a.id} album={a} />
         ))}
       </div>
-    </>
+    </div>
+  )
+}
+
+function PlaylistsTab() {
+  const changes = usePlaylistsVersion()
+  const lists = useAsync('music-playlists', () => music.playlists(), [changes])
+  const [naming, setNaming] = useState(false)
+  const nav = useNavigate()
+  if (lists.loading && !lists.data)
+    return (
+      <div className="music__pad">
+        <TileSkeleton count={6} />
+      </div>
+    )
+  if (lists.error && !lists.data) return <LoadError error={lists.error} onRetry={() => lists.reload()} />
+  const list = lists.data?.playlists ?? []
+  return (
+    <div className="music__pad">
+      <div className="music__bar">
+        <button className="btn btn--brand" onClick={() => setNaming(true)}>
+          <IconAdd size={20} /> New playlist
+        </button>
+        <span className="music__count">{plural(list.length, 'playlist')}</span>
+      </div>
+      {list.length ? (
+        <div className="mgrid">
+          {list.map((p) => (
+            <PlaylistTile key={p.id} playlist={p} />
+          ))}
+        </div>
+      ) : (
+        <div className="music__empty">
+          <b>No playlists yet</b>
+          Make one here, or from the ⋮ on any song, album or the queue: “Add to playlist”.
+        </div>
+      )}
+      {naming && (
+        <NameDialog
+          title="New playlist"
+          action="Create"
+          onClose={() => setNaming(false)}
+          onSubmit={async (name) => {
+            const made = await music.createPlaylist(name)
+            playlistsChanged()
+            nav('/music/playlist/' + made.id)
+          }}
+        />
+      )}
+    </div>
   )
 }
 
 function LikedTab() {
   const liked = useAsync('music-liked', () => music.tracks({ favorite: true, sort: 'favorited', limit: 1000 }))
-  if (liked.loading && !liked.data) return <ListSkeleton />
+  if (liked.loading && !liked.data)
+    return (
+      <div className="music__pad">
+        <ListSkeleton />
+      </div>
+    )
   if (liked.error && !liked.data) return <LoadError error={liked.error} onRetry={() => liked.reload()} />
   const tracks = liked.data?.tracks ?? []
   if (!tracks.length)
@@ -309,31 +457,21 @@ function LikedTab() {
       </div>
     )
   return (
-    <>
+    <div className="music__pad">
       <PlayButtons tracks={tracks} count={plural(tracks.length, 'song')} />
-      <TrackList tracks={tracks} />
-    </>
-  )
-}
-
-function PlayButtons({ tracks, count, children }: { tracks: MusicTrack[]; count?: string; children?: ReactNode }) {
-  return (
-    <div className="music__bar">
-      <button className="btn btn--brand" onClick={() => player.playTracks(tracks, 0, { shuffle: false })} disabled={!tracks.length}>
-        <IconPlay size={20} /> Play
-      </button>
-      <button className="btn btn--grey" onClick={() => tracks.length && player.playTracks(tracks, Math.floor(Math.random() * tracks.length), { shuffle: true })} disabled={!tracks.length}>
-        <IconShuffle size={20} /> Shuffle
-      </button>
-      {children}
-      {count && <span className="music__count">{count}</span>}
+      <TrackList tracks={tracks} header />
     </div>
   )
 }
 
 function SearchResults({ query }: { query: string }) {
   const found = useAsync('music-search:' + query, () => music.search(query), [query])
-  if (found.loading && !found.data) return <ListSkeleton count={6} />
+  if (found.loading && !found.data)
+    return (
+      <div className="music__pad">
+        <ListSkeleton count={6} />
+      </div>
+    )
   if (found.error && !found.data) return <LoadError error={found.error} onRetry={() => found.reload()} />
   const d = found.data
   if (!d || d.tracks.length + d.albums.length + d.artists.length === 0)
@@ -346,37 +484,38 @@ function SearchResults({ query }: { query: string }) {
   return (
     <>
       {d.artists.length > 0 && (
-        <section className="msection">
-          <div className="msection__head">
-            <h2>Artists</h2>
-          </div>
-          <div className="mgrid mgrid--row">
-            {d.artists.map((a) => (
-              <ArtistTile key={a.id} artist={a} />
-            ))}
-          </div>
-        </section>
+        <Row title="Artists" squares>
+          {d.artists.map((a) => (
+            <ArtistTile key={a.id} artist={a} />
+          ))}
+        </Row>
       )}
       {d.albums.length > 0 && (
-        <section className="msection">
-          <div className="msection__head">
-            <h2>Albums</h2>
-          </div>
-          <div className="mgrid mgrid--row">
-            {d.albums.map((a) => (
-              <AlbumTile key={a.id} album={a} />
-            ))}
-          </div>
-        </section>
+        <Row title="Albums" squares>
+          {d.albums.map((a) => (
+            <AlbumTile key={a.id} album={a} />
+          ))}
+        </Row>
       )}
       {d.tracks.length > 0 && (
-        <section className="msection">
+        <section className="msection music__pad">
           <div className="msection__head">
             <h2>Songs</h2>
           </div>
           <TrackList tracks={d.tracks} />
         </section>
       )}
+    </>
+  )
+}
+
+/** The ⋮ beside a page's Play and Shuffle: the whole of it next, at the end of the queue, into a playlist. */
+function PageMenu({ tracks, label }: { tracks: MusicTrack[]; label: string }) {
+  const menu = useMenu()
+  return (
+    <>
+      <MoreButton label={'More for ' + label} open={!!menu.at} onClick={menu.toggle} />
+      {menu.at && <SongsMenu at={menu.at} onClose={menu.close} tracks={async () => tracks} />}
     </>
   )
 }
@@ -395,7 +534,9 @@ export function MusicArtistPage() {
   if (page.loading && !d)
     return (
       <Page>
-        <ListSkeleton />
+        <div className="music__pad">
+          <ListSkeleton />
+        </div>
       </Page>
     )
   if (!d)
@@ -407,7 +548,7 @@ export function MusicArtistPage() {
   const a = d.artist
   return (
     <Page>
-      <div className="mhero">
+      <div className="mhero music__pad">
         <Cover art={a.art} size={232} round kind="artist" className="mhero__art mhero__art--round" />
         <div className="mhero__text">
           <div className="mhero__kind">Artist</div>
@@ -416,30 +557,24 @@ export function MusicArtistPage() {
             {plural(a.trackCount, 'song')}
             {a.albumCount > 0 && ` · ${plural(a.albumCount, 'album')}`}
           </div>
-          <div className="mhero__actions">
-            <PlayButtons tracks={tracks}>
-              <HeartButton kind="artist" id={a.id} loaded={a.favorite} size={24} />
-            </PlayButtons>
-          </div>
+          <PlayButtons tracks={tracks}>
+            <HeartButton kind="artist" id={a.id} loaded={a.favorite} size={24} />
+            <PageMenu tracks={tracks} label={a.name} />
+          </PlayButtons>
         </div>
       </div>
       {d.albums.length > 0 && (
-        <section className="msection">
-          <div className="msection__head">
-            <h2>Albums</h2>
-          </div>
-          <div className="mgrid">
-            {d.albums.map((al) => (
-              <AlbumTile key={al.id} album={al} sub={albumLine(al)} />
-            ))}
-          </div>
-        </section>
+        <Row title="Albums" squares>
+          {d.albums.map((al) => (
+            <AlbumTile key={al.id} album={al} sub={albumLine(al)} />
+          ))}
+        </Row>
       )}
-      <section className="msection">
+      <section className="msection music__pad">
         <div className="msection__head">
           <h2>Songs</h2>
         </div>
-        <TrackList tracks={tracks} />
+        <TrackList tracks={tracks} header />
       </section>
     </Page>
   )
@@ -455,7 +590,9 @@ export function MusicAlbumPage() {
   if (page.loading && !d)
     return (
       <Page>
-        <ListSkeleton />
+        <div className="music__pad">
+          <ListSkeleton />
+        </div>
       </Page>
     )
   if (!d)
@@ -468,23 +605,186 @@ export function MusicAlbumPage() {
   const total = d.tracks.reduce((ms, t) => ms + t.durationMs, 0)
   return (
     <Page>
-      <div className="mhero">
-        <Cover art={al.art} size={232} kind="album" className="mhero__art" />
-        <div className="mhero__text">
-          <div className="mhero__kind">{d.tracks.length === 1 ? 'Single' : 'Album'}</div>
-          <h1 className="mhero__title">{al.title}</h1>
-          <div className="mhero__facts">
-            <Link to={'/music/artist/' + al.artistId}>{al.artist}</Link>
-            {al.year ? ` · ${al.year}` : ''} · {plural(d.tracks.length, 'song')}, {total >= 3_600_000 ? longDuration(total) : clock(total)}
-          </div>
-          <div className="mhero__actions">
+      <div className="mpage">
+        <div className="mhero music__pad">
+          <Cover art={al.art} size={232} kind="album" className="mhero__art" />
+          <div className="mhero__text">
+            <div className="mhero__kind">{d.tracks.length === 1 ? 'Single' : 'Album'}</div>
+            <h1 className="mhero__title">{al.title}</h1>
+            <div className="mhero__facts">
+              <Link to={'/music/artist/' + al.artistId}>{al.artist}</Link>
+              {al.year ? ` · ${al.year}` : ''} · {plural(d.tracks.length, 'song')}, {total >= 3_600_000 ? longDuration(total) : clock(total)}
+            </div>
             <PlayButtons tracks={d.tracks}>
               <HeartButton kind="album" id={al.id} loaded={al.favorite} size={24} />
+              <PageMenu tracks={d.tracks} label={al.title} />
             </PlayButtons>
           </div>
         </div>
+        <div className="mpage__main music__pad">
+          <TrackList tracks={d.tracks} numbers="track" hideAlbum hideCover hideArtist={al.artist} header />
+        </div>
       </div>
-      <TrackList tracks={d.tracks} numbers="track" hideAlbum hideCover />
+    </Page>
+  )
+}
+
+/**
+ * /music/playlist/:id: a playlist's songs in its order. Rows are dragged to another
+ * place; the order shown changes at once and the server is told behind it.
+ */
+export function MusicPlaylistPage() {
+  const { id = '' } = useParams()
+  const nav = useNavigate()
+  const changes = usePlaylistsVersion()
+  const page = useAsync('music-playlist:' + id, () => music.playlist(id), [id, changes])
+  // The list as the person last arranged it, ahead of the server's answer.
+  const [local, setLocal] = useState<PlaylistEntry[] | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  // Changes are sent one after another, in the order they were made (two sent at once
+  // could reach the server the other way round), and the page reads the list again only
+  // when the last of them is done: an answer from between two changes would show the
+  // first without the second for a moment.
+  const chain = useRef<Promise<unknown>>(Promise.resolve())
+  const waiting = useRef(0)
+  useEffect(() => {
+    if (waiting.current === 0) setLocal(null)
+  }, [page.data])
+  useEffect(() => {
+    setLocal(null)
+    setConfirming(false)
+  }, [id])
+  const d = page.data
+  if (page.loading && !d)
+    return (
+      <Page>
+        <div className="music__pad">
+          <ListSkeleton />
+        </div>
+      </Page>
+    )
+  if (!d)
+    return (
+      <Page>
+        <LoadError error={page.error} onRetry={() => page.reload()} title="This playlist could not be opened" />
+      </Page>
+    )
+  const p = d.playlist
+  const tracks = local ?? d.tracks
+  const total = tracks.reduce((ms, t) => ms + t.durationMs, 0)
+  const change = (next: PlaylistEntry[], ask: () => Promise<unknown>) => {
+    setLocal(next)
+    waiting.current++
+    let failed = false
+    chain.current = chain.current
+      .then(ask)
+      .catch(() => {
+        failed = true
+        toast.show('That change was not saved')
+      })
+      .then(() => {
+        if (--waiting.current > 0) return
+        // The lists of playlists show its count and cover; this page reads its own list.
+        playlistsChanged()
+        if (failed) setLocal(null)
+      })
+  }
+  const move = (from: number, to: number) => {
+    const next = tracks.slice()
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    change(next, () =>
+      music.orderPlaylist(
+        p.id,
+        next.map((t) => t.entryId),
+      ),
+    )
+  }
+  const remove = (index: number) => {
+    const entry = tracks[index]
+    change(
+      tracks.filter((_, i) => i !== index),
+      () => music.removeFromPlaylist(p.id, [entry.entryId]),
+    )
+  }
+  return (
+    <Page>
+      <div className="mpage">
+        <div className="mhero music__pad">
+          <PlaylistCover art={p.art} size={232} className="mhero__art" />
+          <div className="mhero__text">
+            <div className="mhero__kind">Playlist</div>
+            <h1 className="mhero__title">{p.name}</h1>
+            <div className="mhero__facts">
+              {plural(tracks.length, 'song')}
+              {total > 0 && `, ${total >= 3_600_000 ? longDuration(total) : clock(total)}`}
+            </div>
+            <PlayButtons tracks={tracks}>
+              <PageMenu tracks={tracks} label={p.name} />
+              <button className="btn btn--grey" onClick={() => setRenaming(true)}>
+                Rename
+              </button>
+              {confirming ? (
+                <button
+                  className="btn btn--danger"
+                  onClick={() =>
+                    music
+                      .deletePlaylist(p.id)
+                      .then(() => {
+                        playlistsChanged()
+                        toast.show(`Deleted ${p.name}`)
+                        nav('/music?tab=playlists', { replace: true })
+                      })
+                      .catch(() => toast.show('The playlist could not be deleted'))
+                  }
+                  onBlur={() => setConfirming(false)}
+                >
+                  Delete it for good
+                </button>
+              ) : (
+                <button className="btn btn--grey" onClick={() => setConfirming(true)}>
+                  Delete
+                </button>
+              )}
+            </PlayButtons>
+          </div>
+        </div>
+        <div className="mpage__main music__pad">
+          {tracks.length ? (
+            <TrackList
+              tracks={tracks}
+              header
+              onMove={move}
+              rowKey={(t) => (t as PlaylistEntry).entryId}
+              rowMenu={(_, i) => [
+                {
+                  label: 'Remove from this playlist',
+                  onSelect: () => remove(i),
+                  danger: true,
+                },
+              ]}
+            />
+          ) : (
+            <div className="music__empty">
+              <b>Nothing in this playlist yet</b>
+              The ⋮ on any song or album has “Add to playlist”.
+            </div>
+          )}
+        </div>
+      </div>
+      {renaming && (
+        <NameDialog
+          title="Rename playlist"
+          action="Save"
+          initial={p.name}
+          onClose={() => setRenaming(false)}
+          onSubmit={async (name) => {
+            await music.renamePlaylist(p.id, name)
+            playlistsChanged()
+          }}
+        />
+      )}
     </Page>
   )
 }
