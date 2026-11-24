@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/music"
 	"github.com/roxy-media/roxy/server/internal/probe"
 	"github.com/roxy-media/roxy/server/internal/segments"
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -89,6 +91,9 @@ func run(args []string) error {
 	if err := lib.EnsureLibraries(context.Background(), cfg.MediaRoots); err != nil {
 		return err
 	}
+	if err := music.EnsureFolders(context.Background(), db, cfg.MusicRoots); err != nil {
+		return err
+	}
 	// Media is read-only to Roxy: writes and deletes are only allowed in the data folder.
 	safefs.Init(cfg.DataDir)
 	library.GuardMediaRoots(context.Background(), db, cfg.MediaRoots)
@@ -99,7 +104,11 @@ func run(args []string) error {
 
 	switch cmd {
 	case "scan":
-		return lib.ScanAll(context.Background(), len(args) > 1 && args[1] == "--force")
+		force := len(args) > 1 && args[1] == "--force"
+		if err := lib.ScanAll(context.Background(), force); err != nil {
+			return err
+		}
+		return music.New(db, ff, filepath.Join(cfg.CacheDir(), "music", "art")).Scan(context.Background(), force)
 	case "serve":
 		return serve(cfg, db, lib, ff, authSvc)
 	default:

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/roxy-media/roxy/server/internal/ffmpeg"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/metadata"
+	"github.com/roxy-media/roxy/server/internal/music"
 	"github.com/roxy-media/roxy/server/internal/segments"
 	"github.com/roxy-media/roxy/server/internal/sessions"
 	"github.com/roxy-media/roxy/server/internal/store"
@@ -46,6 +48,7 @@ type Server struct {
 	board      *activity.Board // "Now playing": who is watching what, and how it is sent
 	links      *linkStore      // TV sign-in codes waiting for a phone's approval
 	voice      *voiceCasts     // anime casts per language (voicecast.go); nil without AniList
+	music      *music.Service  // the music folders' scanner and cover pictures (music.go)
 	start      time.Time
 }
 
@@ -77,6 +80,12 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 		s.loadTranscodingSetting()
 		s.transcoder.Encoder()
 	}()
+	// Music: read the music folders at start and look at them again every so often, as
+	// the video libraries are scanned at start and watched (the same two switches).
+	s.music = music.New(st, ff, filepath.Join(cfg.CacheDir(), "music", "art"))
+	if cfg.ScanOnStart || cfg.Watch {
+		go s.music.Run(ctx, musicScanEvery, cfg.ScanOnStart, cfg.Watch)
+	}
 	s.loadSavedTMDBKey(context.Background())
 	// Discover is set up even before a TMDB key exists; it switches on when one is entered.
 	if meta != nil {
@@ -238,6 +247,27 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 			r.Get("/sources/{id}/remux", s.remuxStream)
 			r.Get("/sources/{id}/remux/start", s.remuxStart)
 			r.Get("/system/transcoding", s.transcodingInfo)
+			// Music (music.go, docs/api/music.md).
+			r.Get("/music", s.musicHome)
+			r.Get("/music/search", s.musicSearch)
+			r.Get("/music/tracks", s.musicTracks)
+			r.Get("/music/tracks/{id}", s.musicTrack)
+			r.Get("/music/tracks/{id}/lyrics", s.musicLyrics)
+			r.Get("/music/tracks/{id}/stream", s.musicStream)
+			r.Head("/music/tracks/{id}/stream", s.musicStream)
+			r.Post("/music/tracks/{id}/played", s.musicPlayed)
+			r.Get("/music/artists", s.musicArtists)
+			r.Get("/music/artists/{id}", s.musicArtist)
+			r.Get("/music/albums", s.musicAlbums)
+			r.Get("/music/albums/{id}", s.musicAlbum)
+			r.Get("/music/art/{hash}", s.musicArt)
+			r.Post("/music/favorites/{kind}/{id}", s.musicFavorite)
+			r.Delete("/music/favorites/{kind}/{id}", s.musicFavorite)
+			r.Get("/music/folders", s.musicFolders)
+			r.Post("/music/folders", s.musicAddFolder)
+			r.Delete("/music/folders/{id}", s.musicRemoveFolder)
+			r.Get("/music/scan", s.musicScan)
+			r.Post("/music/scan", s.musicScan)
 		})
 		// An unknown /v1 path is an API error, not the web shell.
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "no such endpoint") })

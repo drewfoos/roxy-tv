@@ -130,6 +130,7 @@ Library ──< Item (movie | series | season | episode) ──< MediaSource ─
 | Tables | Role |
 |---|---|
 | `libraries` | The media folders (movies, series; anime flag), from `ROXY_MEDIA_ROOTS` or added in the app |
+| `music_folders`, `music_tracks`, `music_albums`, `music_artists`, `music_track_artists`, `music_user_data` | Music, apart from `items` (`docs/api/music.md`): one row per audio file, named by its tags; albums and artists are what the tracks add up to; plays and favourites per profile |
 | `items`, `item_provider_ids`, `item_images`, `item_relations` | Titles and their tree. An item's `guid` (`tmdb:…`, `tvdb:…`, else a content hash) is its stable identity; aired, absolute and season numbers are separate columns |
 | `media_sources`, `media_parts`, `media_streams`, `attachments` | Files, their tracks (codec, bit depth, HDR type, language, flags, `is_text_format`) and their fonts |
 | `media_segments`, `segment_detection`, `audio_fingerprints` | Intro / outro / preview ranges and the data used to find them |
@@ -277,7 +278,7 @@ picked up.
 ### 4.12 Configuration and operations
 
 - Environment variables only (`internal/config`): `ROXY_LISTEN`, `ROXY_DATA_DIR`,
-  `ROXY_MEDIA_ROOTS`, `ROXY_FFMPEG_PATH`, `ROXY_FFPROBE_PATH`, `ROXY_HWACCEL`,
+  `ROXY_MEDIA_ROOTS`, `ROXY_MUSIC_ROOTS` (music folders, comma separated), `ROXY_FFMPEG_PATH`, `ROXY_FFPROBE_PATH`, `ROXY_HWACCEL`,
   `ROXY_VAAPI_DEVICE`, `ROXY_SCAN_ON_START`, `ROXY_DISCOVERY_PORT`, `ROXY_ADVERTISE_URL`,
   `ROXY_OTHER_URLS` (more addresses of this server, e.g. its Tailscale one: the apps switch between them; optional, an admin can save the list in the app instead, and the variable wins when set),
   `ROXY_TRUSTED_PROXIES`, `ROXY_TMDB_API_KEY`, the Sonarr / Radarr / Prowlarr URLs, keys,

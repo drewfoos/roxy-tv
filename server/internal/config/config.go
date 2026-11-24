@@ -27,6 +27,7 @@ type Config struct {
 	OtherURLs   []string
 	DataDir     string   // ROXY_DATA_DIR, default ./data (db, caches)
 	MediaRoots  []string // ROXY_MEDIA_ROOTS, comma separated; each becomes a library
+	MusicRoots  []string // ROXY_MUSIC_ROOTS, comma separated; each becomes a music folder
 	FFmpegPath  string   // ROXY_FFMPEG_PATH, default: search PATH then ~/tools/jellyfin-ffmpeg
 	FFprobePath string   // ROXY_FFPROBE_PATH
 	ScanOnStart bool     // ROXY_SCAN_ON_START, default true
@@ -113,6 +114,13 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 		c.MediaRoots = append(c.MediaRoots, abs)
+	}
+	for _, r := range splitList(env("ROXY_MUSIC_ROOTS", "")) {
+		abs, err := filepath.Abs(r)
+		if err != nil {
+			return nil, err
+		}
+		c.MusicRoots = append(c.MusicRoots, abs)
 	}
 	abs, err := filepath.Abs(c.DataDir)
 	if err != nil {

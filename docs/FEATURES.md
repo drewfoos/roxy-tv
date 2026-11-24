@@ -6,6 +6,12 @@ The full feature list, server and apps. The short version is in the [README](../
 
 (`server/`, Go 1.27, SQLite, jellyfin-ffmpeg shelled out)
 
+- Music (`docs/api/music.md`, since 2026-11-23): music folders read by their tags, song
+  first (an album is listed once two of its songs are there), artists told apart in
+  joined tags, covers kept once each, synced and plain lyrics, plays and favourites per
+  profile, the file itself streamed (lossless stays lossless). A song keeps its history
+  when its file is moved or replaced by a better copy.
+
 - Library scan of TRaSH-style folders (series/year/tvdb tag, SxxExx and absolute numbers,
   specials, sidecar subtitles, `S02E01v2`-style revisions, "<folder name> NN" files such as
   fan-edit arcs), ffprobe of every file, eager font and attachment extraction,
@@ -113,6 +119,11 @@ a budget Google TV.
 ## Roxy Web
 
 (`apps/web/`, TypeScript, React, Vite; started 2026-10-26)
+
+- Music: a library by songs, artists and albums with search, and a player bar that stays
+  across pages (queue, shuffle, repeat, media keys, synced lyrics, the next song loaded
+  ahead so songs follow each other without a wait). Sound goes through the browser, so
+  through the system's own mixer.
 
 - The computer client: Crunchyroll's layout at desktop width (`docs/design/roxy-look.md`),
   the same `/v1` API as the Android app, served by the server itself at `/`.

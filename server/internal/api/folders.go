@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/music"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
 
@@ -201,8 +202,9 @@ func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 	type dir struct {
 		Name   string `json:"name"`
 		Path   string `json:"path"`
-		Videos int    `json:"videos"`         // video files up to two levels in (a hint, not a full count)
-		Skip   string `json:"skip,omitempty"` // why a scan leaves it alone (download folder, extras...)
+		Videos int    `json:"videos"`          // video files up to two levels in (a hint, not a full count)
+		Audio  int    `json:"audio,omitempty"` // audio files, counted the same way (for picking a music folder)
+		Skip   string `json:"skip,omitempty"`  // why a scan leaves it alone (download folder, extras...)
 	}
 	dirs := []dir{}
 	videosHere := 0
@@ -219,7 +221,7 @@ func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 			if why := library.SkipDirReason(full); why != "" {
 				dirs = append(dirs, dir{Name: name, Path: full, Skip: why})
 			} else {
-				dirs = append(dirs, dir{Name: name, Path: full, Videos: countVideos(full)})
+				dirs = append(dirs, dir{Name: name, Path: full, Videos: countVideos(full), Audio: countFiles(full, music.IsAudioFile)})
 			}
 		} else if videoExt[strings.ToLower(filepath.Ext(name))] && library.SkipFileReason(name) == "" {
 			videosHere++
@@ -331,6 +333,11 @@ func isDir(p string) bool {
 // countVideos counts video files at most two levels down (enough to tell an empty
 // folder from a media one without walking a whole drive).
 func countVideos(p string) int {
+	return countFiles(p, func(name string) bool { return videoExt[strings.ToLower(filepath.Ext(name))] })
+}
+
+// countFiles counts the files `is` accepts at most two levels down.
+func countFiles(p string, is func(name string) bool) int {
 	n := 0
 	var walk func(dir string, depth int)
 	walk = func(dir string, depth int) {
@@ -346,7 +353,7 @@ func countVideos(p string) int {
 				if sub := filepath.Join(dir, e.Name()); depth < 2 && library.SkipDirReason(sub) == "" {
 					walk(sub, depth+1)
 				}
-			} else if videoExt[strings.ToLower(filepath.Ext(e.Name()))] && library.SkipFileReason(e.Name()) == "" {
+			} else if is(e.Name()) && library.SkipFileReason(e.Name()) == "" {
 				n++
 			}
 		}

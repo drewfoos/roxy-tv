@@ -158,6 +158,12 @@ func GuardMediaRoots(ctx context.Context, st *store.Store, configured []string) 
 			roots = append(roots, l.Root)
 		}
 	}
+	// Music folders hold media too: served from, never written to.
+	if folders, err := st.MusicFolders(ctx); err == nil {
+		for _, f := range folders {
+			roots = append(roots, f.Root)
+		}
+	}
 	safefs.SetMediaRoots(roots)
 }
 
