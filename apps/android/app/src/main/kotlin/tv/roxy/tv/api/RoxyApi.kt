@@ -1261,6 +1261,13 @@ data class Item(
     /** An extra (type "extra"): trailer, featurette, behindthescenes, deleted, interview, scene, short, clip, theme or extra. */
     val extraType: String? = null,
     val indexAbsolute: Int? = null,
+    /**
+     * An episode's place in the order its series is watched in: the season list read from
+     * the top, so the OVAs that came out between two seasons sit between them. The server
+     * gives it; a show's episodes sorted by it are in the order "next episode" follows
+     * (see [tv.roxy.tv.ui.inPlayOrder]). Null from a server that does not give one.
+     */
+    val watchOrder: Long? = null,
     val runtimeMs: Long? = null,
     val dateCreated: String? = null,
     /** Placeholder from provider metadata (no file). */

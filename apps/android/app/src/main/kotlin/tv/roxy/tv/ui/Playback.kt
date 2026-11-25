@@ -106,9 +106,16 @@ suspend fun playRequest(context: Context, item: Item, fromStart: Boolean = false
     return Result.success(PlayRequest(item = full, url = url, sourceId = source.id, startSeconds = start, explicitStart = fromStart || startMs != null, local = local != null))
 }
 
-/** Episodes in play order: by season, specials last, then by number. */
+/**
+ * Episodes in play order: the order the series is watched in, which the server knows (each
+ * episode's [Item.watchOrder]: the season list read from the top, so after a season's last
+ * episode come the OVAs that came out before the next season, not that season's first).
+ * Where an episode has no place (an older server, a download kept from before the server
+ * gave places): by season with the specials last, then by number, for all of them.
+ */
 fun inPlayOrder(episodes: List<Item>): List<Item> =
-    episodes.sortedWith(compareBy({ (it.seasonAired ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
+    if (episodes.isNotEmpty() && episodes.all { it.watchOrder != null }) episodes.sortedBy { it.watchOrder }
+    else episodes.sortedWith(compareBy({ (it.seasonAired ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.indexAired ?: it.indexAbsolute ?: 0 }))
 
 /** A resume point this close to the end starts the item from the beginning (see [playRequest]). */
 const val END_STRETCH_MS = 15_000L
@@ -183,6 +190,8 @@ suspend fun nextEpisodeLookup(context: Context, itemId: String): Result<PlayRequ
         else runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }
     onlineRead?.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it; if (download == null) return Result.failure(it) }
     val online = onlineRead?.getOrNull()
+    // The show's downloads learn their places from the list, for the days without the server.
+    online?.let { app.downloads.learnPlaces(it) }
     val ordered = inPlayOrder(online ?: app.downloads.episodesOf(seriesId))
     val at = ordered.indexOfFirst { it.id == current.id }
     if (at < 0) return Result.success(null)

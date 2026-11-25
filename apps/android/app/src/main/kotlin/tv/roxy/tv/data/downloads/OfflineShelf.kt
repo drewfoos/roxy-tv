@@ -27,9 +27,14 @@ internal fun shortEpisode(item: Item): String {
     }
 }
 
-/** Play order for downloads: by season with the specials last, then by number. */
-private fun inOrder(entries: List<DownloadEntry>): List<DownloadEntry> =
-    entries.sortedWith(compareBy({ (it.item.seasonAired ?: it.seasonNumber ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.item.indexAired ?: it.item.indexAbsolute ?: 0 }))
+/**
+ * Play order for downloads: the order the series is watched in where every one of them
+ * knows its place ([tv.roxy.tv.api.Item.watchOrder], see [tv.roxy.tv.ui.inPlayOrder]);
+ * else by season with the specials last, then by number.
+ */
+internal fun inOrder(entries: List<DownloadEntry>): List<DownloadEntry> =
+    if (entries.isNotEmpty() && entries.all { it.item.watchOrder != null }) entries.sortedBy { it.item.watchOrder }
+    else entries.sortedWith(compareBy({ (it.item.seasonAired ?: it.seasonNumber ?: 0).let { s -> if (s == 0) Int.MAX_VALUE else s } }, { it.item.indexAired ?: it.item.indexAbsolute ?: 0 }))
 
 /**
  * Of one title's downloads, the one to play next, among those finished downloading:

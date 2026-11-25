@@ -406,6 +406,22 @@ class Downloads(
         }
     }
 
+    /**
+     * Downloads learn their places in the order their show is watched in from a list of its
+     * episodes just read from the server ([Item.watchOrder]). A download keeps the item as
+     * it was when it was made: one from before the server gave places has none, and a
+     * library that changed since may have moved it. Nothing is written when nothing differs.
+     */
+    fun learnPlaces(episodes: List<Item>) {
+        val places = episodes.mapNotNull { e -> e.watchOrder?.let { e.id to it } }.toMap()
+        if (places.isEmpty()) return
+        _index.update { idx ->
+            val changed = idx.entries.filter { (id, e) -> places[id] != null && places[id] != e.item.watchOrder }
+            if (changed.isEmpty()) idx
+            else idx.copy(entries = idx.entries + changed.mapValues { (id, e) -> e.copy(item = e.item.copy(watchOrder = places[id])) })
+        }
+    }
+
     /** Atomically change one entry (no-op when it was deleted meanwhile). */
     fun update(itemId: String, f: (DownloadEntry) -> DownloadEntry) {
         _index.update { idx ->

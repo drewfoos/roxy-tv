@@ -260,6 +260,7 @@ fun PhoneEpisode(episodeId: String, fallbackTitle: String, fromStart: Boolean = 
         // Next / previous only: no files needed. Away from the server the downloaded
         // episodes of the show are the list, so Next Episode offers the next one that plays.
         val online = if (app.server.online.value) runCatching { app.api.allItems(type = "episode", parent = seriesId, recursive = true, sort = "index").items }.getOrNull() else null
+        online?.let { app.downloads.learnPlaces(it) }
         val eps = online ?: app.downloads.episodesOf(seriesId).takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
         siblings = tv.roxy.tv.ui.inPlayOrder(eps)
     }
