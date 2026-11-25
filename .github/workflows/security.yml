@@ -27,8 +27,8 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
@@ -43,8 +43,8 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       # What ships in the browser app; build and test tools are Dependabot's to keep fresh.
@@ -54,7 +54,7 @@ jobs:
     name: Server image (system packages, ffmpeg)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build --pull -f deploy/Dockerfile -t roxy:scan .
       # Holes that have a fix: rebuilding on fresh base images, or raising the ffmpeg
       # version in the Dockerfile, clears them. Ones nobody has fixed yet are not failed on.
