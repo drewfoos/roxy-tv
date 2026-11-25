@@ -1,25 +1,33 @@
-# What Roxy is built from, checked every week for new releases and known holes. A pull
-# request per update; the CI workflow runs on each, so a bump that breaks something says so.
+# What Roxy is built from, looked at once a month for new releases: a pull request per
+# group, and the CI workflow runs on each, so a bump that breaks something says so.
+# Known holes do not wait for this: the Security workflow looks for those every week.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /server
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
       go: { patterns: ["*"] }
   - package-ecosystem: npm
     directory: /apps/web
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
     groups:
       web: { patterns: ["*"], update-types: [minor, patch] }
   - package-ecosystem: gradle
     directory: /apps/android
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
       android: { patterns: ["*"], update-types: [minor, patch] }
   - package-ecosystem: docker
     directory: /deploy
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      actions: { patterns: ["*"] }

@@ -95,7 +95,7 @@ most a request can cost. They have limits of their own, apart from the API's rat
 
 ## Keeping what Roxy is built from current
 
-- **Dependabot** opens a pull request for new releases of the Go modules, the web app's
+- **Dependabot** opens a pull request once a month for new releases of the Go modules, the web app's
   packages, the Android app's libraries, the Docker base images and the CI actions.
 - The **Security** workflow runs every week and on every change to a lock file:
   `govulncheck` (the Go standard library and modules, as far as the server's code
