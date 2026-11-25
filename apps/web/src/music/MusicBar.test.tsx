@@ -9,6 +9,7 @@ import { clearAsyncCache } from '../hooks/useAsync'
 import { FakeAudio } from './fakeAudio'
 import { musicPrefs } from './prefs'
 import { LEAVE_MS, MusicBar, nowPlayingLine } from './MusicBar'
+import { SLIDE_MS } from './Reorder'
 import { MusicBarHost } from './MusicBarHost'
 import { AlbumTile, TrackList } from './Parts'
 import { toast } from './toast'
@@ -232,18 +233,64 @@ describe('the player bar', () => {
     $$('.qrow').forEach((r, i) => { r.getBoundingClientRect = () => ({ top: i * 50, bottom: i * 50 + 50, left: 0, right: 300, width: 300, height: 50, x: 0, y: i * 50, toJSON: () => ({}) }) })
     const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
     const grip = button('Move Song a')!
+    const where = () => $$('.qrow').map((r) => r.style.transform)
     await pointer(grip, 'pointerdown', 20)
     expect($$('.qrow')[0].className).toContain('is-dragged')
+    // The row goes with the pointer, a little at first: nothing has to make room yet.
+    await pointer(grip, 'pointermove', 40)
+    expect(where()).toEqual(['translateY(20px)', '', '', ''])
+    // Past the middle of the next row: that one steps up into the room left behind.
+    await pointer(grip, 'pointermove', 80)
+    expect(where()).toEqual(['translateY(60px)', 'translateY(-50px)', '', ''])
     await pointer(grip, 'pointermove', 130) // past the middle of the third row
-    expect($$('.qrow')[2].className).toContain('drop-after')
+    expect(where()).toEqual(['translateY(110px)', 'translateY(-50px)', 'translateY(-50px)', ''])
+    // Carried back up a row, the third goes back to its place: the list is at every
+    // moment what it would be were the row let go.
+    await pointer(grip, 'pointermove', 80)
+    expect(where()).toEqual(['translateY(60px)', 'translateY(-50px)', '', ''])
+    await pointer(grip, 'pointermove', 130)
+    // Carried past the end it stops at the last row's place.
+    await pointer(grip, 'pointermove', 900)
+    expect(where()).toEqual(['translateY(150px)', 'translateY(-50px)', 'translateY(-50px)', 'translateY(-50px)'])
+    await pointer(grip, 'pointermove', 130)
     await pointer(grip, 'pointerup', 130)
     expect(titles()).toEqual(['Song b', 'Hi-Res Song', 'Song a', 'Song d'])
     expect(currentTrack()!.id).toBe('a') // it went with its row
     expect($('.is-dragged')).toBeNull()
+    expect(where()).toEqual(['', '', '', '']) // nothing of the drag is left on the rows
     // Let go where it was taken up: nothing moves.
     await pointer(button('Move Song d')!, 'pointerdown', 170)
     await pointer(button('Move Song d')!, 'pointerup', 170)
     expect(titles()).toEqual(['Song b', 'Hi-Res Song', 'Song a', 'Song d'])
+  })
+
+  it('lets a carried row glide into its place when it is let go, and only then puts the list in its new order', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: false, media: q }))
+      await act(async () => player.playTracks([...list, song('d')], 0, { shuffle: false }))
+      await renderBar()
+      await click(button('Queue'))
+      $$('.qrow').forEach((r, i) => { r.getBoundingClientRect = () => ({ top: i * 50, bottom: i * 50 + 50, left: 0, right: 300, width: 300, height: 50, x: 0, y: i * 50, toJSON: () => ({}) }) })
+      const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
+      const grip = button('Move Song a')!
+      await pointer(grip, 'pointerdown', 20)
+      // The carried row is where the pointer is, at once; the others slide to make room.
+      expect($$('.qrow')[0].style.transition).toBe('none')
+      expect($$('.qrow')[1].style.transition).toContain('transform ' + SLIDE_MS + 'ms')
+      await pointer(grip, 'pointermove', 130)
+      await pointer(grip, 'pointerup', 130)
+      // Let go 10 px short of its place: it glides the rest of the way (to 100 px down).
+      expect($$('.qrow')[0].style.transform).toBe('translateY(100px)')
+      expect($$('.qrow')[0].style.transition).toContain('transform')
+      expect(titles()).toEqual(['Song a', 'Song b', 'Hi-Res Song', 'Song d']) // the list is not touched yet
+      await act(async () => { vi.advanceTimersByTime(SLIDE_MS + 1) })
+      expect(titles()).toEqual(['Song b', 'Hi-Res Song', 'Song a', 'Song d'])
+      expect($$('.qrow').map((r) => r.style.transform + r.style.transition)).toEqual(['', '', '', ''])
+      expect($('.is-dragged')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('saves the queue as a playlist under the name typed', async () => {
@@ -642,8 +689,10 @@ describe('a list of songs', () => {
     const grip = button('Move Song a')!
     await pointer(grip, 'pointerdown', 60)
     await pointer(grip, 'pointermove', 170) // past the middle of the third song (136 to 186)
-    expect(songRows()[2].className).toContain('drop-after')
-    expect(document.body.querySelector('.trow--head')!.className).not.toContain('drop')
+    expect(songRows().map((r) => r.style.transform)).toEqual(['translateY(110px)', 'translateY(-50px)', 'translateY(-50px)', ''])
+    // The line of names is not a row: it neither moves nor counts as a place.
+    expect(document.body.querySelector<HTMLElement>('.trow--head')!.style.transform).toBe('')
+    expect(document.body.querySelector('.trow--head')!.className).not.toMatch(/is-dragged|is-aside/)
     await pointer(grip, 'pointerup', 170)
     expect(moved).toEqual([[0, 2]])
     // Taken up and let go in its own place: nothing is asked for.

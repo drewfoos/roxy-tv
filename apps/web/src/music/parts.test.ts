@@ -1,31 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { dropIndex } from './Reorder'
+import { dragOffset, dropIndex, rowShifts, settleOffset } from './Reorder'
 import { barLevels, barSpans } from './Visualizer'
 
-describe('where a dragged row lands', () => {
-  // Five rows, 50 px each.
+describe('where a carried row lands', () => {
+  // Five rows, 50 px each. The row is said by how far it has been carried from its place.
   const boxes = [0, 1, 2, 3, 4].map((i) => ({ top: i * 50, bottom: i * 50 + 50 }))
 
-  it('stays where it is until the pointer passes the middle of a neighbour', () => {
-    expect(dropIndex(boxes, 2, 125)).toBe(2)
-    expect(dropIndex(boxes, 2, 80)).toBe(2) // into the row above, not past its middle
-    expect(dropIndex(boxes, 2, 170)).toBe(2) // into the row below, not past its middle
+  it('stays where it is until it covers more than half of a neighbour', () => {
+    expect(dropIndex(boxes, 2, 0)).toBe(2)
+    expect(dropIndex(boxes, 2, -25)).toBe(2) // half over the row above: not yet
+    expect(dropIndex(boxes, 2, 25)).toBe(2) // half over the row below: not yet
+    expect(dropIndex(boxes, 2, -26)).toBe(1)
+    expect(dropIndex(boxes, 2, 26)).toBe(3)
   })
 
-  it('goes down to the last row whose middle the pointer has passed', () => {
-    expect(dropIndex(boxes, 1, 130)).toBe(2)
-    expect(dropIndex(boxes, 1, 180)).toBe(3)
-    expect(dropIndex(boxes, 0, 9999)).toBe(4) // below the list: the end
+  it('goes down to the last row it covers more than half of', () => {
+    expect(dropIndex(boxes, 1, 30)).toBe(2)
+    expect(dropIndex(boxes, 1, 80)).toBe(3)
+    expect(dropIndex(boxes, 0, 200)).toBe(4) // carried to the last place: the end
   })
 
-  it('goes up to the first row whose middle the pointer is above', () => {
-    expect(dropIndex(boxes, 3, 120)).toBe(2)
-    expect(dropIndex(boxes, 3, 60)).toBe(1)
-    expect(dropIndex(boxes, 4, -50)).toBe(0) // above the list: the top
+  it('goes up to the first row it covers more than half of', () => {
+    expect(dropIndex(boxes, 3, -30)).toBe(2)
+    expect(dropIndex(boxes, 3, -90)).toBe(1)
+    expect(dropIndex(boxes, 4, -200)).toBe(0) // carried to the first place: the top
   })
 
   it('is the row itself in a list of one', () => {
-    expect(dropIndex([{ top: 0, bottom: 50 }], 0, 400)).toBe(0)
+    expect(dropIndex([{ top: 0, bottom: 50 }], 0, 0)).toBe(0)
   })
 })
 
@@ -87,5 +89,37 @@ describe('the bars of the visualizer', () => {
     const out = new Float32Array(4)
     barLevels(data, tight, out)
     for (const v of out) expect(v).toBeCloseTo(128 / 255, 5)
+  })
+})
+
+describe('a row carried by its handle', () => {
+  const boxes = [0, 1, 2, 3].map((i) => ({ top: i * 50, bottom: i * 50 + 50 }))
+
+  it('goes with the pointer, and no further than the list goes', () => {
+    expect(dragOffset(boxes, 1, 30)).toBe(30)
+    expect(dragOffset(boxes, 1, -20)).toBe(-20)
+    expect(dragOffset(boxes, 1, 5000)).toBe(100) // the last row's place
+    expect(dragOffset(boxes, 1, -5000)).toBe(-50) // the first row's
+    expect(dragOffset(boxes, 0, -1)).toBe(0)
+    expect(dragOffset([{ top: 10, bottom: 60 }], 0, 80)).toBe(0) // alone: nowhere to go
+  })
+
+  it('has the rows it passes step aside by its own height, and no others', () => {
+    // Carried down from the first place to the third: the two it passed step up.
+    expect(rowShifts(4, 0, 2, 110, 50)).toEqual([110, -50, -50, 0])
+    // Carried up from the last place to the second: the two it passed step down.
+    expect(rowShifts(4, 3, 1, -95, 54)).toEqual([0, 54, 54, -95])
+    // Still over its own place: nothing else moves.
+    expect(rowShifts(4, 2, 2, 12, 50)).toEqual([0, 0, 12, 0])
+  })
+
+  it('settles exactly where the list will have it', () => {
+    expect(settleOffset(boxes, 0, 2)).toBe(100)
+    expect(settleOffset(boxes, 3, 1)).toBe(-100)
+    expect(settleOffset(boxes, 2, 2)).toBe(0)
+    // Rows of different heights: a tall row carried down ends with its foot where the last one's was.
+    const mixed = [{ top: 0, bottom: 80 }, { top: 80, bottom: 120 }, { top: 120, bottom: 160 }]
+    expect(settleOffset(mixed, 0, 2)).toBe(80)
+    expect(settleOffset(mixed, 2, 0)).toBe(-120)
   })
 })

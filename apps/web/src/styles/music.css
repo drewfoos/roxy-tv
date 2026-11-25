@@ -177,10 +177,11 @@ button.trow__n { width: 100%; padding: 0; border: 0; background: none; font: inh
 .trow__grip, .qrow__grip { display: grid; place-items: center; width: 24px; height: 36px; color: var(--muted); cursor: grab; opacity: 0.35; touch-action: none; transition: opacity 140ms, color 140ms; }
 .trow:hover .trow__grip, .qrow:hover .qrow__grip, .trow__grip:focus-visible, .qrow__grip:focus-visible { opacity: 1; color: #fff; }
 .trow__grip:active, .qrow__grip:active { cursor: grabbing; }
-.is-dragged { opacity: 0.4; background: rgba(62, 166, 255, 0.12) !important; }
-.drop-before::before, .drop-after::after { content: ''; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 1px; background: var(--accent); box-shadow: 0 0 8px rgba(62, 166, 255, 0.8); pointer-events: none; }
-.drop-before::before { top: -1px; }
-.drop-after::after { bottom: -1px; }
+/* A row carried by its handle goes with the pointer (Reorder.tsx moves it): lifted off
+   the list, solid, over the rows that slide out of its way. */
+.is-dragged { position: relative; z-index: 6; background: #23232d !important; border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.09); cursor: grabbing; }
+.is-dragged .trow__grip, .is-dragged .qrow__grip { opacity: 1; color: #fff; cursor: grabbing; }
+.is-aside { pointer-events: none; }
 .tlist--dragging, .mqueue__list--dragging { cursor: grabbing; user-select: none; }
 .tlist--dragging .trow, .mqueue__list--dragging .qrow { content-visibility: visible; }
 .tlist--dragging .trow:hover, .mqueue__list--dragging .qrow:hover { background: none; }
