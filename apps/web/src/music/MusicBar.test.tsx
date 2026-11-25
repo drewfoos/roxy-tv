@@ -74,7 +74,7 @@ beforeEach(() => {
       }
       if (url.includes('/favorites/') && failFavorite) return Promise.resolve({ ok: false, status: 500, headers: { get: () => 'application/json' }, json: async () => ({ error: 'no' }), text: async () => '{"error":"no"}' })
       const body = url.endsWith('/lyrics')
-        ? { source: 'lrc', synced: true, lines: [{ ms: 0, text: 'First line' }, { ms: 30000, text: 'Second line' }, { ms: 60000, text: 'Third line' }] }
+        ? { source: lyricsFrom, synced: true, lines: [{ ms: 0, text: 'First line' }, { ms: 30000, text: 'Second line' }, { ms: 60000, text: 'Third line' }] }
         : url === '/v1/music'
           ? { counts: { tracks: 3, albums: 0, artists: 3 }, scanning: false }
           : url === '/v1/music/playlists'
@@ -105,6 +105,8 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+/** Where the stand-in server says a song's lyrics are from. */
+let lyricsFrom = 'lrc'
 const renderBar = () => act(async () => root.render(<MemoryRouter><MusicBar /></MemoryRouter>))
 
 describe('the player bar', () => {
@@ -411,7 +413,7 @@ describe('the player bar', () => {
     expect(q('.menu')).toBeNull()
     await click(q('.mviz__tools button[aria-label="Visualizer style"]'))
     const styles = () => all('.menu [role="menuitemradio"]')
-    expect(styles().map((b) => b.textContent)).toEqual(['Bars', 'Mirror', 'Wave', 'Ring'])
+    expect(styles().map((b) => b.textContent)).toEqual(['Bars', 'Mirror', 'Wave', 'Ring', 'Milkdrop'])
     expect(styles().find((b) => b.getAttribute('aria-checked') === 'true')!.textContent).toBe('Bars')
     await click(styles()[3])
     expect(musicPrefs.get().visualizer).toBe('ring')
@@ -518,6 +520,59 @@ describe('the player bar', () => {
     expect($('.mnow')).toBeNull()
   })
 
+  it('holds the song\'s own address while "now playing" is open, follows the song, and gives the page\'s back', async () => {
+    window.history.replaceState(null, '', '/music/album/al?from=home')
+    try {
+      await act(async () => player.playTracks(list, 0, { shuffle: false }))
+      await renderBar()
+      expect(window.location.pathname).toBe('/music/album/al') // the bar alone changes nothing
+      await click($('.mbar__cover'))
+      expect($('.mnow')).not.toBeNull()
+      expect(window.location.pathname + window.location.search).toBe('/music/song/a')
+      await act(async () => player.next())
+      expect(window.location.pathname).toBe('/music/song/b')
+      await click($('.mbar__cover'))
+      expect($('.mnow')).toBeNull()
+      expect(window.location.pathname + window.location.search).toBe('/music/album/al?from=home')
+      // The queue drawer is not "now playing": the address stays the page's.
+      await click(button('Queue'))
+      expect(window.location.pathname).toBe('/music/album/al')
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
+  it('keeps the page under "now playing" from scrolling, for as long as it is open', async () => {
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    const locked = () => document.documentElement.classList.contains('music-now')
+    expect(locked()).toBe(false)
+    await click($('.mbar__cover'))
+    expect(locked()).toBe(true)
+    // Whatever is beside the song in it (the queue here): it is still "now playing".
+    await click($$('.mnow__switch button').find((b) => b.getAttribute('aria-label') === 'Queue')!)
+    expect(locked()).toBe(true)
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(locked()).toBe(false)
+    await click($('.mbar__cover'))
+    expect(locked()).toBe(true)
+    await click($('.mbar__cover'))
+    expect(locked()).toBe(false)
+  })
+
+  it('says where lyrics are from when they are not the song\'s own', async () => {
+    lyricsFrom = 'online'
+    try {
+      await act(async () => player.playTracks(list, 2, { shuffle: false }))
+      await renderBar()
+      await click(button('Lyrics'))
+      await settle()
+      expect($('.mlyrics__from')!.textContent).toBe('Lyrics from lrclib.net')
+    } finally {
+      lyricsFrom = 'lrc'
+    }
+  })
+
   it('says when a song would not play', async () => {
     await act(async () => player.playTracks(list, 0, { shuffle: false }))
     await renderBar()
@@ -591,6 +646,17 @@ describe('a list of songs', () => {
     await click(heart())
     await settle()
     expect(heart().getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('copies a song\'s own address from its menu', async () => {
+    const copied: string[] = []
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: async (t: string) => { copied.push(t) } } })
+    await renderList()
+    await click(button('More for Song b'))
+    await click(item('Copy link'))
+    await settle()
+    expect(copied).toEqual([window.location.origin + '/music/song/b'])
+    expect(toast.text()).toBe('Link copied')
   })
 
   it('puts a song next, or at the end, from its menu', async () => {

@@ -2,7 +2,7 @@
 // computer has other speakers and another connection).
 export type Quality = 'original' | 320 | 192 | 128 | 96
 export type Levelling = 'off' | 'on'
-export type VisualizerStyle = 'bars' | 'mirror' | 'wave' | 'ring'
+export type VisualizerStyle = 'bars' | 'mirror' | 'wave' | 'ring' | 'milkdrop'
 
 export interface MusicPrefs {
   /** What is asked of the server: the file itself, or a conversion at about this many kbit/s. */
@@ -27,6 +27,8 @@ export const VISUALIZERS: { id: VisualizerStyle; label: string }[] = [
   { id: 'mirror', label: 'Mirror' },
   { id: 'wave', label: 'Wave' },
   { id: 'ring', label: 'Ring' },
+  // The pictures Winamp drew to music (music/Milkdrop.tsx): fetched when picked.
+  { id: 'milkdrop', label: 'Milkdrop' },
 ]
 
 const KEY = 'roxy.music.prefs'

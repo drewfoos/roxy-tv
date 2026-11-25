@@ -287,6 +287,20 @@ export const player = {
     state = { ...state, queue, shuffle, error: null }
     load(queue.index, true)
   },
+  /**
+   * Makes one song the current one without playing it: a song arrived at by its link (a
+   * page may not start sound by itself, and somebody who opens a link has not asked for
+   * any yet). A song the queue holds is gone to; another is put after the one that was
+   * current, and the rest of the queue stays as it was.
+   */
+  cue(track: MusicTrack) {
+    failures = 0
+    const at = state.queue.tracks.findIndex((t) => t.id === track.id)
+    if (at >= 0) return load(at, false)
+    const index = state.queue.index < 0 ? 0 : state.queue.index + 1
+    state = { ...state, queue: insertNext(state.queue, [track]), error: null }
+    load(index, false)
+  },
   playNext(tracks: MusicTrack[]) {
     const had = currentTrack()
     set({ queue: insertNext(state.queue, tracks) })

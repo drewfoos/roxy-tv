@@ -1,6 +1,8 @@
 // The menus of the music pages: what can be done with a song, an album, an artist or a
 // playlist (play it next, put it at the end of the queue, add it to a playlist, go to
 // where it comes from). Opened from a ⋮ button or with the right mouse button.
+import { copyText } from '../components/Form'
+import { songLink } from './links'
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router'
@@ -204,6 +206,8 @@ export function SongsMenu({
     items.push('divider')
     items.push({ label: 'Go to artist', onSelect: () => nav('/music/artist/' + single.artistId) })
     if (single.albumId) items.push({ label: 'Go to album', onSelect: () => nav('/music/album/' + single.albumId) })
+    // The song's own address, to hand to somebody (it is also what the address bar shows while "now playing" is open).
+    items.push({ label: 'Copy link', onSelect: () => void copyText(songLink(single.id)).then((ok) => toast.show(ok ? 'Link copied' : 'The link could not be copied')) })
   }
   if (extra.length) items.push('divider', ...extra)
   // The window that asks for a new playlist's name stands in for the menu (inside it, a

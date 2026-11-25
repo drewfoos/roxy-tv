@@ -2,7 +2,7 @@
 // artist, an album, a playlist. Songs come first: most libraries are single songs, so a
 // song is listed by itself and an album appears once two of its songs are there.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, useNavigate, useNavigationType, useParams, useSearchParams } from 'react-router'
 import { clock, longDuration, music, type MusicAlbum, type MusicHome, type MusicTrack, type PlaylistEntry, type TrackSort } from '../api/music'
 import { useAsync, type AsyncState } from '../hooks/useAsync'
 import { useSession } from '../app/useSession'
@@ -14,6 +14,7 @@ import { IconAdd, IconAlbum, IconClose, IconHeart, IconMusicNote, IconPlay, Icon
 import { playlistsChanged, usePlaylistsVersion } from '../music/changes'
 import { MoreButton, NameDialog, SongsMenu, useMenu } from '../music/Menus'
 import { AlbumTile, ArtistTile, Cover, Empty, HeartButton, ListSkeleton, PlaylistCover, PlaylistTile, TileSkeleton, TrackList, TrackTile } from '../music/Parts'
+import { openNowPlaying } from '../music/links'
 import { player } from '../music/player'
 import { toast } from '../music/toast'
 import '../styles/music.css'
@@ -647,6 +648,45 @@ export function MusicAlbumPage() {
  * /music/playlist/:id: a playlist's songs in its order. Rows are dragged to another
  * place; the order shown changes at once and the server is told behind it.
  */
+/**
+ * A song's own address (music/links.ts): what "Copy link" gives and what the address bar
+ * shows while "now playing" is open. It is the music home with that song in "now
+ * playing", ready to be played (a page may not start sound by itself). With something
+ * else playing, the link does not take the player over: the song is put next.
+ */
+export function MusicSongPage() {
+  const { id = '' } = useParams()
+  const nav = useNavigate()
+  const how = useNavigationType()
+  const song = useAsync('music-track:' + id, () => music.track(id), [id])
+  const found = song.data
+  const missing = !!song.error && !song.loading
+  useEffect(() => {
+    if (missing) {
+      toast.show('That song is not in the library')
+      nav('/music', { replace: true })
+      return
+    }
+    if (!found) return
+    const state = player.get()
+    const current = state.queue.tracks[state.queue.index]
+    if (current?.id === found.id) return openNowPlaying()
+    if (state.playing) {
+      // Come back to by the browser's Back, with another song playing by now: nothing is
+      // asked for. Arrived at by a link while something plays: the song is put next.
+      if (how !== 'POP') {
+        player.playNext([found])
+        toast.show(`"${found.title}" plays next`)
+      }
+      nav('/music', { replace: true })
+      return
+    }
+    player.cue(found)
+    openNowPlaying()
+  }, [found?.id, missing]) // eslint-disable-line react-hooks/exhaustive-deps
+  return <Music />
+}
+
 export function MusicPlaylistPage() {
   const { id = '' } = useParams()
   const nav = useNavigate()

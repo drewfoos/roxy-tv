@@ -31,6 +31,7 @@ const Music = lazyPage(() => import("../pages/Music"), (m) => m.Music);
 const MusicArtist = lazyPage(() => import("../pages/Music"), (m) => m.MusicArtistPage);
 const MusicAlbum = lazyPage(() => import("../pages/Music"), (m) => m.MusicAlbumPage);
 const MusicPlaylist = lazyPage(() => import("../pages/Music"), (m) => m.MusicPlaylistPage);
+const MusicSong = lazyPage(() => import("../pages/Music"), (m) => m.MusicSongPage);
 
 /** Signed out -> login; signed in without a profile -> "Who's watching?"; else the app. */
 export default function App() {
@@ -123,6 +124,7 @@ export default function App() {
         <Route path="/music/artist/:id" element={<MusicArtist />} />
         <Route path="/music/album/:id" element={<MusicAlbum />} />
         <Route path="/music/playlist/:id" element={<MusicPlaylist />} />
+        <Route path="/music/song/:id" element={<MusicSong />} />
         <Route path="/legal/:doc" element={<Legal />} />
         <Route path="/link" element={<LinkEnter />} />
         <Route path="/link/:code" element={<LinkTv />} />

@@ -388,6 +388,9 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
 /* The visualizer. */
 .mviz { position: relative; flex: 1; min-height: 0; border-radius: 12px; }
 .mviz__canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* The Milkdrop picture's name, quietly in a corner while the pointer is over it. */
+.mviz__preset { position: absolute; left: 14px; bottom: 12px; max-width: calc(100% - 28px); padding: 4px 9px; border-radius: 6px; background: rgba(0, 0, 0, 0.5); color: rgba(255, 255, 255, 0.8); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity 180ms; pointer-events: none; }
+.mviz:hover .mviz__preset, .mviz--menu .mviz__preset { opacity: 1; }
 /* Its two buttons show when the pointer is over it (or the keyboard on them). */
 .mviz__tools { position: absolute; top: 0; right: 0; z-index: 2; display: flex; gap: 2px; padding: 4px; border-radius: 22px; background: rgba(18, 18, 24, 0.5); opacity: 0; transition: opacity 200ms; }
 .mviz:hover .mviz__tools, .mviz--menu .mviz__tools, .mviz__tools:focus-within { opacity: 1; }
@@ -397,6 +400,12 @@ button.mbar__quality--hires:hover { background: rgba(62, 166, 255, 0.28); color:
 .mnow--wide .mnow__body { grid-template-columns: minmax(0, 1fr); }
 .mnow--wide .mnow__song { display: none; }
 .mviz__note { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: rgba(255, 255, 255, 0.6); text-align: center; }
+
+/* "Now playing" open: the page under it does not scroll (nor shift: the room of its
+   scrollbar is kept). What scrolls inside it stops at its own ends. */
+html.music-now { overflow: hidden; scrollbar-gutter: stable; }
+.mnow, .mlyrics, .mnow .mqueue__list { overscroll-behavior: contain; }
+.mlyrics__from { margin: 28px 0 8px; font-size: 12.5px; color: rgba(255, 255, 255, 0.45); }
 
 /* For a screen reader alone: said, not shown. */
 .msr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useEffect, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MusicTrack } from '../api/music'
 import { session } from '../api/session'
@@ -16,7 +16,8 @@ import { toast } from '../music/toast'
 vi.mock('../components/TopBar', () => ({ TopBar: () => null }))
 vi.mock('../components/Footer', () => ({ Footer: () => null }))
 
-import { Music, MusicPlaylistPage, visitPick } from './Music'
+import { Music, MusicPlaylistPage, MusicSongPage, visitPick } from './Music'
+import { onOpenNowPlaying } from '../music/links'
 
 const S = { token: 't', userId: 'u', userName: 'drew', isAdmin: false, profileId: 'p', profileName: 'Drew', profileHasAvatar: false, profileAvatarKey: '' }
 const song = (id: string, over: Partial<MusicTrack> = {}): MusicTrack => ({
@@ -87,6 +88,8 @@ function answer(method: string, url: string, body: unknown): { status: number; b
   }
   if (path === '/v1/music/tracks' && url.includes('favorite=') && server.liked) return { status: 200, body: { tracks: server.liked, total: server.liked.length } }
   if (path === '/v1/music/search') return { status: 200, body: { artists: [], albums: [], tracks: [] } }
+  if (path === '/v1/music/tracks/gone') return { status: 404, body: { error: 'track not found' } }
+  if (path.startsWith('/v1/music/tracks/') && path.split('/').length === 5) return { status: 200, body: song(path.split('/')[4]) }
   if (path === '/v1/music/tracks') return { status: 200, body: { tracks: [song('a'), song('b')], total: 2 } }
   if (path === '/v1/music/albums') return { status: 200, body: { albums: server.albums } }
   if (path === '/v1/music/artists') return { status: 200, body: { artists: server.artists } }
@@ -114,6 +117,18 @@ const type = async (text: string) => {
   await settle()
 }
 
+/** Follows a link once (a push, as a press on a link is). */
+function Go({ to }: { to: string }) {
+  const nav = useNavigate()
+  const went = useRef(false)
+  useEffect(() => {
+    if (went.current) return
+    went.current = true
+    nav(to)
+  }, [nav, to])
+  return null
+}
+
 function Where() {
   const loc = useLocation()
   where = loc.pathname + loc.search
@@ -127,6 +142,7 @@ const open = async (at: string) => {
         <Routes>
           <Route path="/music" element={<Music />} />
           <Route path="/music/playlist/:id" element={<MusicPlaylistPage />} />
+          <Route path="/music/song/:id" element={<MusicSongPage />} />
           <Route path="*" element={<p>elsewhere</p>} />
         </Routes>
       </MemoryRouter>,
@@ -434,5 +450,82 @@ describe('a playlist', () => {
   it('says so when it is not there (another profile\'s, or deleted)', async () => {
     await open('/music/playlist/nope')
     expect(host.textContent).toContain('This playlist could not be opened')
+  })
+})
+
+describe("a song's own address", () => {
+  let opened = 0
+  let stop = () => {}
+  beforeEach(() => {
+    opened = 0
+    stop = onOpenNowPlaying(() => { opened++ })
+  })
+  afterEach(() => stop())
+
+  it('shows the song in "now playing", ready to be played and not playing', async () => {
+    await open('/music/song/x')
+    await settle()
+    expect(currentTrack()!.id).toBe('x')
+    expect(player.get().playing).toBe(false) // a page does not start sound by itself
+    expect(opened).toBe(1)
+    expect($('.music')).not.toBeNull() // over the music home
+  })
+
+  it('goes to the song where the queue holds it, and leaves the rest of the queue as it was', async () => {
+    await act(async () => { player.playTracks([song('a'), song('x'), song('c')], 0, { shuffle: false }); player.pause() })
+    await open('/music/song/x')
+    await settle()
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['a', 'x', 'c'])
+    expect(currentTrack()!.id).toBe('x')
+    expect(player.get().playing).toBe(false)
+    expect(opened).toBe(1)
+  })
+
+  it('puts a song the queue does not hold after the one that was current', async () => {
+    await act(async () => { player.playTracks([song('a'), song('b')], 0, { shuffle: false }); player.pause() })
+    await open('/music/song/x')
+    await settle()
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['a', 'x', 'b'])
+    expect(currentTrack()!.id).toBe('x')
+  })
+
+  it('does not take the player over from a song that is playing: the song is put next', async () => {
+    await act(async () => player.playTracks([song('a'), song('b')], 0, { shuffle: false }))
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={['/music', '/music/song/x']} initialIndex={0}>
+          <Where />
+          <Routes>
+            <Route path="/music" element={<Music />} />
+            <Route path="/music/song/:id" element={<MusicSongPage />} />
+          </Routes>
+          <Go to="/music/song/x" />
+        </MemoryRouter>,
+      ),
+    )
+    await settle()
+    expect(currentTrack()!.id).toBe('a')
+    expect(player.get().playing).toBe(true)
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['a', 'x', 'b'])
+    expect(toast.text()).toBe('"Song x" plays next')
+    expect(where).toBe('/music')
+    expect(opened).toBe(0)
+  })
+
+  it('opens "now playing" for the song that is playing already', async () => {
+    await act(async () => player.playTracks([song('a'), song('x')], 1, { shuffle: false }))
+    await open('/music/song/x')
+    await settle()
+    expect(player.get().playing).toBe(true)
+    expect(opened).toBe(1)
+    expect(where).toBe('/music/song/x')
+  })
+
+  it('says so when the song is not in the library, and shows the music home', async () => {
+    await open('/music/song/gone')
+    await settle()
+    expect(toast.text()).toBe('That song is not in the library')
+    expect(where).toBe('/music')
+    expect(opened).toBe(0)
   })
 })

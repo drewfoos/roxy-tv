@@ -2,7 +2,7 @@
 // It reads the player's analyser (the real audio on its way out), so it shows nothing
 // for a paused song and needs Web Audio.
 import { lessMotionAsked } from './motion'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { IconCheck, IconFullscreen, IconFullscreenExit, IconTune } from '../components/Icons'
 import { FloatingMenu, type MenuAt } from './Menus'
 import { player } from './player'
@@ -141,6 +141,9 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, style: Visual
   }
 }
 
+// The Milkdrop pictures are a part of their own, fetched when that style is picked.
+const Milkdrop = lazy(() => import('./Milkdrop').then((m) => ({ default: m.Milkdrop })))
+
 /** The canvas. It draws only while it is on screen, and rests once the sound has died away. */
 export function Visualizer({ style }: { style: VisualizerStyle }) {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -212,6 +215,8 @@ export function VisualizerPanel({ wide = false, onWide, caption }: { wide?: bool
   // Where less motion was asked for (a setting of the system's) the picture stays still
   // until it is asked for here: it is nothing but motion, and it never stops by itself.
   const [still, setStill] = useState(() => lessMotionAsked())
+  // The Milkdrop picture on show now, by its name.
+  const [preset, setPreset] = useState('')
   return (
     <div className={'mviz' + (menu ? ' mviz--menu' : '')}>
       {still ? (
@@ -221,9 +226,14 @@ export function VisualizerPanel({ wide = false, onWide, caption }: { wide?: bool
             Show it moving
           </button>
         </div>
+      ) : prefs.visualizer === 'milkdrop' ? (
+        <Suspense fallback={null}>
+          <Milkdrop onName={setPreset} />
+        </Suspense>
       ) : (
         <Visualizer style={prefs.visualizer} />
       )}
+      {!still && prefs.visualizer === 'milkdrop' && preset && <div className="mviz__preset">{preset}</div>}
       {!still && !ready && <div className="mviz__note">{state.playing ? 'This browser gives no access to the sound, so there is nothing to draw.' : 'Press play to see the sound.'}</div>}
       {caption && <div className="mviz__caption">{caption}</div>}
       <div className="mviz__tools">

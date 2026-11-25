@@ -4,7 +4,7 @@
 // parts, as music players lay them out: the song at the left, the controls over the seek
 // line in the middle, the rest at the right.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { clock, codecName, isHiRes, longDuration, music, qualityLabel, type MusicTrack } from '../api/music'
 import { useAsync } from '../hooks/useAsync'
 import { IconClose, IconDrag, IconExpand, IconLyrics, IconPause, IconPlay, IconPlaylistAdd, IconQueue, IconRepeat, IconRepeatOne, IconShuffle, IconSkipNext, IconSkipPrevious, IconSpectrum, IconTune, IconVolume, IconVolumeOff } from '../components/Icons'
@@ -19,6 +19,7 @@ import { inAlbumRun, levelGain } from './stream'
 import { toast } from './toast'
 import { usePlayer, useProgress } from './usePlayer'
 import { usePrefs } from './usePrefs'
+import { isSongPath, onOpenNowPlaying, songPath } from './links'
 import { animates } from './motion'
 import { VisualizerPanel } from './Visualizer'
 import '../styles/music.css'
@@ -70,7 +71,47 @@ export function MusicBar() {
   const [tab, setTab] = useState<NowTab>('lyrics')
   const [settings, setSettings] = useState<MenuAt | null>(null)
   const loc = useLocation()
+  const navigate = useNavigate()
   useEffect(() => claimMediaKeys(), [])
+  // "Now playing" opened from outside the bar (a song arrived at by its link): on the
+  // lyrics when the song has some, as a press on the cover does.
+  const lyricsNow = useRef(false)
+  lyricsNow.current = !!track?.lyrics
+  useEffect(
+    () =>
+      onOpenNowPlaying(() => {
+        setTab(lyricsNow.current ? 'lyrics' : 'visualizer')
+        setOpen('now')
+      }),
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  // While "now playing" is open the address bar holds the song's own address, and follows
+  // the song as it changes: what is copied from there leads to the song, not to whatever
+  // page lies under the player. Closed, the address is the page's again. (The address
+  // alone is changed, with the browser's own call: the page under the player stays.)
+  const under = useRef<string | null>(null)
+  const songId = track?.id
+  useEffect(() => {
+    if (open === 'now' && songId) {
+      if (under.current == null) under.current = window.location.pathname + window.location.search + window.location.hash
+      const want = songPath(songId)
+      if (window.location.pathname !== want) window.history.replaceState(window.history.state, '', want)
+      return
+    }
+    const was = under.current
+    under.current = null
+    if (was == null || !isSongPath(window.location.pathname)) return // never opened, or a link was followed: the address is another page's already
+    // Arrived by a song's link: there is no page "under" it to go back to but the music home.
+    if (isSongPath(was)) navigate('/music', { replace: true })
+    else window.history.replaceState(window.history.state, '', was)
+  }, [open, songId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // And the page under it does not scroll: the wheel, a finger or the keyboard over the
+  // lyrics or the picture moved the page behind them.
+  useEffect(() => {
+    if (open !== 'now') return
+    document.documentElement.classList.add('music-now')
+    return () => document.documentElement.classList.remove('music-now')
+  }, [open])
   // Going to another page closes "now playing" (a link in it was followed); the queue
   // drawer stays, like the bar.
   useEffect(() => setOpen((o) => (o === 'now' ? 'none' : o)), [loc.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -620,6 +661,8 @@ function LyricsView({ track }: { track: MusicTrack }) {
           </p>
         ),
       )}
+      {/* Not the song's own: said, with where they are from. */}
+      {lyrics.data?.source === 'online' && <p className="mlyrics__from">Lyrics from lrclib.net</p>}
     </div>
   )
 }
