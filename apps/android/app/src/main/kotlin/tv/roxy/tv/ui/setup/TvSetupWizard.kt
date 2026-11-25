@@ -144,10 +144,12 @@ internal fun TvSetupWizard(serverUrl: String, serverName: String, onCancel: (() 
     // The account form lives here, not in its step: opening the Terms takes the step off
     // screen, and the name and passwords must still be there on the way back.
     var name by rememberSaveable { mutableStateOf("") }
-    var pw by rememberSaveable { mutableStateOf("") }
-    var pw2 by rememberSaveable { mutableStateOf("") }
+    // The passwords and the setup code: kept here for as long as the wizard is on screen,
+    // not in the state the system saves for the app (no place for a credential).
+    var pw by remember { mutableStateOf("") }
+    var pw2 by remember { mutableStateOf("") }
     var agreed by rememberSaveable { mutableStateOf(false) }
-    var code by rememberSaveable { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
     var backFromTerms by remember { mutableStateOf(false) }
     // Bumped when a folder is added, changed or removed: the Media step reloads and focuses Continue.
     var foldersChanged by remember { mutableIntStateOf(0) }
@@ -318,7 +320,8 @@ private fun TvAccountStep(
     val agreeReq = remember { FocusRequester() }
     val createReq = remember { FocusRequester() }
     // The server's setup code, when it asks for one: the form's first field then.
-    val needsCode = setupNeedsCode(serverUrl)
+    val codeNeed = rememberSetupCodeNeed(serverUrl)
+    val needsCode = codeNeed.asked
     // Back from the Terms: focus returns to the box beside them, not the top of the form.
     FocusOnStart(if (backFromTerms) agreeReq else first, needsCode)
     val ready = accountReady(name, pw, pw2, agreed, busy, needsCode, code)
@@ -334,7 +337,10 @@ private fun TvAccountStep(
                         app.prefs.saveSession(Session(serverUrl = serverUrl.trimEnd('/'), token = resp.token, userName = resp.user.name, isAdmin = true, acceptedTerms = terms, setupInProgress = true))
                         onDone()
                     }
-                    .onFailure { err = apiError(it) }
+                    .onFailure {
+                        if (setupCodeRefused(it)) codeNeed.refused()
+                        err = apiError(it)
+                    }
                 busy = false
             }
         }

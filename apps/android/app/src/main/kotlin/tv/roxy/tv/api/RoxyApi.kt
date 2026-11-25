@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
 /** A call not sent because the server is known to be away (see [RoxyApi.awayGate]). Reads as any failed connection. */
 class ServerAwayException : IOException("Can't reach Roxy")
 
-class ApiException(val code: Int, message: String) : IOException(message) {
+class ApiException(val code: Int, message: String, /** The server's own name for the refusal ("setup_code"), when it gave one. */ val errorCode: String? = null) : IOException(message) {
     val isUnauthorized: Boolean get() = code == 401
     val isNotFound: Boolean get() = code == 404
 }
@@ -778,7 +778,7 @@ class RoxyApi(private val prefs: Prefs) {
             val text = resp.text
             if (!resp.ok) {
                 Timber.w("HTTP %d %s %s", resp.code, req.method, req.url.encodedPath)
-                throw ApiException(resp.code, serverMessage(text) ?: "HTTP ${resp.code} ${req.method} ${req.url.encodedPath}: ${text.take(200)}")
+                throw ApiException(resp.code, serverMessage(text) ?: "HTTP ${resp.code} ${req.method} ${req.url.encodedPath}: ${text.take(200)}", serverCode(text))
             }
             // A 200 that is not our JSON (a captive portal, a half-started server) is a
             // network-style failure, not a bug: an IOException like the rest.
@@ -791,6 +791,11 @@ class RoxyApi(private val prefs: Prefs) {
     /** The server's `{"error": "..."}` text when the body is one, for messages shown to people. */
     private fun serverMessage(body: String): String? = runCatching {
         kotlinx.serialization.json.Json.parseToJsonElement(body).let { (it as? kotlinx.serialization.json.JsonObject)?.get("error") as? kotlinx.serialization.json.JsonPrimitive }?.content
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    /** The `code` of a server's error answer, when it has one. */
+    private fun serverCode(body: String): String? = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(body).let { (it as? kotlinx.serialization.json.JsonObject)?.get("code") as? kotlinx.serialization.json.JsonPrimitive }?.takeIf { it.isString }?.content
     }.getOrNull()?.takeIf { it.isNotBlank() }
 
     private companion object {

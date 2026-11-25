@@ -294,11 +294,32 @@ internal fun ClosedForPip(open: Boolean = true, onClose: () -> Unit) {
     LaunchedEffect(gone, open) { if (gone && open) close.value() }
 }
 
-/** The app's menus: [DropdownMenu] in the app's colour, closed when the app is left for the PiP window ([ClosedForPip]). */
+/**
+ * Inside a window a page opens over itself (a menu, a dialog, a sheet): tells the
+ * activity when that window loses the focus it had. It is the only word the app gets
+ * that it is being left while such a window is open (MainActivity.ownWindowLostFocus).
+ * Draws nothing.
+ */
+@Composable
+internal fun TellsWhenUnfocused(tell: ((android.view.View) -> Unit)? = null) {
+    val focused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+    val view = androidx.compose.ui.platform.LocalView.current
+    val main = remember(view) { view.context.findActivity() as? tv.roxy.tv.MainActivity }
+    var had by remember { mutableStateOf(false) }
+    LaunchedEffect(focused) {
+        if (focused) had = true
+        else if (had) (tell ?: { root -> main?.ownWindowLostFocus(root) })(view.rootView)
+    }
+}
+
+/** The app's menus: [DropdownMenu] in the app's colour, closed when the app is left for the PiP window ([ClosedForPip], [TellsWhenUnfocused]). */
 @Composable
 internal fun PageMenu(expanded: Boolean, onDismissRequest: () -> Unit, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     ClosedForPip(open = expanded, onClose = onDismissRequest)
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, containerColor = RoxyColors.surfaceHigh, content = content)
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, containerColor = RoxyColors.surfaceHigh) {
+        TellsWhenUnfocused()
+        content()
+    }
 }
 
 /** Translucent ring with a play triangle, drawn over thumbnails. */

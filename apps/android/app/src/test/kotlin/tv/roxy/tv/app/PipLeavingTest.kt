@@ -118,9 +118,29 @@ class PipLeavingTest {
         val root = org.robolectric.util.ReflectionHelpers.callInstanceMethod<Any>(dialog.window!!.decorView, "getViewRootImpl")
         org.robolectric.util.ReflectionHelpers.callInstanceMethod<Any?>(root, "windowFocusChanged", org.robolectric.util.ReflectionHelpers.ClassParameter.from(Boolean::class.javaPrimitiveType, has))
         shadowOf(Looper.getMainLooper()).idle()
+        // What the teller inside one of the app's windows does when the window loses the
+        // focus it had (TellsWhenUnfocused; it has a test of its own, TellsWhenUnfocusedTest).
+        if (has) hadFocus += dialog
+        else if (dialog in telling && hadFocus.remove(dialog)) activity.ownWindowLostFocus(dialog.window!!.decorView)
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
+    private val telling = mutableSetOf<android.app.Dialog>()
+    private val hadFocus = mutableSetOf<android.app.Dialog>()
+
+    /**
+     * A window the page opens over itself, as the app's are: with the teller in it, which
+     * passes on to the activity that the window has lost the focus it had (see [focus]).
+     */
     private fun shown(): android.app.Dialog = android.app.Dialog(activity).also {
+        it.setContentView(android.view.View(activity))
+        it.show()
+        telling += it
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    /** One that says nothing (a window of some library's, a phone that does not tell). */
+    private fun silent(): android.app.Dialog = android.app.Dialog(activity).also {
         it.setContentView(android.view.View(activity))
         it.show()
         shadowOf(Looper.getMainLooper()).idle()
@@ -237,6 +257,26 @@ class PipLeavingTest {
         info.dismiss()
     }
 
+    /**
+     * An open window costs nothing while nothing happens: the app is told by the window
+     * when the focus leaves it. (It used to look ten times a second for as long as a
+     * menu or File info was open over a playing video.)
+     */
+    @Test fun anOpenWindowIsNotWatchedByTheClock() {
+        playing(true)
+        val info = shown()
+        controller.windowFocusChanged(false)
+        focus(info, true)
+        pass(500) // the looks that follow the page's own window losing the focus
+        val looks = activity.looksMade
+        pass(5000)
+        assertTrue("no look while the window is simply open (${activity.looksMade - looks} were made)", activity.looksMade == looks)
+        focus(info, false) // and still the app knows at once when it is left
+        pass(300)
+        assertTrue(activity.pipLeaving)
+        info.dismiss()
+    }
+
     /** Nothing is looked for under an open window while the video is paused: there is no PiP window to leave for. */
     @Test fun pausedUnderAWindowOfTheAppsOwnNothingIsLookedFor() {
         playing(false)
@@ -244,9 +284,11 @@ class PipLeavingTest {
         controller.windowFocusChanged(false)
         focus(info, true)
         pass(300)
+        val looks = activity.looksMade
         focus(info, false)
         pass(1000)
         assertFalse(activity.pipLeaving)
+        assertTrue("not even a look: there is no PiP window to leave for", activity.looksMade == looks)
         // It starts to play under the open window (the next episode): now it is.
         focus(info, true)
         playing(true)
@@ -254,29 +296,6 @@ class PipLeavingTest {
         focus(info, false)
         pass(300)
         assertTrue(activity.pipLeaving)
-        info.dismiss()
-    }
-
-    /** What a page has open over itself closes when the app is left for the PiP window, and the window it leaves is the picture's alone. */
-    @Test fun aWindowThePageOpenedIsClosedForThePipWindow() {
-        playing(true)
-        var open by androidx.compose.runtime.mutableStateOf(true)
-        var closed = 0
-        val info = androidx.activity.ComponentDialog(activity)
-        info.setContentView(androidx.compose.ui.platform.ComposeView(activity).apply {
-            setContent { if (open) tv.roxy.tv.ui.phone.ClosedForPip { closed++; open = false } }
-        })
-        info.show()
-        shadowOf(Looper.getMainLooper()).idle()
-        controller.windowFocusChanged(false)
-        focus(info, true)
-        pass(500)
-        assertTrue("open while the page is in use", open && closed == 0)
-        focus(info, false)
-        pass(400)
-        assertTrue(activity.pipLeaving)
-        assertFalse("File info went with the page", open)
-        assertTrue("and was closed once", closed == 1)
         info.dismiss()
     }
 

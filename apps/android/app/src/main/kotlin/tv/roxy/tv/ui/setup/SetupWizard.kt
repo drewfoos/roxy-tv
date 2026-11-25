@@ -271,13 +271,17 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
     }
     val scope = rememberCoroutineScope()
     var name by rememberSaveable { mutableStateOf("") }
-    var pw by rememberSaveable { mutableStateOf("") }
-    var pw2 by rememberSaveable { mutableStateOf("") }
+    // The passwords and the setup code are kept while this page is (a turn of the phone
+    // does not make it anew), and are not written into the state the system saves for
+    // the app: that is no place for a credential, and typing them again is no loss.
+    var pw by remember { mutableStateOf("") }
+    var pw2 by remember { mutableStateOf("") }
     var agreed by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf<String?>(null) }
-    var code by rememberSaveable { mutableStateOf("") }
-    val needsCode = setupNeedsCode(serverUrl)
+    var code by remember { mutableStateOf("") }
+    val codeNeed = rememberSetupCodeNeed(serverUrl)
+    val needsCode = codeNeed.asked
     StepTitle("Create your account", "You're the admin: you'll manage the server and can add your family later, each with their own account and profiles.")
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (needsCode) {
@@ -311,7 +315,11 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
                             app.prefs.saveSession(Session(serverUrl = serverUrl.trimEnd('/'), token = resp.token, userName = resp.user.name, isAdmin = true, acceptedTerms = terms, setupInProgress = true))
                             onDone()
                         }
-                        .onFailure { err = apiError(it) }
+                        .onFailure {
+                            // The server asks for a code this page did not know of: now it does.
+                            if (setupCodeRefused(it)) codeNeed.refused()
+                            err = apiError(it)
+                        }
                     busy = false
                 }
             },
@@ -326,13 +334,58 @@ private fun AccountStep(serverUrl: String, onDone: () -> Unit, onReadTerms: () -
  */
 internal const val SetupCodeWhere = "Roxy Server wrote it into its log when it started, and into setup-code.txt in its data folder. It shows this server is yours."
 
-/** Whether the server at [serverUrl] asks for its setup code; false until it has said so (an older server never does). */
-@Composable
-internal fun setupNeedsCode(serverUrl: String): Boolean {
-    val app = RoxyApp.get(LocalContext.current)
-    val needs by androidx.compose.runtime.produceState(false, serverUrl) { value = runCatching { app.api.setupStatus(serverUrl).code }.getOrDefault(false) }
-    return needs
+/**
+ * Whether the server asks for its setup code, as far as this page knows.
+ *
+ * The server is asked, and asked again until it answers: one question that got no answer
+ * (the network, a server still starting) used to settle it as "no", for good, and the
+ * form then had no place for the code the server went on to ask for. And whatever was
+ * or was not learnt that way, the server's own refusal of an account sent without the
+ * right code ([setupCodeRefused]) shows the field: the server enforces the code, the
+ * page only finds out.
+ */
+internal class SetupCodeNeed {
+    var asked by mutableStateOf(false)
+        private set
+
+    /** The server said whether it asks for one. */
+    fun answered(code: Boolean) {
+        if (code) asked = true
+    }
+
+    /** The server refused an account for its code. */
+    fun refused() {
+        asked = true
+    }
 }
+
+@Composable
+internal fun rememberSetupCodeNeed(serverUrl: String, ask: (suspend (String) -> Boolean)? = null): SetupCodeNeed {
+    val app = RoxyApp.get(LocalContext.current)
+    val need = remember(serverUrl) { SetupCodeNeed() }
+    LaunchedEffect(serverUrl) { askUntilAnswered(need) { (ask ?: { url -> app.api.setupStatus(url).code })(serverUrl) } }
+    return need
+}
+
+/** Asks the server until it answers, a little longer between tries each time. */
+internal suspend fun askUntilAnswered(need: SetupCodeNeed, firstWaitMs: Long = 1_000, ask: suspend () -> Boolean) {
+    var wait = firstWaitMs
+    while (true) {
+        val answer = try {
+            ask()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (answer != null) return need.answered(answer)
+        kotlinx.coroutines.delay(wait)
+        wait = (wait * 2).coerceAtMost(15_000)
+    }
+}
+
+/** The server refused a new account because of the setup code (wrong, or none sent). */
+internal fun setupCodeRefused(e: Throwable): Boolean = e is tv.roxy.tv.api.ApiException && e.errorCode == "setup_code"
 
 /** The account form can be sent: a name, a password of eight or more typed twice alike, the Terms agreed to, and the setup code when the server asks for one. */
 internal fun accountReady(name: String, pw: String, pw2: String, agreed: Boolean, busy: Boolean, needsCode: Boolean, code: String): Boolean =

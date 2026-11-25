@@ -879,6 +879,7 @@ private fun EpisodeInfoDialog(ep: Item, api: RoxyApi, onDismiss: () -> Unit) {
         containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
         title = { Text(listOfNotNull(ep.episodeCode.takeIf { it.isNotEmpty() }, ep.title.takeIf { it.isNotBlank() }).joinToString("  ·  "), fontSize = 17.sp) },
         text = {
+            TellsWhenUnfocused()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 InfoLine("Video", e.videoLine)
                 InfoLine("Tracks", e.tracksLine)

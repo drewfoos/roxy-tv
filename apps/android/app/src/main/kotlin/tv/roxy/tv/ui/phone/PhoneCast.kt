@@ -87,6 +87,7 @@ fun CastSheet(onDismiss: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) { remote.refreshPlayers(); loading = false }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = RoxyColors.surface, dragHandle = { BottomSheetDefaults.DragHandle(color = RoxyColors.muted) }) {
+        TellsWhenUnfocused()
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp).navigationBarsPadding()) {
             Text("Play on", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = RoxyColors.onBackground, modifier = Modifier.padding(horizontal = PhonePad, vertical = 8.dp))
             DeviceRow(Icons.Outlined.PhoneAndroid, "This phone", null, selected = target == null) { remote.select(null); onDismiss() }

@@ -108,7 +108,7 @@ fun rememberDownloadStarter(): (items: List<Item>, title: Item, seasonName: Stri
             onDismissRequest = { short = null },
             containerColor = RoxyColors.surfaceHigh, titleContentColor = RoxyColors.onBackground, textContentColor = RoxyColors.onBackground,
             title = { Text("Not enough space") },
-            text = { Text("This needs ${formatBytes(needed)} but only ${formatBytes(free)} is free on this phone. Delete some downloads or free up storage, then try again.") },
+            text = { TellsWhenUnfocused(); Text("This needs ${formatBytes(needed)} but only ${formatBytes(free)} is free on this phone. Delete some downloads or free up storage, then try again.") },
             confirmButton = { TextButton(onClick = { short = null }) { Text("OK", color = Color.White) } },
         )
     }
@@ -563,7 +563,7 @@ internal fun ConfirmDialog(title: String, text: String, confirm: String, onConfi
         titleContentColor = RoxyColors.onBackground,
         textContentColor = RoxyColors.onBackground,
         title = { Text(title) },
-        text = { Text(text) },
+        text = { TellsWhenUnfocused(); Text(text) },
         confirmButton = { TextButton(onClick = onConfirm) { Text(confirm, color = RoxyColors.error) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Color.White) } },
     )

@@ -69,8 +69,6 @@ class MainActivity : ComponentActivity() {
     internal companion object {
         /** How long after the window lost the focus the app looks at who has it (see [onWindowFocusChanged]). */
         const val LEAVING_LOOK_MS = 50L
-        /** While a window of the page's own holds the focus over a playing video, how often the app looks whether it still does (see [leavingLook]). */
-        const val OWN_WINDOW_LOOK_MS = 100L
         /** How long a window the app has just opened is given to take the focus before it is no longer waited for (see [leavingLook]). */
         const val OPENING_MS = 500L
         /** The page fades to see-through this fast when the app is left for the PiP window. */
@@ -109,15 +107,31 @@ class MainActivity : ComponentActivity() {
         pipByHand = false
         // Left towards PiP and back without one (the system did not make the window).
         if (!isInPictureInPictureMode) pipLeaving = false
-        // Back with a menu or File info still open: it has the focus again and the page's
-        // window is told nothing, so the looking starts here.
-        lookWhileUnfocused()
     }
 
-    /** Starts the looks of [leavingLook] when a video plays and this window has not the focus (a window of the page's own may). */
-    private fun lookWhileUnfocused() {
+    /**
+     * A window of the page's own (a menu, File info, a sheet) says that it has lost the
+     * focus it had ([tv.roxy.tv.ui.phone.TellsWhenUnfocused], inside that window).
+     *
+     * With such a window open the page's own window hears nothing when the app is left:
+     * the Home gesture takes the focus from the dialog, not from the page, and the app
+     * shrank into the PiP window with the dialog over the picture. The window that loses
+     * the focus is told, as every window is, and passes it on: an event, where there
+     * used to be a look ten times a second for as long as the window was open.
+     *
+     * What it means is settled by [leavingLook] a moment later: the focus may have gone
+     * to another of the app's windows, or back to the page.
+     *
+     * Should a phone not send this (or a window be opened without the teller in it), the
+     * app is not told early, and that is all: once it is in the PiP window whatever the
+     * page had open is closed (ClosedForPip goes by [inPip] as well).
+     */
+    fun ownWindowLostFocus(root: android.view.View?) {
         val decor = window?.decorView ?: return
-        if (!pip.armed || hasWindowFocus() || isInPictureInPictureMode) return
+        if (root != null && root !== decor) hadFocusOnce[root] = true
+        if (!pip.armed || hasWindowFocus() || !inFront()) return
+        ownWindowHadFocus = true
+        ownWindowLostOnce = false
         decor.removeCallbacks(leavingLook)
         decor.postDelayed(leavingLook, LEAVING_LOOK_MS)
     }
@@ -180,11 +194,7 @@ class MainActivity : ComponentActivity() {
     /** Called by the page's player: whether it plays, and where the picture is in the (whole) window. */
     fun updatePip(owner: Any, playing: Boolean, source: android.graphics.Rect?) {
         val decor = window?.decorView
-        val was = pip.armed
         sendPip(pip.playing(owner, playing, source, decor?.width ?: 0, decor?.height ?: 0))
-        // It began to play with a window of the page's own holding the focus (the next
-        // episode starting under an open sheet): from now on leaving has to be looked for.
-        if (!was && pip.armed) lookWhileUnfocused()
     }
 
     /** Leave PiP support behind when the page closes, so other screens never shrink. */
@@ -243,11 +253,9 @@ class MainActivity : ComponentActivity() {
     /**
      * Who has the focus, a moment after the page's window lost it.
      *
-     * A window of the page's own (a menu, File info, a sheet): the page is in use. But from
-     * then on the page's window hears nothing: the Home gesture with File info open takes
-     * the focus from the dialog, not from the page, and the app shrank into the PiP window
-     * with the dialog lying over the picture. So for as long as such a window holds the
-     * focus over a playing video the app keeps looking, a few times a second.
+     * A window of the page's own (a menu, File info, a sheet): the page is in use. From
+     * then on it is that window which says when the focus leaves it ([ownWindowLostFocus]),
+     * and this is run again to see where it went.
      *
      * Nobody of the app's: it is being left. Two things look the same for a moment and
      * are not that:
@@ -261,6 +269,7 @@ class MainActivity : ComponentActivity() {
      *    focus, "nobody" is believed only at a second look.
      */
     private val leavingLook: Runnable = Runnable {
+        looksMade++
         if (!inFront()) return@Runnable
         val decor = window?.decorView
         val windows = ownWindows()
@@ -272,7 +281,6 @@ class MainActivity : ComponentActivity() {
             pipLeaving = false
             ownWindowHadFocus = true
             ownWindowLostOnce = false
-            if (pip.armed) again(OWN_WINDOW_LOOK_MS)
             return@Runnable
         }
         if (own == false && !hasWindowFocus() && pip.armed) {
@@ -287,6 +295,10 @@ class MainActivity : ComponentActivity() {
         ownWindowLostOnce = false
         if (pip.leftByFocus(hasWindowFocus(), isInMultiWindowMode, own)) pipLeaving = true
     }
+
+    /** How many looks were made (for tests: an open window must cost none while nothing happens). */
+    internal var looksMade = 0
+        private set
 
     /** A window of the page's own had the focus at the last look ([leavingLook]). */
     private var ownWindowHadFocus = false
