@@ -945,6 +945,91 @@ func TestMusicConversionsHaveAShare(t *testing.T) {
 	}
 }
 
+// A lyrics file with nothing in it but an address is not the song's lyrics: the song is
+// listed without any and the lyrics are "not found". Lyrics found online stand in for a
+// song that has none, and step back when it gets its own.
+func TestMusicLyricsJunkAndOnline(t *testing.T) {
+	w := newMusicWorld(t)
+	song := w.song("A/song.mp3", nil, "title", "Song", "artist", "A")
+	lrc := strings.TrimSuffix(song, ".mp3") + ".lrc"
+	if err := os.WriteFile(lrc, []byte("www.t.me/somebody_music"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := w.do("POST", "/v1/music/folders", w.adminTok, map[string]string{"path": w.root}); rec.Code != 201 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	w.scanned()
+	type row struct {
+		ID     string `json:"id"`
+		Lyrics string `json:"lyrics"`
+	}
+	listed := func() row {
+		var list struct {
+			Tracks []row `json:"tracks"`
+		}
+		w.get("/v1/music/tracks", w.aliceTok, 200, &list)
+		if len(list.Tracks) != 1 {
+			t.Fatalf("%d songs", len(list.Tracks))
+		}
+		return list.Tracks[0]
+	}
+	tr := listed()
+	if tr.Lyrics != "" {
+		t.Fatalf("an address beside the song is listed as its lyrics: %q", tr.Lyrics)
+	}
+	path := "/v1/music/tracks/" + tr.ID + "/lyrics"
+	if rec := w.do("GET", path, w.aliceTok, nil); rec.Code != 404 {
+		t.Fatalf("lyrics of a song that has only an address: %d %s", rec.Code, rec.Body.String())
+	}
+	// Found online (the pass that asks is the music package's; here it is its result).
+	if err := w.st.SetMusicOnlineLyrics(context.Background(), tr.ID, "[00:01.00]Found\n[00:03.00]online", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if got := listed().Lyrics; got != "online" {
+		t.Fatalf("listed as %q, want online", got)
+	}
+	var l struct {
+		Source string `json:"source"`
+		Synced bool   `json:"synced"`
+		Lines  []struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+	}
+	w.get(path, w.aliceTok, 200, &l)
+	if l.Source != "online" || !l.Synced || len(l.Lines) != 2 || l.Lines[0].Text != "Found" {
+		t.Fatalf("online lyrics: %+v", l)
+	}
+	// The song gets a lyrics file of its own: that is what is shown.
+	if err := os.WriteFile(lrc, []byte("[00:02.00]My own"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := w.do("POST", "/v1/music/scan", w.adminTok, map[string]bool{"force": false}); rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	w.scanned()
+	if got := listed().Lyrics; got != "lrc" {
+		t.Fatalf("with a file of its own: %q", got)
+	}
+	w.get(path, w.aliceTok, 200, &l)
+	if l.Source != "lrc" || l.Lines[0].Text != "My own" {
+		t.Fatalf("its own lyrics: %+v", l)
+	}
+}
+
+// Nobody outside is asked about a library's songs unless the owner said so.
+func TestLyricsOnlineIsOffUnlessTurnedOn(t *testing.T) {
+	if lyricsFinder(&config.Config{}) != nil {
+		t.Fatal("a server that was not told to looks lyrics up online")
+	}
+	if f := lyricsFinder(&config.Config{LyricsFetch: true}); f == nil || !strings.HasPrefix(f.BaseURL, "https://") {
+		t.Fatalf("turned on: %+v", f)
+	}
+	t.Setenv("ROXY_LYRICS_ONLINE", "")
+	if c, err := config.Load(); err == nil && c.LyricsFetch {
+		t.Fatal("the setting is on by default")
+	}
+}
+
 // Loudness is measured after a scan and comes with the songs.
 func TestMusicLoudnessOverAPI(t *testing.T) {
 	w := newMusicWorld(t)

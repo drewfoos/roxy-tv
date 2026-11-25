@@ -138,7 +138,11 @@ a budget Google TV.
   the file's own with gapless on, 11 ms of silence a join with it off (`docs/api/music.md`,
   "Joins"). Two decoded songs are held at most. Volume levelling from the server's
   measurements, a streaming quality for slow connections, a visualizer (bars, mirror,
-  wave, ring) and a page that says how the song playing is sent and joined. Laid out
+  wave, ring, and the Milkdrop pictures: the open-source butterchurn, fetched when
+  picked) and a page that says how the song playing is sent and joined. A song has an
+  address of its own (`/music/song/<id>`): it is what the address bar shows while "now
+  playing" is open, and what "Copy link" gives. Lists are put in another order by
+  carrying a row: it goes with the pointer and the others make room. Laid out
   for a phone (two tiles and part of a third, "now playing" with its own controls), for
   the desktop steps of the rest of the site, and for very wide screens (up to fourteen
   tiles a row; an album's songs beside its cover, a list never wider than can be read

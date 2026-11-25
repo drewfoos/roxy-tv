@@ -90,6 +90,7 @@ func NewRouterContext(ctx context.Context, cfg *config.Config, st *store.Store, 
 	// Music: read the music folders at start and look at them again every so often, as
 	// the video libraries are scanned at start and watched (the same two switches).
 	s.music = music.New(st, ff, filepath.Join(cfg.CacheDir(), "music", "art"))
+	s.music.Lyrics = lyricsFinder(cfg)
 	// Measuring loudness waits while a film is being converted for somebody.
 	s.music.Busy = func() bool { return len(transcodeSlots) > 0 }
 	s.musicTC = music.NewTranscoder(ff, filepath.Join(cfg.CacheDir(), "music", "converted"), musicConvertedMax)

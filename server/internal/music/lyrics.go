@@ -7,12 +7,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 // Lyrics are a song's words. Synced lyrics carry the time each line is sung at.
 type Lyrics struct {
-	Source string      `json:"source"` // "lrc" | "txt" | "embedded"
+	Source string      `json:"source"` // "lrc" | "txt" | "embedded" | "online"
 	Synced bool        `json:"synced"`
 	Lines  []LyricLine `json:"lines"`
 }
@@ -113,12 +114,50 @@ var (
 	reLrcMeta = regexp.MustCompile(`^\[([a-zA-Z#]+):([^\]]*)\]\s*$`)
 	// Word-by-word times inside a line ("<00:12.34>"), which only karaoke players use.
 	reLrcWord = regexp.MustCompile(`<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>`)
+	// An address where words should be: what a release group leaves in a lyrics file or a
+	// lyrics tag in place of the lyrics ("www.t.me/somebody"). Nobody sings one.
+	reAdvert = regexp.MustCompile(`(?i)(https?://|www\.|\bt\.me/|\b[a-z0-9-]+\.(com|net|org|io|me|tv|ru|cc|to|xyz)(/|\b))`)
 )
+
+// isAdvert reports whether a line is an address left in place of words.
+func isAdvert(line string) bool {
+	return reAdvert.MatchString(line)
+}
+
+// hasWords reports whether lines hold anything that is sung: a letter or a digit somewhere.
+func hasWords(lines []LyricLine) bool {
+	for _, l := range lines {
+		for _, r := range l.Text {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// lyricsOrNothing is a file's own lyrics tag as it is kept: nothing when it holds no lyrics.
+func lyricsOrNothing(text string) string {
+	if LyricsKind(text, "embedded") == "" {
+		return ""
+	}
+	return text
+}
+
+// LyricsKind says whether text is lyrics at all ("" when it is not: empty, or nothing
+// but an address), and of which kind when it is.
+func LyricsKind(text, source string) string {
+	if len(ParseLyrics(text, source).Lines) == 0 {
+		return ""
+	}
+	return source
+}
 
 // ParseLyrics reads lyrics text. Text with LRC time marks ("[01:23.45]words") comes back
 // synced and in time order: a line with several marks is sung at each of them, and the
 // file's own offset ("[offset:+250]", milliseconds, positive = earlier) is applied. Text
-// without marks comes back line by line, unsynced.
+// without marks comes back line by line, unsynced. An address left where words should be
+// is left out, and text with nothing sung in it comes back with no lines: not lyrics.
 func ParseLyrics(text, source string) Lyrics {
 	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	out := Lyrics{Source: source}
@@ -157,6 +196,9 @@ func ParseLyrics(text, source string) Lyrics {
 			line = strings.TrimSpace(line[len(m[0]):])
 		}
 		line = strings.TrimSpace(reLrcWord.ReplaceAllString(line, ""))
+		if isAdvert(line) {
+			continue
+		}
 		if len(times) == 0 {
 			plain = append(plain, line)
 			continue
@@ -172,6 +214,9 @@ func ParseLyrics(text, source string) Lyrics {
 			}
 		}
 		sort.SliceStable(synced, func(i, j int) bool { return synced[i].Ms < synced[j].Ms })
+		if !hasWords(synced) {
+			return out // time marks and nothing sung at them
+		}
 		out.Synced, out.Lines = true, synced
 		return out
 	}
@@ -182,9 +227,12 @@ func ParseLyrics(text, source string) Lyrics {
 	for len(plain) > 0 && plain[len(plain)-1] == "" {
 		plain = plain[:len(plain)-1]
 	}
-	out.Lines = make([]LyricLine, 0, len(plain))
+	lines := make([]LyricLine, 0, len(plain))
 	for _, l := range plain {
-		out.Lines = append(out.Lines, LyricLine{Text: l})
+		lines = append(lines, LyricLine{Text: l})
+	}
+	if hasWords(lines) {
+		out.Lines = lines
 	}
 	return out
 }

@@ -47,6 +47,39 @@ type Service struct {
 
 	picMu sync.Mutex
 	pics  map[string]picture // folder pictures already read, by path
+
+	// Lyrics, when set, finds the lyrics of songs that have none of their own (lrclib.go).
+	Lyrics *LyricsFinder
+
+	lyrMu      sync.Mutex
+	lyricFiles map[string]lyricsFileSeen // lyrics files already read, by path
+	finding    bool                      // a pass that looks lyrics up is running
+}
+
+// lyricsFileSeen is what a lyrics file held when it was last read: an unchanged one is
+// not read again at every scan.
+type lyricsFileSeen struct {
+	size, mtime int64
+	ok          bool
+}
+
+// holdsLyrics reads a lyrics file beside a song and says whether it holds lyrics.
+func (s *Service) holdsLyrics(path string, size, mtime int64, kind string) bool {
+	s.lyrMu.Lock()
+	seen, had := s.lyricFiles[path]
+	s.lyrMu.Unlock()
+	if had && seen.size == size && seen.mtime == mtime {
+		return seen.ok
+	}
+	text, ok := ReadLyricsFile(path)
+	seen = lyricsFileSeen{size: size, mtime: mtime, ok: ok && LyricsKind(text, kind) != ""}
+	s.lyrMu.Lock()
+	if s.lyricFiles == nil {
+		s.lyricFiles = map[string]lyricsFileSeen{}
+	}
+	s.lyricFiles[path] = seen
+	s.lyrMu.Unlock()
+	return seen.ok
 }
 
 type picture struct {
@@ -170,6 +203,10 @@ func (s *Service) AfterScan(ctx context.Context, background, all bool) {
 		if _, err := s.MeasureLoudness(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("music: loudness pass failed", "err", err)
 		}
+		// Songs with no lyrics of their own, where looking online is turned on.
+		if _, err := s.FindLyrics(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("music: lyrics pass failed", "err", err)
+		}
 	}
 	if background {
 		go work()
@@ -267,12 +304,14 @@ type diskFile struct {
 	size   int64
 	mtime  int64
 	top    string // the folder directly under the music folder it is in ("" for a file at the top)
-	lyrics string // lyrics file beside it: "lrc", "txt" or ""
+	lyrics string // lyrics file beside it that holds lyrics: "lrc", "txt" or ""
 }
 
 // walkMusic lists the audio files under root, and for every folder the names in it
-// (lower case), which say what pictures and lyrics files are there.
-func walkMusic(ctx context.Context, root string) (files []diskFile, dirNames map[string][]string, err error) {
+// (lower case), which say what pictures and lyrics files are there. holdsLyrics, when
+// given, is asked whether a lyrics file beside a song really holds lyrics (a file with
+// nothing in it but an address does not count as the song having any).
+func walkMusic(ctx context.Context, root string, holdsLyrics func(path string, size, mtime int64, kind string) bool) (files []diskFile, dirNames map[string][]string, err error) {
 	dirNames = map[string][]string{}
 	var walk func(dir, top string) error
 	walk = func(dir, top string) error {
@@ -289,11 +328,35 @@ func walkMusic(ctx context.Context, root string) (files []diskFile, dirNames map
 		}
 		names := make([]string, 0, len(entries))
 		present := map[string]bool{}
+		byName := map[string]os.DirEntry{}
 		for _, e := range entries {
 			if !e.IsDir() {
 				names = append(names, e.Name())
 				present[strings.ToLower(e.Name())] = true
+				byName[strings.ToLower(e.Name())] = e
 			}
+		}
+		// The lyrics file beside a song, of the kinds there are, in the order they are
+		// preferred: the first that holds lyrics.
+		lyricsOf := func(audio string) string {
+			if holdsLyrics == nil {
+				return SidecarKind(audio, present)
+			}
+			stem := strings.ToLower(strings.TrimSuffix(audio, filepath.Ext(audio)))
+			for _, ext := range lyricsExts {
+				e, ok := byName[stem+ext]
+				if !ok || !e.Type().IsRegular() {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil {
+					continue
+				}
+				if holdsLyrics(filepath.Join(dir, e.Name()), info.Size(), info.ModTime().UnixNano(), ext[1:]) {
+					return ext[1:]
+				}
+			}
+			return ""
 		}
 		// A folder holding an ignore file is not read, nor anything under it.
 		if present[".ignore"] || present[".roxyignore"] || present[".nomedia"] {
@@ -324,7 +387,7 @@ func walkMusic(ctx context.Context, root string) (files []diskFile, dirNames map
 			if err != nil {
 				continue
 			}
-			files = append(files, diskFile{path: full, size: info.Size(), mtime: info.ModTime().UnixNano(), top: top, lyrics: SidecarKind(name, present)})
+			files = append(files, diskFile{path: full, size: info.Size(), mtime: info.ModTime().UnixNano(), top: top, lyrics: lyricsOf(name)})
 		}
 		return nil
 	}
@@ -351,7 +414,7 @@ func (s *Service) scanFolder(ctx context.Context, folder model.MusicFolder, forc
 	if err != nil {
 		return res, err
 	}
-	files, dirNames, err := walkMusic(ctx, folder.Root)
+	files, dirNames, err := walkMusic(ctx, folder.Root, s.holdsLyrics)
 	if err != nil {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
@@ -660,11 +723,11 @@ func buildRow(folderID int64, r read, known func(string) bool) *store.MusicTrack
 		Disc: info.Disc, Track: info.Track, Year: info.Year, Genres: info.Genres,
 		DurationMs: info.DurationMs, Container: info.Container, Codec: info.Codec, Bitrate: info.Bitrate,
 		SampleRate: info.SampleRate, BitDepth: info.BitDepth, Channels: info.Channels,
-		Art: r.art, LyricsText: info.Lyrics, MBRecording: info.MBRecording, MBAlbum: info.MBAlbum,
+		Art: r.art, LyricsText: lyricsOrNothing(info.Lyrics), MBRecording: info.MBRecording, MBAlbum: info.MBAlbum,
 		GainTrack: info.GainTrack, PeakTrack: info.PeakTrack, GainAlbum: info.GainAlbum, PeakAlbum: info.PeakAlbum,
 	}
 	row.Lyrics = f.lyrics
-	if row.Lyrics == "" && info.Lyrics != "" {
+	if row.Lyrics == "" && row.LyricsText != "" {
 		row.Lyrics = "embedded"
 	}
 	search := []string{title, artistTag, info.Album}

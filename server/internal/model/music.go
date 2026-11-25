@@ -84,6 +84,8 @@ type MusicTrack struct {
 	Path       string `json:"-"`
 	Mtime      int64  `json:"-"`
 	LyricsText string `json:"-"`
+	// LyricsOnline: lyrics found online, for a song with none of its own.
+	LyricsOnline string `json:"-"`
 }
 
 // LosslessCodec reports whether an audio codec keeps every sample of what was recorded.

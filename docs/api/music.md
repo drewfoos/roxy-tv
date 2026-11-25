@@ -36,7 +36,17 @@ signed-in user; plays, favourites and playlists belong to the profile named by
   `artist.*` in their folder, else the picture of their newest song. Pictures are kept
   once each, under the hash of their bytes.
 - **Lyrics.** `Song.lrc` (synced) or `Song.txt` beside `Song.mp3`, else the lyrics the
-  audio file carries.
+  audio file carries. A file or a tag that holds an address and nothing sung (what a
+  release group writes there in place of lyrics: `www.t.me/…`) is not lyrics: the song
+  counts as having none, and a line like that among real lyrics is left out.
+- **Lyrics found online** (`ROXY_LYRICS_ONLINE=1`, off by default). Songs with no lyrics
+  of their own are looked up at lrclib.net after a scan, one every 0.7 s: first by name,
+  artist, album and length, then by the song's plain name (without "(2012 Remaster)" and
+  the like), taking the entry of the same name and length (within 3 s), a timed one
+  before a plain one. What is found is kept with the song; a song nothing was found for
+  is asked about again after 30 days; four failed questions in a row end the pass until
+  the next scan. The question names the song to a service outside the house, which is
+  why it is the owner's to turn on. A song's own lyrics are always the ones shown.
 - **Loudness.** After a scan the server measures each song it has not measured yet (EBU
   R 128 / BS.1770, from the audio itself, a few songs at a time beside the scan: about a
   second a song): its integrated loudness and its true peak. A file that changes is
@@ -74,7 +84,7 @@ signed-in user; plays, favourites and playlists belong to the profile named by
 | `durationMs`, `size` | |
 | `container`, `codec`, `bitrate` (bits/s), `sampleRate`, `bitDepth`, `channels`, `lossless` | how the file is encoded |
 | `art` | hash of the picture to show (the file's own, else its album's); absent for none |
-| `lyrics` | `"lrc"`, `"txt"` or `"embedded"`; absent when there are none |
+| `lyrics` | `"lrc"`, `"txt"`, `"embedded"` or `"online"` (found online, the song having none of its own); absent when there are none |
 | `gainTrack`, `gainAlbum` | ReplayGain in dB, as tagged; absent when not tagged |
 | `loudness`, `peak` | measured by the server: integrated loudness in LUFS and true peak in dBTP; absent until measured |
 | `albumLoudness`, `albumPeak` | the loudness (LUFS) and true peak (dBTP) of the song's album measured as one; absent until every song of it is measured |

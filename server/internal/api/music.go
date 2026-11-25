@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/roxy-media/roxy/server/internal/config"
 	"github.com/roxy-media/roxy/server/internal/library"
 	"github.com/roxy-media/roxy/server/internal/model"
 	"github.com/roxy-media/roxy/server/internal/music"
@@ -215,6 +216,16 @@ func (s *Server) musicTrack(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// lyricsFinder is what looks lyrics up online for songs that have none: nothing at all
+// unless the owner turned it on (ROXY_LYRICS_ONLINE). The look-up names the song to a
+// service outside the house, and that is the owner's to decide.
+func lyricsFinder(cfg *config.Config) *music.LyricsFinder {
+	if !cfg.LyricsFetch {
+		return nil
+	}
+	return music.NewLyricsFinder()
+}
+
 // GET /v1/music/tracks/{id}/lyrics -> {source, synced, lines: [{ms, text}]}; 404 when the
 // song has none. A lyrics file beside the song ("Song.lrc", then "Song.txt") comes before
 // the words the audio file carries.
@@ -240,6 +251,11 @@ func (s *Server) musicLyrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if l := music.ParseLyrics(t.LyricsText, "embedded"); len(l.Lines) > 0 {
+		writeJSON(w, 200, l)
+		return
+	}
+	// None of its own: the ones found online, where looking there is turned on.
+	if l := music.ParseLyrics(t.LyricsOnline, "online"); len(l.Lines) > 0 {
 		writeJSON(w, 200, l)
 		return
 	}

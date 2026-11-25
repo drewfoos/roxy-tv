@@ -294,6 +294,44 @@ func (s *Store) SetMusicTrackLyrics(ctx context.Context, id, kind string) error 
 	return err
 }
 
+// MusicLyricsWanted is a song with no lyrics of its own, to be looked up.
+type MusicLyricsWanted struct {
+	ID         string
+	Title      string
+	Artist     string // the artist the song is filed under
+	Album      string
+	DurationMs int64
+}
+
+// MusicTracksWantingLyrics lists the songs that have no lyrics of their own and none
+// found online, and were not asked about since `since` (Unix seconds): newest first.
+func (s *Store) MusicTracksWantingLyrics(ctx context.Context, since int64) ([]MusicLyricsWanted, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.title, COALESCE(NULLIF(ar.name, ''), t.artist), t.album, t.duration_ms
+		FROM music_tracks t LEFT JOIN music_artists ar ON ar.id = t.artist_id
+		WHERE t.missing_since IS NULL AND t.lyrics = '' AND t.lyrics_online = '' AND t.lyrics_online_at < ?
+		ORDER BY t.added_at DESC, t.id`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MusicLyricsWanted
+	for rows.Next() {
+		var w MusicLyricsWanted
+		if err := rows.Scan(&w.ID, &w.Title, &w.Artist, &w.Album, &w.DurationMs); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// SetMusicOnlineLyrics keeps what a look-up found for a song ("" = nothing found) and
+// when it was made.
+func (s *Store) SetMusicOnlineLyrics(ctx context.Context, id, text string, at int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE music_tracks SET lyrics_online = ?, lyrics_online_at = ? WHERE id = ?`, text, at, id)
+	return err
+}
+
 // MarkMusicMissing hides tracks whose files are gone. The rows stay: a file that comes
 // back (a drive mounted again, a folder moved back) is the same song, played as often
 // and still a favourite.
@@ -498,7 +536,8 @@ type MusicTrackQuery struct {
 
 const musicTrackCols = `t.id, t.title, t.artist, t.artist_id, COALESCE(t.album_id, ''), t.album, t.album_artist, t.disc, t.track, t.year,
 	t.duration_ms, t.container, t.codec, t.bitrate, t.sample_rate, t.bit_depth, t.channels, t.size,
-	CASE WHEN t.art <> '' THEN t.art ELSE COALESCE(al.art, '') END, t.lyrics, t.gain_track, t.gain_album, t.added_at, t.path, t.mtime,
+	CASE WHEN t.art <> '' THEN t.art ELSE COALESCE(al.art, '') END,
+	CASE WHEN t.lyrics <> '' THEN t.lyrics WHEN t.lyrics_online <> '' THEN 'online' ELSE '' END, t.gain_track, t.gain_album, t.added_at, t.path, t.mtime,
 	t.loudness, t.true_peak, al.loudness, al.true_peak,
 	COALESCE(u.is_favorite, 0), COALESCE(u.play_count, 0), u.last_played_at`
 
@@ -692,7 +731,7 @@ func (s *Store) GetMusicTrack(ctx context.Context, scope, id string) (*model.Mus
 	if err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT lyrics_text FROM music_tracks WHERE id = ?`, id).Scan(&t.LyricsText); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT lyrics_text, lyrics_online FROM music_tracks WHERE id = ?`, id).Scan(&t.LyricsText, &t.LyricsOnline); err != nil {
 		return nil, err
 	}
 	one := []model.MusicTrack{t}

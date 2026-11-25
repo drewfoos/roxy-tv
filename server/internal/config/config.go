@@ -28,6 +28,7 @@ type Config struct {
 	DataDir     string   // ROXY_DATA_DIR, default ./data (db, caches)
 	MediaRoots  []string // ROXY_MEDIA_ROOTS, comma separated; each becomes a library
 	MusicRoots  []string // ROXY_MUSIC_ROOTS, comma separated; each becomes a music folder
+	LyricsFetch bool     // ROXY_LYRICS_ONLINE, default off: songs with no lyrics of their own are looked up at lrclib.net (which is told their name, artist, album and length)
 	FFmpegPath  string   // ROXY_FFMPEG_PATH, default: search PATH then ~/tools/jellyfin-ffmpeg
 	FFprobePath string   // ROXY_FFPROBE_PATH
 	ScanOnStart bool     // ROXY_SCAN_ON_START, default true
@@ -84,6 +85,7 @@ func Load() (*Config, error) {
 		FFmpegPath:           env("ROXY_FFMPEG_PATH", ""),
 		FFprobePath:          env("ROXY_FFPROBE_PATH", ""),
 		ScanOnStart:          envBool("ROXY_SCAN_ON_START", true),
+		LyricsFetch:          envBool("ROXY_LYRICS_ONLINE", false),
 		Watch:                envBool("ROXY_WATCH", true),
 		Debug:                envBool("ROXY_DEBUG", false),
 		TMDBAPIKey:           env("ROXY_TMDB_API_KEY", ""),

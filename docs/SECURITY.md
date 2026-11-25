@@ -78,6 +78,14 @@ A file that took ffmpeg over could read what the server can, its database includ
 write to the data folder. Keeping the image current is the defence against known holes
 (see below); a fence between ffmpeg and the server's own files is not built yet.
 
+## What leaves the house
+
+The server asks outside services about what is in the library only for what the owner
+set up: TMDB, AniList and fanart.tv for films and series (titles, for their pictures and
+descriptions), and, when `ROXY_LYRICS_ONLINE` is turned on, lrclib.net for lyrics (a
+song's name, artist, album and length, for songs that have no lyrics of their own). The
+lyrics look-up is off unless it is turned on.
+
 ## Conversions
 
 A conversion (a transcode, a remux, a song converted for a phone) is an ffmpeg run, the
