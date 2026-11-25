@@ -237,6 +237,10 @@ func TestWatchDropsFoldersANewIgnoreRuleLeavesOut(t *testing.T) {
 	// while the rule takes effect, as rebuilding by removing every watch and adding them
 	// back left it unwatched for a moment.
 	season2 := filepath.Join(show, "Season 02")
+	// The watcher adds its folders one after another when it starts: Season 01 watched
+	// does not say Season 02 is yet. Sampling from before it is would count the start as
+	// a gap (seen on a slow machine), which is not what is looked for here.
+	waitFor("Season 02 to be watched", func() bool { return watching(season2) })
 	var gap atomic.Bool
 	stop := make(chan struct{})
 	sampled := make(chan struct{})
