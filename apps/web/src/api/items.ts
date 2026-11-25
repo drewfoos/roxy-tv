@@ -162,8 +162,15 @@ export function pickSignsSubtitle(source: MediaSource | undefined, wantLang = 'e
   return pool.slice().sort((a, b) => score(b) - score(a))[0] ?? null
 }
 
-/** Episodes in the order they aired: specials (season 0) last, by episode number. */
+/**
+ * A show's episodes in the order they are watched: the server's (each episode's
+ * watchOrder: the season list read from the top, so after a season's last episode come
+ * the OVAs that came out before the next season, not that season's first). Where an
+ * episode has no place (an older server): by season with the specials (season 0) last,
+ * then by number, for all of them.
+ */
 export function sortEpisodes(eps: Item[]): Item[] {
+  if (eps.length && eps.every((e) => e.watchOrder != null)) return eps.slice().sort((a, b) => a.watchOrder! - b.watchOrder!)
   const key = (e: Item) => {
     const s = e.seasonAired ?? 0
     return s === 0 ? Number.MAX_SAFE_INTEGER : s

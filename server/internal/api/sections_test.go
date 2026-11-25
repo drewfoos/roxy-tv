@@ -13,10 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/seasonlist"
 	"github.com/roxy-media/roxy/server/internal/store"
 )
 
-func describe(secs []section) string {
+func describe(secs []seasonlist.Section) string {
 	var parts []string
 	for _, s := range secs {
 		d := s.Kind + ":" + s.Title
@@ -34,13 +35,13 @@ func describe(secs []section) string {
 // the library has first, by date.
 func TestSectionsInReleaseOrder(t *testing.T) {
 	const min = 60 * 1000
-	seasons := []seasonIn{
+	seasons := []seasonlist.Season{
 		{ID: "s3", Title: "Season 3", Index: 3, Start: "2015-04-04", Count: 12},
 		{ID: "s1", Title: "Season 1", Index: 1, Start: "2012-01-06", Count: 12},
 		{ID: "s2", Title: "Season 2", Index: 2, Start: "2013-07-07", Count: 12},
 		{ID: "s4", Title: "Season 4", Index: 4, Start: "2018-04-17", Count: 12},
 	}
-	specials := []specialIn{
+	specials := []seasonlist.Special{
 		{ID: "ova1", Title: "Highschool DxD OVA 1", Date: "2012-09-20", RuntimeMs: 24 * min},
 		{ID: "ova2", Title: "Highschool DxD OVA 2", Date: "2013-05-21", RuntimeMs: 24 * min},
 		{ID: "new", Title: "New OVA", Date: "2015-03-10", RuntimeMs: 3 * min}, // named an OVA: placed whatever its length
@@ -52,7 +53,7 @@ func TestSectionsInReleaseOrder(t *testing.T) {
 		{ID: "harem", Title: "Before Harem Special", Date: "2011-12-19", Virtual: true},
 		{ID: "unknown", Title: "Making Of", Date: "2012-02-01"}, // no length known: an extra
 	}
-	got := describe(buildSections(seasons, specials, nil, 0))
+	got := describe(seasonlist.Build(seasons, specials, nil, 0))
 	want := "season:Season 1 | specials:OVAs[ova1 ova2] | season:Season 2 | specials:New OVA[new] | season:Season 3 | specials:BorN OVA[born] | specials:Hero Episode 0[hero0] | season:Season 4 | specials:Specials[unknown short1 short2 nodate harem]"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
@@ -65,15 +66,15 @@ func TestSectionsInReleaseOrder(t *testing.T) {
 func TestSectionsFilmsAndEdges(t *testing.T) {
 	const min = 60 * 1000
 	year := 2020
-	film := func(id, title, date string) movieIn {
+	film := func(id, title, date string) seasonlist.Movie {
 		it := model.Item{ID: id, Title: title, Type: model.TypeMovie}
 		if date == "" {
 			it.Year = &year
 		}
-		return movieIn{Item: it, Date: date}
+		return seasonlist.Movie{Item: it, Date: date}
 	}
-	seasons := []seasonIn{{ID: "s1", Index: 1, Start: "2016-01-14", Count: 10}, {ID: "s2", Index: 2, Start: "2017-01-12", Count: 10}, {ID: "s3", Index: 3, Start: "2024-04-10", Count: 11}}
-	specials := []specialIn{
+	seasons := []seasonlist.Season{{ID: "s1", Index: 1, Start: "2016-01-14", Count: 10}, {ID: "s2", Index: 2, Start: "2017-01-12", Count: 10}, {ID: "s3", Index: 3, Start: "2024-04-10", Count: 11}}
+	specials := []seasonlist.Special{
 		{ID: "pro", Title: "Prologue", Date: "2015-12-01", RuntimeMs: 25 * min},
 		{ID: "choker", Title: "God's Blessing on This Wonderful Choker!", Date: "2016-06-24", RuntimeMs: 24 * min},
 		{ID: "art", Title: "God's Blessing on These Wonderful Works of Art!", Date: "2017-07-24", RuntimeMs: 24 * min},
@@ -81,13 +82,13 @@ func TestSectionsFilmsAndEdges(t *testing.T) {
 		{ID: "imp", Title: "Watch Out for Impostors!", Date: "2025-04-25", RuntimeMs: 24 * min},
 		{ID: "late", Title: "Another One", Date: "2020-01-01", RuntimeMs: 24 * min},
 	}
-	movies := []movieIn{film("m1", "Legend of Crimson", "2019-08-30"), film("m2", "Undated Film", "")}
-	got := describe(buildSections(seasons, specials, movies, 24*min))
+	movies := []seasonlist.Movie{film("m1", "Legend of Crimson", "2019-08-30"), film("m2", "Undated Film", "")}
+	got := describe(seasonlist.Build(seasons, specials, movies, 24*min))
 	want := "specials:Prologue[pro] | season:Season 1 | specials:God's Blessing on This Wonderful Choker![choker] | season:Season 2 | specials:God's Blessing on These Wonderful Works of Art![art] | movie:Legend of Crimson | specials:Another One[late] | season:Season 3 | specials:OVAs[red imp] | movie:Undated Film"
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
-	if got := describe(buildSections(seasons, nil, nil, 0)); got != "season:Season 1 | season:Season 2 | season:Season 3" {
+	if got := describe(seasonlist.Build(seasons, nil, nil, 0)); got != "season:Season 1 | season:Season 2 | season:Season 3" {
 		t.Fatalf("seasons only: %s", got)
 	}
 }
@@ -169,7 +170,7 @@ func TestSeriesSectionsEndpoint(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	var out struct{ Sections []section }
+	var out struct{ Sections []seasonlist.Section }
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -196,12 +197,12 @@ func ptr(s string) *string { return &s }
 // long recap is not story; nothing undated or missing is placed between seasons.
 func TestSpecialPlacementByLength(t *testing.T) {
 	const min, sec = 60 * 1000, 1000
-	seasons := []seasonIn{{ID: "s1", Index: 1, Start: "2020-01-01", Count: 12}, {ID: "s2", Index: 2, Start: "2022-01-01", Count: 12}}
-	sp := func(id, title string, runtime int64) specialIn {
-		return specialIn{ID: id, Title: title, Date: "2021-01-01", RuntimeMs: runtime}
+	seasons := []seasonlist.Season{{ID: "s1", Index: 1, Start: "2020-01-01", Count: 12}, {ID: "s2", Index: 2, Start: "2022-01-01", Count: 12}}
+	sp := func(id, title string, runtime int64) seasonlist.Special {
+		return seasonlist.Special{ID: id, Title: title, Date: "2021-01-01", RuntimeMs: runtime}
 	}
 	cases := []struct {
-		sp      specialIn
+		sp      seasonlist.Special
 		between bool
 	}{
 		{sp("at15", "Beach Day", 15*min), true},
@@ -212,11 +213,11 @@ func TestSpecialPlacementByLength(t *testing.T) {
 		{sp("recap", "Recap Special", 24*min), false},
 		{sp("digest", "Season 1 Digest", 46*min), false},
 		{sp("recapOVA", "OVA Recap", 24*min), true}, // named an OVA: the name wins
-		{specialIn{ID: "undated", Title: "Beach Day", RuntimeMs: 24 * min}, false},
-		{specialIn{ID: "missing", Title: "Beach Day", Date: "2021-01-01", RuntimeMs: 24 * min, Virtual: true}, false},
+		{seasonlist.Special{ID: "undated", Title: "Beach Day", RuntimeMs: 24 * min}, false},
+		{seasonlist.Special{ID: "missing", Title: "Beach Day", Date: "2021-01-01", RuntimeMs: 24 * min, Virtual: true}, false},
 	}
 	for _, c := range cases {
-		out := buildSections(append([]seasonIn(nil), seasons...), []specialIn{c.sp}, nil, 0)
+		out := seasonlist.Build(append([]seasonlist.Season(nil), seasons...), []seasonlist.Special{c.sp}, nil, 0)
 		between := len(out) == 3 && out[1].Kind == "specials" && out[2].Kind == "season"
 		bottom := len(out) == 3 && out[2].Kind == "specials" && out[2].Title == "Specials"
 		if between != c.between || (!c.between && !bottom) {
@@ -288,7 +289,7 @@ func TestFilmLengthSpecials(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	var out struct{ Sections []section }
+	var out struct{ Sections []seasonlist.Section }
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +321,7 @@ func TestLengthsAgainstTheShow(t *testing.T) {
 		{"2.5 times but under an hour", 55 * min, 22 * min, false},
 		{"episode length unknown", 120 * min, 0, false},
 	} {
-		if got := isFilm(c.runtime, c.typical); got != c.film {
+		if got := seasonlist.IsFilm(c.runtime, c.typical); got != c.film {
 			t.Errorf("%s: film %v, want %v", c.name, got, c.film)
 		}
 	}
@@ -340,9 +341,9 @@ func TestLengthsAgainstTheShow(t *testing.T) {
 		{"unknown show length, 10 minutes", 10 * min, 0, false}, // the fallback is 15, not the 5 floor
 		{"unknown special length", 0, 24 * min, false},
 	} {
-		sp := specialIn{ID: "x", Title: "Something", RuntimeMs: c.runtime}
-		if got := sp.isEpisode(episodeLength(c.typical)); got != c.episode {
-			t.Errorf("%s: episode %v, want %v (threshold %d min)", c.name, got, c.episode, episodeLength(c.typical)/min)
+		sp := seasonlist.Special{ID: "x", Title: "Something", RuntimeMs: c.runtime}
+		if got := sp.IsEpisode(seasonlist.EpisodeLength(c.typical)); got != c.episode {
+			t.Errorf("%s: episode %v, want %v (threshold %d min)", c.name, got, c.episode, seasonlist.EpisodeLength(c.typical)/min)
 		}
 	}
 	idx := func(id string) *string { return &id }
@@ -353,10 +354,10 @@ func TestLengthsAgainstTheShow(t *testing.T) {
 		{ParentID: idx("s1"), RuntimeMs: rt(200 * min), IsVirtual: true}, // a placeholder: not counted
 		{ParentID: idx("s1")}, // no length: not counted
 	}
-	if got := typicalRuntime(eps, map[string]bool{"s1": true}); got != 24*min {
+	if got := seasonlist.TypicalRuntime(eps, map[string]bool{"s1": true}); got != 24*min {
 		t.Errorf("typical %d min, want the median of 23, 24, 48 = 24", got/min)
 	}
-	if got := typicalRuntime(nil, nil); got != 0 {
+	if got := seasonlist.TypicalRuntime(nil, nil); got != 0 {
 		t.Errorf("typical with no episodes: %d, want 0", got)
 	}
 }

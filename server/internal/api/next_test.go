@@ -42,7 +42,7 @@ func TestNextToPlayRule(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := ""
-		if n := nextToPlay(c.eps); n != nil {
+		if n := nextToPlay(c.eps, nil); n != nil {
 			got = n.ID
 		}
 		if got != c.want {

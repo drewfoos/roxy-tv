@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/seasonlist"
 )
 
 // GET /v1/items/{id}/next -> {"item": Episode | null}: the episode a show's Play means for
@@ -39,15 +40,26 @@ func (s *Server) itemNext(w http.ResponseWriter, r *http.Request) {
 	}
 	fillAvailability(eps)
 	s.attachUserData(ctx, eps)
-	writeJSON(w, 200, map[string]any{"item": nextToPlay(eps)})
+	// The order of watching (the season list's). Not read: the seasons' numbers alone.
+	keys, err := s.store.WatchKeys(ctx, it.ID)
+	if err != nil {
+		keys = nil
+	}
+	writeJSON(w, 200, map[string]any{"item": nextToPlay(eps, keys)})
 }
 
 // nextToPlay is the episode a show's Play means: one in progress (the latest in order,
 // rewatches included), else the first unwatched one after the last watched, else the
-// first unwatched, else the first (watch again). Specials only when the show has nothing
-// else; what cannot play (missing, unaired) never. The web's nextToPlay and the apps'
-// upNextOf follow the same rule (and the same cases in their tests).
-func nextToPlay(eps []model.Item) *model.Item {
+// first unwatched, else the first (watch again). What cannot play (missing, unaired)
+// never.
+//
+// "In order" is the order of watching, keys (the season list read from the top:
+// seasonlist.Keys): after a season's last episode come the OVAs that came out before the
+// next one, then that season. The extras at the list's foot count only when the show
+// has nothing else. Without keys it is the seasons' numbers, specials only when there is
+// nothing else: the rule the web's nextToPlay and the apps' upNextOf keep for when the
+// server cannot be asked (the same cases in their tests).
+func nextToPlay(eps []model.Item, keys map[string]seasonlist.Key) *model.Item {
 	playable := []model.Item{}
 	for _, e := range eps {
 		if e.HasMedia && e.Availability != "missing" && e.Availability != "unaired" {
@@ -69,9 +81,22 @@ func nextToPlay(eps []model.Item) *model.Item {
 		}
 		return 0
 	}
+	// An episode's place: the season list's when it is known for every one of them.
+	placed := keys != nil
+	for _, e := range playable {
+		if _, ok := keys[e.ID]; !ok {
+			placed = false
+		}
+	}
+	extra := func(e model.Item) bool {
+		if placed {
+			return keys[e.ID].Extra
+		}
+		return season(e) == 0
+	}
 	ordered := []model.Item{}
 	for _, e := range playable {
-		if season(e) != 0 {
+		if !extra(e) {
 			ordered = append(ordered, e)
 		}
 	}
@@ -79,6 +104,9 @@ func nextToPlay(eps []model.Item) *model.Item {
 		ordered = playable
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
+		if placed {
+			return keys[ordered[i].ID].Order < keys[ordered[j].ID].Order
+		}
 		if season(ordered[i]) != season(ordered[j]) {
 			return season(ordered[i]) < season(ordered[j])
 		}

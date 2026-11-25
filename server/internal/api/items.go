@@ -106,6 +106,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.fillSeriesRefs(r.Context(), items)
+	s.fillWatchOrder(r.Context(), items)
 	fillAvailability(items)
 	s.attachUserData(r.Context(), items)
 	s.fillAudioLanguages(r.Context(), items)
@@ -182,10 +183,48 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 	one := []model.Item{*it}
 	s.fillSeriesRefs(r.Context(), one)
+	s.fillWatchOrder(r.Context(), one)
 	fillAvailability(one)
 	s.attachUserData(r.Context(), one)
 	s.fillAudioLanguages(r.Context(), one)
 	writeJSON(w, 200, one[0])
+}
+
+// watchOrderSeries: a list with episodes of more shows than this is not one show's
+// episodes (a search, a row of recent ones), and nobody sorts it into a show's order.
+const watchOrderSeries = 4
+
+// fillWatchOrder gives the episodes of a list their place in the order their show is
+// watched in (model.Item.WatchOrder), after fillSeriesRefs. A player sorts a show's
+// episodes by it to know what comes next: the season list read from the top, where the
+// OVAs that came out between two seasons sit between them. One read per show.
+func (s *Server) fillWatchOrder(ctx context.Context, items []model.Item) {
+	var series []string
+	seen := map[string]bool{}
+	for i := range items {
+		if id := items[i].SeriesID; items[i].Type == model.TypeEpisode && id != "" && !seen[id] {
+			seen[id] = true
+			series = append(series, id)
+		}
+	}
+	if len(series) == 0 || len(series) > watchOrderSeries {
+		return
+	}
+	for _, id := range series {
+		keys, err := s.store.WatchKeys(ctx, id)
+		if err != nil {
+			continue
+		}
+		for i := range items {
+			if items[i].Type != model.TypeEpisode || items[i].SeriesID != id {
+				continue
+			}
+			if k, ok := keys[items[i].ID]; ok {
+				order := k.Order
+				items[i].WatchOrder = &order
+			}
+		}
+	}
 }
 
 // GET /v1/items/{id}/extras -> {items}: a film's or show's trailers, featurettes and the

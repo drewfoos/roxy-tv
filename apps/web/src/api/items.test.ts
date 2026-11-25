@@ -16,6 +16,18 @@ describe('episodes', () => {
   it('sorts by season, specials last', () => {
     expect(sortEpisodes([ep(0, 1), ep(2, 1), ep(1, 2), ep(1, 1)]).map((e) => e.id)).toEqual(['s1e1', 's1e2', 's2e1', 's0e1'])
   })
+  // The server places each episode in the order of watching (the season list read from
+  // the top): an OVA that came out between two seasons plays between them. Before, the
+  // next episode after a season's last was the next season's first, past the OVA.
+  it('sorts by the place the server gives each episode, when it gives every one its place', () => {
+    const placed = (season: number, n: number, place: number | null) => ({ ...ep(season, n), watchOrder: place })
+    const show = [placed(0, 2, 900), placed(2, 1, 400), placed(0, 9, 320), placed(1, 12, 212), placed(0, 8, 310)]
+    expect(sortEpisodes(show).map((e) => e.id)).toEqual(['s1e12', 's0e8', 's0e9', 's2e1', 's0e2'])
+    // One without a place (an older server's answer mixed in): the seasons' numbers, for all.
+    const mixed = show.map((e) => (e.id === 's2e1' ? { ...e, watchOrder: null } : e))
+    expect(sortEpisodes(mixed).map((e) => e.id)).toEqual(['s1e12', 's2e1', 's0e2', 's0e8', 's0e9'])
+    expect(sortEpisodes([])).toEqual([])
+  })
 })
 
 describe('nextToPlay', () => {

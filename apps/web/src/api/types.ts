@@ -125,6 +125,12 @@ export interface Item {
   extraType?: string
   seasonAired?: number | null
   indexAbsolute?: number | null
+  /**
+   * An episode's place in the order its series is watched in: the season list read from
+   * the top, so the OVAs that came out between two seasons sit between them. Given by the
+   * server; sortEpisodes orders a show's episodes by it.
+   */
+  watchOrder?: number | null
   runtimeMs?: number | null
   dateCreated?: string | null
   isVirtual?: boolean

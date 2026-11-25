@@ -85,9 +85,27 @@ it; the player plays with its own engine (the TV app: libmpv + libass). In memor
 `include=sources` (attach `mediaSources` to each item).
 
 Item: `{id, guid, libraryId, type, parentId?, title, sortTitle?, year?, overview?,
-indexAired?, seasonAired?, indexAbsolute?, runtimeMs?, providerIds?, dateCreated,
+indexAired?, seasonAired?, indexAbsolute?, watchOrder?, runtimeMs?, providerIds?, dateCreated,
 dateModified, seriesId? + seriesTitle? (episodes, list views), mediaSources?}` plus the
 metadata, `images` and `userData` fields described below.
+
+**The order a series is watched in.** An episode carries `watchOrder` (a number) when it
+is asked for by itself or in a list of one show's episodes (a season's, or the whole
+show's): its place in the order of watching, which is the season list
+(`/v1/items/{id}/sections`) read from the top. Season 1's episodes, the OVAs that came out
+before season 2, season 2, and so on; the specials at the list's foot (shorts, recaps,
+undated ones, ones the library has no file of) after everything. A special whose `.nfo`
+places it (before an episode, before or after a season) is exactly there. **A player's
+"next episode" is the next playable episode by `watchOrder`**, not by season and number:
+sort the show's episodes by it. The number says where an episode belongs, not how many
+come before it, so it stays the same when episodes are added and may be kept (with a
+download) and compared with numbers read later. Where any episode of a list has none (an
+older server), sort by season with season 0 last, then by number.
+
+The server's own answers follow the same order: Continue Watching offers, after a
+finished episode, the next one in it (never one of the specials at the foot), and
+`/v1/items/{series}/next` (what a show's Play means) goes on in it after the last
+episode watched.
 
 MediaSource: `{id, itemId, name?, container?, size, durationMs, bitrate?, versionLabel?,
 isPrimary, parts[], streams[], attachments[]}`. Streams carry `type` (`video|audio|subtitle`),

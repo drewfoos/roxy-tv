@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/roxy-media/roxy/server/internal/model"
+	"github.com/roxy-media/roxy/server/internal/seasonlist"
 )
 
 // ContinueItems is Home's Continue Watching: one entry per show, most recent first.
@@ -93,7 +94,7 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 		if at, ok := seriesAt[f.series]; ok && at >= f.at {
 			continue // a half-watched episode of this show is more recent
 		}
-		it, err := s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, f.season, f.epNum, true)
+		it, err := s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, true)
 		if err != nil || it == nil {
 			// Nothing unwatched after it. On a rewatch (every episode already watched)
 			// the next one in order still comes up; otherwise this was the last there is.
@@ -104,7 +105,7 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 				continue
 			}
 			if all, err2 := s.allEpisodesPlayed(ctx, scopeID, f.series); err2 == nil && all {
-				it, err = s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, f.season, f.epNum, false)
+				it, err = s.nextEpisodeAfter(ctx, scopeID, f.series, f.item, false)
 			}
 			if err != nil || it == nil {
 				continue
@@ -150,94 +151,98 @@ func (s *Store) ContinueItems(ctx context.Context, scopeID string, limit int) ([
 	return out, nil
 }
 
-// storyKey orders a series' episodes as they are meant to be watched: regular episodes by
-// season and number, and a special with a place in story order (airs before an episode,
-// before a season, or after a season) at that place. A special without one has no place
-// (ok false): next-up skips it, as it always has.
-func storyKey(season, ep, special int, beforeSeason, beforeEp, afterSeason *int) (key [3]int, ok bool) {
-	switch {
-	case season > 0:
-		return [3]int{season, ep * 2, 0}, true
-	case beforeSeason != nil && *beforeSeason > 0:
-		e := 1
-		if beforeEp != nil && *beforeEp > 0 {
-			e = *beforeEp
-		}
-		return [3]int{*beforeSeason, e*2 - 1, special}, true
-	case afterSeason != nil && *afterSeason > 0:
-		return [3]int{*afterSeason, 1 << 30, special}, true
-	}
-	return key, false
-}
-
-func keyLess(a, b [3]int) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
-}
-
 // seriesEpisodes joins a series' seasons (se) to their episodes (i), both found by
 // parent. Left to SQLite, "the next episode" read every episode in the library for each
 // show on Continue Watching (it starts from the type index), one such read per show.
 const seriesEpisodes = `items se INDEXED BY items_parent JOIN items i INDEXED BY items_parent ON i.parent_id = se.id`
 
-// nextEpisodeAfter is the first real episode of a series after the one just finished
-// (afterID, at season/ep), in story order (storyKey: specials placed by their .nfo come in
-// between); with unplayedOnly, the first the profile has not watched.
-func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID, afterID string, season, ep int, unplayedOnly bool) (*model.Item, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT i.id, COALESCE(se.index_aired, 0), COALESCE(i.index_aired, 0),
+// watchEpisode is one episode of a series as the order of watching needs it.
+type watchEpisode struct {
+	seasonlist.Episode
+	played bool
+}
+
+// watchEpisodes reads every episode of a series (placeholders included: a season starts
+// when its first episode came out, held or not), with whether the profile watched it
+// ("" for nobody's).
+func (s *Store) watchEpisodes(ctx context.Context, scopeID, seriesID string) ([]watchEpisode, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id, se.id, se.index_aired, COALESCE(i.index_aired, i.index_absolute, 0),
+		COALESCE(i.title, ''), COALESCE(i.premiere_date, ''), COALESCE(i.runtime_ms, 0), i.is_virtual,
 		i.airs_before_season, i.airs_before_episode, i.airs_after_season, COALESCE(u.played, 0)
 		FROM `+seriesEpisodes+`
 		LEFT JOIN user_item_data u ON u.item_guid = i.guid AND u.scope_id = ?
-		WHERE se.parent_id = ? AND i.type = 'episode' AND i.is_virtual = 0`, scopeID, seriesID)
+		WHERE se.parent_id = ? AND i.type = 'episode'`, scopeID, seriesID)
 	if err != nil {
 		return nil, err
 	}
-	type cand struct {
-		id     string
-		key    [3]int
-		played bool
-	}
-	var cands []cand
-	// A special with no place in story order keeps (0, n): everything placed comes after it.
-	after := [3]int{season, ep * 2, 0}
+	defer rows.Close()
+	var out []watchEpisode
 	for rows.Next() {
-		var id string
-		var sn, en, played int
-		var bs, be, as sql.NullInt64
-		if err := rows.Scan(&id, &sn, &en, &bs, &be, &as, &played); err != nil {
-			rows.Close()
+		var e watchEpisode
+		var season, bs, be, as sql.NullInt64
+		var virtual, played int
+		if err := rows.Scan(&e.ID, &e.SeasonID, &season, &e.Number, &e.Title, &e.Date, &e.RuntimeMs, &virtual, &bs, &be, &as, &played); err != nil {
 			return nil, err
 		}
-		k, ok := storyKey(sn, en, en, ptrInt(bs), ptrInt(be), ptrInt(as))
-		if id == afterID && ok {
-			after = k
+		e.Season = seasonlist.Unnumbered
+		if season.Valid {
+			e.Season = int(season.Int64)
 		}
-		if ok {
-			cands = append(cands, cand{id, k, played == 1})
-		}
+		e.Virtual, e.played = virtual == 1, played == 1
+		e.BeforeSeason, e.BeforeEpisode, e.AfterSeason = ptrInt(bs), ptrInt(be), ptrInt(as)
+		out = append(out, e)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	return out, rows.Err()
+}
+
+func watchKeys(eps []watchEpisode) map[string]seasonlist.Key {
+	plain := make([]seasonlist.Episode, len(eps))
+	for i := range eps {
+		plain[i] = eps[i].Episode
+	}
+	return seasonlist.Keys(plain)
+}
+
+// WatchKeys gives every episode of a series its place in the order the series is
+// watched in: the season list read from the top (seasonlist.Keys).
+func (s *Store) WatchKeys(ctx context.Context, seriesID string) (map[string]seasonlist.Key, error) {
+	eps, err := s.watchEpisodes(ctx, "", seriesID)
+	if err != nil {
 		return nil, err
 	}
-	var best *cand
-	for i := range cands {
-		c := &cands[i]
-		if c.id == afterID || !keyLess(after, c.key) || (unplayedOnly && c.played) {
+	return watchKeys(eps), nil
+}
+
+// nextEpisodeAfter is the first real episode of a series after the one just finished
+// (afterID) in the order of watching: the season list read from the top, so the OVAs
+// that came out between two seasons come between them (seasonlist.Keys; it went by the
+// seasons' numbers before, and after a season's last episode came the next season's
+// first). With unplayedOnly, the first the profile has not watched. The extras at the
+// list's foot never come up; after one of them, what is next is counted from the top.
+func (s *Store) nextEpisodeAfter(ctx context.Context, scopeID, seriesID, afterID string, unplayedOnly bool) (*model.Item, error) {
+	eps, err := s.watchEpisodes(ctx, scopeID, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	keys := watchKeys(eps)
+	after := int64(-1)
+	if k, ok := keys[afterID]; ok && !k.Extra {
+		after = k.Order
+	}
+	best, bestAt := "", int64(0)
+	for _, e := range eps {
+		k := keys[e.ID]
+		if e.ID == afterID || e.Virtual || k.Extra || k.Order <= after || (unplayedOnly && e.played) {
 			continue
 		}
-		if best == nil || keyLess(c.key, best.key) {
-			best = c
+		if best == "" || k.Order < bestAt || (k.Order == bestAt && e.ID < best) {
+			best, bestAt = e.ID, k.Order
 		}
 	}
-	if best == nil {
+	if best == "" {
 		return nil, nil
 	}
-	return s.GetItem(ctx, best.id)
+	return s.GetItem(ctx, best)
 }
 
 // allEpisodesPlayed reports whether the profile has watched every real regular episode

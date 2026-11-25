@@ -51,6 +51,10 @@ type Item struct {
 	AirsBeforeSeason  *int `json:"airsBeforeSeason,omitempty"`
 	AirsBeforeEpisode *int `json:"airsBeforeEpisode,omitempty"`
 	AirsAfterSeason   *int `json:"airsAfterSeason,omitempty"`
+	// WatchOrder: an episode's place in the order its series is watched in (the season
+	// list read from the top: seasonlist.Keys), to sort a show's episodes by. Filled by
+	// the API on episodes it lists or returns; a player's "next episode" follows it.
+	WatchOrder *int64 `json:"watchOrder,omitempty"`
 	// ExtraType, for an extra: trailer, featurette, behindthescenes, deleted, interview,
 	// scene, short, clip, theme or extra.
 	ExtraType    string            `json:"extraType,omitempty"`
