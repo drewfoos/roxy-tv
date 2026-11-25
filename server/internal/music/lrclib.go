@@ -80,7 +80,16 @@ var (
 	// "(2012 Remaster)", "[Live]", "(feat. Somebody)", " - Remastered 2011".
 	reTitleNote = regexp.MustCompile(`(?i)\s*[\(\[][^\)\]]*\b(remaster(ed)?|version|mix|edit|mono|stereo|deluxe|bonus|feat\.?|ft\.?|featuring|with|live|single|explicit|clean|anniversary|edition|demo|acoustic|instrumental)\b[^\)\]]*[\)\]]`)
 	reTitleTail = regexp.MustCompile(`(?i)\s+-\s+[^-]*\b(remaster(ed)?|version|mix|edit|mono|stereo|live|single|demo)\b[^-]*$`)
+	// A name that says the song is the one without words.
+	reWordless = regexp.MustCompile(`(?i)\b(instrumental|karaoke|off[ -]?vocal|backing track)\b|\binst\.`)
 )
+
+// saysWordless is whether a song's name says it has no words. Such a song is asked about
+// under its own name only: its plain name is the sung version's, and that one's lyrics
+// would be put on it.
+func saysWordless(title string) bool {
+	return reWordless.MatchString(title)
+}
 
 // plainTitle is a song's name without what a release added to it.
 func plainTitle(title string) string {
@@ -123,8 +132,10 @@ func (f *LyricsFinder) get(ctx context.Context, path string, q url.Values, out a
 }
 
 // Find looks a song up: first as the library names it (name, artist, album and length
-// together), then by name and artist alone, taking of what comes back the song of the
-// same name and the same length, a timed one before a plain one. The text is LRC when
+// together), then by its plain name and artist, taking of what comes back the song of
+// the same name and the same length, a timed one before a plain one (never one marked
+// as having no words). A song whose own name says it has no words is asked about under
+// that name only. The text is LRC when
 // the lyrics are timed. found is false when the service has nothing for the song (or
 // knows it as an instrumental); err means it could not be asked.
 func (f *LyricsFinder) Find(ctx context.Context, q LyricsQuery) (text string, found bool, err error) {
@@ -145,9 +156,12 @@ func (f *LyricsFinder) Find(ctx context.Context, q LyricsQuery) (text string, fo
 		if t := one.text(); !one.Instrumental && LyricsKind(t, "online") != "" {
 			return t, true, nil
 		}
-		if one.Instrumental {
-			return "", false, nil
-		}
+		// An entry with no words, or marked as having none: not the last word. Whoever
+		// filed a song under its full release name ("Song (feat. Somebody)") sometimes
+		// left it so, while the same recording under its plain name has its lyrics.
+	}
+	if saysWordless(q.Title) {
+		return "", false, nil
 	}
 	title := plainTitle(q.Title)
 	var many []lrclibSong
@@ -157,7 +171,7 @@ func (f *LyricsFinder) Find(ctx context.Context, q LyricsQuery) (text string, fo
 	want := Fold(title)
 	best, bestScore := -1, 0.0
 	for i, s := range many {
-		if s.Instrumental || Fold(plainTitle(s.TrackName)) != want || LyricsKind(s.text(), "online") == "" {
+		if s.Instrumental || saysWordless(s.TrackName) || Fold(plainTitle(s.TrackName)) != want || LyricsKind(s.text(), "online") == "" {
 			continue
 		}
 		// The same recording is the same length, give or take the silence at its ends;

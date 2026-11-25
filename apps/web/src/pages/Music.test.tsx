@@ -512,6 +512,38 @@ describe("a song's own address", () => {
     expect(opened).toBe(0)
   })
 
+  it('adds nothing when the address is come back to by Back with another song playing', async () => {
+    await act(async () => player.playTracks([song('a'), song('b')], 0, { shuffle: false }))
+    const Back = () => {
+      const nav = useNavigate()
+      const went = useRef(false)
+      useEffect(() => {
+        if (went.current) return
+        went.current = true
+        nav(-1)
+      }, [nav])
+      return null
+    }
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={['/music/song/x', '/music']} initialIndex={1}>
+          <Where />
+          <Routes>
+            <Route path="/music" element={<Music />} />
+            <Route path="/music/song/:id" element={<MusicSongPage />} />
+          </Routes>
+          <Back />
+        </MemoryRouter>,
+      ),
+    )
+    await settle()
+    expect(player.get().queue.tracks.map((t) => t.id)).toEqual(['a', 'b'])
+    expect(currentTrack()!.id).toBe('a')
+    expect(player.get().playing).toBe(true)
+    expect(where).toBe('/music')
+    expect(opened).toBe(0)
+  })
+
   it('opens "now playing" for the song that is playing already', async () => {
     await act(async () => player.playTracks([song('a'), song('x')], 1, { shuffle: false }))
     await open('/music/song/x')

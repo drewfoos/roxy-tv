@@ -43,7 +43,11 @@ signed-in user; plays, favourites and playlists belong to the profile named by
   of their own are looked up at lrclib.net after a scan, one every 0.7 s: first by name,
   artist, album and length, then by the song's plain name (without "(2012 Remaster)" and
   the like), taking the entry of the same name and length (within 3 s), a timed one
-  before a plain one. What is found is kept with the song; a song nothing was found for
+  before a plain one. An entry marked as having no words does not end the look (the
+  mark is sometimes wrong for a song filed under its full release name, and the same
+  recording under its plain name has its lyrics); a song whose own name says it has
+  none ("Instrumental", "Karaoke", "Off Vocal") is asked about under that name only,
+  so that the sung version's lyrics are never put on it. What is found is kept with the song; a song nothing was found for
   is asked about again after 30 days; four failed questions in a row end the pass until
   the next scan. The question names the song to a service outside the house, which is
   why it is the owner's to turn on. A song's own lyrics are always the ones shown.

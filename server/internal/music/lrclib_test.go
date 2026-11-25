@@ -223,6 +223,66 @@ func TestFindLyricsOnline(t *testing.T) {
 	}
 }
 
+// A song's entry under its full release name is sometimes marked as having no words by
+// whoever filed it, while the same recording under its plain name has them. The mark
+// alone does not end the look; a name that itself says the song has no words does.
+func TestAWordlessMarkIsNotTheLastWord(t *testing.T) {
+	ctx := context.Background()
+	svc := newLyricsService(t)
+	f := svc.finder()
+	sung := func(string) (int, any) {
+		return 200, []map[string]any{
+			// Filed with words by mistake, under the name of the version without: not taken for the song.
+			{"trackName": "Airplanes (Instrumental)", "duration": 180, "syncedLyrics": "[00:01.00]not this one"},
+			{"trackName": "Airplanes", "duration": 180.48, "syncedLyrics": "[00:09.00]Can we pretend that airplanes"},
+			{"trackName": "Airplanes", "duration": 180, "instrumental": true},
+		}
+	}
+
+	q := LyricsQuery{Title: "Airplanes (feat. Somebody of Some Band)", Artist: "B.o.B", Album: "An Album", DurationSec: 180}
+	svc.get = func(string) (int, any) {
+		return 200, map[string]any{"trackName": q.Title, "duration": 181, "instrumental": true}
+	}
+	svc.find = sung
+	text, ok, err := f.Find(ctx, q)
+	if err != nil || !ok || text != "[00:09.00]Can we pretend that airplanes" {
+		t.Fatalf("marked wordless under its release name, sung under its plain one: %q %v %v", text, ok, err)
+	}
+	if got := svc.questions(); len(got) != 2 || got[1] != "search Airplanes|B.o.B" {
+		t.Fatalf("asked: %v", got)
+	}
+
+	// An entry that carries no words at all (and no mark) is no answer either.
+	svc.asked = nil
+	svc.get = func(string) (int, any) { return 200, map[string]any{"trackName": q.Title, "duration": 181} }
+	if text, ok, err := f.Find(ctx, q); err != nil || !ok || text == "" {
+		t.Fatalf("an empty entry under the release name: %q %v %v", text, ok, err)
+	}
+
+	// A song named as the one without words is never given the sung version's lyrics,
+	// which is what its plain name would find: only its own entry is asked for.
+	for _, title := range []string{"Airplanes (Instrumental)", "Airplanes - Instrumental", "Airplanes (Off Vocal)", "Airplanes [Karaoke Version]", "Airplanes (Inst.)"} {
+		svc.asked = nil
+		svc.get = func(string) (int, any) { return 404, nil }
+		svc.find = sung
+		if text, ok, err := f.Find(ctx, LyricsQuery{Title: title, Artist: "B.o.B", DurationSec: 180}); err != nil || ok || text != "" {
+			t.Errorf("%q was given lyrics: %q %v %v", title, text, ok, err)
+		}
+		if got := svc.questions(); len(got) != 1 || !strings.HasPrefix(got[0], "get ") {
+			t.Errorf("%q: asked %v", title, got)
+		}
+	}
+	// A word that only looks like it is not that: "Instant Crush" is sung.
+	svc.asked = nil
+	svc.get = func(string) (int, any) { return 404, nil }
+	svc.find = func(string) (int, any) {
+		return 200, []map[string]any{{"trackName": "Instant Crush", "duration": 337, "plainLyrics": "I didn't want to be the one to forget"}}
+	}
+	if _, ok, err := f.Find(ctx, LyricsQuery{Title: "Instant Crush (feat. Somebody)", Artist: "Daft Punk", DurationSec: 337}); err != nil || !ok {
+		t.Errorf("a sung song with \"Inst\" in its name: %v %v", ok, err)
+	}
+}
+
 func TestPlainTitle(t *testing.T) {
 	for in, want := range map[string]string{
 		"Smooth Criminal (2012 Remaster)":          "Smooth Criminal",

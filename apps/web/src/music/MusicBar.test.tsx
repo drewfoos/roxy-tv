@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MusicTrack } from '../api/music'
 import { session } from '../api/session'
@@ -10,12 +10,25 @@ import { FakeAudio } from './fakeAudio'
 import { musicPrefs } from './prefs'
 import { LEAVE_MS, MusicBar, nowPlayingLine } from './MusicBar'
 import { SLIDE_MS } from './Reorder'
+import { openNowPlaying } from './links'
 import { MusicBarHost } from './MusicBarHost'
 import { AlbumTile, TrackList } from './Parts'
 import { toast } from './toast'
 import { currentTrack, player, resetPlayerForTests } from './player'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// The Milkdrop pictures are a part of their own (its own tests: Milkdrop.test.tsx): here
+// a stand-in says when the panel shows it, and hands it a picture's name.
+vi.mock('./Milkdrop', async () => {
+  const { createElement, useEffect } = await import('react')
+  return {
+    Milkdrop: ({ onName }: { onName?: (name: string) => void }) => {
+      useEffect(() => onName?.('A picture by somebody'), []) // eslint-disable-line react-hooks/exhaustive-deps
+      return createElement('canvas', { className: 'mviz__canvas', 'data-milkdrop': '1' })
+    },
+  }
+})
 
 const S = { token: 't', userId: 'u', userName: 'drew', isAdmin: false, profileId: 'p', profileName: 'Drew', profileHasAvatar: false, profileAvatarKey: '' }
 const song = (id: string, over: Partial<MusicTrack> = {}): MusicTrack => ({
@@ -521,7 +534,10 @@ describe('the player bar', () => {
   })
 
   it('holds the song\'s own address while "now playing" is open, follows the song, and gives the page\'s back', async () => {
-    window.history.replaceState(null, '', '/music/album/al?from=home')
+    // What the router keeps with the page in the browser's history (its place in it, by
+    // which Back is told from a new page) stays as it is: only the address changes.
+    const kept = { idx: 3, key: 'page', usr: null }
+    window.history.replaceState(kept, '', '/music/album/al?from=home')
     try {
       await act(async () => player.playTracks(list, 0, { shuffle: false }))
       await renderBar()
@@ -529,17 +545,76 @@ describe('the player bar', () => {
       await click($('.mbar__cover'))
       expect($('.mnow')).not.toBeNull()
       expect(window.location.pathname + window.location.search).toBe('/music/song/a')
+      expect(window.history.state).toEqual(kept)
       await act(async () => player.next())
       expect(window.location.pathname).toBe('/music/song/b')
+      expect(window.history.state).toEqual(kept)
       await click($('.mbar__cover'))
       expect($('.mnow')).toBeNull()
       expect(window.location.pathname + window.location.search).toBe('/music/album/al?from=home')
+      expect(window.history.state).toEqual(kept)
       // The queue drawer is not "now playing": the address stays the page's.
       await click(button('Queue'))
       expect(window.location.pathname).toBe('/music/album/al')
     } finally {
       window.history.replaceState(null, '', '/')
     }
+  })
+
+  it('shows the music home when "now playing" is closed after a song\'s link was followed', async () => {
+    // Arrived at by a song's address: there is no page under the player to give back.
+    window.history.replaceState(null, '', '/music/song/a')
+    let at = ''
+    const Where = () => {
+      at = useLocation().pathname
+      return null
+    }
+    try {
+      await act(async () => { player.playTracks(list, 0, { shuffle: false }); player.pause() })
+      await act(async () => root.render(<MemoryRouter initialEntries={['/music/song/a']}><Where /><MusicBar /></MemoryRouter>))
+      await act(async () => openNowPlaying())
+      expect($('.mnow')).not.toBeNull()
+      expect(at).toBe('/music/song/a')
+      await click($('.mbar__cover'))
+      expect($('.mnow')).toBeNull()
+      expect(at).toBe('/music')
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
+  it('is opened from outside the bar (a song\'s link): on the lyrics where the song has some, on the visualizer where it has none', async () => {
+    const shown = () => $$('.mnow__switch button').find((b) => b.getAttribute('aria-selected') === 'true')?.getAttribute('aria-label')
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    expect($('.mnow')).toBeNull()
+    await act(async () => openNowPlaying())
+    expect($('.mnow')).not.toBeNull()
+    expect(shown()).toBe('Visualizer')
+    await click($('.mbar__cover'))
+    expect($('.mnow')).toBeNull()
+    await act(async () => player.jump(2))
+    await act(async () => openNowPlaying())
+    expect(shown()).toBe('Lyrics')
+  })
+
+  it('shows the Milkdrop pictures when that style is picked, with the name of the one on show', async () => {
+    await act(async () => player.playTracks(list, 0, { shuffle: false }))
+    await renderBar()
+    await click($('.mbar button[aria-label="Visualizer"]'))
+    expect($('.mviz canvas')).not.toBeNull()
+    expect($('.mviz canvas[data-milkdrop]')).toBeNull() // not before it is asked for
+    await click($('.mviz__tools button[aria-label="Visualizer style"]'))
+    await click($$('.menu [role="menuitemradio"]').find((b) => b.textContent === 'Milkdrop')!)
+    expect(musicPrefs.get().visualizer).toBe('milkdrop')
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)) }) // its part is fetched
+    expect($('.mviz canvas[data-milkdrop]')).not.toBeNull()
+    expect($$('.mviz canvas').length).toBe(1)
+    expect($('.mviz__preset')!.textContent).toBe('A picture by somebody')
+    // Another style: the name goes with the pictures.
+    await click($$('.menu [role="menuitemradio"]').find((b) => b.textContent === 'Wave')!)
+    expect($('.mviz canvas[data-milkdrop]')).toBeNull()
+    expect($('.mviz__preset')).toBeNull()
   })
 
   it('keeps the page under "now playing" from scrolling, for as long as it is open', async () => {
@@ -571,6 +646,15 @@ describe('the player bar', () => {
     } finally {
       lyricsFrom = 'lrc'
     }
+  })
+
+  it('and says nothing of the kind over a song\'s own lyrics', async () => {
+    await act(async () => player.playTracks(list, 2, { shuffle: false }))
+    await renderBar()
+    await click(button('Lyrics'))
+    await settle()
+    expect($('.mlyrics')!.textContent).toContain('First line')
+    expect($('.mlyrics__from')).toBeNull()
   })
 
   it('says when a song would not play', async () => {
