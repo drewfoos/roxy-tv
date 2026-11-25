@@ -50,6 +50,10 @@ services:
       TZ: "America/Los_Angeles"
       ROXY_MEDIA_ROOTS: "/data/media/movies,/data/media/tv"
       # ROXY_MUSIC_ROOTS: "/data/media/music"   # music folders (or add one in Library settings)
+      # Lyrics for songs that have none of their own, looked up at lrclib.net. Off unless
+      # turned on: the look-up tells that service each such song's name, artist, album
+      # and length.
+      # ROXY_LYRICS_ONLINE: "1"
       # auto tries NVENC, Quick Sync, VAAPI, AMF, then software x264 with a 1 s test
       # encode at startup. Force one with nvenc | qsv | vaapi | amf | none.
       ROXY_HWACCEL: "auto"
