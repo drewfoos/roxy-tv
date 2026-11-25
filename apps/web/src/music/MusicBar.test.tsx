@@ -231,6 +231,8 @@ describe('the player bar', () => {
     await click(button('Queue'))
     // jsdom lays nothing out: each row is given its place, 50 px a row.
     $$('.qrow').forEach((r, i) => { r.getBoundingClientRect = () => ({ top: i * 50, bottom: i * 50 + 50, left: 0, right: 300, width: 300, height: 50, x: 0, y: i * 50, toJSON: () => ({}) }) })
+    // jsdom gives the list no box, which reads as "the pointer is at its edge": the list would scroll by itself, a frame at a time.
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0)
     const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
     const grip = button('Move Song a')!
     const where = () => $$('.qrow').map((r) => r.style.transform)
@@ -272,7 +274,9 @@ describe('the player bar', () => {
       await renderBar()
       await click(button('Queue'))
       $$('.qrow').forEach((r, i) => { r.getBoundingClientRect = () => ({ top: i * 50, bottom: i * 50 + 50, left: 0, right: 300, width: 300, height: 50, x: 0, y: i * 50, toJSON: () => ({}) }) })
-      const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
+      // jsdom gives the list no box, which reads as "the pointer is at its edge": the list would scroll by itself, a frame at a time.
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0)
+    const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
       const grip = button('Move Song a')!
       await pointer(grip, 'pointerdown', 20)
       // The carried row is where the pointer is, at once; the others slide to make room.
@@ -685,6 +689,8 @@ describe('a list of songs', () => {
     place(document.body.querySelector<HTMLElement>('.trow--head')!, 0, 36)
     const songRows = () => Array.from(document.body.querySelectorAll<HTMLElement>('.trow:not(.trow--head)'))
     songRows().forEach((r, i) => place(r, 36 + i * 50, 50))
+    // jsdom gives the list no box, which reads as "the pointer is at its edge": the list would scroll by itself, a frame at a time.
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0)
     const pointer = (el: Element, type: string, y: number) => act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 })) })
     const grip = button('Move Song a')!
     await pointer(grip, 'pointerdown', 60)
