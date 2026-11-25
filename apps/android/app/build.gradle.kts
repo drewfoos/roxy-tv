@@ -113,7 +113,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons)
     implementation(libs.androidx.tv.material)
     // Android TV's Watch Next store (the launcher's "Continue watching" row).
-    implementation("androidx.tvprovider:tvprovider:1.0.0")
+    implementation("androidx.tvprovider:tvprovider:1.1.0")
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -136,7 +136,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     // Screens drawn on the JVM (no device): ROXY_SHOTS=1 ./gradlew testDebugUnitTest --tests '*Shots*'
     // writes PNGs to app/build/shots. Skipped otherwise (CI included).
-    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("org.robolectric:robolectric:4.18.1")
     testImplementation("androidx.compose.ui:ui-test-junit4:1.12.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest:1.12.1")
 }

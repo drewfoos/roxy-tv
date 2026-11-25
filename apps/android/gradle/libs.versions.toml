@@ -2,20 +2,20 @@
 # since it is the reference app for libmpv on Android. The app talks to Roxy Server's
 # native API with OkHttp + kotlinx.serialization; no Jellyfin SDK.
 [versions]
-android-plugin = "9.4.1"
-kotlin = "2.4.20"
+android-plugin = "9.5.2"
+kotlin = "2.4.21"
 androidx-activity = "1.13.0"
 androidx-compose = "1.12.1"
 androidx-compose-material3 = "1.4.0"
 androidx-tv-material3 = "1.1.0"
 androidx-core = "1.19.1"
 androidx-lifecycle = "2.11.0"
-androidx-datastore = "1.1.7"
+androidx-datastore = "1.3.0"
 coil = "3.6.3"
 kotlinx-coroutines = "1.11.0"
-okhttp = "5.5.0"
-kotlinx-serialization = "1.11.0"
-libmpv = "1.0.0"
+okhttp = "5.5.1"
+kotlinx-serialization = "1.13.0"
+libmpv = "1.1.0"
 timber = "5.0.1"
 
 [libraries]
@@ -40,9 +40,9 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 libmpv = { group = "dev.jdtech.mpv", name = "libmpv", version.ref = "libmpv" }
 timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
-androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version = "1.5.1" }
-androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version = "1.5.1" }
-androidx-camera-view = { group = "androidx.camera", name = "camera-view", version = "1.5.1" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version = "1.7.0" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version = "1.7.0" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version = "1.7.0" }
 mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version = "17.3.0" }
 
 [plugins]
