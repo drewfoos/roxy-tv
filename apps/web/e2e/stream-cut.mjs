@@ -100,8 +100,13 @@ try {
   // too. (Killing ffmpeg at the right moment for each reopening was a race CI kept losing:
   // a remux there could be gone, or not started, when the cut came.)
   await page.route(/\/remux/, async (route) => {
-    const resp = await route.fetch()
-    const body = await resp.body()
+    // Every stream is downloaded here to its end, the ones the player has left behind too
+    // (a browser stops those; this stand-in does not). The server ends a device's oldest
+    // once it holds more than its share, and a stream ended that way is one the player
+    // no longer wants: nothing to hand on.
+    const resp = await route.fetch().catch(() => null)
+    const body = resp && (await resp.body().catch(() => null))
+    if (!resp || !body) return route.abort().catch(() => {})
     const headers = { ...resp.headers() }
     delete headers['content-length']
     await route.fulfill({ status: resp.status(), headers, body: body.subarray(0, 3_000_000) })

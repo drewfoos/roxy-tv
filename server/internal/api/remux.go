@@ -31,7 +31,7 @@ func (s *Server) remuxStream(w http.ResponseWriter, r *http.Request) {
 		tooManyConversions(w)
 		return
 	}
-	ctx, superseded, end := s.conv.begin(r.Context(), "remux", client)
+	ctx, superseded, end := s.conv.begin(r.Context(), "remux", client, clientShare(remuxSlots))
 	defer end()
 	r = r.WithContext(ctx)
 	if !takeSlot(ctx, remuxSlots, superseded) {

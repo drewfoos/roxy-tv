@@ -141,8 +141,8 @@ as-is (MP4 `mov_text` becomes SRT), so it plays like direct play at a lower bitr
   track is stereo AAC at 128 kb/s.
 - HDR sources are tone-mapped to SDR (`tonemapx`) when the build has the filter.
 - At most 4 transcodes run at once (8 remuxes); one more gets `503`.
-- One device has at most 2 of each. A third from the same device is not refused: it ends
-  that device's oldest (a seek or a change of quality asks for the next stream before
+- One device has at most half of each (2 transcodes, 4 remuxes). One more from the same
+  device is not refused: it ends that device's oldest (a seek or a change of quality asks for the next stream before
   the old one has gone), so a player never has to wait for its own leftovers, and no
   device can take every place.
 - Starts are counted per device: 30 at once, then one a second. Past that the answer is

@@ -24,10 +24,13 @@ import (
 //   - starts are counted: startBurst at once, then startPerSecond. A player that seeks
 //     about asks for a conversion per seek, which this allows; a loop does not get an
 //     ffmpeg per turn.
-//   - a client has at most perClient conversions of a kind running. A player plays one
-//     stream, and a seek or a change of quality asks for the next before the old one
-//     has gone, so a new one past the limit is not refused: it ends that client's
-//     oldest, which the player has left behind anyway.
+//   - a client has at most half the server's places of a kind (clientShare: two of the
+//     four transcodes, four of the eight remuxes). A player plays one stream, and a seek
+//     or a change of quality asks for the next before the old one has gone, so a new
+//     one past the share is not refused: it ends that client's oldest, which the player
+//     has left behind anyway. (A browser with several tabs is one client: half the
+//     places lets a few of them play at once; a share of two had a third tab's stream
+//     end the first's, whose player reopened it and ended the second's, and so on.)
 type conversions struct {
 	mu      sync.Mutex
 	running map[string][]*runningConversion // kind|client -> oldest first
@@ -39,8 +42,6 @@ type runningConversion struct {
 }
 
 const (
-	// perClientConversions: the stream being played and the one that replaces it.
-	perClientConversions = 2
 	conversionStartBurst = 30
 	conversionStartRate  = 1 // a second, after the burst
 	// supersededWait is how long a new conversion waits for a place its own client's
@@ -74,17 +75,24 @@ func (c *conversions) mayStart(client string) bool {
 	return c.starts.allow(client)
 }
 
-// begin registers a running conversion of kind for client. ctx is the conversion's own:
-// it ends when the request does, or when a later conversion of the same client and kind
-// takes its place. superseded says whether this call ended an older one (its place on
-// the server is on its way to being free). end must be called when the conversion is over.
-func (c *conversions) begin(parent context.Context, kind, client string) (ctx context.Context, superseded bool, end func()) {
+// clientShare is how many of a kind's places one client may hold: half of them, and
+// never fewer than the two a seek needs (the stream being played and its replacement).
+func clientShare(slots chan struct{}) int {
+	return max(2, cap(slots)/2)
+}
+
+// begin registers a running conversion of kind for client, which may hold share of them.
+// ctx is the conversion's own: it ends when the request does, or when a later conversion
+// of the same client and kind takes its place. superseded says whether this call ended
+// an older one (its place on the server is on its way to being free). end must be called
+// when the conversion is over.
+func (c *conversions) begin(parent context.Context, kind, client string, share int) (ctx context.Context, superseded bool, end func()) {
 	ctx, cancel := context.WithCancel(parent)
 	mine := &runningConversion{cancel: cancel}
 	key := kind + "|" + client
 	c.mu.Lock()
 	list := c.running[key]
-	for len(list) >= perClientConversions {
+	for len(list) >= share {
 		list[0].cancel()
 		list = list[1:]
 		superseded = true

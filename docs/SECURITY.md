@@ -84,8 +84,8 @@ A conversion (a transcode, a remux, a song converted for a phone) is an ffmpeg r
 most a request can cost. They have limits of their own, apart from the API's rate limit:
 
 - the server runs 4 transcodes, 8 remuxes and 2 song conversions at once;
-- one device has at most 2 transcodes and 2 remuxes: its next one ends its oldest
-  (a player has left that one behind), so no device can hold every place;
+- one device has at most half of them (2 transcodes, 4 remuxes): its next one ends its
+  oldest (a player has left that one behind), so no device can hold every place;
 - transcode and remux starts are counted per device: 30 at once, then one a second;
 - song conversions wait in a queue of 32, of which one client may hold 6; one that
   nobody waits for any more is dropped before it starts. Past the limits the answer is

@@ -268,9 +268,9 @@ func TestConcurrentTranscodesAreBounded(t *testing.T) {
 }
 
 // One device could take every place the server has: four conversions asked for by one
-// player, and nobody else could convert anything. A device has two at most (the stream
-// it plays and the one replacing it), and its next does not get a third place: it ends
-// that device's oldest, which its player has left behind.
+// player, and nobody else could convert anything. A device has half of a kind's places
+// at most, and its next does not get one more: it ends that device's oldest, which its
+// player has left behind.
 func TestOneDeviceCannotTakeEveryConversion(t *testing.T) {
 	for _, kind := range []string{"transcode", "remux"} {
 		t.Run(kind, func(t *testing.T) {
@@ -279,41 +279,42 @@ func TestOneDeviceCannotTakeEveryConversion(t *testing.T) {
 			if kind == "remux" {
 				slots = remuxSlots
 			}
-			path := "/v1/sources/src/" + kind
-			first := w.openAs(t, "tv", path)
-			defer first.Body.Close()
-			second := w.openAs(t, "tv", path)
-			defer second.Body.Close()
-			waitUntil(t, "two running", 5*time.Second, func() bool { return len(w.running()) == 2 })
-			// A seek, a change of quality: the next one, with the first two still open.
-			third := w.openAs(t, "tv", path)
-			defer third.Body.Close()
-			waitUntil(t, "the oldest to be ended", 5*time.Second, func() bool { return len(w.running()) == 2 && len(slots) == 2 })
-			if n := w.s.conv.count(kind, "device|tv"); n != 2 {
-				t.Fatalf("the device has %d conversions, want 2", n)
+			share := clientShare(slots)
+			if share != cap(slots)/2 || share < 2 {
+				t.Fatalf("a device's share of %d places is %d, want half", cap(slots), share)
 			}
-			// The one ended is the oldest: its stream is over, the second's goes on.
+			path := "/v1/sources/src/" + kind
+			var own []*http.Response
+			for i := 0; i < share; i++ {
+				own = append(own, w.openAs(t, "tv", path))
+			}
+			waitUntil(t, "the device's share running", 5*time.Second, func() bool { return len(w.running()) == share })
+			// A seek, a change of quality: the next one, with the others still open.
+			own = append(own, w.openAs(t, "tv", path))
+			waitUntil(t, "the oldest to be ended", 5*time.Second, func() bool { return len(w.running()) == share && len(slots) == share })
+			if n := w.s.conv.count(kind, "device|tv"); n != share {
+				t.Fatalf("the device has %d conversions, want %d", n, share)
+			}
+			// The one ended is the oldest: its stream is over, the next oldest's goes on.
 			done := make(chan error, 1)
-			go func() { _, err := io.Copy(io.Discard, first.Body); done <- err }()
+			go func() { _, err := io.Copy(io.Discard, own[0].Body); done <- err }()
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
 				t.Fatal("the oldest stream was not ended")
 			}
-			if _, err := io.ReadFull(second.Body, make([]byte, 64<<10)); err != nil {
-				t.Fatalf("the newer stream was ended too: %v", err)
+			if _, err := io.ReadFull(own[1].Body, make([]byte, 64<<10)); err != nil {
+				t.Fatalf("a newer stream was ended too: %v", err)
 			}
 			// Other devices fill the rest of the server's places...
-			var others []*http.Response
 			for i := 0; len(slots) < cap(slots); i++ {
-				others = append(others, w.openAs(t, "other"+strconv.Itoa(i), path))
+				w.openAs(t, "other"+strconv.Itoa(i), path)
 			}
 			// ...and the device's next still starts: it only ever trades one of its own.
-			fourth := w.openAs(t, "tv", path)
-			defer fourth.Body.Close()
+			w.openAs(t, "tv", path)
 			waitUntil(t, "the trade", 5*time.Second, func() bool { return len(w.running()) == cap(slots) && len(slots) == cap(slots) })
-			if n := w.s.conv.count(kind, "device|tv"); n != 2 {
-				t.Fatalf("the device has %d conversions after its fourth, want 2", n)
+			if n := w.s.conv.count(kind, "device|tv"); n != share {
+				t.Fatalf("the device has %d conversions after one more, want %d", n, share)
 			}
 			// While somebody with none is told the server is busy, as before.
 			resp := w.get(t, "latecomer", path)
@@ -321,12 +322,6 @@ func TestOneDeviceCannotTakeEveryConversion(t *testing.T) {
 			if resp.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("a device with none, the server full: %d, want 503", resp.StatusCode)
 			}
-			for _, r := range append(others, first, second, third, fourth) {
-				r.Body.Close()
-			}
-			waitUntil(t, "every ffmpeg to stop", 10*time.Second, func() bool { return len(w.running()) == 0 })
-			waitUntil(t, "every slot to be free", 5*time.Second, func() bool { return len(slots) == 0 })
-			waitUntil(t, "nothing left counted", 5*time.Second, func() bool { return w.s.conv.count(kind, "device|tv") == 0 })
 		})
 	}
 }

@@ -85,7 +85,7 @@ func (s *Server) transcodeStream(w http.ResponseWriter, r *http.Request) {
 		tooManyConversions(w)
 		return
 	}
-	ctx, superseded, end := s.conv.begin(r.Context(), "transcode", client)
+	ctx, superseded, end := s.conv.begin(r.Context(), "transcode", client, clientShare(transcodeSlots))
 	defer end()
 	r = r.WithContext(ctx)
 	if !takeSlot(ctx, transcodeSlots, superseded) {
